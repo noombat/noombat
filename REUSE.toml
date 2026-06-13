@@ -1,0 +1,49 @@
+# REUSE 3.3 compliance configuration.
+#
+# This file declares licensing for files that cannot carry inline SPDX
+# headers (configuration, data, and documentation files). All source
+# code files (.rs, .ts, .sh, .html, .typ, Dockerfile) carry inline headers.
+#
+# Verify compliance:    reuse lint
+# Add header to a file: reuse annotate --license AGPL-3.0-or-later \
+#                          --copyright "Gabriel Henrique Lopes Gomes Alves Nunes" \
+#                          --year 2026 <file>
+#
+# See https://reuse.software/ for the full specification.
+
+version = 1
+SPDX-PackageName = "Noombat"
+SPDX-PackageDownloadLocation = "https://codeberg.org/noombat/noombat"
+
+[[annotations]]
+path = [
+    # Cargo manifests and Rust tooling.
+    "Cargo.toml",
+    "Cargo.lock",
+    "crates/*/Cargo.toml",
+    "rust-toolchain.toml",
+    "deny.toml",
+    # Configuration.
+    "noombat.toml",
+    ".env.example",
+    ".gitignore",
+    "docker-compose.yml",
+    # Database migrations.
+    "migrations/**",
+    # Typst CV templates.
+    "templates/**",
+    # Locale files.
+    "crates/noombat-api/locales/**",
+    # Frontend and test metadata.
+    "frontend/package.json",
+    "tests/e2e/package.json",
+    "tests/e2e/tsconfig.json",
+    "tests/e2e/pnpm-lock.yaml",
+    # Documentation.
+    "README.md",
+    "docs/**",
+    # CI workflow.
+    ".forgejo/workflows/**",
+]
+SPDX-FileCopyrightText = "2026 Gabriel Henrique Lopes Gomes Alves Nunes"
+SPDX-License-Identifier = "AGPL-3.0-or-later"
