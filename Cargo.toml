@@ -1,0 +1,83 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/noombat-core",
+    "crates/noombat-ap",
+    "crates/noombat-markup",
+    "crates/noombat-federation",
+    "crates/noombat-identity",
+    "crates/noombat-jobs",
+    "crates/noombat-groups",
+    "crates/noombat-events",
+    "crates/noombat-chat",
+    "crates/noombat-api",
+    "crates/noombat-server",
+]
+
+[workspace.package]
+edition = "2021"
+rust-version = "1.88.0"
+license = "AGPL-3.0-or-later"
+repository = "https://codeberg.org/noombat/noombat"
+
+[workspace.dependencies]
+# Internal crates.
+noombat-core = { path = "crates/noombat-core" }
+noombat-ap = { path = "crates/noombat-ap" }
+noombat-markup = { path = "crates/noombat-markup" }
+noombat-federation = { path = "crates/noombat-federation" }
+noombat-identity = { path = "crates/noombat-identity" }
+noombat-jobs = { path = "crates/noombat-jobs" }
+noombat-groups = { path = "crates/noombat-groups" }
+noombat-events = { path = "crates/noombat-events" }
+noombat-chat = { path = "crates/noombat-chat" }
+noombat-api = { path = "crates/noombat-api" }
+
+# HTTP framework.
+axum = { version = "0.8.9", features = ["macros", "ws"] }
+tower-http = { version = "0.6.8", features = ["cors", "trace", "compression-gzip", "limit", "request-id"] }
+
+# Async runtime.
+tokio = { version = "1", features = ["full"] }
+
+# Serialisation.
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Database.
+sqlx = { version = "0.8.6", features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "uuid", "chrono", "json", "migrate"] }
+
+# Templates.
+askama = "0.14"
+askama_web = { version = "0.14", features = ["axum-0.8"] }
+
+# Logging and tracing.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Error handling.
+thiserror = "2"
+anyhow = "1"
+
+# HTTP client.
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
+
+# Cryptography.
+rsa = { version = "0.9", features = ["sha2"] }
+sha2 = "0.10"
+base64 = "0.22"
+rand = "0.8"
+
+# Types.
+uuid = { version = "1", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+
+# Configuration.
+dotenvy = "0.15"
+figment = { version = "0.10", features = ["env", "toml"] }
+
+# Internationalisation.
+rust-i18n = "3"
+
+[profile.dev.package.sqlx-macros]
+opt-level = 2
