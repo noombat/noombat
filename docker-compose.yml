@@ -1,0 +1,58 @@
+services:
+  noombat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      NOOMBAT_DOMAIN: ${NOOMBAT_DOMAIN:-localhost}
+      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
+      NOOMBAT_HOST: "0.0.0.0"
+      NOOMBAT_PORT: "8443"
+    ports:
+      - "8443:8443"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      meilisearch:
+        condition: service_started
+
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: noombat
+      POSTGRES_PASSWORD: noombat
+      POSTGRES_DB: noombat
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noombat"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+
+  meilisearch:
+    image: docker.io/getmeili/meilisearch:v1.12
+    environment:
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
+      MEILI_ENV: development
+    ports:
+      - "7700:7700"
+    volumes:
+      - meili-data:/meili_data
+
+volumes:
+  pg-data:
+  redis-data:
+  meili-data:
