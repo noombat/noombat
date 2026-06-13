@@ -42,8 +42,8 @@ and exchange end-to-end encrypted direct messages via an integrated Chatmail ser
 noombat/
 ├── Cargo.toml                    # Workspace root.
 ├── crates/
-│   ├── noombat-core/             # Domain types, error types, extension-point traits.
-│   ├── noombat-ap/               # ActivityPub serialisation, vocabulary, error bodies.
+│   ├── noombat-core/             # Core domain types, error types, and extension-point traits for Noombat.
+│   ├── noombat-ap/               # ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies.
 │   ├── noombat-markup/           # (Markdown and KaTeX) to HTML pipeline.
 │   ├── noombat-federation/       # Inbox, outbox, delivery, WebFinger, NodeInfo, HTTP Signatures.
 │   ├── noombat-identity/         # Auth, profiles, key generation, CV generation.
