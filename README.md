@@ -44,13 +44,13 @@ noombat/
 ├── crates/
 │   ├── noombat-core/             # Core domain types, error types, and extension-point traits for Noombat.
 │   ├── noombat-ap/               # ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies.
-│   ├── noombat-markup/           # (Markdown and KaTeX) to HTML pipeline.
-│   ├── noombat-federation/       # ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, and HTTP Signature verification.
 │   ├── noombat-identity/         # Actor repository, key generation, and post persistence.
-│   ├── noombat-jobs/             # Job CRUD, search, matching.
-│   ├── noombat-groups/           # Group actor logic.
-│   ├── noombat-events/           # Event CRUD, RSVP, calendar.
-│   ├── noombat-chat/             # Chatmail bridge.
+│   ├── noombat-federation/       # ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, and HTTP Signature verification.
+│   ├── noombat-markup/           # (Markdown and KaTeX) to HTML pipeline and Markdown to Typst converter.
+│   ├── noombat-jobs/             # Job listing CRUD, search, and matching.
+│   ├── noombat-groups/           # Group actor logic, membership, and redistribution.
+│   ├── noombat-events/           # Event CRUD, RSVP, and calendar feeds.
+│   ├── noombat-chat/             # IMAP/SMTP transport proxy for Chatmail; deltachat-rpc-server fallback.
 │   ├── noombat-api/              # Axum routes, server-side HTML Askama templates, and internationalisation.
 │   └── noombat-server/           # Binary entry point, configuration, and migration runner.
 ├── frontend/                     # SolidJS islands and HTMX assets (pnpm).

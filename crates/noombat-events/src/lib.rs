@@ -1,0 +1,5 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+#![forbid(unsafe_code)]
+//! Event CRUD, RSVP, and calendar feeds.
