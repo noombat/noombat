@@ -1,0 +1,35 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-issue-forms.json
+name: Feature Request
+description: Suggest an idea or enhancement for Noombat.
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to suggest a feature for **Noombat**!
+  - type: textarea
+    id: problem
+    attributes:
+      label: The Problem
+      description: Is your feature request related to a problem? Please describe.
+      placeholder: I'm always frustrated when...
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: Describe the solution you would like to see implemented.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Describe any alternative solutions or workarounds you have considered.
+  - type: input
+    id: workspace-crate
+    attributes:
+      label: Relevant Crate (Optional)
+      description: If you know which crate this belongs in (e.g. noombat-api, noombat-groups), list it here.

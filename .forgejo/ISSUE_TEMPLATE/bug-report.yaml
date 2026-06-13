@@ -1,0 +1,54 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-issue-forms.json
+name: Bug Report
+description: Report a bug or issue with Noombat.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for reporting an issue with **Noombat**! Please provide as much detail as possible so we can reproduce it.
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear and concise description of what the bug is.
+      placeholder: When I try to federate a post...
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction Steps
+      description: How can we reproduce this issue?
+      value: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What did you expect to happen?
+    validations:
+      required: true
+  - type: input
+    id: rust-version
+    attributes:
+      label: Rust Version
+      description: Which version of Rust are you compiling with?
+      placeholder: e.g., 1.88.0
+  - type: input
+    id: postgres-version
+    attributes:
+      label: PostgreSQL Version
+      description: Since Noombat uses SQLx with Postgres, please provide your Postgres version.
+      placeholder: e.g., 16.2
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant Logs
+      description: Paste any relevant `tracing` logs or stack traces here.
+      render: shell
