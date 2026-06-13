@@ -52,7 +52,7 @@ noombat/
 │   ├── noombat-events/           # Event CRUD, RSVP, calendar.
 │   ├── noombat-chat/             # Chatmail bridge.
 │   ├── noombat-api/              # Axum routes, server-side HTML Askama templates, and internationalisation.
-│   └── noombat-server/           # Binary entry point, configuration, migrations.
+│   └── noombat-server/           # Binary entry point, configuration, and migration runner.
 ├── frontend/                     # SolidJS islands and HTMX assets (pnpm).
 ├── migrations/                   # SQL migrations (sqlx).
 ├── templates/                    # Typst CV templates.

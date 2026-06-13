@@ -1,0 +1,13 @@
+# Local development configuration.
+# Environment variables prefixed NOOMBAT_ take precedence.
+
+domain = "localhost"
+database_url = "postgres://noombat:noombat@localhost/noombat"
+host = "0.0.0.0"
+port = 8443
+max_connections = 5
+open_registrations = true
+
+# Development-only bearer token for C2S outbox POST!.
+# Set to enable POST /users/{username}/outbox. Omit to disable.
+admin_token = "noombat"
