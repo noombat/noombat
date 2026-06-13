@@ -1,0 +1,12 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+#![forbid(unsafe_code)]
+//! ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo,
+//! and HTTP Signature verification.
+
+pub mod delivery;
+pub mod http_sig;
+pub mod inbox;
+pub mod nodeinfo;
+pub mod webfinger;

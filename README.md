@@ -45,8 +45,8 @@ noombat/
 │   ├── noombat-core/             # Core domain types, error types, and extension-point traits for Noombat.
 │   ├── noombat-ap/               # ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies.
 │   ├── noombat-markup/           # (Markdown and KaTeX) to HTML pipeline.
-│   ├── noombat-federation/       # Inbox, outbox, delivery, WebFinger, NodeInfo, HTTP Signatures.
-│   ├── noombat-identity/         # Auth, profiles, key generation, CV generation.
+│   ├── noombat-federation/       # ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, and HTTP Signature verification.
+│   ├── noombat-identity/         # Actor repository, key generation, and post persistence.
 │   ├── noombat-jobs/             # Job CRUD, search, matching.
 │   ├── noombat-groups/           # Group actor logic.
 │   ├── noombat-events/           # Event CRUD, RSVP, calendar.
