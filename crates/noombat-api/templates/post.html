@@ -1,0 +1,16 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }} — {{ i18n.t("nav_brand") }}{% endblock %}
+
+{% block content %}
+        <article aria-label="{{ aria_post_label }}">
+            <header>
+                <a href="/users/{{ author }}">{{ author_display }}</a>
+                <time datetime="{{ created_at }}">{{ created_at }}</time>
+            </header>
+            <div>{{ content_html|safe }}</div>
+        </article>
+{% endblock %}

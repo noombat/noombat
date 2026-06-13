@@ -51,7 +51,7 @@ noombat/
 │   ├── noombat-groups/           # Group actor logic.
 │   ├── noombat-events/           # Event CRUD, RSVP, calendar.
 │   ├── noombat-chat/             # Chatmail bridge.
-│   ├── noombat-api/              # Axum routes, middleware, Askama templates.
+│   ├── noombat-api/              # Axum routes, server-side HTML Askama templates, and internationalisation.
 │   └── noombat-server/           # Binary entry point, configuration, migrations.
 ├── frontend/                     # SolidJS islands and HTMX assets (pnpm).
 ├── migrations/                   # SQL migrations (sqlx).

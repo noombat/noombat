@@ -1,0 +1,25 @@
+# English (United States), baseline locale.
+# The locale is determined by the filename; no top-level key required.
+
+# Navigation and layout.
+skip_to_content: "Skip to content"
+nav_brand: "Noombat"
+
+# Feed.
+feed_title: "Feed"
+feed_heading: "Feed"
+feed_loading: "Loading..."
+feed_loading_more: "Loading more..."
+feed_permalink: "Permalink"
+
+# Post.
+post_title_pattern: "Post by %{name}"
+
+# Profile.
+profile_title_pattern: "%{display_name} (@%{handle})"
+
+# ARIA labels.
+aria_nav_main: "Main"
+aria_post_by: "Post by %{name}"
+aria_fediverse_handle: "Fediverse handle"
+aria_about: "About"

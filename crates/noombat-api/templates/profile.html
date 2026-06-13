@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ page_title }}{% endblock %}
+
+{% block head %}
+    <link rel="alternate" type="application/activity+json"
+          href="https://{{ domain }}/users/{{ username }}">
+{% endblock %}
+
+{% block content %}
+        <header>
+            <h1>{{ display_name }}</h1>
+            <p class="handle" aria-label="{{ i18n.t("aria_fediverse_handle") }}">
+                @{{ username }}@{{ domain }}
+            </p>
+        </header>
+        <section aria-label="{{ i18n.t("aria_about") }}">
+            {{ summary_html|safe }}
+        </section>
+{% endblock %}

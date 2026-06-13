@@ -1,0 +1,25 @@
+# Português (Brasil).
+# A localidade é determinada pelo nome do arquivo; nenhuma chave de nível superior é necessária.
+
+# Navegação e layout.
+skip_to_content: "Pular para o conteúdo"
+nav_brand: "Noombat"
+
+# Feed.
+feed_title: "Feed"
+feed_heading: "Feed"
+feed_loading: "Carregando…"
+feed_loading_more: "Carregando mais…"
+feed_permalink: "Link permanente"
+
+# Publicação.
+post_title_pattern: "Publicação de %{name}"
+
+# Perfil.
+profile_title_pattern: "%{display_name} (@%{handle})"
+
+# Rótulos ARIA.
+aria_nav_main: "Principal"
+aria_post_by: "Publicação de %{name}"
+aria_fediverse_handle: "Identificador no Fediverso"
+aria_about: "Sobre"

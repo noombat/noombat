@@ -1,0 +1,19 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ i18n.t("feed_title") }} — {{ i18n.t("nav_brand") }}{% endblock %}
+
+{% block content %}
+        <h1>{{ i18n.t("feed_heading") }}</h1>
+        <div id="feed-items"
+             hx-get="/feed?page=1"
+             hx-trigger="load"
+             hx-swap="innerHTML"
+             hx-indicator="#feed-loading">
+            <span id="feed-loading" class="htmx-indicator" aria-live="polite">
+                {{ i18n.t("feed_loading") }}
+            </span>
+        </div>
+{% endblock %}

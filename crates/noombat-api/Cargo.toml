@@ -1,0 +1,25 @@
+[package]
+name = "noombat-api"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Axum routes, server-side HTML Askama templates, and internationalisation."
+
+[dependencies]
+noombat-core = { workspace = true }
+noombat-ap = { workspace = true }
+noombat-federation = { workspace = true }
+noombat-identity = { workspace = true }
+askama = { workspace = true }
+askama_web = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tower-http = { workspace = true }
+uuid = { workspace = true }
+reqwest = { workspace = true }
+rust-i18n = { workspace = true }
