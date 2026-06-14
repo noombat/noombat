@@ -61,7 +61,7 @@ jobs:
           curl -L --proto '=https' --tlsv1.2 -sSf \
             https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
             | bash
-          cargo binstall --no-confirm cargo-deny
+          cargo binstall --no-confirm cargo-deny@0.19.8
       - run: cargo deny check
 
   # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
@@ -182,7 +182,7 @@ jobs:
 
       - name: Install sqlx-cli and run migrations
         run: |
-          cargo install sqlx-cli --locked --no-default-features \
+          cargo install sqlx-cli@0.8.6 --locked --no-default-features \
             --features postgres,rustls
           sqlx migrate run --source migrations
 
@@ -190,12 +190,8 @@ jobs:
         run: cargo test --workspace
 
   e2e:
-    name: "E2E (${{ matrix.browser }})"
+    name: End-to-end tests (Firefox, Chromium, WebKit)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        browser: [firefox, chromium, webkit]
     container:
       image: mcr.microsoft.com/playwright:v1.60.0-noble
       options: "--shm-size=2g --ipc=host"
@@ -252,7 +248,7 @@ jobs:
 
       - name: Install sqlx-cli and run migrations
         run: |
-          cargo install sqlx-cli --locked --no-default-features \
+          cargo install sqlx-cli@0.8.6 --locked --no-default-features \
             --features postgres,rustls
           sqlx migrate run --source migrations
 
@@ -292,14 +288,22 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
-      - name: Run Playwright tests
+      - name: Run Playwright tests (Firefox)
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=${{ matrix.browser }}
+        run: pnpm exec playwright test --project=firefox
+
+      - name: Run Playwright tests (Chromium)
+        working-directory: tests/e2e
+        run: pnpm exec playwright test --project=chromium
+
+      - name: Run Playwright tests (WebKit)
+        working-directory: tests/e2e
+        run: pnpm exec playwright test --project=webkit
 
       - name: Upload Playwright report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v4
         with:
-          name: playwright-report-${{ matrix.browser }}
+          name: playwright-report
           path: tests/e2e/playwright-report/
           retention-days: 14
