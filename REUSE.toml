@@ -44,6 +44,9 @@ path = [
     "docs/**",
     # CI workflow.
     ".forgejo/workflows/**",
+    # Forgejo issue and PR templates.
+    ".forgejo/ISSUE_TEMPLATE/**",
+    ".forgejo/PULL_REQUEST_TEMPLATE.md",
 ]
 SPDX-FileCopyrightText = "2026 Gabriel Henrique Lopes Gomes Alves Nunes"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
