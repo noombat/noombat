@@ -80,8 +80,7 @@ pub fn negotiate_locale(headers: &HeaderMap) -> String {
             let quality = parts
                 .find_map(|p| {
                     let p = p.trim();
-                    p.strip_prefix("q=")
-                        .and_then(|q| q.parse::<f32>().ok())
+                    p.strip_prefix("q=").and_then(|q| q.parse::<f32>().ok())
                 })
                 .unwrap_or(1.0);
             Some((tag, quality))

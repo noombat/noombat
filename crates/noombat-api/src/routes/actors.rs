@@ -25,7 +25,10 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/users/{username}", get(get_actor))
-        .route("/users/{username}/outbox", get(get_outbox).post(post_outbox))
+        .route(
+            "/users/{username}/outbox",
+            get(get_outbox).post(post_outbox),
+        )
 }
 
 // ..... HELPERS .....
@@ -35,19 +38,14 @@ fn wants_activity_json(headers: &HeaderMap) -> bool {
         .get_all("accept")
         .iter()
         .filter_map(|v| v.to_str().ok())
-        .any(|v| {
-            v.contains("application/activity+json")
-                || v.contains("application/ld+json")
-        })
+        .any(|v| v.contains("application/activity+json") || v.contains("application/ld+json"))
 }
 
 /// Verify the `Authorization: Bearer <token>` header against the
 /// configured admin token. Returns `Err(Forbidden)` on mismatch or
 /// if no admin token is configured.
 fn verify_bearer_token(headers: &HeaderMap, expected: &Option<String>) -> Result<(), NoombatError> {
-    let expected = expected
-        .as_deref()
-        .ok_or(NoombatError::Forbidden)?;
+    let expected = expected.as_deref().ok_or(NoombatError::Forbidden)?;
 
     let header = headers
         .get(AUTHORIZATION)
@@ -149,10 +147,7 @@ async fn get_outbox(
         .await
         .unwrap_or_default();
 
-    let items: Vec<serde_json::Value> = posts
-        .into_iter()
-        .map(|p| p.ap_object)
-        .collect();
+    let items: Vec<serde_json::Value> = posts.into_iter().map(|p| p.ap_object).collect();
 
     let collection = json!({
         "@context": "https://www.w3.org/ns/activitystreams",
@@ -233,7 +228,10 @@ async fn post_outbox(
         .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
 
     // Validate visibility.
-    if !matches!(body.visibility.as_str(), "public" | "unlisted" | "followers") {
+    if !matches!(
+        body.visibility.as_str(),
+        "public" | "unlisted" | "followers"
+    ) {
         return Err(NoombatError::BadRequest(
             "visibility must be public, unlisted, or followers".into(),
         )
@@ -243,7 +241,9 @@ async fn post_outbox(
     // Generate a unique AP ID for the Note.
     let note_id = format!(
         "https://{}/users/{}/posts/{}",
-        state.domain, username, Uuid::new_v4()
+        state.domain,
+        username,
+        Uuid::new_v4()
     );
 
     // For now, content is stored as-is (no Markdown processing).

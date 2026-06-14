@@ -47,10 +47,7 @@ async fn get_post(
         .get_all("accept")
         .iter()
         .filter_map(|v| v.to_str().ok())
-        .any(|v| {
-            v.contains("application/activity+json")
-                || v.contains("application/ld+json")
-        });
+        .any(|v| v.contains("application/activity+json") || v.contains("application/ld+json"));
 
     if wants_json {
         let obj = serde_json::json!({

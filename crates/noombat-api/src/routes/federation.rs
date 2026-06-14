@@ -32,17 +32,16 @@ async fn webfinger_handler(
     State(state): State<AppState>,
     Query(query): Query<WebFingerQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (username, domain) = webfinger::parse_acct_uri(&query.resource)
-        .ok_or_else(|| {
-            noombat_core::error::NoombatError::BadRequest(
-                "invalid resource URI; expected acct:user@domain".into(),
-            )
-        })?;
+    let (username, domain) = webfinger::parse_acct_uri(&query.resource).ok_or_else(|| {
+        noombat_core::error::NoombatError::BadRequest(
+            "invalid resource URI; expected acct:user@domain".into(),
+        )
+    })?;
 
     if domain != state.domain {
-        return Err(noombat_core::error::NoombatError::ActorNotFound(
-            format!("{username}@{domain}"),
-        )
+        return Err(noombat_core::error::NoombatError::ActorNotFound(format!(
+            "{username}@{domain}"
+        ))
         .into());
     }
 
@@ -64,15 +63,11 @@ async fn nodeinfo_well_known(State(state): State<AppState>) -> impl IntoResponse
     Json(nodeinfo::well_known(&state.domain))
 }
 
-async fn nodeinfo_handler(
-    State(state): State<AppState>,
-) -> Result<impl IntoResponse, ApiError> {
+async fn nodeinfo_handler(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
     // Execute the four independent COUNT queries concurrently.
     let (total_users, active_month, active_half_year, local_posts) = tokio::try_join!(
-        sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM actors WHERE is_local = TRUE"
-        )
-        .fetch_one(&state.pool),
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM actors WHERE is_local = TRUE")
+            .fetch_one(&state.pool),
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM actors \
              WHERE is_local = TRUE AND updated_at > now() - interval '30 days'"
@@ -154,11 +149,7 @@ async fn inbox_handler(
 
     // Resolve the remote actor's public key from the key_id URI.
     // The key_id typically ends with `#main-key`; strip it to get the actor URI.
-    let actor_uri = parsed
-        .key_id
-        .split('#')
-        .next()
-        .unwrap_or(&parsed.key_id);
+    let actor_uri = parsed.key_id.split('#').next().unwrap_or(&parsed.key_id);
     let remote_actor =
         inbox::resolve_remote_actor(&state.pool, &state.http_client, actor_uri).await?;
 

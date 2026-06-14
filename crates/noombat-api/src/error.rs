@@ -20,10 +20,9 @@ impl From<NoombatError> for ApiError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, body) = match &self.0 {
-            NoombatError::ActorNotFound(detail) => (
-                StatusCode::NOT_FOUND,
-                ApError::actor_not_found(detail),
-            ),
+            NoombatError::ActorNotFound(detail) => {
+                (StatusCode::NOT_FOUND, ApError::actor_not_found(detail))
+            }
             NoombatError::NotFound { entity, id } => (
                 StatusCode::NOT_FOUND,
                 ApError::actor_not_found(format!("{entity}/{id}")),
@@ -32,18 +31,13 @@ impl IntoResponse for ApiError {
                 StatusCode::CONFLICT,
                 ApError::bad_request(format!("actor already exists: {detail}")),
             ),
-            NoombatError::BadRequest(detail) => (
-                StatusCode::BAD_REQUEST,
-                ApError::bad_request(detail),
-            ),
-            NoombatError::SignatureVerification => (
-                StatusCode::UNAUTHORIZED,
-                ApError::signature_failed(),
-            ),
-            NoombatError::Forbidden => (
-                StatusCode::FORBIDDEN,
-                ApError::bad_request("forbidden"),
-            ),
+            NoombatError::BadRequest(detail) => {
+                (StatusCode::BAD_REQUEST, ApError::bad_request(detail))
+            }
+            NoombatError::SignatureVerification => {
+                (StatusCode::UNAUTHORIZED, ApError::signature_failed())
+            }
+            NoombatError::Forbidden => (StatusCode::FORBIDDEN, ApError::bad_request("forbidden")),
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApError::internal("an internal error occurred"),

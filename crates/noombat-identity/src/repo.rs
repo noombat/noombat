@@ -236,7 +236,10 @@ pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<S
     .fetch_all(pool)
     .await?;
 
-    Ok(ap_ids.into_iter().map(|ap_id| format!("{ap_id}/inbox")).collect())
+    Ok(ap_ids
+        .into_iter()
+        .map(|ap_id| format!("{ap_id}/inbox"))
+        .collect())
 }
 
 /// Count the total number of public posts by a local actor.
@@ -321,9 +324,9 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .await?;
 
     // Fetch the persisted row (may be the existing row on conflict).
-    find_by_ap_id(pool, &remote.ap_id)
-        .await?
-        .ok_or_else(|| NoombatError::Internal("upsert_remote_actor: row not found after insert".into()))
+    find_by_ap_id(pool, &remote.ap_id).await?.ok_or_else(|| {
+        NoombatError::Internal("upsert_remote_actor: row not found after insert".into())
+    })
 }
 
 // ..... FOLLOWS .....

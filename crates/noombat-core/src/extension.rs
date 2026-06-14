@@ -13,8 +13,12 @@ use crate::error::Result;
 
 /// Pluggable search backend (default: Meilisearch).
 pub trait SearchBackend: Send + Sync + 'static {
-    fn upsert(&self, index: &str, id: &str, document: Value)
-        -> impl Future<Output = Result<()>> + Send;
+    fn upsert(
+        &self,
+        index: &str,
+        id: &str,
+        document: Value,
+    ) -> impl Future<Output = Result<()>> + Send;
 
     fn delete(&self, index: &str, id: &str) -> impl Future<Output = Result<()>> + Send;
 

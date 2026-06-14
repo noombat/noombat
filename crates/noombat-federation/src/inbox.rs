@@ -230,20 +230,14 @@ async fn handle_create(
 ) -> Result<()> {
     let object = &activity.object;
 
-    let object_type = object
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     let ap_id = object
         .get("id")
         .and_then(|v| v.as_str())
         .ok_or_else(|| NoombatError::BadRequest("Create object missing id".into()))?;
 
-    let content_html = object
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
     let post_type = match object_type {
         "Note" => "note",

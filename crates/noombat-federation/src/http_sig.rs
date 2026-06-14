@@ -44,9 +44,8 @@ pub fn sign_request(
     let date = Utc::now().format("%a, %d %b %Y %T GMT").to_string();
 
     let mut headers_list = vec!["(request-target)", "host", "date"];
-    let mut signing_string = format!(
-        "(request-target): {method} {path}\nhost: {host}\ndate: {date}"
-    );
+    let mut signing_string =
+        format!("(request-target): {method} {path}\nhost: {host}\ndate: {date}");
 
     if let Some(digest) = body_digest {
         headers_list.push("digest");
@@ -235,15 +234,17 @@ pub fn reconstruct_signing_string(
 
     for name in headers_list {
         if name == "(request-target)" {
-            lines.push(format!("(request-target): {} {}", method.to_lowercase(), path));
+            lines.push(format!(
+                "(request-target): {} {}",
+                method.to_lowercase(),
+                path
+            ));
         } else {
             let value = request_headers
                 .iter()
                 .find(|(k, _)| k.eq_ignore_ascii_case(name))
                 .map(|(_, v)| v.as_str())
-                .ok_or_else(|| {
-                    NoombatError::SignatureVerification
-                })?;
+                .ok_or_else(|| NoombatError::SignatureVerification)?;
             lines.push(format!("{}: {}", name.to_lowercase(), value));
         }
     }
@@ -353,11 +354,13 @@ mod tests {
         ];
         let request_headers = vec![
             ("Host".to_owned(), "example.org".to_owned()),
-            ("Date".to_owned(), "Mon, 01 Jan 2024 00:00:00 GMT".to_owned()),
+            (
+                "Date".to_owned(),
+                "Mon, 01 Jan 2024 00:00:00 GMT".to_owned(),
+            ),
         ];
         let result =
-            reconstruct_signing_string(&headers_list, "POST", "/inbox", &request_headers)
-                .unwrap();
+            reconstruct_signing_string(&headers_list, "POST", "/inbox", &request_headers).unwrap();
         assert_eq!(
             result,
             "(request-target): post /inbox\nhost: example.org\ndate: Mon, 01 Jan 2024 00:00:00 GMT"
