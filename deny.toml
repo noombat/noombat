@@ -10,6 +10,11 @@
 unmaintained = "all"
 unsound = "workspace"
 yanked = "warn"
+ignore = [
+    # Marvin Attack (RSA timing side-channel). No patched version available.
+    # https://rustsec.org/advisories/RUSTSEC-2023-0071
+    "RUSTSEC-2023-0071",
+]
 
 [licenses]
 # All licenses are denied unless explicitly listed here.
