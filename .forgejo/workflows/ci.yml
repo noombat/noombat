@@ -1,11 +1,13 @@
 # Forgejo Actions CI pipeline for Codeberg.
 #
-# Jobs `fmt`, `clippy`, `deny`, `test`, and `msrv` run on Codeberg's
-# hosted runners (`codeberg-small`). They require no infrastructure.
+# Jobs `fmt`, `reuse`, and `deny` run on Codeberg's hosted runners
+# (`codeberg-small`). They require no infrastructure and perform no
+# Rust compilation.
 #
-# Jobs `integration` and `e2e` run on a self-hosted runner registered
-# with the label `ubuntu-latest`. They use PostgreSQL and Redis service
-# containers and require Docker-in-Docker on the runner host.
+# All other jobs run on a self-hosted runner registered with the label
+# `ubuntu-latest`. They require Rust compilation, which exceeds the
+# `codeberg-small` deadline on a cold cache. Jobs `integration` and
+# `e2e` additionally use PostgreSQL and Redis service containers.
 
 name: CI
 
@@ -19,7 +21,7 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# ..... HOSTED RUNNER JOBS (no database required) .....
+# ..... HOSTED RUNNER JOBS (no Rust compilation required) .....
 
 jobs:
   fmt:
@@ -30,35 +32,10 @@ jobs:
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --component rustfmt
+            | sh -s -- -y --default-toolchain stable \
+              --profile minimal --component rustfmt
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --all -- --check
-
-  clippy:
-    name: Clippy
-    runs-on: codeberg-small
-    steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --component clippy
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - run: cargo clippy --workspace -- -D warnings
-
-  deny:
-    name: Cargo Deny
-    runs-on: codeberg-small
-    steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Install Rust and cargo-deny
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable
-          . "$HOME/.cargo/env"
-          cargo install cargo-deny --locked
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-      - run: cargo deny check
 
   reuse:
     name: REUSE compliance
@@ -66,18 +43,62 @@ jobs:
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install reuse
-        run: pip install --break-system-packages reuse
+        run: pip install --break-system-packages reuse==6.2.0
       - run: reuse lint
 
-  test:
-    name: Unit tests
+  deny:
+    name: Cargo Deny
     runs-on: codeberg-small
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install cargo-deny
+        run: |
+          curl -L --proto '=https' --tlsv1.2 -sSf \
+            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+            | bash
+          cargo binstall --no-confirm cargo-deny
+      - run: cargo deny check
+
+  # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable \
+              --profile minimal --component clippy
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Cache Cargo artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-clippy-
+      - run: cargo clippy --workspace -- -D warnings
+
+  test:
+    name: Unit tests
+    # Runs without a database. Tests that require PostgreSQL are
+    # exercised in the `integration` job instead.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
         uses: https://code.forgejo.org/actions/cache@v4
@@ -92,17 +113,24 @@ jobs:
 
   msrv:
     name: MSRV (1.88.0)
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
-      - name: Install Rust 1.88.0
+      - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.88.0
+            | sh -s -- -y --default-toolchain 1.88.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Cache Cargo artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-msrv-
       - run: cargo check --workspace
-
-  # ..... SELF-HOSTED RUNNER JOBS .....
 
   integration:
     name: Integration tests
@@ -138,13 +166,14 @@ jobs:
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable
+            | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
         uses: https://code.forgejo.org/actions/cache@v4
         with:
           path: |
+            ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
             target
@@ -161,8 +190,12 @@ jobs:
         run: cargo test --workspace
 
   e2e:
-    name: End-to-end tests (Firefox, Chromium, WebKit)
+    name: "E2E (${{ matrix.browser }})"
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        browser: [firefox, chromium, webkit]
     container:
       image: mcr.microsoft.com/playwright:v1.60.0-noble
       options: "--shm-size=2g --ipc=host"
@@ -197,9 +230,10 @@ jobs:
       - name: Install system build dependencies
         run: |
           apt-get update -qq
-          apt-get install -y --no-install-recommends build-essential pkg-config
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config postgresql-client
 
-      - name: Install Rust toolchain
+      - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain stable --profile minimal
@@ -209,6 +243,7 @@ jobs:
         uses: https://code.forgejo.org/actions/cache@v4
         with:
           path: |
+            ~/.cargo/bin
             ~/.cargo/registry
             ~/.cargo/git
             target
@@ -242,9 +277,14 @@ jobs:
         run: |
           ./target/release/noombat &
           for i in $(seq 1 30); do
-            curl -sf http://localhost:8443/healthz && break
+            if curl -sf http://localhost:8443/healthz; then
+              echo "Server is ready"
+              exit 0
+            fi
             sleep 2
           done
+          echo "::error::Server failed to start within 60 seconds"
+          exit 1
 
       - name: Install Playwright test dependencies
         working-directory: tests/e2e
@@ -252,22 +292,14 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
-      - name: Run Playwright tests (Firefox — primary)
+      - name: Run Playwright tests
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=firefox
-
-      - name: Run Playwright tests (Chromium)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=chromium
-
-      - name: Run Playwright tests (WebKit)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=webkit
+        run: pnpm exec playwright test --project=${{ matrix.browser }}
 
       - name: Upload Playwright report
         if: always()
         uses: https://code.forgejo.org/actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-${{ matrix.browser }}
           path: tests/e2e/playwright-report/
           retention-days: 14
