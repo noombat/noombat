@@ -22,16 +22,16 @@ repository = "https://codeberg.org/noombat/noombat"
 
 [workspace.dependencies]
 # Internal crates.
-noombat-core = { path = "crates/noombat-core" }
-noombat-ap = { path = "crates/noombat-ap" }
-noombat-markup = { path = "crates/noombat-markup" }
-noombat-federation = { path = "crates/noombat-federation" }
-noombat-identity = { path = "crates/noombat-identity" }
-noombat-jobs = { path = "crates/noombat-jobs" }
-noombat-groups = { path = "crates/noombat-groups" }
-noombat-events = { path = "crates/noombat-events" }
-noombat-chat = { path = "crates/noombat-chat" }
-noombat-api = { path = "crates/noombat-api" }
+noombat-core = { path = "crates/noombat-core", version = "0.1.0" }
+noombat-ap = { path = "crates/noombat-ap", version = "0.1.0" }
+noombat-markup = { path = "crates/noombat-markup", version = "0.1.0" }
+noombat-federation = { path = "crates/noombat-federation", version = "0.1.0" }
+noombat-identity = { path = "crates/noombat-identity", version = "0.1.0" }
+noombat-jobs = { path = "crates/noombat-jobs", version = "0.1.0" }
+noombat-groups = { path = "crates/noombat-groups", version = "0.1.0" }
+noombat-events = { path = "crates/noombat-events", version = "0.1.0" }
+noombat-chat = { path = "crates/noombat-chat", version = "0.1.0" }
+noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 
 # HTTP framework.
 axum = { version = "0.8.9", features = ["macros", "ws"] }
