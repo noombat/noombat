@@ -1,18 +1,18 @@
-# cargo-deny configuration (v2 schema)
+# cargo-deny configuration (cargo-deny 0.19.x, v2 schema)
 # https://embarkstudios.github.io/cargo-deny/
+# https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 # Run: cargo deny check
 
 [advisories]
-version = 2
-# Scope: which crates to check. All matches are treated as errors.
-# Values: "all" (v1 "deny", check all crates), "workspace" (v1 "warn", check direct dependencies only), "transitive", "none"
-vulnerability = "all"
-unmaintained = "workspace"
-yanked = "workspace"
-notice = "workspace"
+# `vulnerability` and `notice` always emit errors and are not configurable.
+# `unmaintained` (default: all) and `unsound` (default: workspace) control
+# which crates are checked; Values: "all", "workspace", "transitive", "none".
+unmaintained = "all"
+unsound = "workspace"
+yanked = "warn"
 
 [licenses]
-version = 2
+# All licenses are denied unless explicitly listed here.
 allow = [
     "MIT",
     "Apache-2.0",
