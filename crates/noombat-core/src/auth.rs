@@ -66,9 +66,9 @@ impl CedarBackend {
     /// Returns [`NoombatError::Internal`] if the policy or schema source
     /// fails to parse.
     pub fn new(policy_src: &str, schema_src: Option<&str>) -> Result<Self> {
-        let policy_set: cedar_policy::PolicySet = policy_src.parse().map_err(|e| {
-            NoombatError::Internal(format!("failed to parse Cedar policies: {e}"))
-        })?;
+        let policy_set: cedar_policy::PolicySet = policy_src
+            .parse()
+            .map_err(|e| NoombatError::Internal(format!("failed to parse Cedar policies: {e}")))?;
 
         let schema = match schema_src {
             Some(src) => {

@@ -135,7 +135,10 @@ async fn main() -> anyhow::Result<()> {
         };
         match noombat_core::auth::load_cedar_backend(&policy_path, schema_opt) {
             Ok(backend) => {
-                info!("Cedar authorisation backend loaded from {}", policies_dir.display());
+                info!(
+                    "Cedar authorisation backend loaded from {}",
+                    policies_dir.display()
+                );
                 Arc::new(backend) as Arc<dyn noombat_core::auth::AuthorisationBackend>
             }
             Err(e) => {
@@ -143,7 +146,10 @@ async fn main() -> anyhow::Result<()> {
             }
         }
     } else {
-        info!("no Cedar policies found at {}; using empty policy set", policy_path.display());
+        info!(
+            "no Cedar policies found at {}; using empty policy set",
+            policy_path.display()
+        );
         Arc::new(
             noombat_core::auth::CedarBackend::new("", None)
                 .expect("failed to create empty Cedar backend"),

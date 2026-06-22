@@ -24,7 +24,12 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/users/{username}", get(get_actor).patch(patch_actor).delete(delete_actor_handler))
+        .route(
+            "/users/{username}",
+            get(get_actor)
+                .patch(patch_actor)
+                .delete(delete_actor_handler),
+        )
         .route(
             "/users/{username}/outbox",
             get(get_outbox).post(post_outbox),
@@ -356,7 +361,10 @@ async fn patch_actor(
 
     // For now, summary_html is a plain escaped copy of summary_md.
     // The noombat-markup pipeline will replace this.
-    let summary_html = body.summary_md.as_ref().map(|md| format!("<p>{}</p>", escape_html(md)));
+    let summary_html = body
+        .summary_md
+        .as_ref()
+        .map(|md| format!("<p>{}</p>", escape_html(md)));
 
     let params = noombat_identity::repo::UpdateActor {
         display_name: body.display_name,
