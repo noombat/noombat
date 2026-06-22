@@ -309,7 +309,8 @@ async fn post_outbox(
     // Enqueue delivery to all accepted followers.
     let inboxes = noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id).await?;
     for inbox in inboxes {
-        noombat_federation::delivery::enqueue(&state.pool, &create_activity, &inbox).await?;
+        noombat_federation::delivery::enqueue(&state.pool, actor.id, &create_activity, &inbox)
+            .await?;
     }
 
     Ok((

@@ -9,7 +9,10 @@ use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
-use tracing::{error, info};
+use tracing::{error, info, warn};
+use uuid::Uuid;
+
+use crate::http_sig;
 
 /// Maximum number of concurrent outbound HTTP deliveries per poll cycle.
 const MAX_CONCURRENT_DELIVERIES: usize = 10;
@@ -18,21 +21,39 @@ const MAX_CONCURRENT_DELIVERIES: usize = 10;
 #[derive(FromRow)]
 struct DeliveryRow {
     id: i64,
+    actor_id: Uuid,
     payload: Value,
     target_inbox: String,
     attempts: i16,
 }
 
+/// Signing credentials for the sending actor, fetched once per delivery.
+struct SigningCredentials {
+    /// Key ID URI, e.g. `https://noombat.social/users/alice#main-key`.
+    key_id: String,
+    /// RSA private key in PKCS#8 PEM format.
+    private_key_pem: String,
+}
+
 /// Enqueue an activity for delivery to a remote inbox.
+///
+/// # Arguments
+/// * `pool`: the database connection pool.
+/// * `actor_id`: the UUID of the local actor sending the activity
+///   (used by the delivery worker to look up the signing key).
+/// * `payload`: the full ActivityPub activity as JSON.
+/// * `target_inbox`: the remote actor's inbox URI.
 pub async fn enqueue(
     pool: &PgPool,
+    actor_id: Uuid,
     payload: &Value,
     target_inbox: &str,
 ) -> noombat_core::error::Result<()> {
     sqlx::query(
-        r#"INSERT INTO delivery_queue (payload, target_inbox)
-           VALUES ($1, $2)"#,
+        r#"INSERT INTO delivery_queue (actor_id, payload, target_inbox)
+           VALUES ($1, $2, $3)"#,
     )
+    .bind(actor_id)
     .bind(payload)
     .bind(target_inbox)
     .execute(pool)
@@ -52,7 +73,7 @@ pub async fn enqueue(
 /// 10 attempts.
 pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
     let rows = sqlx::query_as::<_, DeliveryRow>(
-        r#"SELECT id, payload, target_inbox, attempts
+        r#"SELECT id, actor_id, payload, target_inbox, attempts
            FROM delivery_queue
            WHERE next_retry <= now() AND attempts < 10
            ORDER BY next_retry ASC
@@ -98,12 +119,99 @@ pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
     }
 }
 
+/// Fetch the signing credentials for the sending actor.
+async fn fetch_signing_credentials(
+    pool: &PgPool,
+    actor_id: Uuid,
+) -> noombat_core::error::Result<SigningCredentials> {
+    let row = sqlx::query_as::<_, (String, Option<String>)>(
+        r#"SELECT ap_id, private_key_pem FROM actors WHERE id = $1"#,
+    )
+    .bind(actor_id)
+    .fetch_one(pool)
+    .await
+    .map_err(noombat_core::error::NoombatError::from)?;
+
+    let private_key_pem = row.1.ok_or_else(|| {
+        noombat_core::error::NoombatError::Internal(
+            "delivery actor has no private key (remote actor in delivery queue?)".into(),
+        )
+    })?;
+
+    Ok(SigningCredentials {
+        key_id: format!("{}#main-key", row.0),
+        private_key_pem,
+    })
+}
+
+/// Extract the host and path components from a URL string.
+///
+/// Returns `(host, path)` or `None` if the URL cannot be parsed.
+fn parse_inbox_url(url: &str) -> Option<(String, String)> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    let (host, path) = match rest.find('/') {
+        Some(idx) => (rest[..idx].to_owned(), rest[idx..].to_owned()),
+        None => (rest.to_owned(), "/".to_owned()),
+    };
+    Some((host, path))
+}
+
 /// Attempt delivery of a single activity to a remote inbox.
 async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: DeliveryRow) {
+    // Fetch signing credentials for the sending actor.
+    let creds = match fetch_signing_credentials(pool, row.actor_id).await {
+        Ok(c) => c,
+        Err(e) => {
+            error!(actor_id = %row.actor_id, "failed to fetch signing credentials: {e}");
+            schedule_retry(pool, row.id, row.attempts).await;
+            return;
+        }
+    };
+
+    // Parse the target inbox URL into host and path for signing.
+    let (host, path) = match parse_inbox_url(&row.target_inbox) {
+        Some(parts) => parts,
+        None => {
+            error!(target_inbox = %row.target_inbox, "malformed inbox URL; dropping");
+            let _ = sqlx::query("DELETE FROM delivery_queue WHERE id = $1")
+                .bind(row.id)
+                .execute(pool)
+                .await;
+            return;
+        }
+    };
+
     let body = serde_json::to_vec(&row.payload).unwrap_or_default();
+    let body_digest = http_sig::digest_body(&body);
+
+    // Sign the request (CPU-bound; offloaded to a blocking thread).
+    let signed = match http_sig::sign_request_async(
+        creds.key_id,
+        creds.private_key_pem,
+        "post".to_owned(),
+        path.clone(),
+        host.clone(),
+        Some(body_digest.clone()),
+    )
+    .await
+    {
+        Ok(s) => s,
+        Err(e) => {
+            error!(target_inbox = %row.target_inbox, "failed to sign request: {e}");
+            schedule_retry(pool, row.id, row.attempts).await;
+            return;
+        }
+    };
+
     let result = http_client
         .post(&row.target_inbox)
         .header("Content-Type", "application/activity+json")
+        .header("Host", &host)
+        .header("Date", &signed.date)
+        .header("Digest", format!("SHA-256={body_digest}"))
+        .header("Signature", &signed.signature_header)
         .body(body)
         .send()
         .await;
@@ -117,35 +225,93 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
             info!(target_inbox = %row.target_inbox, "delivered successfully");
         }
         Ok(resp) if resp.status().as_u16() == 410 => {
-            // 410 Gone — remote actor deleted; remove from queue.
+            // 410 Gone: remote actor deleted; remove from queue.
             let _ = sqlx::query("DELETE FROM delivery_queue WHERE id = $1")
                 .bind(row.id)
                 .execute(pool)
                 .await;
             info!(target_inbox = %row.target_inbox, "remote actor gone (410); dropping");
         }
-        _ => {
-            // Transient failure: exponential backoff.
-            let backoff_secs = 60i64 * 2i64.pow(row.attempts as u32);
-            let max_backoff = TimeDelta::days(7).num_seconds();
-            let delay = backoff_secs.min(max_backoff);
-            let next_retry = Utc::now() + TimeDelta::seconds(delay);
-
-            let _ = sqlx::query(
-                r#"UPDATE delivery_queue
-                   SET attempts = attempts + 1, next_retry = $1
-                   WHERE id = $2"#,
-            )
-            .bind(next_retry)
-            .bind(row.id)
-            .execute(pool)
-            .await;
-
+        Ok(resp) => {
+            warn!(
+                target_inbox = %row.target_inbox,
+                status = resp.status().as_u16(),
+                attempts = row.attempts,
+                "delivery failed; scheduling retry"
+            );
+            schedule_retry(pool, row.id, row.attempts).await;
+        }
+        Err(e) => {
             error!(
                 target_inbox = %row.target_inbox,
                 attempts = row.attempts,
-                "delivery failed; retrying later"
+                "delivery HTTP error: {e}; scheduling retry"
             );
+            schedule_retry(pool, row.id, row.attempts).await;
         }
+    }
+}
+
+/// Apply exponential backoff to a failed delivery.
+async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
+    let backoff_secs = 60i64 * 2i64.pow(current_attempts as u32);
+    let max_backoff = TimeDelta::days(7).num_seconds();
+    let delay = backoff_secs.min(max_backoff);
+    let next_retry = Utc::now() + TimeDelta::seconds(delay);
+
+    let _ = sqlx::query(
+        r#"UPDATE delivery_queue
+           SET attempts = attempts + 1, next_retry = $1
+           WHERE id = $2"#,
+    )
+    .bind(next_retry)
+    .bind(queue_id)
+    .execute(pool)
+    .await;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_inbox_url_https_with_path() {
+        let result = parse_inbox_url("https://mastodon.social/users/alice/inbox");
+        assert_eq!(
+            result,
+            Some((
+                "mastodon.social".to_owned(),
+                "/users/alice/inbox".to_owned()
+            ))
+        );
+    }
+
+    #[test]
+    fn parse_inbox_url_http_with_port() {
+        let result = parse_inbox_url("http://localhost:8443/inbox");
+        assert_eq!(
+            result,
+            Some(("localhost:8443".to_owned(), "/inbox".to_owned()))
+        );
+    }
+
+    #[test]
+    fn parse_inbox_url_no_path() {
+        let result = parse_inbox_url("https://example.org");
+        assert_eq!(result, Some(("example.org".to_owned(), "/".to_owned())));
+    }
+
+    #[test]
+    fn parse_inbox_url_preserves_query() {
+        let result = parse_inbox_url("https://example.org/inbox?shared=true");
+        assert_eq!(
+            result,
+            Some(("example.org".to_owned(), "/inbox?shared=true".to_owned()))
+        );
+    }
+
+    #[test]
+    fn parse_inbox_url_no_scheme() {
+        assert_eq!(parse_inbox_url("example.org/inbox"), None);
     }
 }
