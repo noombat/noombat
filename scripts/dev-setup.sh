@@ -49,6 +49,8 @@ command -v sqlx >/dev/null 2>&1 || {
     cargo install sqlx-cli --no-default-features --features rustls,postgres
 }
 
+command -v pnpm >/dev/null 2>&1 || fail "pnpm not found; install via: npm install -g pnpm"
+
 # ..... ENVIRONMENT FILE .....
 
 if [ ! -f .env ]; then
@@ -95,6 +97,14 @@ if [ ! -f Cargo.lock ]; then
     info "Generating Cargo.lock..."
     cargo generate-lockfile
 fi
+
+# ..... FRONTEND BUILD .....
+
+info "Installing frontend dependencies..."
+(cd frontend && pnpm install)
+
+info "Building frontend assets (TailwindCSS)..."
+(cd frontend && pnpm build)
 
 # ..... BUILD .....
 

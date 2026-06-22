@@ -23,6 +23,7 @@ export default defineConfig({
   },
 
   projects: [
+    // Desktop viewports (≥ 1280 px).
     {
       name: "firefox",
       use: { ...devices["Desktop Firefox"] },
@@ -34,6 +35,24 @@ export default defineConfig({
     {
       name: "webkit",
       use: { ...devices["Desktop Safari"] },
+    },
+    // Mobile viewports (≤ 400 px).
+    {
+      name: "firefox-mobile",
+      use: {
+        ...devices["Desktop Firefox"],
+        viewport: { width: 375, height: 667 },
+        isMobile: true,
+        hasTouch: true,
+      },
+    },
+    {
+      name: "chromium-mobile",
+      use: { ...devices["Pixel 5"] },
+    },
+    {
+      name: "webkit-mobile",
+      use: { ...devices["iPhone 13"] },
     },
   ],
 });
