@@ -128,7 +128,7 @@ cargo test --workspace
 cargo fmt --all -- --check
 cargo clippy --workspace -- -D warnings
 
-# Check REUSE licensing compliance (requires: pip install reuse).
+# Check REUSE licensing compliance (requires: pipx install reuse).
 reuse lint
 
 # Prepare sqlx offline query data (requires a running database).
