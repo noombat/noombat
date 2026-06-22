@@ -37,6 +37,7 @@ struct ActorRow {
     private_key_pem: Option<String>,
     domain: String,
     is_local: bool,
+    inbox_url: Option<String>,
     chatmail_addr: Option<String>,
     orcid: Option<String>,
     actor_privacy: serde_json::Value,
@@ -73,6 +74,7 @@ impl ActorRow {
             private_key_pem: self.private_key_pem,
             domain: self.domain,
             is_local: self.is_local,
+            inbox_url: self.inbox_url,
             chatmail_addr: self.chatmail_addr,
             orcid: self.orcid,
             actor_privacy,
@@ -128,6 +130,7 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         private_key_pem: Some(params.private_key_pem.clone()),
         domain: row.domain,
         is_local: row.is_local,
+        inbox_url: None,
         chatmail_addr: None,
         orcid: None,
         actor_privacy: privacy,
@@ -143,7 +146,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
                id, actor_type, ap_id, username, display_name,
                avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
-               chatmail_addr, orcid, actor_privacy,
+               inbox_url, chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE username = $1 AND is_local = TRUE"#,
@@ -163,7 +166,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
                id, actor_type, ap_id, username, display_name,
                avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
-               chatmail_addr, orcid, actor_privacy,
+               inbox_url, chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE ap_id = $1"#,
@@ -221,13 +224,12 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
 
 /// Retrieve the inbox URIs of all accepted followers of a local actor.
 ///
-/// Returns the `ap_id` of each follower suffixed with `/inbox`, which is
-/// the standard ActivityPub inbox path. For efficiency, shared inboxes
-/// should be used in production; this simplified version delivers to
-/// individual inboxes.
+/// Uses each follower's stored `inbox_url` (populated during actor
+/// resolution) with a fallback to `{ap_id}/inbox` for actors resolved
+/// before the column was introduced.
 pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> {
-    let ap_ids = sqlx::query_scalar::<_, String>(
-        r#"SELECT a.ap_id
+    let inboxes = sqlx::query_scalar::<_, String>(
+        r#"SELECT COALESCE(a.inbox_url, a.ap_id || '/inbox')
            FROM follows f
            JOIN actors a ON a.id = f.follower_id
            WHERE f.following_id = $1 AND f.accepted = TRUE"#,
@@ -236,10 +238,7 @@ pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<S
     .fetch_all(pool)
     .await?;
 
-    Ok(ap_ids
-        .into_iter()
-        .map(|ap_id| format!("{ap_id}/inbox"))
-        .collect())
+    Ok(inboxes)
 }
 
 /// Count the total number of public posts by a local actor.
@@ -289,6 +288,7 @@ pub struct RemoteActor {
     pub summary_html: Option<String>,
     pub public_key_pem: String,
     pub actor_type: String,
+    pub inbox_url: String,
 }
 
 /// Insert or update a remote actor in the `actors` table.
@@ -303,13 +303,13 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     sqlx::query(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
-                domain, public_key_pem, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE, $9)
+                domain, public_key_pem, inbox_url, is_local, actor_privacy)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
                display_name = EXCLUDED.display_name,
                summary_html = EXCLUDED.summary_html,
-               updated_at = now()"#,
+               inbox_url = EXCLUDED.inbox_url"#,
     )
     .bind(id)
     .bind(&remote.actor_type)
@@ -319,6 +319,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(&remote.summary_html)
     .bind(&remote.domain)
     .bind(&remote.public_key_pem)
+    .bind(&remote.inbox_url)
     .bind(&privacy_json)
     .execute(pool)
     .await?;

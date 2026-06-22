@@ -39,6 +39,8 @@ pub struct Actor {
     pub private_key_pem: Option<String>,
     pub domain: String,
     pub is_local: bool,
+    /// Remote actors only: their declared ActivityPub inbox URI.
+    pub inbox_url: Option<String>,
     pub chatmail_addr: Option<String>,
     pub orcid: Option<String>,
     pub actor_privacy: ActorPrivacy,

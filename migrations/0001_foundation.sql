@@ -16,6 +16,7 @@ CREATE TABLE actors (
     private_key_pem TEXT,
     domain          TEXT NOT NULL,
     is_local        BOOLEAN NOT NULL DEFAULT TRUE,
+    inbox_url       TEXT, -- remote actors only: their declared AP inbox URI
     chatmail_addr   TEXT,
     chatmail_cred   BYTEA,
     orcid           TEXT,
@@ -332,6 +333,7 @@ CREATE TABLE domain_restrictions (
 
 CREATE TABLE delivery_queue (
     id           BIGSERIAL PRIMARY KEY,
+    actor_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     payload      JSONB NOT NULL,
     target_inbox TEXT NOT NULL,
     attempts     SMALLINT NOT NULL DEFAULT 0,
@@ -342,3 +344,36 @@ CREATE TABLE delivery_queue (
 CREATE INDEX idx_delivery_queue_next_retry
     ON delivery_queue (next_retry)
     WHERE attempts < 10;
+
+-- ..... FOREIGN-KEY INDICES .....
+
+CREATE INDEX idx_experiences_actor ON experiences (actor_id);
+CREATE INDEX idx_educations_actor ON educations (actor_id);
+CREATE INDEX idx_skills_actor ON skills (actor_id);
+CREATE INDEX idx_publications_actor ON publications (actor_id);
+CREATE INDEX idx_verified_links_actor ON verified_links (actor_id);
+CREATE INDEX idx_custom_sections_actor ON custom_profile_sections (actor_id);
+CREATE INDEX idx_media_attachments_post ON media_attachments (post_id);
+CREATE INDEX idx_job_listings_actor ON job_listings (actor_id);
+CREATE INDEX idx_applications_job ON applications (job_listing_id);
+CREATE INDEX idx_group_memberships_group ON group_memberships (group_id);
+CREATE INDEX idx_event_rsvps_event ON event_rsvps (event_id);
+CREATE INDEX idx_events_group ON events (group_id) WHERE group_id IS NOT NULL;
+
+-- ..... UPDATED_AT TRIGGER .....
+
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = now();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_actors_updated_at
+    BEFORE UPDATE ON actors
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_applications_updated_at
+    BEFORE UPDATE ON applications
+    FOR EACH ROW EXECUTE FUNCTION set_updated_at();

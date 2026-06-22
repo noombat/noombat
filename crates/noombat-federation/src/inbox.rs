@@ -90,6 +90,7 @@ pub async fn resolve_remote_actor(
             "Group" => "group".to_owned(),
             _ => "individual".to_owned(),
         },
+        inbox_url: ap_actor.inbox.clone(),
     };
 
     repo::upsert_remote_actor(pool, &remote).await
@@ -157,8 +158,11 @@ async fn handle_follow(
             }
         });
 
-        let remote_inbox = format!("{}/inbox", remote_actor.ap_id);
-        delivery::enqueue(pool, &accept_activity, &remote_inbox).await?;
+        let remote_inbox = remote_actor
+            .inbox_url
+            .clone()
+            .unwrap_or_else(|| format!("{}/inbox", remote_actor.ap_id));
+        delivery::enqueue(pool, local_actor.id, &accept_activity, &remote_inbox).await?;
 
         info!(
             follower = %remote_actor.ap_id,
