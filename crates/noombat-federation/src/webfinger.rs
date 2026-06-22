@@ -5,7 +5,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// A WebFinger response (JRD — JSON Resource Descriptor).
+/// A WebFinger response (JRD: JSON Resource Descriptor).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebFingerResponse {
     pub subject: String,
@@ -27,9 +27,9 @@ pub struct WebFingerLink {
 /// Construct a WebFinger response for a local actor.
 ///
 /// # Arguments
-/// * `username` — the local part (e.g. `alice`)
-/// * `domain` — the instance domain (e.g. `noombat.social`)
-/// * `ap_id` — the fully-qualified ActivityPub identifier
+/// * `username`: the local part (e.g. `alice`).
+/// * `domain`: the instance domain (e.g. `noombat.social`).
+/// * `ap_id`: the fully-qualified ActivityPub identifier.
 pub fn build_response(username: &str, domain: &str, ap_id: &str) -> WebFingerResponse {
     WebFingerResponse {
         subject: format!("acct:{username}@{domain}"),

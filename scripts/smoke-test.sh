@@ -35,7 +35,7 @@ check() {
         echo "  ✓  $description (HTTP $status)"
         PASS=$((PASS + 1))
     else
-        echo "  ✗  $description — expected $expected_status, got $status"
+        echo "  ✗  $description: expected $expected_status, got $status"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -56,7 +56,7 @@ check_json() {
         echo "  ✓  $description"
         PASS=$((PASS + 1))
     else
-        echo "  ✗  $description — expected '$expected', got '$actual'"
+        echo "  ✗  $description: expected '$expected', got '$actual'"
         FAIL=$((FAIL + 1))
     fi
 }
@@ -82,7 +82,7 @@ check_post() {
         echo "  ✓  $description (HTTP $status)"
         PASS=$((PASS + 1))
     else
-        echo "  ✗  $description — expected $expected_status, got $status"
+        echo "  ✗  $description: expected $expected_status, got $status"
         FAIL=$((FAIL + 1))
     fi
 }

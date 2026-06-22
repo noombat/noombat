@@ -81,6 +81,7 @@ noombat/
 │   └── noombat-server/           # Binary entry point, configuration, and migration runner.
 ├── frontend/                     # SolidJS islands and HTMX assets (pnpm).
 ├── migrations/                   # SQL migrations (sqlx).
+├── policies/                     # Cedar authorisation policies and schema.
 ├── templates/                    # Typst CV templates.
 ├── docker-compose.yml
 ├── noombat.toml                  # Default configuration.
@@ -101,22 +102,27 @@ Required settings:
 | `port`               | `NOOMBAT_PORT`               | Listen port (default `8443`).                       |
 | `open_registrations` | `NOOMBAT_OPEN_REGISTRATIONS` | Enable open registration (default `true`).          |
 | `admin_token`        | `NOOMBAT_ADMIN_TOKEN`        | Bearer token for C2S outbox POST (development-only).|
+| `policies_dir`       | `NOOMBAT_POLICIES_DIR`       | Path to Cedar policy files (default `policies`).    |
 
 ## Endpoints
 
-| Path                              | Method | Description                         |
-|-----------------------------------|--------|-------------------------------------|
-| `/`                               | GET    | Home feed page.                     |
-| `/feed`                           | GET    | Feed HTMX partial (paginated).      |
-| `/users/{username}`               | GET    | Actor (AP JSON or HTML profile).    |
-| `/users/{username}/inbox`         | POST   | ActivityPub S2S inbox.              |
-| `/users/{username}/outbox`        | GET    | ActivityPub outbox collection.      |
-| `/users/{username}/outbox`        | POST   | Create Note (bearer token required).|
-| `/posts/{id}`                     | GET    | Single post (AP JSON or HTML).      |
-| `/.well-known/webfinger`          | GET    | Actor discovery (RFC 7033).         |
-| `/.well-known/nodeinfo`           | GET    | NodeInfo discovery.                 |
-| `/nodeinfo/2.1`                   | GET    | NodeInfo 2.1 document.              |
-| `/healthz`                        | GET    | Health check.                       |
+| Path                              | Method | Description                          |
+|-----------------------------------|--------|--------------------------------------|
+| `/`                               | GET    | Home feed page.                      |
+| `/feed`                           | GET    | Feed HTMX partial (paginated).       |
+| `/users/{username}`               | GET    | Actor (AP JSON or HTML profile).     |
+| `/users/{username}`               | PATCH  | Update actor (bearer token required).|
+| `/users/{username}`               | DELETE | Delete actor (bearer token required).|
+| `/users/{username}/inbox`         | POST   | ActivityPub S2S inbox.               |
+| `/users/{username}/outbox`        | GET    | ActivityPub outbox collection.       |
+| `/users/{username}/outbox`        | POST   | Create Note (bearer token required). |
+| `/users/{username}/followers`     | GET    | ActivityPub followers collection.    |
+| `/users/{username}/following`     | GET    | ActivityPub following collection.    |
+| `/users/{username}/posts/{id}`    | GET    | Single post (AP JSON or HTML).       |
+| `/.well-known/webfinger`          | GET    | Actor discovery (RFC 7033).          |
+| `/.well-known/nodeinfo`           | GET    | NodeInfo discovery.                  |
+| `/nodeinfo/2.1`                   | GET    | NodeInfo 2.1 document.               |
+| `/healthz`                        | GET    | Health check.                        |
 
 ## Development
 

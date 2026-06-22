@@ -16,7 +16,7 @@
 
 import { test, expect } from "@playwright/test";
 
-// ── Health ──────────────────────────────────────────────────────
+// ..... Health .....
 
 test.describe("Health", () => {
   test("GET /healthz returns 200", async ({ request }) => {
@@ -25,7 +25,7 @@ test.describe("Health", () => {
   });
 });
 
-// ── NodeInfo ────────────────────────────────────────────────────
+// ..... NodeInfo .....
 
 test.describe("NodeInfo", () => {
   test("well-known returns a link to /nodeinfo/2.1", async ({ request }) => {
@@ -45,7 +45,7 @@ test.describe("NodeInfo", () => {
   });
 });
 
-// ── WebFinger ───────────────────────────────────────────────────
+// ..... WebFinger .....
 
 test.describe("WebFinger", () => {
   test("returns 400 without resource parameter", async ({ request }) => {
@@ -72,9 +72,9 @@ test.describe("WebFinger", () => {
   });
 });
 
-// ── Actor (ActivityPub JSON) ────────────────────────────────────
+// ..... Actor (ActivityPub JSON) .....
 
-test.describe("Actor — AP JSON", () => {
+test.describe("Actor: AP JSON", () => {
   test("returns AP actor when Accept: application/activity+json", async ({
     request,
   }) => {
@@ -100,9 +100,9 @@ test.describe("Actor — AP JSON", () => {
   });
 });
 
-// ── Actor (HTML profile page) ───────────────────────────────────
+// ..... Actor (HTML profile page) .....
 
-test.describe("Actor — HTML profile", () => {
+test.describe("Actor: HTML profile", () => {
   test("renders semantic HTML with ARIA landmarks", async ({ page }) => {
     await page.goto("/users/testuser");
 
@@ -139,7 +139,7 @@ test.describe("Actor — HTML profile", () => {
   });
 });
 
-// ── Feed page ───────────────────────────────────────────────────
+// ..... Feed page .....
 
 test.describe("Feed page", () => {
   test("renders with HTMX attributes", async ({ page }) => {
@@ -156,7 +156,7 @@ test.describe("Feed page", () => {
   });
 });
 
-// ── Outbox ──────────────────────────────────────────────────────
+// ..... Outbox .....
 
 test.describe("Outbox", () => {
   test("GET outbox returns an OrderedCollection", async ({ request }) => {
