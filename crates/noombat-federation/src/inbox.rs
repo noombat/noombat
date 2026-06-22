@@ -280,12 +280,36 @@ async fn handle_delete(pool: &PgPool, activity: &Activity) -> Result<()> {
 
     info!(actor = %activity.actor, object = %object_id, "received Delete");
 
-    // Tombstone the post if it exists locally.
+    // Verify that the requesting actor owns the post before deleting.
+    let is_authorised = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM posts p
+           JOIN actors a ON a.id = p.actor_id
+           WHERE p.ap_id = $1 AND a.ap_id = $2"#,
+    )
+    .bind(object_id)
+    .bind(&activity.actor)
+    .fetch_one(pool)
+    .await?;
+
+    if is_authorised == 0 {
+        // Either the post does not exist locally, or the requesting
+        // actor is not its author.  Both cases are safe to ignore:
+        // the post may have already been deleted, or the request is
+        // unauthorised.
+        warn!(
+            actor = %activity.actor,
+            object = %object_id,
+            "Delete ignored: post not found or actor mismatch"
+        );
+        return Ok(());
+    }
+
     sqlx::query("DELETE FROM posts WHERE ap_id = $1")
         .bind(object_id)
         .execute(pool)
         .await?;
 
+    info!(object = %object_id, "post deleted");
     Ok(())
 }
 
