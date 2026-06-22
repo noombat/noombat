@@ -11,6 +11,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use uuid::Uuid;
 
 use noombat_core::error::NoombatError;
 
@@ -19,28 +20,29 @@ use crate::i18n::{negotiate_locale, I18n};
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/posts/{id}", get(get_post))
+    Router::new().route("/users/{username}/posts/{post_id}", get(get_post))
 }
 
 async fn get_post(
     State(state): State<AppState>,
-    Path(id): Path<String>,
+    Path((username, post_id)): Path<(String, Uuid)>,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
-        r#"SELECT p.ap_id, p.content_html, p.created_at,
+        r#"SELECT p.id, p.ap_id, p.content_html, p.ap_object, p.created_at,
                   a.username, a.display_name
            FROM posts p
            JOIN actors a ON a.id = p.actor_id
-           WHERE p.ap_id = $1"#,
+           WHERE p.id = $1 AND a.username = $2"#,
     )
-    .bind(&id)
+    .bind(post_id)
+    .bind(&username)
     .fetch_optional(&state.pool)
     .await
     .map_err(NoombatError::from)?
     .ok_or_else(|| NoombatError::NotFound {
         entity: "post",
-        id: uuid::Uuid::nil(),
+        id: post_id,
     })?;
 
     let wants_json = headers
@@ -89,8 +91,10 @@ async fn get_post(
 
 #[derive(sqlx::FromRow)]
 struct PostRow {
+    id: Uuid,
     ap_id: String,
     content_html: String,
+    ap_object: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     username: String,
     display_name: Option<String>,

@@ -70,6 +70,8 @@ pub struct FeedPost {
     pub content_html: String,
     pub created_at: String,
     pub ap_id: String,
+    /// The post's UUID, used for permalink construction.
+    pub post_id: String,
     /// Pre-computed ARIA label (e.g. "Post by Alice").
     pub aria_label: String,
 }

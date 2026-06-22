@@ -9,7 +9,7 @@
     </header>
     <div>{{ post.content_html|safe }}</div>
     <footer>
-        <a href="/posts/{{ post.ap_id }}">{{ permalink_label }}</a>
+        <a href="/users/{{ post.author }}/posts/{{ post.post_id }}">{{ permalink_label }}</a>
     </footer>
 </article>
 {% endfor %}
