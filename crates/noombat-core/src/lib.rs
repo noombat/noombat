@@ -5,6 +5,7 @@
 //! Core domain types, error types, and extension-point traits for Noombat.
 
 pub mod actor;
+pub mod auth;
 pub mod error;
 pub mod extension;
 pub mod privacy;

@@ -1,0 +1,52 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+// Cedar schema for Noombat.
+
+namespace Noombat {
+    entity Actor;
+
+    entity Profile in [Actor];
+
+    entity ProfileSection in [Profile];
+
+    entity Post in [Actor];
+
+    // Common context record carried with every authorisation request.
+    // Optional fields (?) are present only when the action requires them.
+    type AuthContext = {
+        is_owner: String,
+        visibility?: String,
+        cv_download?: String,
+    };
+
+    action "view" appliesTo {
+        principal: [Actor],
+        resource: [Profile, ProfileSection, Post],
+        context: AuthContext,
+    };
+
+    action "edit" appliesTo {
+        principal: [Actor],
+        resource: [Profile, ProfileSection, Post],
+        context: AuthContext,
+    };
+
+    action "delete" appliesTo {
+        principal: [Actor],
+        resource: [Profile, ProfileSection, Post],
+        context: AuthContext,
+    };
+
+    action "create_post" appliesTo {
+        principal: [Actor],
+        resource: [Profile],
+        context: AuthContext,
+    };
+
+    action "download_cv" appliesTo {
+        principal: [Actor],
+        resource: [Profile],
+        context: AuthContext,
+    };
+}

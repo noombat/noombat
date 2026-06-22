@@ -35,7 +35,7 @@ noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 
 # HTTP framework.
 axum = { version = "0.8.9", features = ["macros", "ws"] }
-tower-http = { version = "0.6.8", features = ["cors", "trace", "compression-gzip", "limit", "request-id"] }
+tower-http = { version = "0.6.8", features = ["cors", "trace", "compression-gzip", "limit", "request-id", "fs"] }
 
 # Async runtime.
 tokio = { version = "1", features = ["full"] }
@@ -79,5 +79,11 @@ figment = { version = "0.10", features = ["env", "toml"] }
 # Internationalisation.
 rust-i18n = "3"
 
+# Authorisation.
+cedar-policy = "4.11"
+
 [profile.dev.package.sqlx-macros]
 opt-level = 2
+
+[profile.dev.package.num-bigint-dig]
+opt-level = 3

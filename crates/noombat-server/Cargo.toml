@@ -12,6 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 noombat-api = { workspace = true }
+noombat-core = { workspace = true }
 noombat-federation = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }

@@ -8,6 +8,7 @@ rust_i18n::i18n!("locales", fallback = "en-US");
 
 pub mod error;
 pub mod i18n;
+pub mod middleware;
 pub mod routes;
 pub mod state;
 
@@ -25,6 +26,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::feed::router())
         .merge(routes::posts::router())
         .merge(routes::health::router())
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            middleware::authorisation,
+        ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
         .with_state(state)

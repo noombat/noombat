@@ -2,6 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Shared application state passed to all Axum handlers.
 
+use std::sync::Arc;
+
+use noombat_core::auth::AuthorisationBackend;
 use sqlx::PgPool;
 
 /// Application-wide state, injected into Axum handlers via [`axum::extract::State`].
@@ -14,4 +17,6 @@ pub struct AppState {
     /// Development-only bearer token for C2S outbox POST!
     /// To be replaced by full authentication!
     pub admin_token: Option<String>,
+    /// Authorisation backend (default: Cedar).
+    pub auth: Arc<dyn AuthorisationBackend>,
 }

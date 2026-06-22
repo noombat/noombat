@@ -8,6 +8,7 @@
 //! and starts the Axum HTTP listener.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 use std::time::Duration;
 
 use figment::providers::{Env, Format, Toml};
@@ -43,6 +44,9 @@ struct Config {
     /// Development-only bearer token for C2S outbox POST!
     /// If unset, the outbox POST endpoint is disabled.
     admin_token: Option<String>,
+    /// Path to the Cedar policies directory (default `policies`).
+    #[serde(default = "default_policies_dir")]
+    policies_dir: String,
 }
 
 fn default_host() -> String {
@@ -56,6 +60,9 @@ fn default_max_connections() -> u32 {
 }
 fn default_true() -> bool {
     true
+}
+fn default_policies_dir() -> String {
+    "policies".to_owned()
 }
 
 #[tokio::main]
@@ -116,12 +123,40 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Build the Axum application.
+    let policies_dir = std::path::Path::new(&config.policies_dir);
+    let policy_path = policies_dir.join("noombat.cedar");
+    let schema_path = policies_dir.join("noombat.cedarschema");
+
+    let auth_backend = if policy_path.exists() {
+        let schema_opt = if schema_path.exists() {
+            Some(schema_path.as_path())
+        } else {
+            None
+        };
+        match noombat_core::auth::load_cedar_backend(&policy_path, schema_opt) {
+            Ok(backend) => {
+                info!("Cedar authorisation backend loaded from {}", policies_dir.display());
+                Arc::new(backend) as Arc<dyn noombat_core::auth::AuthorisationBackend>
+            }
+            Err(e) => {
+                panic!("failed to load Cedar policies: {e}");
+            }
+        }
+    } else {
+        info!("no Cedar policies found at {}; using empty policy set", policy_path.display());
+        Arc::new(
+            noombat_core::auth::CedarBackend::new("", None)
+                .expect("failed to create empty Cedar backend"),
+        ) as Arc<dyn noombat_core::auth::AuthorisationBackend>
+    };
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
         http_client,
         open_registrations: config.open_registrations,
         admin_token: config.admin_token.clone(),
+        auth: auth_backend,
     };
     let app = noombat_api::build_router(state);
 
