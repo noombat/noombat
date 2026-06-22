@@ -11,3 +11,6 @@ open_registrations = true
 # Development-only bearer token for C2S outbox POST!.
 # Set to enable POST /users/{username}/outbox. Omit to disable.
 admin_token = "noombat"
+
+# Path to the Cedar authorisation policy files.
+policies_dir = "policies"
