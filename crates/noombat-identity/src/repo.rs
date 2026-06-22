@@ -417,3 +417,153 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<()> 
 
     Ok(())
 }
+
+// ..... ACTOR UPDATE .....
+
+/// Mutable fields for an actor update.
+pub struct UpdateActor {
+    pub display_name: Option<String>,
+    pub summary_md: Option<String>,
+    pub summary_html: Option<String>,
+    pub avatar_url: Option<String>,
+    pub header_url: Option<String>,
+}
+
+/// Update a local actor's editable fields.
+pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -> Result<Actor> {
+    sqlx::query(
+        r#"UPDATE actors SET
+               display_name = COALESCE($2, display_name),
+               summary_md = COALESCE($3, summary_md),
+               summary_html = COALESCE($4, summary_html),
+               avatar_url = COALESCE($5, avatar_url),
+               header_url = COALESCE($6, header_url)
+           WHERE id = $1 AND is_local = TRUE"#,
+    )
+    .bind(actor_id)
+    .bind(&params.display_name)
+    .bind(&params.summary_md)
+    .bind(&params.summary_html)
+    .bind(&params.avatar_url)
+    .bind(&params.header_url)
+    .execute(pool)
+    .await?;
+
+    find_by_id(pool, actor_id).await
+}
+
+/// Retrieve an actor by primary key.
+pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
+    let row = sqlx::query_as::<_, ActorRow>(
+        r#"SELECT
+               id, actor_type, ap_id, username, display_name,
+               avatar_url, header_url, summary_md, summary_html,
+               public_key_pem, private_key_pem, domain, is_local,
+               inbox_url, chatmail_addr, orcid, actor_privacy,
+               created_at, updated_at
+           FROM actors
+           WHERE id = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| NoombatError::NotFound {
+        entity: "actor",
+        id,
+    })?;
+
+    row.into_actor()
+}
+
+// ..... ACTOR DELETE .....
+
+/// Delete a local actor and all dependent data (cascaded by FK constraints).
+pub async fn delete_actor(pool: &PgPool, actor_id: Uuid) -> Result<()> {
+    let result = sqlx::query("DELETE FROM actors WHERE id = $1 AND is_local = TRUE")
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(NoombatError::NotFound {
+            entity: "actor",
+            id: actor_id,
+        });
+    }
+
+    Ok(())
+}
+
+// ..... SOCIAL GRAPH COUNTS AND LISTS .....
+
+/// Count accepted followers of an actor.
+pub async fn count_followers(pool: &PgPool, actor_id: Uuid) -> Result<i64> {
+    let count = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM follows
+           WHERE following_id = $1 AND accepted = TRUE"#,
+    )
+    .bind(actor_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(count)
+}
+
+/// Count actors that a given actor follows (accepted only).
+pub async fn count_following(pool: &PgPool, actor_id: Uuid) -> Result<i64> {
+    let count = sqlx::query_scalar::<_, i64>(
+        r#"SELECT COUNT(*) FROM follows
+           WHERE follower_id = $1 AND accepted = TRUE"#,
+    )
+    .bind(actor_id)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(count)
+}
+
+/// Retrieve the AP identifiers of an actor's accepted followers.
+pub async fn list_follower_ap_ids(
+    pool: &PgPool,
+    actor_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<String>> {
+    let ids = sqlx::query_scalar::<_, String>(
+        r#"SELECT a.ap_id FROM follows f
+           JOIN actors a ON a.id = f.follower_id
+           WHERE f.following_id = $1 AND f.accepted = TRUE
+           ORDER BY f.created_at DESC
+           LIMIT $2 OFFSET $3"#,
+    )
+    .bind(actor_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(ids)
+}
+
+/// Retrieve the AP identifiers of actors that a given actor follows.
+pub async fn list_following_ap_ids(
+    pool: &PgPool,
+    actor_id: Uuid,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<String>> {
+    let ids = sqlx::query_scalar::<_, String>(
+        r#"SELECT a.ap_id FROM follows f
+           JOIN actors a ON a.id = f.following_id
+           WHERE f.follower_id = $1 AND f.accepted = TRUE
+           ORDER BY f.created_at DESC
+           LIMIT $2 OFFSET $3"#,
+    )
+    .bind(actor_id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(ids)
+}

@@ -24,11 +24,13 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/users/{username}", get(get_actor))
+        .route("/users/{username}", get(get_actor).patch(patch_actor).delete(delete_actor_handler))
         .route(
             "/users/{username}/outbox",
             get(get_outbox).post(post_outbox),
         )
+        .route("/users/{username}/followers", get(get_followers))
+        .route("/users/{username}/following", get(get_following))
 }
 
 // ..... HELPERS .....
@@ -332,8 +334,129 @@ fn escape_html(input: &str) -> String {
         .replace('"', "&quot;")
 }
 
-// ..... TEMPLATES .....
+// ..... PATCH /users/{username} .....
 
+#[derive(Deserialize)]
+struct PatchActorBody {
+    display_name: Option<String>,
+    summary_md: Option<String>,
+}
+
+async fn patch_actor(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Result<impl IntoResponse, ApiError> {
+    verify_bearer_token(&headers, &state.admin_token)?;
+
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let body: PatchActorBody = serde_json::from_slice(&body)
+        .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
+
+    // For now, summary_html is a plain escaped copy of summary_md.
+    // The noombat-markup pipeline will replace this.
+    let summary_html = body.summary_md.as_ref().map(|md| format!("<p>{}</p>", escape_html(md)));
+
+    let params = noombat_identity::repo::UpdateActor {
+        display_name: body.display_name,
+        summary_md: body.summary_md,
+        summary_html,
+        avatar_url: None,
+        header_url: None,
+    };
+
+    let updated = noombat_identity::repo::update_actor(&state.pool, actor.id, &params).await?;
+
+    Ok((
+        StatusCode::OK,
+        [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
+        Json(json!({
+            "id": updated.ap_id,
+            "type": "Person",
+            "preferredUsername": updated.username,
+            "name": updated.display_name,
+            "summary": updated.summary_html
+        })),
+    ))
+}
+
+// ..... DELETE /users/{username} .....
+
+async fn delete_actor_handler(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    headers: HeaderMap,
+) -> Result<StatusCode, ApiError> {
+    verify_bearer_token(&headers, &state.admin_token)?;
+
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    noombat_identity::repo::delete_actor(&state.pool, actor.id).await?;
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ..... GET /users/{username}/followers .....
+
+async fn get_followers(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    let total = noombat_identity::repo::count_followers(&state.pool, actor.id)
+        .await
+        .unwrap_or(0);
+    let items = noombat_identity::repo::list_follower_ap_ids(&state.pool, actor.id, 40, 0)
+        .await
+        .unwrap_or_default();
+
+    let collection = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{}/followers", actor.ap_id),
+        "type": "OrderedCollection",
+        "totalItems": total,
+        "orderedItems": items
+    });
+
+    Ok((
+        StatusCode::OK,
+        [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
+        Json(collection),
+    ))
+}
+
+// ..... GET /users/{username}/following .....
+
+async fn get_following(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    let total = noombat_identity::repo::count_following(&state.pool, actor.id)
+        .await
+        .unwrap_or(0);
+    let items = noombat_identity::repo::list_following_ap_ids(&state.pool, actor.id, 40, 0)
+        .await
+        .unwrap_or_default();
+
+    let collection = json!({
+        "@context": "https://www.w3.org/ns/activitystreams",
+        "id": format!("{}/following", actor.ap_id),
+        "type": "OrderedCollection",
+        "totalItems": total,
+        "orderedItems": items
+    });
+
+    Ok((
+        StatusCode::OK,
+        [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
+        Json(collection),
+    ))
+}
+
+// ..... TEMPLATES .....
 #[derive(Template, WebTemplate)]
 #[template(path = "profile.html")]
 struct ProfilePage {
