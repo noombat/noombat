@@ -14,7 +14,6 @@ COPY frontend/ frontend/
 COPY templates/ templates/
 
 # Build in release mode.
-ENV SQLX_OFFLINE=true
 RUN cargo build --release --bin noombat
 
 # ..... RUNTIME .....
