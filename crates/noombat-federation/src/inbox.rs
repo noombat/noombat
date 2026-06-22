@@ -33,7 +33,7 @@ pub async fn process_activity(
         types::CREATE => handle_create(pool, http_client, &activity).await,
         types::DELETE => handle_delete(pool, &activity).await,
         types::ACCEPT => handle_accept(pool, http_client, &activity).await,
-        types::REJECT => handle_reject(pool, &activity).await,
+        types::REJECT => handle_reject(pool, http_client, &activity).await,
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
             Ok(())
@@ -361,12 +361,44 @@ async fn handle_accept(
 
 // ..... REJECT .....
 
-async fn handle_reject(_pool: &PgPool, activity: &Activity) -> Result<()> {
-    info!(actor = %activity.actor, "received Reject");
-    // A Reject of a Follow deletes the pending follow record.
-    // For now, log and ignore, i.e. the follow record remains pending.
-    // Full implementation requires resolving both actors, which needs
-    // the http_client; the signature is expanded when needed.
+async fn handle_reject(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    // A Reject wraps the original Follow activity.
+    let inner_type = activity
+        .object
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    if inner_type != "Follow" {
+        warn!(inner_type, "Reject of non-Follow; ignoring");
+        return Ok(());
+    }
+
+    // The Follow's actor is the local user who sent the follow request.
+    let follower_uri = activity
+        .object
+        .get("actor")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| NoombatError::BadRequest("Reject: missing Follow actor".into()))?;
+
+    let follower_username = extract_local_username(follower_uri)
+        .ok_or_else(|| NoombatError::BadRequest("cannot parse follower URI".into()))?;
+
+    let local_actor = repo::find_local_by_username(pool, follower_username).await?;
+    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+
+    // Delete the pending follow: local_actor follows remote_actor.
+    repo::delete_follow(pool, local_actor.id, remote_actor.id).await?;
+    info!(
+        follower = %local_actor.ap_id,
+        target = %remote_actor.ap_id,
+        "outbound follow rejected by remote; follow deleted"
+    );
+
     Ok(())
 }
 
