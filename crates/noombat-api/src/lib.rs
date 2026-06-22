@@ -14,6 +14,7 @@ pub mod state;
 
 use axum::Router;
 use tower_http::compression::CompressionLayer;
+use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
 
 use crate::state::AppState;
@@ -26,6 +27,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::feed::router())
         .merge(routes::posts::router())
         .merge(routes::health::router())
+        .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::authorisation,

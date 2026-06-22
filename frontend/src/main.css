@@ -1,0 +1,85 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes */
+
+/*
+ * TailwindCSS v4 entry point for Noombat.
+ *
+ * Theme tokens defined in @theme become Tailwind utility classes
+ * (e.g. bg-surface, text-muted, font-sans, border-border).
+ *
+ * @source tells Tailwind to scan the Askama templates (which live
+ * outside the frontend/ tree) for class names.
+ */
+
+@import "tailwindcss";
+@source "../../crates/noombat-api/templates/**/*.html";
+
+@theme {
+    --color-bg: #fafafa;
+    --color-fg: #1a1a1a;
+    --color-muted: #666666;
+    --color-accent: #4a6fa5;
+    --color-focus: #2563eb;
+    --color-surface: #ffffff;
+    --color-border: #e0e0e0;
+
+    --font-sans: system-ui, -apple-system, sans-serif;
+}
+
+/*
+ * Dark mode: override the CSS custom properties that @theme generated.
+ * Tailwind utilities (bg-bg, text-fg, etc.) reference these properties,
+ * so the palette switches automatically.
+ */
+@media (prefers-color-scheme: dark) {
+    :root {
+        --color-bg: #1a1a1a;
+        --color-fg: #e0e0e0;
+        --color-muted: #999999;
+        --color-accent: #7ba4d4;
+        --color-focus: #60a5fa;
+        --color-surface: #2a2a2a;
+        --color-border: #444444;
+    }
+}
+
+/* ..... Focus ..... */
+
+@layer base {
+    :focus-visible {
+        outline: 2px solid var(--color-focus);
+        outline-offset: 2px;
+    }
+
+    a:focus-visible {
+        border-radius: 2px;
+    }
+}
+
+/* ..... Skip link ..... */
+
+.skip-link {
+    position: absolute;
+    top: -100%;
+    left: 1rem;
+    padding: 0.5rem 1rem;
+    background: var(--color-accent);
+    color: #fff;
+    text-decoration: none;
+    z-index: 100;
+    border-radius: 0 0 4px 4px;
+}
+
+.skip-link:focus {
+    top: 0;
+}
+
+/* ..... HTMX indicators ..... */
+
+.htmx-indicator {
+    display: none;
+}
+
+.htmx-request .htmx-indicator {
+    display: inline-block;
+}

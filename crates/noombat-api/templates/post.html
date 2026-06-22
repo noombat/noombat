@@ -7,10 +7,16 @@
 
 {% block content %}
         <article aria-label="{{ aria_post_label }}">
-            <header>
-                <a href="/users/{{ author }}">{{ author_display }}</a>
-                <time datetime="{{ created_at }}">{{ created_at }}</time>
+            <header class="flex items-baseline gap-2 mb-2">
+                <a href="/users/{{ author }}"
+                   class="text-accent font-semibold no-underline hover:underline">
+                    {{ author_display }}
+                </a>
+                <time datetime="{{ created_at }}"
+                      class="text-muted text-xs">
+                    {{ created_at }}
+                </time>
             </header>
-            <div>{{ content_html|safe }}</div>
+            <div class="leading-relaxed">{{ content_html|safe }}</div>
         </article>
 {% endblock %}
