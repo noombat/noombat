@@ -39,6 +39,7 @@ path = [
     "crates/noombat-api/locales/**",
     # Frontend and test metadata.
     "frontend/package.json",
+    "frontend/pnpm-lock.yaml",
     "tests/e2e/package.json",
     "tests/e2e/tsconfig.json",
     "tests/e2e/pnpm-lock.yaml",
