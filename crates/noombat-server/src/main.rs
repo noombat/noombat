@@ -152,10 +152,8 @@ async fn main() -> anyhow::Result<()> {
             "no Cedar policies found at {}; using empty policy set",
             policy_path.display()
         );
-        Arc::new(
-            cedar::CedarBackend::new("", None)
-                .expect("failed to create empty Cedar backend"),
-        ) as Arc<dyn noombat_core::auth::AuthorisationBackend>
+        Arc::new(cedar::CedarBackend::new("", None).expect("failed to create empty Cedar backend"))
+            as Arc<dyn noombat_core::auth::AuthorisationBackend>
     };
 
     let state = AppState {

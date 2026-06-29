@@ -38,9 +38,8 @@ impl CedarBackend {
 
         let schema = match schema_src {
             Some(src) => {
-                let (schema, warnings) =
-                    cedar_policy::Schema::from_cedarschema_str(src)
-                        .map_err(|e| format!("failed to parse Cedar schema: {e}"))?;
+                let (schema, warnings) = cedar_policy::Schema::from_cedarschema_str(src)
+                    .map_err(|e| format!("failed to parse Cedar schema: {e}"))?;
                 for w in warnings {
                     warn!("Cedar schema warning: {w}");
                 }
@@ -155,12 +154,10 @@ pub fn load_cedar_backend(
     })?;
 
     let schema_src = match schema_path {
-        Some(path) => Some(std::fs::read_to_string(path).map_err(|e| {
-            format!(
-                "failed to read Cedar schema from {}: {e}",
-                path.display()
-            )
-        })?),
+        Some(path) => Some(
+            std::fs::read_to_string(path)
+                .map_err(|e| format!("failed to read Cedar schema from {}: {e}", path.display()))?,
+        ),
         None => None,
     };
 
