@@ -13,6 +13,7 @@ use axum::routing::get;
 use axum::{Json, Router};
 use uuid::Uuid;
 
+use noombat_ap::context::AS_CONTEXT;
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
@@ -53,7 +54,7 @@ async fn get_post(
 
     if wants_json {
         let obj = serde_json::json!({
-            "@context": "https://www.w3.org/ns/activitystreams",
+            "@context": AS_CONTEXT,
             "id": row.ap_id,
             "type": "Note",
             "attributedTo": format!("https://{}/users/{}", state.domain, row.username),

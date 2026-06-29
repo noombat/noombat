@@ -3,14 +3,15 @@
 //! Structured JSON-LD error bodies for federation-facing endpoints.
 
 use serde::Serialize;
+use serde_json::Value;
 
-use crate::context::AS_CONTEXT;
+use crate::context::error_context;
 
 /// A JSON-LD error body conforming to the ActivityStreams Error type.
 #[derive(Debug, Clone, Serialize)]
 pub struct ApError {
     #[serde(rename = "@context")]
-    pub context: &'static str,
+    pub context: Value,
     #[serde(rename = "type")]
     pub error_type: &'static str,
     pub summary: &'static str,
@@ -22,7 +23,7 @@ pub struct ApError {
 impl ApError {
     pub fn actor_not_found(detail: impl Into<String>) -> Self {
         Self {
-            context: AS_CONTEXT,
+            context: error_context(),
             error_type: "Error",
             summary: "actor_not_found",
             content: detail.into(),
@@ -32,7 +33,7 @@ impl ApError {
 
     pub fn bad_request(detail: impl Into<String>) -> Self {
         Self {
-            context: AS_CONTEXT,
+            context: error_context(),
             error_type: "Error",
             summary: "bad_request",
             content: detail.into(),
@@ -42,7 +43,7 @@ impl ApError {
 
     pub fn signature_failed() -> Self {
         Self {
-            context: AS_CONTEXT,
+            context: error_context(),
             error_type: "Error",
             summary: "signature_verification_failed",
             content: "HTTP Signature verification failed.".to_owned(),
@@ -52,7 +53,7 @@ impl ApError {
 
     pub fn internal(detail: impl Into<String>) -> Self {
         Self {
-            context: AS_CONTEXT,
+            context: error_context(),
             error_type: "Error",
             summary: "internal_error",
             content: detail.into(),

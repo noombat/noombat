@@ -90,6 +90,14 @@ test.describe("Actor: AP JSON", () => {
     expect(body.inbox).toContain("/inbox");
     expect(body.outbox).toContain("/outbox");
     expect(body.publicKey).toBeDefined();
+
+    // The @context must be an array containing the ActivityStreams
+    // vocabulary and the W3C Security Vocabulary (required for the
+    // publicKey sub-object to be valid JSON-LD).
+    const ctx = body["@context"];
+    expect(Array.isArray(ctx)).toBeTruthy();
+    expect(ctx).toContain("https://www.w3.org/ns/activitystreams");
+    expect(ctx).toContain("https://w3id.org/security/v1");
   });
 
   test("returns 404 for nonexistent actor", async ({ request }) => {

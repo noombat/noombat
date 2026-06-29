@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use noombat_ap::context::default_context;
+use noombat_ap::context::{default_context, AS_CONTEXT};
 use noombat_ap::object::{ApActor, ApPublicKey};
 use noombat_core::error::NoombatError;
 
@@ -157,7 +157,7 @@ async fn get_outbox(
     let items: Vec<serde_json::Value> = posts.into_iter().map(|p| p.ap_object).collect();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": AS_CONTEXT,
         "id": format!("{}/outbox", actor.ap_id),
         "type": "OrderedCollection",
         "totalItems": total,
@@ -276,7 +276,7 @@ async fn post_outbox(
     }
 
     let note_object = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": AS_CONTEXT,
         "id": note_id,
         "type": "Note",
         "attributedTo": actor.ap_id,
@@ -291,7 +291,7 @@ async fn post_outbox(
     });
 
     let create_activity = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": AS_CONTEXT,
         "id": format!("{}/activity", note_id),
         "type": "Create",
         "actor": actor.ap_id,
@@ -420,7 +420,7 @@ async fn get_followers(
         .unwrap_or_default();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": AS_CONTEXT,
         "id": format!("{}/followers", actor.ap_id),
         "type": "OrderedCollection",
         "totalItems": total,
@@ -450,7 +450,7 @@ async fn get_following(
         .unwrap_or_default();
 
     let collection = json!({
-        "@context": "https://www.w3.org/ns/activitystreams",
+        "@context": AS_CONTEXT,
         "id": format!("{}/following", actor.ap_id),
         "type": "OrderedCollection",
         "totalItems": total,
