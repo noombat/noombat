@@ -7,11 +7,9 @@ repository.workspace = true
 description = "Core domain types, error types, and extension-point traits for Noombat."
 
 [dependencies]
-cedar-policy = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 thiserror = { workspace = true }
-tracing = { workspace = true }
 uuid = { workspace = true }

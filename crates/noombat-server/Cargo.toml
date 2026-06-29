@@ -16,6 +16,7 @@ noombat-core = { workspace = true }
 noombat-federation = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
+cedar-policy = { workspace = true }
 dotenvy = { workspace = true }
 figment = { workspace = true }
 reqwest = { workspace = true }

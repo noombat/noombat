@@ -7,6 +7,8 @@
 //! Loads configuration, runs migrations, spawns the delivery-queue worker,
 //! and starts the Axum HTTP listener.
 
+mod cedar;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
@@ -133,7 +135,7 @@ async fn main() -> anyhow::Result<()> {
         } else {
             None
         };
-        match noombat_core::auth::load_cedar_backend(&policy_path, schema_opt) {
+        match cedar::load_cedar_backend(&policy_path, schema_opt) {
             Ok(backend) => {
                 info!(
                     "Cedar authorisation backend loaded from {}",
@@ -151,7 +153,7 @@ async fn main() -> anyhow::Result<()> {
             policy_path.display()
         );
         Arc::new(
-            noombat_core::auth::CedarBackend::new("", None)
+            cedar::CedarBackend::new("", None)
                 .expect("failed to create empty Cedar backend"),
         ) as Arc<dyn noombat_core::auth::AuthorisationBackend>
     };
