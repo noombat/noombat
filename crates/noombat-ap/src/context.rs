@@ -42,6 +42,7 @@ mod tests {
     fn default_context_includes_as_security_and_noombat() {
         let ctx = default_context();
         let arr = ctx.as_array().unwrap();
+        assert_eq!(arr.len(), 3);
         assert_eq!(arr[0], AS_CONTEXT);
         assert_eq!(arr[1], SECURITY_CONTEXT);
         assert!(arr[2].get("noombat").is_some());
