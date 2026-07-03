@@ -2,7 +2,13 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! Actor repository, key generation, and post persistence.
+//! Actor repository, key generation, post persistence, profile section
+//! CRUD, DOI resolution, and domain verification.
 
+pub mod cv;
+pub mod doi_client;
+pub mod hashtags;
 pub mod keys;
+pub mod profile;
 pub mod repo;
+pub mod verification;

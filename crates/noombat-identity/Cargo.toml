@@ -8,10 +8,16 @@ description = "Actor repository, key generation, and post persistence."
 
 [dependencies]
 noombat-core = { workspace = true }
+noombat-markup = { workspace = true }
 chrono = { workspace = true }
 rand = { workspace = true }
+regex = { workspace = true }
+reqwest = { workspace = true }
 rsa = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
+tempfile = { workspace = true }
+tracing = { workspace = true }
 uuid = { workspace = true }
