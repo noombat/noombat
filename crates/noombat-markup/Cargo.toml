@@ -8,3 +8,10 @@ description = "(Markdown and KaTeX) to HTML pipeline and Markdown to Typst conve
 
 [dependencies]
 noombat-core = { workspace = true }
+pulldown-cmark = { workspace = true }
+ammonia = { workspace = true }
+katex = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
