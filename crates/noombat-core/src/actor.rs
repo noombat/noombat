@@ -27,6 +27,8 @@ pub struct Actor {
     pub ap_id: String,
     pub username: String,
     pub display_name: Option<String>,
+    /// Professional headline (e.g. "Senior Rust Engineer at Acme Corp").
+    pub headline: Option<String>,
     pub avatar_url: Option<String>,
     pub header_url: Option<String>,
     /// (Markdown and KaTeX) source for the profile summary.

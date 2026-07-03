@@ -37,6 +37,9 @@ pub enum NoombatError {
 
     #[error("internal error: {0}")]
     Internal(String),
+
+    #[error("service unavailable: {0}")]
+    ServiceUnavailable(String),
 }
 
 /// Convenience alias.

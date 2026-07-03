@@ -1,3 +1,6 @@
+-- SPDX-License-Identifier: AGPL-3.0-or-later
+-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
 -- Foundation schema for Noombat.
 
 -- ..... ACTORS .....
@@ -20,6 +23,7 @@ CREATE TABLE actors (
     chatmail_addr   TEXT,
     chatmail_cred   BYTEA,
     orcid           TEXT,
+    headline        TEXT,
     actor_privacy   JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
