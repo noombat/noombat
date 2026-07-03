@@ -29,6 +29,7 @@ struct ActorRow {
     ap_id: String,
     username: String,
     display_name: Option<String>,
+    headline: Option<String>,
     avatar_url: Option<String>,
     header_url: Option<String>,
     summary_md: Option<String>,
@@ -66,6 +67,7 @@ impl ActorRow {
             ap_id: self.ap_id,
             username: self.username,
             display_name: self.display_name,
+            headline: self.headline,
             avatar_url: self.avatar_url,
             header_url: self.header_url,
             summary_md: self.summary_md,
@@ -122,6 +124,7 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         ap_id: row.ap_id,
         username: row.username,
         display_name: row.display_name,
+        headline: None,
         avatar_url: None,
         header_url: None,
         summary_md: None,
@@ -144,7 +147,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               avatar_url, header_url, summary_md, summary_html,
+               headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
@@ -164,7 +167,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               avatar_url, header_url, summary_md, summary_html,
+               headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
@@ -194,6 +197,7 @@ pub struct NewPost {
 /// Row returned by post queries.
 #[derive(FromRow)]
 pub struct PostSummary {
+    pub id: Uuid,
     pub ap_id: String,
     pub ap_object: serde_json::Value,
 }
@@ -206,7 +210,7 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
                (id, actor_id, ap_id, post_type, content_md, content_html,
                 visibility, ap_object)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-           RETURNING ap_id, ap_object"#,
+           RETURNING id, ap_id, ap_object"#,
     )
     .bind(id)
     .bind(post.actor_id)
@@ -423,6 +427,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<()> 
 /// Mutable fields for an actor update.
 pub struct UpdateActor {
     pub display_name: Option<String>,
+    pub headline: Option<String>,
     pub summary_md: Option<String>,
     pub summary_html: Option<String>,
     pub avatar_url: Option<String>,
@@ -434,14 +439,16 @@ pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -
     sqlx::query(
         r#"UPDATE actors SET
                display_name = COALESCE($2, display_name),
-               summary_md = COALESCE($3, summary_md),
-               summary_html = COALESCE($4, summary_html),
-               avatar_url = COALESCE($5, avatar_url),
-               header_url = COALESCE($6, header_url)
+               headline = COALESCE($3, headline),
+               summary_md = COALESCE($4, summary_md),
+               summary_html = COALESCE($5, summary_html),
+               avatar_url = COALESCE($6, avatar_url),
+               header_url = COALESCE($7, header_url)
            WHERE id = $1 AND is_local = TRUE"#,
     )
     .bind(actor_id)
     .bind(&params.display_name)
+    .bind(&params.headline)
     .bind(&params.summary_md)
     .bind(&params.summary_html)
     .bind(&params.avatar_url)
@@ -457,7 +464,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               avatar_url, header_url, summary_md, summary_html,
+               headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
