@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 ///
 /// The hashtag must be preceded by whitespace or the start of the string.
 static HASHTAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|(?<=\s))#([A-Za-z]\w{0,99})").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:^|\s)#([A-Za-z]\w{0,99})").unwrap());
 
 /// Extract hashtags from a text fragment and append them (normalised,
 /// lowercase, without the leading `#`) to the output vector.
