@@ -28,6 +28,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::actors::router())
         .merge(routes::cv::router())
         .merge(routes::feed::router())
+        .merge(routes::follows::router())
         .merge(routes::hashtags::router())
         .merge(routes::posts::router())
         .merge(routes::jobs::router())

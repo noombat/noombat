@@ -6,6 +6,7 @@ pub mod actors;
 pub mod cv;
 pub mod federation;
 pub mod feed;
+pub mod follows;
 pub mod hashtags;
 pub mod health;
 pub mod jobs;
