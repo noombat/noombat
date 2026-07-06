@@ -46,9 +46,11 @@ jobs:
         run: pip install --break-system-packages reuse==6.2.0
       - run: reuse lint
 
+  # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
+
   deny:
     name: Cargo Deny
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Install Rust
@@ -56,6 +58,14 @@ jobs:
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Cache Cargo artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: cargo-deny-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-deny-
       - name: Install cargo-deny
         run: |
           curl -L --proto '=https' --tlsv1.2 -sSf \
@@ -63,8 +73,6 @@ jobs:
             | bash
           cargo binstall --no-confirm cargo-deny@0.19.8
       - run: cargo deny check
-
-  # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
 
   clippy:
     name: Clippy
