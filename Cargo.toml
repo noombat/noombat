@@ -82,6 +82,21 @@ rust-i18n = "4"
 # Authorisation.
 cedar-policy = "4.11"
 
+# Markup pipeline.
+pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
+ammonia = "4"
+katex = { version = "0.4", default-features = true }
+regex = "1"
+
+# Search.
+meilisearch-sdk = "0.28"
+
+# URL parsing (domain verification, DOI).
+url = "2"
+
+# Temporary files (CV generation).
+tempfile = "3"
+
 [profile.dev.package.sqlx-macros]
 opt-level = 2
 
