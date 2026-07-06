@@ -132,3 +132,87 @@ permit(
 ) when {
     context.federate_profile == "true"
 };
+
+// ..... Group posting .....
+
+// A group member may post to the group.
+@id("group-member-post")
+permit(
+    principal,
+    action == Noombat::Action::"post_to_group",
+    resource
+) when {
+    context has group_role
+    && (context.group_role == "member"
+        || context.group_role == "moderator"
+        || context.group_role == "admin")
+};
+
+// ..... Group moderation .....
+
+// A group moderator or admin may moderate content within the group.
+@id("group-moderate")
+permit(
+    principal,
+    action == Noombat::Action::"moderate",
+    resource
+) when {
+    context has group_role
+    && (context.group_role == "moderator" || context.group_role == "admin")
+};
+
+// A group admin may manage membership (promote, demote, ban).
+@id("group-manage-members")
+permit(
+    principal,
+    action == Noombat::Action::"manage_members",
+    resource
+) when {
+    context has group_role && context.group_role == "admin"
+};
+
+// ..... Reporting .....
+
+// Any authenticated actor may report content.
+@id("anyone-may-report")
+permit(
+    principal,
+    action == Noombat::Action::"report",
+    resource
+) when {
+    true
+};
+
+// ..... Instance moderation .....
+
+// Instance moderators and admins may resolve reports.
+@id("moderator-resolve-report")
+permit(
+    principal,
+    action == Noombat::Action::"resolve_report",
+    resource
+) when {
+    context has instance_role
+    && (context.instance_role == "moderator" || context.instance_role == "admin")
+};
+
+// Instance moderators and admins may suspend actors.
+@id("moderator-suspend-actor")
+permit(
+    principal,
+    action == Noombat::Action::"suspend_actor",
+    resource
+) when {
+    context has instance_role
+    && (context.instance_role == "moderator" || context.instance_role == "admin")
+};
+
+// Only instance admins may configure instance settings.
+@id("admin-configure-instance")
+permit(
+    principal,
+    action == Noombat::Action::"configure_instance",
+    resource
+) when {
+    context has instance_role && context.instance_role == "admin"
+};
