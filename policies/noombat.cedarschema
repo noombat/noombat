@@ -12,29 +12,33 @@ namespace Noombat {
 
     entity Post in [Actor];
 
+    entity JobListing in [Actor];
+
     // Common context record carried with every authorisation request.
-    // Optional fields (?) are present only when the action requires them.
     type AuthContext = {
         is_owner: String,
         visibility?: String,
         cv_download?: String,
+        is_follower?: String,
+        discoverable?: String,
+        federate_profile?: String,
     };
 
     action "view" appliesTo {
         principal: [Actor],
-        resource: [Profile, ProfileSection, Post],
+        resource: [Profile, ProfileSection, Post, JobListing],
         context: AuthContext,
     };
 
     action "edit" appliesTo {
         principal: [Actor],
-        resource: [Profile, ProfileSection, Post],
+        resource: [Profile, ProfileSection, Post, JobListing],
         context: AuthContext,
     };
 
     action "delete" appliesTo {
         principal: [Actor],
-        resource: [Profile, ProfileSection, Post],
+        resource: [Profile, ProfileSection, Post, JobListing],
         context: AuthContext,
     };
 
@@ -45,6 +49,30 @@ namespace Noombat {
     };
 
     action "download_cv" appliesTo {
+        principal: [Actor],
+        resource: [Profile],
+        context: AuthContext,
+    };
+
+    action "manage_sections" appliesTo {
+        principal: [Actor],
+        resource: [Profile],
+        context: AuthContext,
+    };
+
+    action "manage_job" appliesTo {
+        principal: [Actor],
+        resource: [JobListing],
+        context: AuthContext,
+    };
+
+    action "search_index" appliesTo {
+        principal: [Actor],
+        resource: [Profile],
+        context: AuthContext,
+    };
+
+    action "federate_profile_data" appliesTo {
         principal: [Actor],
         resource: [Profile],
         context: AuthContext,
