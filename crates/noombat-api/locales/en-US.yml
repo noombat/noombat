@@ -17,6 +17,13 @@ post_title_pattern: "Post by %{name}"
 
 # Profile.
 profile_title_pattern: "%{display_name} (@%{handle})"
+profile_experience: "Experience"
+profile_education: "Education"
+profile_skills: "Skills"
+profile_publications: "Publications"
+profile_links: "Links"
+profile_present: "present"
+profile_verified: "Verified"
 
 # ARIA labels.
 aria_nav_main: "Main"

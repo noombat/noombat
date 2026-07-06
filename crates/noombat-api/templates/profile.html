@@ -6,6 +6,9 @@
 {% block title %}{{ page_title }}{% endblock %}
 
 {% block head %}
+    {% if !indexable %}
+    <meta name="robots" content="noindex">
+    {% endif %}
     <link rel="alternate" type="application/activity+json"
           href="https://{{ domain }}/users/{{ username }}">
 {% endblock %}
@@ -13,13 +16,103 @@
 {% block content %}
         <header class="mb-6">
             <h1 class="text-2xl font-bold">{{ display_name }}</h1>
+            {% if !headline.is_empty() %}
+            <p class="text-base text-muted mt-1">{{ headline }}</p>
+            {% endif %}
             <p class="text-muted text-sm"
                aria-label="{{ i18n.t("aria_fediverse_handle") }}">
                 @{{ username }}@{{ domain }}
             </p>
         </header>
         <section aria-label="{{ i18n.t("aria_about") }}"
-                 class="leading-relaxed">
+                 class="leading-relaxed mb-8">
             {{ summary_html|safe }}
         </section>
+
+        {% if !experiences.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_experience") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_experience") }}</h2>
+            {% for exp in experiences %}
+            <article class="mb-4 border-b border-border pb-4">
+                <h3 class="font-semibold">{{ exp.title }}</h3>
+                <p class="text-muted text-sm">{{ exp.company }} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} – {{ end }}{% else %} – {{ i18n.t("profile_present") }}{% endif %}</p>
+                {% if let Some(html) = exp.description_html %}
+                <div class="mt-2 leading-relaxed">{{ html|safe }}</div>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        {% if !educations.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_education") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_education") }}</h2>
+            {% for edu in educations %}
+            <article class="mb-4 border-b border-border pb-4">
+                <h3 class="font-semibold">{{ edu.institution }}</h3>
+                <p class="text-muted text-sm">{% if let Some(degree) = edu.degree %}{{ degree }}{% endif %}{% if let Some(field) = edu.field_of_study %} · {{ field }}{% endif %} · {{ edu.start_date }}{% if let Some(end) = edu.end_date %} – {{ end }}{% else %} – {{ i18n.t("profile_present") }}{% endif %}</p>
+            </article>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        {% if !skills.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_skills") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_skills") }}</h2>
+            <div class="flex flex-wrap gap-2">
+                {% for skill in skills %}
+                <span class="bg-surface border border-border px-3 py-1 rounded text-sm">
+                    {{ skill.name }}
+                </span>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+
+        {% if !publications.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_publications") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_publications") }}</h2>
+            {% for pub_ in publications %}
+            <article class="mb-4 border-b border-border pb-4">
+                <h3 class="font-semibold">{{ pub_.title }}</h3>
+                {% if let Some(journal) = pub_.journal %}
+                <p class="text-muted text-sm">{{ journal }}</p>
+                {% endif %}
+                <p class="text-muted text-xs">
+                    <a href="https://doi.org/{{ pub_.doi }}" class="text-accent no-underline hover:underline" rel="noopener noreferrer" target="_blank">
+                        doi:{{ pub_.doi }}
+                    </a>
+                </p>
+            </article>
+            {% endfor %}
+        </section>
+        {% endif %}
+
+        {% if !verified_links.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_links") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_links") }}</h2>
+            <ul class="space-y-1">
+                {% for link in verified_links %}
+                <li>
+                    <a href="{{ link.url }}" rel="me noopener noreferrer" target="_blank"
+                       class="text-accent no-underline hover:underline">
+                        {{ link.url }}
+                    </a>
+                    {% if link.verified_at.is_some() %}
+                    <span class="text-green-600 text-xs ml-1" aria-label="{{ i18n.t("profile_verified") }}">✓</span>
+                    {% endif %}
+                </li>
+                {% endfor %}
+            </ul>
+        </section>
+        {% endif %}
+
+        {% for section in custom_sections %}
+        <section aria-label="{{ section.title }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ section.title }}</h2>
+            {% if section.content_html.is_some() %}
+            <div class="leading-relaxed">{{ section.content_html.as_deref().unwrap_or_default()|safe }}</div>
+            {% endif %}
+        </section>
+        {% endfor %}
 {% endblock %}

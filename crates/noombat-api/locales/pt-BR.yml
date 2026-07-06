@@ -17,6 +17,13 @@ post_title_pattern: "Publicação de %{name}"
 
 # Perfil.
 profile_title_pattern: "%{display_name} (@%{handle})"
+profile_experience: "Experiência"
+profile_education: "Formação"
+profile_skills: "Habilidades"
+profile_publications: "Publicações"
+profile_links: "Links"
+profile_present: "presente"
+profile_verified: "Verificado"
 
 # Rótulos ARIA.
 aria_nav_main: "Principal"
