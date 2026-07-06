@@ -20,6 +20,8 @@ CREATE TABLE actors (
     domain          TEXT NOT NULL,
     is_local        BOOLEAN NOT NULL DEFAULT TRUE,
     inbox_url       TEXT, -- remote actors only: their declared AP inbox URI
+    instance_role   TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
+    actor_status    TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
     chatmail_addr   TEXT,
     chatmail_cred   BYTEA,
     orcid           TEXT,
@@ -45,8 +47,7 @@ CREATE TABLE experiences (
     description_md   TEXT,
     description_html TEXT,
     sort_order       SMALLINT NOT NULL DEFAULT 0,
-    visibility       TEXT NOT NULL DEFAULT 'public'
-                     CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     ap_object        JSONB NOT NULL
 );
 
@@ -61,8 +62,7 @@ CREATE TABLE educations (
     description_md   TEXT,
     description_html TEXT,
     sort_order       SMALLINT NOT NULL DEFAULT 0,
-    visibility       TEXT NOT NULL DEFAULT 'public'
-                     CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     ap_object        JSONB NOT NULL
 );
 
@@ -70,8 +70,7 @@ CREATE TABLE skills (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id   UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
-    visibility TEXT NOT NULL DEFAULT 'public'
-               CHECK (visibility IN ('public', 'private')),
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
     UNIQUE (actor_id, name)
 );
 
@@ -83,8 +82,7 @@ CREATE TABLE verified_links (
     url          TEXT NOT NULL,
     verified_at  TIMESTAMPTZ,
     last_checked TIMESTAMPTZ NOT NULL DEFAULT now(),
-    visibility   TEXT NOT NULL DEFAULT 'public'
-                 CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     UNIQUE (actor_id, url)
 );
 
@@ -103,8 +101,7 @@ CREATE TABLE publications (
     published_date DATE,
     doi_metadata   JSONB NOT NULL,
     fetched_at     TIMESTAMPTZ NOT NULL,
-    visibility     TEXT NOT NULL DEFAULT 'public'
-                   CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility     TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     ap_object      JSONB NOT NULL,
     UNIQUE (actor_id, doi)
 );
@@ -135,16 +132,14 @@ CREATE TABLE posts (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id           UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     ap_id              TEXT NOT NULL UNIQUE,
-    post_type          TEXT NOT NULL DEFAULT 'note'
-                       CHECK (post_type IN ('note', 'article')),
+    post_type          TEXT NOT NULL DEFAULT 'note' CHECK (post_type IN ('note', 'article')),
     title              TEXT,
     featured_image_url TEXT,
     content_md         TEXT NOT NULL,
     content_html       TEXT NOT NULL,
     in_reply_to        TEXT,
     canonical_uri      TEXT,
-    visibility         TEXT NOT NULL DEFAULT 'public'
-                       CHECK (visibility IN ('public', 'unlisted', 'followers')),
+    visibility         TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
     ap_object          JSONB NOT NULL,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -207,8 +202,7 @@ CREATE TABLE applications (
     cover_letter_html TEXT,
     include_cv       BOOLEAN NOT NULL DEFAULT TRUE,
     cv_snapshot      BYTEA,
-    status           TEXT NOT NULL DEFAULT 'submitted'
-                     CHECK (status IN ('submitted', 'reviewed', 'shortlisted', 'rejected', 'withdrawn')),
+    status           TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'reviewed', 'shortlisted', 'rejected', 'withdrawn')),
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (applicant_id, job_listing_id)
@@ -220,8 +214,7 @@ CREATE TABLE group_memberships (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     group_id   UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     member_id  UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    role       TEXT NOT NULL DEFAULT 'member'
-               CHECK (role IN ('member', 'moderator', 'admin')),
+    role       TEXT NOT NULL DEFAULT 'member' CHECK (role IN ('member', 'moderator', 'admin')),
     accepted   BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (group_id, member_id)
@@ -301,8 +294,7 @@ CREATE TABLE custom_profile_sections (
     content_html TEXT,
     data         JSONB,
     sort_order   SMALLINT NOT NULL DEFAULT 0,
-    visibility   TEXT NOT NULL DEFAULT 'public'
-                 CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     ap_object    JSONB NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -335,6 +327,24 @@ CREATE TABLE domain_restrictions (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ..... USER REPORTS .....
+
+CREATE TABLE reports (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    target_actor_id UUID REFERENCES actors(id) ON DELETE CASCADE,
+    target_post_id  UUID REFERENCES posts(id) ON DELETE CASCADE,
+    reason          TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'illegal', 'impersonation', 'other')),
+    comment         TEXT,
+    forwarded       BOOLEAN NOT NULL DEFAULT FALSE,
+    status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    resolved_by     UUID REFERENCES actors(id),
+    resolution_note TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at     TIMESTAMPTZ,
+    CHECK (target_actor_id IS NOT NULL OR target_post_id IS NOT NULL)
+);
+
 -- ..... DELIVERY QUEUE .....
 
 CREATE TABLE delivery_queue (
@@ -347,9 +357,7 @@ CREATE TABLE delivery_queue (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
-CREATE INDEX idx_delivery_queue_next_retry
-    ON delivery_queue (next_retry)
-    WHERE attempts < 10;
+CREATE INDEX idx_delivery_queue_next_retry ON delivery_queue (next_retry) WHERE attempts < 10;
 
 -- ..... FOREIGN-KEY INDICES .....
 
@@ -365,6 +373,10 @@ CREATE INDEX idx_applications_job ON applications (job_listing_id);
 CREATE INDEX idx_group_memberships_group ON group_memberships (group_id);
 CREATE INDEX idx_event_rsvps_event ON event_rsvps (event_id);
 CREATE INDEX idx_events_group ON events (group_id) WHERE group_id IS NOT NULL;
+CREATE INDEX idx_reports_reporter ON reports (reporter_id);
+CREATE INDEX idx_reports_target_actor ON reports (target_actor_id) WHERE target_actor_id IS NOT NULL;
+CREATE INDEX idx_reports_target_post ON reports (target_post_id) WHERE target_post_id IS NOT NULL;
+CREATE INDEX idx_reports_status ON reports (status) WHERE status = 'open';
 
 -- ..... UPDATED_AT TRIGGER .....
 
