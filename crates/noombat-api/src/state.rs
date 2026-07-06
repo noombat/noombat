@@ -5,6 +5,7 @@
 use std::sync::Arc;
 
 use noombat_core::auth::AuthorisationBackend;
+use noombat_federation::nodeinfo::NodeInfoFeatures;
 use sqlx::PgPool;
 
 /// Application-wide state, injected into Axum handlers via [`axum::extract::State`].
@@ -21,4 +22,6 @@ pub struct AppState {
     pub auth: Arc<dyn AuthorisationBackend>,
     /// Search backend (default: Meilisearch).
     pub search: Option<Arc<dyn noombat_core::extension::SearchBackend>>,
+    /// Instance-level feature flags exposed via NodeInfo.
+    pub nodeinfo_features: NodeInfoFeatures,
 }

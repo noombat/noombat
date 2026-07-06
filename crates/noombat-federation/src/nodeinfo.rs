@@ -37,10 +37,44 @@ pub struct NodeInfoParams {
     pub active_half_year: u64,
     pub local_posts: u64,
     pub open_registrations: bool,
+    /// Instance-level feature flags exposed in the `metadata` object.
+    pub features: NodeInfoFeatures,
+}
+
+/// Noombat-specific feature flags included in the NodeInfo metadata.
+///
+/// Each field defaults to `false`; the server binary populates them
+/// from configuration at startup.
+#[derive(Debug, Clone, Default)]
+pub struct NodeInfoFeatures {
+    pub chatmail_available: bool,
+    pub chatmail_domain: Option<String>,
+    pub groups_enabled: bool,
+    pub events_enabled: bool,
+    pub articles_enabled: bool,
 }
 
 /// Build the full NodeInfo 2.1 document with Noombat-specific metadata.
 pub fn build(params: &NodeInfoParams) -> Value {
+    let mut metadata = json!({
+        "noombat:supportedVocabulary": [
+            "noombat:JobListing",
+            "noombat:Experience",
+            "noombat:Education",
+            "noombat:Skill",
+            "noombat:Publication",
+            "noombat:Application"
+        ],
+        "noombat:jobListingsEnabled": true,
+        "noombat:chatmailAvailable": params.features.chatmail_available,
+        "noombat:groupsEnabled": params.features.groups_enabled,
+        "noombat:eventsEnabled": params.features.events_enabled,
+        "noombat:articlesEnabled": params.features.articles_enabled,
+    });
+    if let Some(ref domain) = params.features.chatmail_domain {
+        metadata["noombat:chatmailDomain"] = json!(domain);
+    }
+
     json!({
         "version": "2.1",
         "software": {
@@ -58,21 +92,7 @@ pub fn build(params: &NodeInfoParams) -> Value {
             "localPosts": params.local_posts
         },
         "openRegistrations": params.open_registrations,
-        "metadata": {
-            "noombat:supportedVocabulary": [
-                "noombat:JobListing",
-                "noombat:Experience",
-                "noombat:Education",
-                "noombat:Skill",
-                "noombat:Publication",
-                "noombat:Application"
-            ],
-            "noombat:jobListingsEnabled": true,
-            "noombat:chatmailAvailable": false,
-            "noombat:groupsEnabled": false,
-            "noombat:eventsEnabled": false,
-            "noombat:articlesEnabled": false
-        }
+        "metadata": metadata,
     })
 }
 
@@ -96,11 +116,36 @@ mod tests {
             active_half_year: 8,
             local_posts: 42,
             open_registrations: true,
+            features: NodeInfoFeatures::default(),
         };
         let doc = build(&params);
         assert_eq!(doc["software"]["name"], "noombat");
         assert_eq!(doc["usage"]["users"]["total"], 10);
         assert_eq!(doc["usage"]["localPosts"], 42);
         assert_eq!(doc["openRegistrations"], true);
+    }
+
+    #[test]
+    fn build_reflects_feature_flags() {
+        let params = NodeInfoParams {
+            total_users: 1,
+            active_month: 1,
+            active_half_year: 1,
+            local_posts: 0,
+            open_registrations: false,
+            features: NodeInfoFeatures {
+                chatmail_available: true,
+                chatmail_domain: Some("chat.example.org".to_owned()),
+                groups_enabled: true,
+                events_enabled: false,
+                articles_enabled: true,
+            },
+        };
+        let doc = build(&params);
+        assert_eq!(doc["metadata"]["noombat:chatmailAvailable"], true);
+        assert_eq!(doc["metadata"]["noombat:chatmailDomain"], "chat.example.org");
+        assert_eq!(doc["metadata"]["noombat:groupsEnabled"], true);
+        assert_eq!(doc["metadata"]["noombat:eventsEnabled"], false);
+        assert_eq!(doc["metadata"]["noombat:articlesEnabled"], true);
     }
 }

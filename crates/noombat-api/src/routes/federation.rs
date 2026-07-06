@@ -92,6 +92,7 @@ async fn nodeinfo_handler(State(state): State<AppState>) -> Result<impl IntoResp
         active_half_year: active_half_year as u64,
         local_posts: local_posts as u64,
         open_registrations: state.open_registrations,
+        features: state.nodeinfo_features.clone(),
     };
     Ok(Json(nodeinfo::build(&params)))
 }

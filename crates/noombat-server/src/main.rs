@@ -61,6 +61,20 @@ struct Config {
     /// Maximum age in days before a verified link is re-checked (default 7).
     #[serde(default = "default_reverify_max_age")]
     link_max_age_days: i32,
+    /// Whether the Chatmail sidecar is deployed (default `false`).
+    #[serde(default)]
+    chatmail_available: bool,
+    /// Chatmail domain (e.g. `chat.noombat.social`).
+    chatmail_domain: Option<String>,
+    /// Whether group support is enabled (default `false`).
+    #[serde(default)]
+    groups_enabled: bool,
+    /// Whether event support is enabled (default `false`).
+    #[serde(default)]
+    events_enabled: bool,
+    /// Whether article (long-form post) support is enabled (default `false`).
+    #[serde(default)]
+    articles_enabled: bool,
 }
 
 fn default_host() -> String {
@@ -231,6 +245,13 @@ async fn main() -> anyhow::Result<()> {
         admin_token: config.admin_token.clone(),
         auth: auth_backend,
         search,
+        nodeinfo_features: noombat_federation::nodeinfo::NodeInfoFeatures {
+            chatmail_available: config.chatmail_available,
+            chatmail_domain: config.chatmail_domain.clone(),
+            groups_enabled: config.groups_enabled,
+            events_enabled: config.events_enabled,
+            articles_enabled: config.articles_enabled,
+        },
     };
     let app = noombat_api::build_router(state);
 
