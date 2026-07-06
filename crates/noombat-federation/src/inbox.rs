@@ -235,13 +235,11 @@ async fn handle_undo(
                 .ok_or_else(|| NoombatError::BadRequest("Undo Like: missing id".into()))?;
 
             let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
-            sqlx::query(
-                "DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2",
-            )
-            .bind(inner_ap_id)
-            .bind(remote_actor.id)
-            .execute(pool)
-            .await?;
+            sqlx::query("DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2")
+                .bind(inner_ap_id)
+                .bind(remote_actor.id)
+                .execute(pool)
+                .await?;
             info!(ap_id = %inner_ap_id, "like undone");
         }
         "Announce" => {
@@ -252,13 +250,11 @@ async fn handle_undo(
                 .ok_or_else(|| NoombatError::BadRequest("Undo Announce: missing id".into()))?;
 
             let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
-            sqlx::query(
-                "DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2",
-            )
-            .bind(inner_ap_id)
-            .bind(remote_actor.id)
-            .execute(pool)
-            .await?;
+            sqlx::query("DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2")
+                .bind(inner_ap_id)
+                .bind(remote_actor.id)
+                .execute(pool)
+                .await?;
             info!(ap_id = %inner_ap_id, "boost undone");
         }
         other => {
@@ -481,12 +477,10 @@ async fn handle_announce(
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
     // Look up the boosted post locally.
-    let post = sqlx::query_scalar::<_, uuid::Uuid>(
-        r#"SELECT id FROM posts WHERE ap_id = $1"#,
-    )
-    .bind(object_uri)
-    .fetch_optional(pool)
-    .await?;
+    let post = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
+        .bind(object_uri)
+        .fetch_optional(pool)
+        .await?;
 
     let post_id = match post {
         Some(id) => id,
@@ -530,12 +524,10 @@ async fn handle_like(
 
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
-    let post_id = sqlx::query_scalar::<_, uuid::Uuid>(
-        r#"SELECT id FROM posts WHERE ap_id = $1"#,
-    )
-    .bind(object_uri)
-    .fetch_optional(pool)
-    .await?;
+    let post_id = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
+        .bind(object_uri)
+        .fetch_optional(pool)
+        .await?;
 
     let post_id = match post_id {
         Some(id) => id,

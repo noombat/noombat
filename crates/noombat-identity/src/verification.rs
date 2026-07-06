@@ -14,9 +14,8 @@ use uuid::Uuid;
 
 /// CSS selector matching `<a>` and `<link>` elements whose `rel`
 /// attribute contains `me`.
-static REL_ME_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
-    Selector::parse("a[rel~=me][href], link[rel~=me][href]").unwrap()
-});
+static REL_ME_SELECTOR: LazyLock<Selector> =
+    LazyLock::new(|| Selector::parse("a[rel~=me][href], link[rel~=me][href]").unwrap());
 
 /// A row from the `verified_links` table.
 #[derive(Debug, Clone, sqlx::FromRow, serde::Serialize)]

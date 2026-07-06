@@ -143,7 +143,10 @@ mod tests {
         };
         let doc = build(&params);
         assert_eq!(doc["metadata"]["noombat:chatmailAvailable"], true);
-        assert_eq!(doc["metadata"]["noombat:chatmailDomain"], "chat.example.org");
+        assert_eq!(
+            doc["metadata"]["noombat:chatmailDomain"],
+            "chat.example.org"
+        );
         assert_eq!(doc["metadata"]["noombat:groupsEnabled"], true);
         assert_eq!(doc["metadata"]["noombat:eventsEnabled"], false);
         assert_eq!(doc["metadata"]["noombat:articlesEnabled"], true);

@@ -283,19 +283,11 @@ async fn create_publication(
         }
     } else {
         let mailto = format!("admin@{}", state.domain);
-        let meta = noombat_identity::doi_client::resolve(
-            &state.http_client,
-            &body.doi,
-            &mailto,
-        )
-        .await?;
+        let meta =
+            noombat_identity::doi_client::resolve(&state.http_client, &body.doi, &mailto).await?;
 
-        let authors_json = serde_json::to_value(&meta.authors)
-            .unwrap_or(serde_json::json!([]));
-        let published_date = meta
-            .published_date
-            .as_deref()
-            .and_then(parse_partial_date);
+        let authors_json = serde_json::to_value(&meta.authors).unwrap_or(serde_json::json!([]));
+        let published_date = meta.published_date.as_deref().and_then(parse_partial_date);
 
         noombat_identity::profile::NewPublication {
             doi: body.doi,

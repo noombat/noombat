@@ -32,8 +32,7 @@ pub fn verify_bearer_token(
         .strip_prefix("Bearer ")
         .ok_or(NoombatError::Forbidden)?;
 
-    if token.len() != expected.len()
-        || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
+    if token.len() != expected.len() || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
     {
         return Err(NoombatError::Forbidden);
     }
