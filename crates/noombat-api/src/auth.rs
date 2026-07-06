@@ -7,9 +7,13 @@
 use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
 use noombat_core::error::NoombatError;
+use subtle::ConstantTimeEq;
 
 /// Verify that the request carries an `Authorization: Bearer <token>`
 /// header matching the configured admin token.
+///
+/// The comparison is performed in constant time (via the `subtle`
+/// crate) to prevent timing side-channel attacks.
 ///
 /// Returns `Err(Forbidden)` if no admin token is configured, if the
 /// header is absent or malformed, or if the token does not match.
@@ -28,7 +32,9 @@ pub fn verify_bearer_token(
         .strip_prefix("Bearer ")
         .ok_or(NoombatError::Forbidden)?;
 
-    if token != expected {
+    if token.len() != expected.len()
+        || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
+    {
         return Err(NoombatError::Forbidden);
     }
     Ok(())

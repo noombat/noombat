@@ -26,3 +26,4 @@ tracing = { workspace = true }
 uuid = { workspace = true }
 reqwest = { workspace = true }
 rust-i18n = { workspace = true }
+subtle = { workspace = true }
