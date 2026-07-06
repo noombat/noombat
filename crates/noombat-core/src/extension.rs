@@ -47,6 +47,28 @@ pub trait AnalyticsBackend: Send + Sync + 'static {
     ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 }
 
+/// Pluggable ActivityPub vocabulary extension (default: built-in Noombat namespace).
+///
+/// Implementations register additional JSON-LD namespaces. The federation
+/// service includes their properties in outbound objects and parses them
+/// on inbound receipt.
+pub trait VocabularyExtension: Send + Sync + 'static {
+    /// The namespace URI (e.g. `"https://example.org/ns#"`).
+    fn namespace_uri(&self) -> &str;
+
+    /// The short prefix used in JSON-LD `@context` (e.g. `"example"`).
+    fn prefix(&self) -> &str;
+
+    /// Extend an outbound ActivityPub object with extension-specific
+    /// properties. The implementation may mutate `object` in place.
+    fn extend_outbound(&self, object: &mut Value);
+
+    /// Extract extension-specific properties from an inbound object.
+    /// Returns a JSON value of the extracted data, or `None` if the
+    /// extension namespace is not present.
+    fn parse_inbound(&self, object: &Value) -> Option<Value>;
+}
+
 /// Custom profile section provider.
 pub trait ProfileSectionProvider: Send + Sync + 'static {
     /// A unique identifier for this section type (e.g. `"certifications"`).
