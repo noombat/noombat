@@ -30,6 +30,7 @@ CREATE TABLE actors (
 );
 
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
+CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain) WHERE is_local = TRUE;
 CREATE INDEX idx_actors_domain ON actors (domain);
 
 -- ..... PROFILE SECTIONS .....
@@ -171,6 +172,7 @@ CREATE TABLE follows (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     follower_id  UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     following_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    ap_id        TEXT,
     accepted     BOOLEAN NOT NULL DEFAULT FALSE,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (follower_id, following_id)

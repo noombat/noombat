@@ -340,24 +340,60 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
 ///
 /// If `auto_accept` is `true`, the follow is immediately accepted;
 /// otherwise it remains pending until explicitly accepted.
+///
+/// `follow_ap_id` is the AP `id` of the inbound `Follow` activity
+/// (if known). It is stored so that the `Accept` or `Reject`
+/// response can reference the original activity, as expected by
+/// Mastodon and other AP implementations.
 pub async fn create_follow(
     pool: &PgPool,
     follower_id: Uuid,
     following_id: Uuid,
     auto_accept: bool,
 ) -> Result<()> {
+    create_follow_with_ap_id(pool, follower_id, following_id, auto_accept, None).await
+}
+
+/// Like [`create_follow`], but stores the Follow activity's AP `id`.
+pub async fn create_follow_with_ap_id(
+    pool: &PgPool,
+    follower_id: Uuid,
+    following_id: Uuid,
+    auto_accept: bool,
+    follow_ap_id: Option<&str>,
+) -> Result<()> {
     sqlx::query(
-        r#"INSERT INTO follows (follower_id, following_id, accepted)
-           VALUES ($1, $2, $3)
+        r#"INSERT INTO follows (follower_id, following_id, accepted, ap_id)
+           VALUES ($1, $2, $3, $4)
            ON CONFLICT (follower_id, following_id) DO NOTHING"#,
     )
     .bind(follower_id)
     .bind(following_id)
     .bind(auto_accept)
+    .bind(follow_ap_id)
     .execute(pool)
     .await?;
 
     Ok(())
+}
+
+/// Retrieve the AP `id` of the original Follow activity for a given
+/// follow relationship, if stored.
+pub async fn get_follow_ap_id(
+    pool: &PgPool,
+    follower_id: Uuid,
+    following_id: Uuid,
+) -> Result<Option<String>> {
+    let row = sqlx::query_scalar::<_, Option<String>>(
+        r#"SELECT ap_id FROM follows
+           WHERE follower_id = $1 AND following_id = $2"#,
+    )
+    .bind(follower_id)
+    .bind(following_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(row.flatten())
 }
 
 /// Accept a pending follow relationship.
@@ -395,6 +431,9 @@ pub struct RemotePost {
     pub actor_id: Uuid,
     pub ap_id: String,
     pub post_type: String,
+    /// Original Markdown source from the Mastodon-convention `source`
+    /// property (when available), otherwise a copy of `content_html`.
+    pub content_md: String,
     pub content_html: String,
     pub ap_object: serde_json::Value,
 }
@@ -413,7 +452,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<()> 
     .bind(post.actor_id)
     .bind(&post.ap_id)
     .bind(&post.post_type)
-    .bind(&post.content_html) // For remote posts, content_md = content_html.
+    .bind(&post.content_md)
     .bind(&post.content_html)
     .bind(&post.ap_object)
     .execute(pool)
