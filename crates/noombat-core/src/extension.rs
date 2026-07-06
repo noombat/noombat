@@ -5,46 +5,47 @@
 //! These traits define the stable interfaces that instance operators and
 //! downstream developers may implement to customise the platform.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use serde_json::Value;
 
 use crate::error::Result;
 
 /// Pluggable search backend (default: Meilisearch).
+#[async_trait::async_trait]
 pub trait SearchBackend: Send + Sync + 'static {
-    fn upsert(
-        &self,
-        index: &str,
-        id: &str,
-        document: Value,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    async fn upsert(&self, index: &str, id: &str, document: Value) -> Result<()>;
 
-    fn delete(
-        &self,
-        index: &str,
-        id: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+    async fn delete(&self, index: &str, id: &str) -> Result<()>;
 
-    fn search(
+    async fn search(
         &self,
         index: &str,
         query: &str,
         filters: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + '_>>;
+    ) -> Result<Vec<Value>>;
 }
 
 /// Pluggable analytics backend (default: PostgreSQL counters).
+#[async_trait::async_trait]
 pub trait AnalyticsBackend: Send + Sync + 'static {
-    fn increment(
+    /// Record a single interaction event.
+    async fn increment(&self, target_type: &str, target_id: &str, metric: &str) -> Result<()>;
+
+    /// Query aggregated counter values for a target over a date range.
+    ///
+    /// Returns a JSON array of `{ "period": "YYYY-MM-DD", "count": N }`
+    /// objects, ordered by period ascending. The caller is responsible
+    /// for specifying the date range via `start` and `end` in
+    /// `YYYY-MM-DD` format.
+    async fn query(
         &self,
         target_type: &str,
         target_id: &str,
         metric: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
+        start: &str,
+        end: &str,
+    ) -> Result<Vec<Value>>;
 }
 
 /// Pluggable ActivityPub vocabulary extension (default: built-in Noombat namespace).

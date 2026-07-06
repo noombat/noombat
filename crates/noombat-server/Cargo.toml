@@ -11,6 +11,7 @@ name = "noombat"
 path = "src/main.rs"
 
 [dependencies]
+async-trait = { workspace = true }
 noombat-api = { workspace = true }
 noombat-core = { workspace = true }
 noombat-federation = { workspace = true }

@@ -2,9 +2,6 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Meilisearch implementation of the [`SearchBackend`] trait.
 
-use std::future::Future;
-use std::pin::Pin;
-
 use meilisearch_sdk::client::Client;
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::extension::SearchBackend;
@@ -123,82 +120,57 @@ impl MeilisearchBackend {
     }
 }
 
+#[async_trait::async_trait]
 impl SearchBackend for MeilisearchBackend {
-    fn upsert(
-        &self,
-        index: &str,
-        id: &str,
-        document: Value,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        let index = index.to_owned();
-        let id = id.to_owned();
-        Box::pin(async move {
-            let idx = self.client.index(&index);
-            let docs = vec![document];
-            idx.add_or_replace(&docs, Some("id"))
-                .await
-                .map_err(|e| NoombatError::Internal(format!("meilisearch upsert: {e}")))?;
-            debug!(
-                index = index.as_str(),
-                id = id.as_str(),
-                "upserted document"
-            );
-            Ok(())
-        })
+    async fn upsert(&self, index: &str, id: &str, document: Value) -> Result<()> {
+        let idx = self.client.index(index);
+        let docs = vec![document];
+        idx.add_or_replace(&docs, Some("id"))
+            .await
+            .map_err(|e| NoombatError::Internal(format!("meilisearch upsert: {e}")))?;
+        debug!(index, id, "upserted document");
+        Ok(())
     }
 
-    fn delete(
-        &self,
-        index: &str,
-        id: &str,
-    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>> {
-        let index = index.to_owned();
-        let id = id.to_owned();
-        Box::pin(async move {
-            let idx = self.client.index(&index);
-            idx.delete_document(&id)
-                .await
-                .map_err(|e| NoombatError::Internal(format!("meilisearch delete: {e}")))?;
-            debug!(index = index.as_str(), id = id.as_str(), "deleted document");
-            Ok(())
-        })
+    async fn delete(&self, index: &str, id: &str) -> Result<()> {
+        let idx = self.client.index(index);
+        idx.delete_document(id)
+            .await
+            .map_err(|e| NoombatError::Internal(format!("meilisearch delete: {e}")))?;
+        debug!(index, id, "deleted document");
+        Ok(())
     }
 
-    fn search(
+    async fn search(
         &self,
         index: &str,
         query: &str,
         filters: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + '_>> {
-        let index = index.to_owned();
-        let query = query.to_owned();
-        let filters = filters.map(|f| f.to_owned());
-        Box::pin(async move {
-            let idx = self.client.index(&index);
-            let mut search = idx.search();
-            search.with_query(&query);
-            search.with_limit(limit);
-            search.with_offset(offset);
-            if let Some(ref f) = filters {
-                search.with_filter(f);
-            }
+    ) -> Result<Vec<Value>> {
+        let idx = self.client.index(index);
+        let mut search = idx.search();
+        search.with_query(query);
+        search.with_limit(limit);
+        search.with_offset(offset);
+        if let Some(f) = filters {
+            search.with_filter(f);
+        }
 
-            let results = search
-                .execute::<Value>()
-                .await
-                .map_err(|e| NoombatError::Internal(format!("meilisearch search: {e}")))?;
+        let results = search
+            .execute::<Value>()
+            .await
+            .map_err(|e| NoombatError::Internal(format!("meilisearch search: {e}")))?;
 
-            let hits: Vec<Value> = results.hits.into_iter().map(|h| h.result).collect();
-            debug!(
-                index = index.as_str(),
-                query = query.as_str(),
-                total_hits = results.estimated_total_hits.unwrap_or(0),
-                returned = hits.len(),
-                "search completed"
-            );
-            Ok(hits)
-        })
+        let hits: Vec<Value> = results.hits.into_iter().map(|h| h.result).collect();
+        debug!(
+            index,
+            query,
+            total_hits = results.estimated_total_hits.unwrap_or(0),
+            returned = hits.len(),
+            "search completed"
+        );
+        Ok(hits)
     }
 }
