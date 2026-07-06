@@ -240,14 +240,76 @@ async fn list_publications(
     Ok((StatusCode::OK, Json(items)))
 }
 
+/// Request body for publication creation.
+///
+/// If only `doi` is provided, metadata is resolved automatically via
+/// the CrossRef and DataCite APIs. If `title` and `authors` are also
+/// provided, they are used as-is (skipping resolution).
+#[derive(serde::Deserialize)]
+struct CreatePublicationRequest {
+    doi: String,
+    title: Option<String>,
+    authors: Option<serde_json::Value>,
+    abstract_md: Option<String>,
+    journal: Option<String>,
+    publisher: Option<String>,
+    published_date: Option<chrono::NaiveDate>,
+    doi_metadata: Option<serde_json::Value>,
+    visibility: Option<String>,
+}
+
 async fn create_publication(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    Json(params): Json<noombat_identity::profile::NewPublication>,
+    Json(body): Json<CreatePublicationRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    // When the caller supplies only a bare DOI, resolve the metadata
+    // server-side so that clients need not call the DOI endpoint first.
+    let params = if body.title.is_some() && body.authors.is_some() {
+        noombat_identity::profile::NewPublication {
+            doi: body.doi,
+            title: body.title.unwrap_or_default(),
+            authors: body.authors.unwrap_or(serde_json::json!([])),
+            abstract_md: body.abstract_md,
+            journal: body.journal,
+            publisher: body.publisher,
+            published_date: body.published_date,
+            doi_metadata: body.doi_metadata.unwrap_or(serde_json::json!({})),
+            visibility: body.visibility,
+        }
+    } else {
+        let mailto = format!("admin@{}", state.domain);
+        let meta = noombat_identity::doi_client::resolve(
+            &state.http_client,
+            &body.doi,
+            &mailto,
+        )
+        .await?;
+
+        let authors_json = serde_json::to_value(&meta.authors)
+            .unwrap_or(serde_json::json!([]));
+        let published_date = meta
+            .published_date
+            .as_deref()
+            .and_then(parse_partial_date);
+
+        noombat_identity::profile::NewPublication {
+            doi: body.doi,
+            title: meta.title,
+            authors: authors_json,
+            abstract_md: body.abstract_md,
+            journal: meta.journal,
+            publisher: meta.publisher,
+            published_date,
+            doi_metadata: meta.raw,
+            visibility: body.visibility,
+        }
+    };
+
     let pub_ =
         noombat_identity::profile::create_publication(&state.pool, actor.id, &params).await?;
     Ok((StatusCode::CREATED, Json(pub_)))
@@ -377,4 +439,17 @@ async fn reindex_profile_skills(state: &AppState, actor: &noombat_core::actor::A
         .unwrap_or_default();
     let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
     crate::search_sync::index_profile(&state.search, actor, &names);
+}
+
+/// Parse a date string that may be partial: `"2024"`, `"2024-06"`, or `"2024-06-15"`.
+/// Missing month defaults to January; missing day defaults to the first of the month.
+fn parse_partial_date(s: &str) -> Option<chrono::NaiveDate> {
+    // Full date: "2024-06-15"
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Some(d);
+    }
+    let parts: Vec<&str> = s.split('-').collect();
+    let year: i32 = parts.first()?.parse().ok()?;
+    let month: u32 = parts.get(1).and_then(|m| m.parse().ok()).unwrap_or(1);
+    chrono::NaiveDate::from_ymd_opt(year, month, 1)
 }
