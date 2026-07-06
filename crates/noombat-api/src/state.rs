@@ -19,4 +19,6 @@ pub struct AppState {
     pub admin_token: Option<String>,
     /// Authorisation backend (default: Cedar).
     pub auth: Arc<dyn AuthorisationBackend>,
+    /// Search backend (default: Meilisearch).
+    pub search: Option<Arc<dyn noombat_core::extension::SearchBackend>>,
 }

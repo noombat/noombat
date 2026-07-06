@@ -11,6 +11,8 @@ noombat-core = { workspace = true }
 noombat-ap = { workspace = true }
 noombat-federation = { workspace = true }
 noombat-identity = { workspace = true }
+noombat-jobs = { workspace = true }
+noombat-markup = { workspace = true }
 askama = { workspace = true }
 askama_web = { workspace = true }
 axum = { workspace = true }

@@ -6,10 +6,12 @@
 
 rust_i18n::i18n!("locales", fallback = "en-US");
 
+pub mod auth;
 pub mod error;
 pub mod i18n;
 pub mod middleware;
 pub mod routes;
+pub mod search_sync;
 pub mod state;
 
 use axum::Router;
@@ -24,8 +26,13 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(routes::federation::router())
         .merge(routes::actors::router())
+        .merge(routes::cv::router())
         .merge(routes::feed::router())
+        .merge(routes::hashtags::router())
         .merge(routes::posts::router())
+        .merge(routes::jobs::router())
+        .merge(routes::profile_sections::router())
+        .merge(routes::search::router())
         .merge(routes::health::router())
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .layer(axum::middleware::from_fn_with_state(
