@@ -34,6 +34,8 @@ pub async fn process_activity(
         types::DELETE => handle_delete(pool, &activity).await,
         types::ACCEPT => handle_accept(pool, http_client, &activity).await,
         types::REJECT => handle_reject(pool, http_client, &activity).await,
+        types::ANNOUNCE => handle_announce(pool, http_client, &activity).await,
+        types::LIKE => handle_like(pool, http_client, &activity).await,
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
             Ok(())
@@ -135,8 +137,16 @@ async fn handle_follow(
     // Determine whether to auto-accept based on the local actor's privacy settings.
     let auto_accept = !local_actor.actor_privacy.require_follow_approval;
 
-    // Persist the follow relationship.
-    repo::create_follow(pool, remote_actor.id, local_actor.id, auto_accept).await?;
+    // Persist the follow relationship, recording the Follow activity's
+    // AP id so that Accept / Reject can reference it.
+    repo::create_follow_with_ap_id(
+        pool,
+        remote_actor.id,
+        local_actor.id,
+        auto_accept,
+        Some(&activity.id),
+    )
+    .await?;
 
     if auto_accept {
         // Construct and deliver an Accept { Follow } activity.
@@ -217,6 +227,40 @@ async fn handle_undo(
                 "follow undone"
             );
         }
+        "Like" => {
+            let inner_ap_id = activity
+                .object
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| NoombatError::BadRequest("Undo Like: missing id".into()))?;
+
+            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            sqlx::query(
+                "DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2",
+            )
+            .bind(inner_ap_id)
+            .bind(remote_actor.id)
+            .execute(pool)
+            .await?;
+            info!(ap_id = %inner_ap_id, "like undone");
+        }
+        "Announce" => {
+            let inner_ap_id = activity
+                .object
+                .get("id")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| NoombatError::BadRequest("Undo Announce: missing id".into()))?;
+
+            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            sqlx::query(
+                "DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2",
+            )
+            .bind(inner_ap_id)
+            .bind(remote_actor.id)
+            .execute(pool)
+            .await?;
+            info!(ap_id = %inner_ap_id, "boost undone");
+        }
         other => {
             warn!(inner_type = other, "unsupported Undo target; ignoring");
         }
@@ -243,6 +287,21 @@ async fn handle_create(
 
     let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
+    // Extract the Mastodon-convention `source` property when available.
+    // If the source carries `text/markdown`, store it in `content_md`;
+    // otherwise fall back to `content_html` (the previous behaviour).
+    let content_md = object
+        .get("source")
+        .and_then(|src| {
+            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+            if media == "text/markdown" {
+                src.get("content").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(content_html);
+
     let post_type = match object_type {
         "Note" => "note",
         "Article" => "article",
@@ -262,6 +321,7 @@ async fn handle_create(
         actor_id: remote_actor.id,
         ap_id: ap_id.to_owned(),
         post_type: post_type.to_owned(),
+        content_md: content_md.to_owned(),
         content_html: content_html.to_owned(),
         ap_object: activity.object.clone(),
     };
@@ -399,6 +459,106 @@ async fn handle_reject(
         "outbound follow rejected by remote; follow deleted"
     );
 
+    Ok(())
+}
+
+// ..... ANNOUNCE .....
+
+async fn handle_announce(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    // The `object` of an Announce is the AP ID of the boosted post.
+    let object_uri = activity
+        .object
+        .as_str()
+        .or_else(|| activity.object.get("id").and_then(|v| v.as_str()))
+        .ok_or_else(|| NoombatError::BadRequest("Announce: missing object id".into()))?;
+
+    info!(actor = %activity.actor, object = %object_uri, "received Announce");
+
+    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+
+    // Look up the boosted post locally.
+    let post = sqlx::query_scalar::<_, uuid::Uuid>(
+        r#"SELECT id FROM posts WHERE ap_id = $1"#,
+    )
+    .bind(object_uri)
+    .fetch_optional(pool)
+    .await?;
+
+    let post_id = match post {
+        Some(id) => id,
+        None => {
+            warn!(object = %object_uri, "Announce references unknown post; ignoring");
+            return Ok(());
+        }
+    };
+
+    let boost_ap_id = &activity.id;
+    sqlx::query(
+        r#"INSERT INTO boosts (id, actor_id, post_id, ap_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (actor_id, post_id) DO NOTHING"#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(remote_actor.id)
+    .bind(post_id)
+    .bind(boost_ap_id)
+    .execute(pool)
+    .await?;
+
+    info!(actor = %remote_actor.ap_id, post = %object_uri, "boost recorded");
+    Ok(())
+}
+
+// ..... LIKE .....
+
+async fn handle_like(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    let object_uri = activity
+        .object
+        .as_str()
+        .or_else(|| activity.object.get("id").and_then(|v| v.as_str()))
+        .ok_or_else(|| NoombatError::BadRequest("Like: missing object id".into()))?;
+
+    info!(actor = %activity.actor, object = %object_uri, "received Like");
+
+    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+
+    let post_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        r#"SELECT id FROM posts WHERE ap_id = $1"#,
+    )
+    .bind(object_uri)
+    .fetch_optional(pool)
+    .await?;
+
+    let post_id = match post_id {
+        Some(id) => id,
+        None => {
+            warn!(object = %object_uri, "Like references unknown post; ignoring");
+            return Ok(());
+        }
+    };
+
+    let like_ap_id = &activity.id;
+    sqlx::query(
+        r#"INSERT INTO likes (id, actor_id, post_id, ap_id)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (actor_id, post_id) DO NOTHING"#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(remote_actor.id)
+    .bind(post_id)
+    .bind(like_ap_id)
+    .execute(pool)
+    .await?;
+
+    info!(actor = %remote_actor.ap_id, post = %object_uri, "like recorded");
     Ok(())
 }
 
