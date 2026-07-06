@@ -97,6 +97,12 @@ url = "2"
 # Temporary files (CV generation).
 tempfile = "3"
 
+# Constant-time comparison (token verification).
+subtle = "2"
+
+# HTML parsing (domain verification).
+scraper = "0.27"
+
 [profile.dev.package.sqlx-macros]
 opt-level = 2
 
