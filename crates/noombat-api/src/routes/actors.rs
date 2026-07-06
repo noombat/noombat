@@ -5,7 +5,7 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Path, State};
-use axum::http::header::{AUTHORIZATION, CONTENT_TYPE};
+use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::get;
@@ -48,26 +48,7 @@ fn wants_activity_json(headers: &HeaderMap) -> bool {
         .any(|v| v.contains("application/activity+json") || v.contains("application/ld+json"))
 }
 
-/// Verify the `Authorization: Bearer <token>` header against the
-/// configured admin token. Returns `Err(Forbidden)` on mismatch or
-/// if no admin token is configured.
-fn verify_bearer_token(headers: &HeaderMap, expected: &Option<String>) -> Result<(), NoombatError> {
-    let expected = expected.as_deref().ok_or(NoombatError::Forbidden)?;
-
-    let header = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(NoombatError::Forbidden)?;
-
-    let token = header
-        .strip_prefix("Bearer ")
-        .ok_or(NoombatError::Forbidden)?;
-
-    if token != expected {
-        return Err(NoombatError::Forbidden);
-    }
-    Ok(())
-}
+use crate::auth::verify_bearer_token;
 
 // ..... GET /users/{username} .....
 
@@ -79,6 +60,35 @@ async fn get_actor(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     if wants_activity_json(&headers) {
+        // Build the AP actor attachment (ORCID, verified links) only
+        // when federate_profile is enabled.
+        let attachment = if actor.actor_privacy.federate_profile {
+            let mut entries: Vec<serde_json::Value> = Vec::new();
+            if let Some(ref orcid) = actor.orcid {
+                entries.push(serde_json::json!({
+                    "type": "PropertyValue",
+                    "name": "ORCID",
+                    "value": format!("<a href=\"https://orcid.org/{orcid}\" rel=\"me\">{orcid}</a>")
+                }));
+            }
+            if let Ok(links) =
+                noombat_identity::verification::list_links(&state.pool, actor.id).await
+            {
+                for link in links {
+                    if link.verified_at.is_some() {
+                        entries.push(serde_json::json!({
+                            "type": "PropertyValue",
+                            "name": "Website",
+                            "value": format!("<a rel=\"me\" href=\"{url}\">{url}</a>", url = link.url)
+                        }));
+                    }
+                }
+            }
+            if entries.is_empty() { None } else { Some(entries) }
+        } else {
+            None
+        };
+
         let ap_actor = ApActor {
             context: Some(default_context()),
             id: actor.ap_id.clone(),
@@ -102,7 +112,7 @@ async fn get_actor(
                 public_key_pem: actor.public_key_pem.clone(),
             },
             url: Some(actor.ap_id.clone()),
-            attachment: None,
+            attachment,
             endpoints: None,
         };
 
@@ -127,13 +137,33 @@ async fn get_actor(
         &[("display_name", &display_name), ("handle", &handle)],
     );
 
+    // Load profile sections (public visibility only for unauthenticated view).
+    let vis = noombat_core::privacy::SectionVisibility::Public;
+    let (experiences, educations, skills, publications, verified_links, custom_sections) =
+        tokio::join!(
+            noombat_identity::profile::list_experiences(&state.pool, actor.id, &vis),
+            noombat_identity::profile::list_educations(&state.pool, actor.id, &vis),
+            noombat_identity::profile::list_skills(&state.pool, actor.id, false),
+            noombat_identity::profile::list_publications(&state.pool, actor.id, &vis),
+            noombat_identity::verification::list_links(&state.pool, actor.id),
+            noombat_identity::profile::list_custom_sections(&state.pool, actor.id, &vis),
+        );
+
     let page = ProfilePage {
         i18n,
         page_title,
         username: actor.username.clone(),
         display_name,
+        headline: actor.headline.clone().unwrap_or_default(),
         summary_html: actor.summary_html.clone().unwrap_or_default(),
         domain: state.domain.clone(),
+        indexable: actor.actor_privacy.indexable,
+        experiences: experiences.unwrap_or_default(),
+        educations: educations.unwrap_or_default(),
+        skills: skills.unwrap_or_default(),
+        publications: publications.unwrap_or_default(),
+        verified_links: verified_links.unwrap_or_default(),
+        custom_sections: custom_sections.unwrap_or_default(),
     };
 
     Ok(page.into_response())
@@ -222,17 +252,12 @@ async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    Json(body): Json<OutboxPostBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    // Authenticate via bearer token BEFORE parsing the body.
     verify_bearer_token(&headers, &state.admin_token)?;
 
     // Resolve the local actor.
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-
-    // Parse the request body.
-    let body: OutboxPostBody = serde_json::from_slice(&body)
-        .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
 
     // Validate visibility.
     if !matches!(
@@ -253,9 +278,10 @@ async fn post_outbox(
         Uuid::new_v4()
     );
 
-    // For now, content is stored as-is (no Markdown processing).
-    // To be implemented in the `noombat-markup` pipeline!
-    let content_html = format!("<p>{}</p>", escape_html(&body.content));
+    // Render Markdown through the noombat-markup pipeline.
+    let markup_output = noombat_markup::render(&body.content);
+    let content_html = markup_output.html;
+    let hashtags = markup_output.hashtags;
 
     // Build the ActivityPub object.
     let mut to = vec![];
@@ -275,6 +301,18 @@ async fn post_outbox(
         _ => {}
     }
 
+    // Build Mastodon-convention hashtag tags for federation.
+    let tag_objects: Vec<serde_json::Value> = hashtags
+        .iter()
+        .map(|t| {
+            json!({
+                "type": "Hashtag",
+                "name": format!("#{t}"),
+                "href": format!("https://{}/tags/{t}", state.domain)
+            })
+        })
+        .collect();
+
     let note_object = json!({
         "@context": AS_CONTEXT,
         "id": note_id,
@@ -283,10 +321,11 @@ async fn post_outbox(
         "content": content_html,
         "source": {
             "content": body.content,
-            "mediaType": "text/plain"
+            "mediaType": "text/markdown"
         },
         "to": to,
         "cc": cc,
+        "tag": tag_objects,
         "published": chrono::Utc::now().to_rfc3339()
     });
 
@@ -313,6 +352,30 @@ async fn post_outbox(
     };
     noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
 
+    // Link extracted hashtags to the newly created post.
+    if !hashtags.is_empty() {
+        // Resolve post UUID from the ap_id (last path segment).
+        if let Some(uuid_str) = note_id.rsplit('/').next() {
+            if let Ok(post_uuid) = uuid_str.parse::<Uuid>() {
+                let _ = noombat_identity::hashtags::link_post_hashtags(
+                    &state.pool,
+                    post_uuid,
+                    &hashtags,
+                )
+                .await;
+            }
+        }
+    }
+
+    // Index the post in Meilisearch (fire-and-forget; public only).
+    crate::search_sync::index_post(
+        &state.search,
+        &note_id,
+        &actor.id.to_string(),
+        &content_html,
+        &body.visibility,
+    );
+
     // Enqueue delivery to all accepted followers.
     let inboxes = noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id).await?;
     for inbox in inboxes {
@@ -327,23 +390,12 @@ async fn post_outbox(
     ))
 }
 
-/// Minimal HTML entity escaping for plain text content (development-only).
-///
-/// To be replaced by the `noombat-markup` crate's Markdown with `ammonia`
-/// HTML sanitisation pipeline!
-fn escape_html(input: &str) -> String {
-    input
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-}
-
 // ..... PATCH /users/{username} .....
 
 #[derive(Deserialize)]
 struct PatchActorBody {
     display_name: Option<String>,
+    headline: Option<String>,
     summary_md: Option<String>,
 }
 
@@ -351,23 +403,21 @@ async fn patch_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    body: axum::body::Bytes,
+    Json(body): Json<PatchActorBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
 
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let body: PatchActorBody = serde_json::from_slice(&body)
-        .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
 
-    // For now, summary_html is a plain escaped copy of summary_md.
-    // The noombat-markup pipeline will replace this.
+    // Render Markdown summary through the noombat-markup pipeline.
     let summary_html = body
         .summary_md
         .as_ref()
-        .map(|md| format!("<p>{}</p>", escape_html(md)));
+        .map(|md| noombat_markup::render(md).html);
 
     let params = noombat_identity::repo::UpdateActor {
         display_name: body.display_name,
+        headline: body.headline,
         summary_md: body.summary_md,
         summary_html,
         avatar_url: None,
@@ -375,6 +425,13 @@ async fn patch_actor(
     };
 
     let updated = noombat_identity::repo::update_actor(&state.pool, actor.id, &params).await?;
+
+    // Synchronise search index with current skills (fire-and-forget).
+    let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
+        .await
+        .unwrap_or_default();
+    let skill_names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
+    crate::search_sync::index_profile(&state.search, &updated, &skill_names);
 
     Ok((
         StatusCode::OK,
@@ -472,6 +529,15 @@ struct ProfilePage {
     page_title: String,
     username: String,
     display_name: String,
+    headline: String,
     summary_html: String,
     domain: String,
+    /// When `false`, emit `<meta name="robots" content="noindex">`.
+    indexable: bool,
+    experiences: Vec<noombat_identity::profile::Experience>,
+    educations: Vec<noombat_identity::profile::Education>,
+    skills: Vec<noombat_identity::profile::Skill>,
+    publications: Vec<noombat_identity::profile::Publication>,
+    verified_links: Vec<noombat_identity::verification::VerifiedLink>,
+    custom_sections: Vec<noombat_identity::profile::CustomSection>,
 }

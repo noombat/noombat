@@ -3,7 +3,12 @@
 //! Route modules.
 
 pub mod actors;
+pub mod cv;
 pub mod federation;
 pub mod feed;
+pub mod hashtags;
 pub mod health;
+pub mod jobs;
 pub mod posts;
+pub mod profile_sections;
+pub mod search;
