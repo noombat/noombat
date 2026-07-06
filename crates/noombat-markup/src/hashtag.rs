@@ -9,7 +9,7 @@ use std::sync::LazyLock;
 ///
 /// The hashtag must be preceded by whitespace or the start of the string.
 static HASHTAG_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:^|\s)#([A-Za-z]\w{0,99})").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:^|\s)#([A-Za-z]\w*)").unwrap());
 
 /// Extract hashtags from a text fragment and append them (normalised,
 /// lowercase, without the leading `#`) to the output vector.
@@ -66,10 +66,10 @@ mod tests {
     }
 
     #[test]
-    fn long_hashtag_truncated() {
-        // Tags longer than 100 characters are not matched.
-        let long_tag = format!("#{}", "a".repeat(101));
+    fn long_hashtag_accepted() {
+        let long_tag = format!("#{}", "a".repeat(256));
         let tags = extract(&long_tag);
-        assert!(tags.is_empty());
+        assert_eq!(tags.len(), 1);
+        assert_eq!(tags[0].len(), 256);
     }
 }
