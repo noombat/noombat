@@ -4,7 +4,7 @@
 # Initialise the Noombat development environment.
 #
 # Prerequisites:
-#   - Rust >= 1.88.0
+#   - Rust >= 1.94.0
 #   - Podman with `podman-compose` or Docker with Docker Compose
 #   - sqlx-cli: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 #

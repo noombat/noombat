@@ -29,7 +29,7 @@ and exchange end-to-end encrypted direct messages via an integrated Chatmail ser
 
 ## Prerequisites
 
-- Rust ≥ 1.88.0
+- Rust ≥ 1.94.0
 - PostgreSQL ≥ 16
 - Redis ≥ 7
 - Meilisearch ≥ 1.12
@@ -106,23 +106,27 @@ Required settings:
 
 ## Endpoints
 
-| Path                              | Method | Description                          |
-|-----------------------------------|--------|--------------------------------------|
-| `/`                               | GET    | Home feed page.                      |
-| `/feed`                           | GET    | Feed HTMX partial (paginated).       |
-| `/users/{username}`               | GET    | Actor (AP JSON or HTML profile).     |
-| `/users/{username}`               | PATCH  | Update actor (bearer token required).|
-| `/users/{username}`               | DELETE | Delete actor (bearer token required).|
-| `/users/{username}/inbox`         | POST   | ActivityPub S2S inbox.               |
-| `/users/{username}/outbox`        | GET    | ActivityPub outbox collection.       |
-| `/users/{username}/outbox`        | POST   | Create Note (bearer token required). |
-| `/users/{username}/followers`     | GET    | ActivityPub followers collection.    |
-| `/users/{username}/following`     | GET    | ActivityPub following collection.    |
-| `/users/{username}/posts/{id}`    | GET    | Single post (AP JSON or HTML).       |
-| `/.well-known/webfinger`          | GET    | Actor discovery (RFC 7033).          |
-| `/.well-known/nodeinfo`           | GET    | NodeInfo discovery.                  |
-| `/nodeinfo/2.1`                   | GET    | NodeInfo 2.1 document.               |
-| `/healthz`                        | GET    | Health check.                        |
+| Path                                            | Method | Description                           |
+|-------------------------------------------------|--------|---------------------------------------|
+| `/`                                             | GET    | Home feed page.                       |
+| `/feed`                                         | GET    | Feed HTMX partial (paginated).        |
+| `/users/{username}`                             | GET    | Actor (AP JSON or HTML profile).      |
+| `/users/{username}`                             | PATCH  | Update actor (bearer token required). |
+| `/users/{username}`                             | DELETE | Delete actor (bearer token required). |
+| `/users/{username}/inbox`                       | POST   | ActivityPub S2S inbox.                |
+| `/users/{username}/outbox`                      | GET    | ActivityPub outbox collection.        |
+| `/users/{username}/outbox`                      | POST   | Create Note (bearer token required).  |
+| `/users/{username}/followers`                   | GET    | ActivityPub followers collection.     |
+| `/users/{username}/following`                   | GET    | ActivityPub following collection.     |
+| `/users/{username}/following`                   | POST   | Initiate outbound follow (bearer).    |
+| `/users/{username}/pending_follows`             | GET    | List pending inbound follows (bearer).|
+| `/users/{username}/pending_follows/{id}/accept` | POST   | Accept pending follow (bearer).       |
+| `/users/{username}/pending_follows/{id}/reject` | POST   | Reject pending follow (bearer).       |
+| `/users/{username}/posts/{id}`                  | GET    | Single post (AP JSON or HTML).        |
+| `/.well-known/webfinger`                        | GET    | Actor discovery (RFC 7033).           |
+| `/.well-known/nodeinfo`                         | GET    | NodeInfo discovery.                   |
+| `/nodeinfo/2.1`                                 | GET    | NodeInfo 2.1 document.                |
+| `/healthz`                                      | GET    | Health check.                         |
 
 ## Development
 

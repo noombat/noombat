@@ -189,7 +189,7 @@ jobs:
 
       - name: Install sqlx-cli and run migrations
         run: |
-          cargo install sqlx-cli@0.8.6 --locked --no-default-features \
+          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
             --features postgres,rustls
           sqlx migrate run --source migrations
 
@@ -254,7 +254,7 @@ jobs:
 
       - name: Install sqlx-cli and run migrations
         run: |
-          cargo install sqlx-cli@0.8.6 --locked --no-default-features \
+          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
             --features postgres,rustls
           sqlx migrate run --source migrations
 

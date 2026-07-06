@@ -16,7 +16,10 @@ WORKDIR /build/frontend
 RUN npm install -g pnpm && pnpm install && pnpm build
 
 # ..... RUST BUILD .....
-FROM rust:1.95-bookworm AS builder
+# The `rust:1-bookworm` tag tracks the latest stable Rust 1.x release,
+# matching the CI `stable` channel. The workspace MSRV (rust-version in
+# Cargo.toml) is verified separately by the CI `msrv` job.
+FROM rust:1-bookworm AS builder
 
 WORKDIR /build
 COPY Cargo.toml rust-toolchain.toml ./
