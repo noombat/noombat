@@ -13,9 +13,12 @@ export default defineConfig({
     rollupOptions: {
       input: {
         main: "src/main.css",
+        editor: "src/editor/index.tsx",
       },
       output: {
+        // CSS assets keep stable names; JS islands get hashed names.
         assetFileNames: "assets/[name][extname]",
+        entryFileNames: "assets/[name]-[hash].js",
       },
     },
     // Emit a manifest so the server can resolve hashed filenames.

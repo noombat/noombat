@@ -1,0 +1,115 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes */
+
+/*
+ * (Markdown + KaTeX) editor island styles.
+ */
+
+.noombat-editor {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--color-surface);
+}
+
+/* ..... Tab bar (mobile only) ..... */
+
+.noombat-editor__tabs {
+  display: flex;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.noombat-editor__tab {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  border: none;
+  background: transparent;
+  color: var(--color-muted);
+  cursor: pointer;
+  font-size: 0.875rem;
+  min-height: 44px; /* WCAG 2.2 touch target */
+}
+
+.noombat-editor__tab--active {
+  color: var(--color-fg);
+  border-bottom: 2px solid var(--color-accent);
+}
+
+/* ..... Split panes ..... */
+
+.noombat-editor__panes {
+  display: flex;
+  flex-direction: column;
+  min-height: 200px;
+}
+
+.noombat-editor__source,
+.noombat-editor__preview {
+  width: 100%;
+  padding: 0.75rem;
+  box-sizing: border-box;
+}
+
+.noombat-editor__source {
+  border: none;
+  resize: vertical;
+  font-family: monospace;
+  font-size: 0.9rem;
+  line-height: 1.5;
+  background: var(--color-bg);
+  color: var(--color-fg);
+  min-height: 200px;
+}
+
+.noombat-editor__source:focus {
+  outline: 2px solid var(--color-focus);
+  outline-offset: -2px;
+}
+
+.noombat-editor__preview {
+  overflow-y: auto;
+  line-height: 1.6;
+  color: var(--color-fg);
+}
+
+/* ..... Mobile: hide inactive pane ..... */
+
+.noombat-editor__source--hidden,
+.noombat-editor__preview--hidden {
+  display: none;
+}
+
+/* ..... Desktop (from 768 px): side-by-side ..... */
+
+@media (min-width: 768px) {
+  .noombat-editor__tabs {
+    display: none;
+  }
+
+  .noombat-editor__panes {
+    flex-direction: row;
+  }
+
+  .noombat-editor__source,
+  .noombat-editor__preview {
+    width: 50%;
+    min-height: 300px;
+  }
+
+  .noombat-editor__source {
+    border-right: 1px solid var(--color-border);
+  }
+
+  /* On desktop both panes are always visible. */
+  .noombat-editor__source--hidden,
+  .noombat-editor__preview--hidden {
+    display: block;
+  }
+}
+
+/* ..... KaTeX error styling ..... */
+
+.katex-error {
+  color: #c0392b;
+  font-family: monospace;
+}
