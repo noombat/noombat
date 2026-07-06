@@ -6,6 +6,7 @@
 //! downstream developers may implement to customise the platform.
 
 use std::future::Future;
+use std::pin::Pin;
 
 use serde_json::Value;
 
@@ -18,9 +19,13 @@ pub trait SearchBackend: Send + Sync + 'static {
         index: &str,
         id: &str,
         document: Value,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
-    fn delete(&self, index: &str, id: &str) -> impl Future<Output = Result<()>> + Send;
+    fn delete(
+        &self,
+        index: &str,
+        id: &str,
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 
     fn search(
         &self,
@@ -29,7 +34,7 @@ pub trait SearchBackend: Send + Sync + 'static {
         filters: Option<&str>,
         limit: usize,
         offset: usize,
-    ) -> impl Future<Output = Result<Vec<Value>>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<Vec<Value>>> + Send + '_>>;
 }
 
 /// Pluggable analytics backend (default: PostgreSQL counters).
@@ -39,7 +44,7 @@ pub trait AnalyticsBackend: Send + Sync + 'static {
         target_type: &str,
         target_id: &str,
         metric: &str,
-    ) -> impl Future<Output = Result<()>> + Send;
+    ) -> Pin<Box<dyn Future<Output = Result<()>> + Send + '_>>;
 }
 
 /// Custom profile section provider.

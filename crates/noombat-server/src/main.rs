@@ -8,6 +8,7 @@
 //! and starts the Axum HTTP listener.
 
 mod cedar;
+mod meilisearch;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -49,6 +50,17 @@ struct Config {
     /// Path to the Cedar policies directory (default `policies`).
     #[serde(default = "default_policies_dir")]
     policies_dir: String,
+    /// Meilisearch base URL (e.g. `http://localhost:7700`).
+    /// If unset, full-text search is disabled.
+    meili_url: Option<String>,
+    /// Meilisearch API key (optional).
+    meili_key: Option<String>,
+    /// Interval in seconds between link re-verification sweeps (default 3600).
+    #[serde(default = "default_reverify_interval")]
+    link_reverify_interval_secs: u64,
+    /// Maximum age in days before a verified link is re-checked (default 7).
+    #[serde(default = "default_reverify_max_age")]
+    link_max_age_days: i32,
 }
 
 fn default_host() -> String {
@@ -65,6 +77,12 @@ fn default_true() -> bool {
 }
 fn default_policies_dir() -> String {
     "policies".to_owned()
+}
+fn default_reverify_interval() -> u64 {
+    3600
+}
+fn default_reverify_max_age() -> i32 {
+    7
 }
 
 #[tokio::main]
@@ -124,6 +142,33 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Spawn the link re-verification background worker.
+    {
+        let pool = pool.clone();
+        let client = http_client.clone();
+        let domain = config.domain.clone();
+        let interval = Duration::from_secs(config.link_reverify_interval_secs);
+        let max_age = config.link_max_age_days;
+        tokio::spawn(async move {
+            loop {
+                match noombat_identity::verification::reverify_stale_links(
+                    &pool, &client, &domain, max_age,
+                )
+                .await
+                {
+                    Ok(count) if count > 0 => {
+                        info!(count, "re-verified stale links");
+                    }
+                    Err(e) => {
+                        tracing::warn!("link re-verification sweep failed: {e}");
+                    }
+                    _ => {}
+                }
+                tokio::time::sleep(interval).await;
+            }
+        });
+    }
+
     // Build the Axum application.
     let policies_dir = std::path::Path::new(&config.policies_dir);
     let policy_path = policies_dir.join("noombat.cedar");
@@ -152,9 +197,36 @@ async fn main() -> anyhow::Result<()> {
             "no Cedar policies found at {}; using empty policy set",
             policy_path.display()
         );
-        Arc::new(cedar::CedarBackend::new("", None).expect("failed to create empty Cedar backend"))
-            as Arc<dyn noombat_core::auth::AuthorisationBackend>
+        Arc::new(
+            cedar::CedarBackend::new("", None)
+                .expect("failed to create empty Cedar backend"),
+        ) as Arc<dyn noombat_core::auth::AuthorisationBackend>
     };
+
+    // Meilisearch search backend (optional).
+    let search: Option<Arc<dyn noombat_core::extension::SearchBackend>> =
+        if let Some(ref meili_url) = config.meili_url {
+            match meilisearch::MeilisearchBackend::new(
+                meili_url,
+                config.meili_key.as_deref(),
+            ) {
+                Ok(backend) => {
+                    if let Err(e) = backend.ensure_indices().await {
+                        tracing::warn!("Meilisearch index setup failed (search degraded): {e}");
+                    } else {
+                        info!(url = %meili_url, "Meilisearch search backend connected");
+                    }
+                    Some(Arc::new(backend))
+                }
+                Err(e) => {
+                    tracing::warn!("Meilisearch client init failed (search disabled): {e}");
+                    None
+                }
+            }
+        } else {
+            info!("no NOOMBAT_MEILI_URL configured; full-text search disabled");
+            None
+        };
 
     let state = AppState {
         pool,
@@ -163,6 +235,7 @@ async fn main() -> anyhow::Result<()> {
         open_registrations: config.open_registrations,
         admin_token: config.admin_token.clone(),
         auth: auth_backend,
+        search,
     };
     let app = noombat_api::build_router(state);
 
