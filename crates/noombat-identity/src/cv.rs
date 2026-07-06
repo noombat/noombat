@@ -38,16 +38,16 @@ pub async fn generate_cv_pdf(
     // ..... Fetch profile data .....
     let actor = crate::repo::find_by_id(pool, actor_id).await?;
 
-    let experiences =
-        profile::list_experiences(pool, actor_id, max_vis).await?;
-    let educations =
-        profile::list_educations(pool, actor_id, max_vis).await?;
-    let skills = profile::list_skills(pool, actor_id, matches!(max_vis, SectionVisibility::Private))
-        .await?;
-    let publications =
-        profile::list_publications(pool, actor_id, max_vis).await?;
-    let links =
-        crate::verification::list_links(pool, actor_id).await?;
+    let experiences = profile::list_experiences(pool, actor_id, max_vis).await?;
+    let educations = profile::list_educations(pool, actor_id, max_vis).await?;
+    let skills = profile::list_skills(
+        pool,
+        actor_id,
+        matches!(max_vis, SectionVisibility::Private),
+    )
+    .await?;
+    let publications = profile::list_publications(pool, actor_id, max_vis).await?;
+    let links = crate::verification::list_links(pool, actor_id).await?;
 
     // ..... Load template .....
     let template_path = template_dir.join(format!("{template}.typ"));
@@ -137,10 +137,7 @@ pub async fn generate_cv_pdf(
     // Skills.
     src.push_str("#let skills = (\n");
     for skill in &skills {
-        src.push_str(&format!(
-            "  \"{}\",\n",
-            escape_typst_string(&skill.name)
-        ));
+        src.push_str(&format!("  \"{}\",\n", escape_typst_string(&skill.name)));
     }
     src.push_str(")\n");
 
@@ -183,10 +180,7 @@ pub async fn generate_cv_pdf(
     src.push_str("#let verified_links = (\n");
     for link in &links {
         if link.verified_at.is_some() {
-            src.push_str(&format!(
-                "  \"{}\",\n",
-                escape_typst_string(&link.url)
-            ));
+            src.push_str(&format!("  \"{}\",\n", escape_typst_string(&link.url)));
         }
     }
     src.push_str(")\n\n");
@@ -200,15 +194,14 @@ pub async fn generate_cv_pdf(
 
 /// Compile a Typst source string to PDF bytes using the `typst` CLI.
 async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
-    let tmp_dir = tempfile::tempdir().map_err(|e| {
-        NoombatError::Internal(format!("failed to create temp dir: {e}"))
-    })?;
+    let tmp_dir = tempfile::tempdir()
+        .map_err(|e| NoombatError::Internal(format!("failed to create temp dir: {e}")))?;
     let input_path = tmp_dir.path().join("cv.typ");
     let output_path = tmp_dir.path().join("cv.pdf");
 
-    tokio::fs::write(&input_path, source).await.map_err(|e| {
-        NoombatError::Internal(format!("failed to write temp Typst source: {e}"))
-    })?;
+    tokio::fs::write(&input_path, source)
+        .await
+        .map_err(|e| NoombatError::Internal(format!("failed to write temp Typst source: {e}")))?;
 
     let output = tokio::process::Command::new("typst")
         .arg("compile")
@@ -217,9 +210,7 @@ async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
         .output()
         .await
         .map_err(|e| {
-            NoombatError::Internal(format!(
-                "failed to invoke typst (is it installed?): {e}"
-            ))
+            NoombatError::Internal(format!("failed to invoke typst (is it installed?): {e}"))
         })?;
 
     if !output.status.success() {
@@ -229,9 +220,9 @@ async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
         )));
     }
 
-    tokio::fs::read(&output_path).await.map_err(|e| {
-        NoombatError::Internal(format!("failed to read compiled PDF: {e}"))
-    })
+    tokio::fs::read(&output_path)
+        .await
+        .map_err(|e| NoombatError::Internal(format!("failed to read compiled PDF: {e}")))
 }
 
 /// Escape a string for embedding in a Typst string literal.
@@ -242,10 +233,7 @@ fn escape_typst_string(s: &str) -> String {
 }
 
 /// Format a date range as `"Jan 2020 – Dec 2023"` or `"Jan 2020 – present"`.
-fn format_date_range(
-    start: chrono::NaiveDate,
-    end: Option<chrono::NaiveDate>,
-) -> String {
+fn format_date_range(start: chrono::NaiveDate, end: Option<chrono::NaiveDate>) -> String {
     let start_str = start.format("%b %Y").to_string();
     match end {
         Some(e) => format!("{start_str} – {}", e.format("%b %Y")),

@@ -33,14 +33,43 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     // ..... Additional tags beyond ammonia's defaults .....
     // KaTeX HTML output and MathML elements.
     builder.add_tags([
-        "span", "math", "semantics", "mrow", "mi", "mo", "mn", "ms",
-        "mtext", "mspace", "msup", "msub", "msubsup", "mfrac", "msqrt",
-        "mroot", "mtable", "mtr", "mtd", "mover", "munder",
-        "munderover", "mpadded", "mphantom", "menclose",
-        "annotation", "annotation-xml",
+        "span",
+        "math",
+        "semantics",
+        "mrow",
+        "mi",
+        "mo",
+        "mn",
+        "ms",
+        "mtext",
+        "mspace",
+        "msup",
+        "msub",
+        "msubsup",
+        "mfrac",
+        "msqrt",
+        "mroot",
+        "mtable",
+        "mtr",
+        "mtd",
+        "mover",
+        "munder",
+        "munderover",
+        "mpadded",
+        "mphantom",
+        "menclose",
+        "annotation",
+        "annotation-xml",
         // Standard Markdown elements not in ammonia defaults.
-        "details", "summary", "kbd", "mark", "var", "samp",
-        "time", "figure", "figcaption",
+        "details",
+        "summary",
+        "kbd",
+        "mark",
+        "var",
+        "samp",
+        "time",
+        "figure",
+        "figcaption",
     ]);
 
     // ..... Additional tag attributes .....
@@ -97,12 +126,16 @@ mod tests {
         let input = r#"<div class="safe" style="position:fixed;z-index:9999">overlay</div>"#;
         let result = clean(input);
         assert!(result.contains(r#"class="safe""#));
-        assert!(!result.contains("style="), "style on <div> must be stripped: {result}");
+        assert!(
+            !result.contains("style="),
+            "style on <div> must be stripped: {result}"
+        );
     }
 
     #[test]
     fn allows_mathml_elements() {
-        let input = "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><mi>x</mi></mrow></math>";
+        let input =
+            "<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><mi>x</mi></mrow></math>";
         let result = clean(input);
         assert!(result.contains("<math"));
         assert!(result.contains("<mrow>"));

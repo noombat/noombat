@@ -54,14 +54,11 @@ async fn search(
     State(state): State<AppState>,
     Query(params): Query<SearchParams>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let backend = state
-        .search
-        .as_ref()
-        .ok_or_else(|| {
-            ApiError(noombat_core::error::NoombatError::ServiceUnavailable(
-                "search is not configured".into(),
-            ))
-        })?;
+    let backend = state.search.as_ref().ok_or_else(|| {
+        ApiError(noombat_core::error::NoombatError::ServiceUnavailable(
+            "search is not configured".into(),
+        ))
+    })?;
 
     if !ALLOWED_INDICES.contains(&params.index.as_str()) {
         return Err(ApiError(noombat_core::error::NoombatError::BadRequest(
@@ -90,9 +87,9 @@ async fn search(
             // expression. Surface this as 400 Bad Request rather than
             // an opaque 500 so the caller can correct the query.
             if params.filter.is_some() {
-                ApiError(noombat_core::error::NoombatError::BadRequest(
-                    format!("search failed (likely invalid filter): {e}"),
-                ))
+                ApiError(noombat_core::error::NoombatError::BadRequest(format!(
+                    "search failed (likely invalid filter): {e}"
+                )))
             } else {
                 ApiError::from(e)
             }

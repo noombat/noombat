@@ -84,7 +84,11 @@ async fn get_actor(
                     }
                 }
             }
-            if entries.is_empty() { None } else { Some(entries) }
+            if entries.is_empty() {
+                None
+            } else {
+                Some(entries)
+            }
         } else {
             None
         };
@@ -139,15 +143,14 @@ async fn get_actor(
 
     // Load profile sections (public visibility only for unauthenticated view).
     let vis = noombat_core::privacy::SectionVisibility::Public;
-    let (experiences, educations, skills, publications, verified_links, custom_sections) =
-        tokio::join!(
-            noombat_identity::profile::list_experiences(&state.pool, actor.id, &vis),
-            noombat_identity::profile::list_educations(&state.pool, actor.id, &vis),
-            noombat_identity::profile::list_skills(&state.pool, actor.id, false),
-            noombat_identity::profile::list_publications(&state.pool, actor.id, &vis),
-            noombat_identity::verification::list_links(&state.pool, actor.id),
-            noombat_identity::profile::list_custom_sections(&state.pool, actor.id, &vis),
-        );
+    let (experiences, educations, skills, publications, verified_links, custom_sections) = tokio::join!(
+        noombat_identity::profile::list_experiences(&state.pool, actor.id, &vis),
+        noombat_identity::profile::list_educations(&state.pool, actor.id, &vis),
+        noombat_identity::profile::list_skills(&state.pool, actor.id, false),
+        noombat_identity::profile::list_publications(&state.pool, actor.id, &vis),
+        noombat_identity::verification::list_links(&state.pool, actor.id),
+        noombat_identity::profile::list_custom_sections(&state.pool, actor.id, &vis),
+    );
 
     let page = ProfilePage {
         i18n,

@@ -197,19 +197,14 @@ async fn main() -> anyhow::Result<()> {
             "no Cedar policies found at {}; using empty policy set",
             policy_path.display()
         );
-        Arc::new(
-            cedar::CedarBackend::new("", None)
-                .expect("failed to create empty Cedar backend"),
-        ) as Arc<dyn noombat_core::auth::AuthorisationBackend>
+        Arc::new(cedar::CedarBackend::new("", None).expect("failed to create empty Cedar backend"))
+            as Arc<dyn noombat_core::auth::AuthorisationBackend>
     };
 
     // Meilisearch search backend (optional).
     let search: Option<Arc<dyn noombat_core::extension::SearchBackend>> =
         if let Some(ref meili_url) = config.meili_url {
-            match meilisearch::MeilisearchBackend::new(
-                meili_url,
-                config.meili_key.as_deref(),
-            ) {
+            match meilisearch::MeilisearchBackend::new(meili_url, config.meili_key.as_deref()) {
                 Ok(backend) => {
                     if let Err(e) = backend.ensure_indices().await {
                         tracing::warn!("Meilisearch index setup failed (search degraded): {e}");

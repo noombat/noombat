@@ -51,9 +51,7 @@ async fn download_cv(
     headers: HeaderMap,
     Query(params): Query<CvParams>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username)
-            .await?;
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     // Reject template names that could escape the templates directory.
     if params.template.contains('/')

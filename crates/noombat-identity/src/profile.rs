@@ -45,18 +45,19 @@ pub async fn create_experience(
     params: &NewExperience,
 ) -> Result<Experience> {
     let id = Uuid::new_v4();
-    let visibility = params
-        .visibility
-        .as_deref()
-        .unwrap_or("public");
+    let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
 
     // Render Markdown description if provided.
     let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref());
 
     let ap_object = build_experience_ap_object(
-        &id, &params.title, &params.company, params.start_date,
-        params.end_date, desc_html.as_deref(),
+        &id,
+        &params.title,
+        &params.company,
+        params.start_date,
+        params.end_date,
+        desc_html.as_deref(),
     );
 
     let row = sqlx::query_as::<_, Experience>(
@@ -108,13 +109,11 @@ pub async fn list_experiences(
 
 /// Delete an experience entry owned by the given actor.
 pub async fn delete_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query(
-        "DELETE FROM experiences WHERE id = $1 AND actor_id = $2",
-    )
-    .bind(id)
-    .bind(actor_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM experiences WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
@@ -171,10 +170,7 @@ pub async fn update_experience(
     let start_date = params.start_date.unwrap_or(current.start_date);
     let end_date = params.end_date.unwrap_or(current.end_date);
     let sort_order = params.sort_order.unwrap_or(current.sort_order);
-    let visibility = params
-        .visibility
-        .as_deref()
-        .unwrap_or(&current.visibility);
+    let visibility = params.visibility.as_deref().unwrap_or(&current.visibility);
 
     let desc_md_source = match &params.description_md {
         Some(inner) => inner.as_deref(),
@@ -183,7 +179,12 @@ pub async fn update_experience(
     let (desc_md, desc_html) = render_optional_markdown(desc_md_source);
 
     let ap_object = build_experience_ap_object(
-        &id, title, company, start_date, end_date, desc_html.as_deref(),
+        &id,
+        title,
+        company,
+        start_date,
+        end_date,
+        desc_html.as_deref(),
     );
 
     let row = sqlx::query_as::<_, Experience>(
@@ -315,12 +316,11 @@ pub async fn list_educations(
 
 /// Delete an education entry owned by the given actor.
 pub async fn delete_education(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result =
-        sqlx::query("DELETE FROM educations WHERE id = $1 AND actor_id = $2")
-            .bind(id)
-            .bind(actor_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM educations WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
@@ -375,21 +375,18 @@ pub async fn update_education(
         .institution
         .as_deref()
         .unwrap_or(&current.institution);
-    let degree = params.degree.as_ref().map_or_else(
-        || current.degree.as_deref(),
-        |v| v.as_deref(),
-    );
-    let field_of_study = params.field_of_study.as_ref().map_or_else(
-        || current.field_of_study.as_deref(),
-        |v| v.as_deref(),
-    );
+    let degree = params
+        .degree
+        .as_ref()
+        .map_or_else(|| current.degree.as_deref(), |v| v.as_deref());
+    let field_of_study = params
+        .field_of_study
+        .as_ref()
+        .map_or_else(|| current.field_of_study.as_deref(), |v| v.as_deref());
     let start_date = params.start_date.unwrap_or(current.start_date);
     let end_date = params.end_date.unwrap_or(current.end_date);
     let sort_order = params.sort_order.unwrap_or(current.sort_order);
-    let visibility = params
-        .visibility
-        .as_deref()
-        .unwrap_or(&current.visibility);
+    let visibility = params.visibility.as_deref().unwrap_or(&current.visibility);
 
     let desc_md_source = match &params.description_md {
         Some(inner) => inner.as_deref(),
@@ -507,12 +504,11 @@ pub async fn list_skills(
 
 /// Remove a skill from an actor's profile.
 pub async fn delete_skill(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result =
-        sqlx::query("DELETE FROM skills WHERE id = $1 AND actor_id = $2")
-            .bind(id)
-            .bind(actor_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM skills WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
@@ -636,12 +632,11 @@ pub async fn list_publications(
 
 /// Delete a publication entry owned by the given actor.
 pub async fn delete_publication(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result =
-        sqlx::query("DELETE FROM publications WHERE id = $1 AND actor_id = $2")
-            .bind(id)
-            .bind(actor_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM publications WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
@@ -661,13 +656,11 @@ pub async fn update_actor_privacy(
     privacy: &noombat_core::privacy::ActorPrivacy,
 ) -> Result<()> {
     let json = serde_json::to_value(privacy)?;
-    sqlx::query(
-        "UPDATE actors SET actor_privacy = $2 WHERE id = $1 AND is_local = TRUE",
-    )
-    .bind(actor_id)
-    .bind(&json)
-    .execute(pool)
-    .await?;
+    sqlx::query("UPDATE actors SET actor_privacy = $2 WHERE id = $1 AND is_local = TRUE")
+        .bind(actor_id)
+        .bind(&json)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -767,13 +760,11 @@ pub async fn list_custom_sections(
 
 /// Delete a custom section owned by the given actor.
 pub async fn delete_custom_section(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query(
-        "DELETE FROM custom_profile_sections WHERE id = $1 AND actor_id = $2",
-    )
-    .bind(id)
-    .bind(actor_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM custom_profile_sections WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {

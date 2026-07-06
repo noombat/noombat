@@ -35,10 +35,7 @@ pub fn router() -> Router<AppState> {
             patch(update_education).delete(delete_education),
         )
         // Skills.
-        .route(
-            "/users/{username}/skills",
-            get(list_skills).post(add_skill),
-        )
+        .route("/users/{username}/skills", get(list_skills).post(add_skill))
         .route("/users/{username}/skills/{id}", delete(delete_skill))
         // Publications.
         .route(
@@ -54,10 +51,7 @@ pub fn router() -> Router<AppState> {
             "/users/{username}/links",
             get(list_verified_links).post(add_verified_link),
         )
-        .route(
-            "/users/{username}/links/{id}",
-            delete(delete_verified_link),
-        )
+        .route("/users/{username}/links/{id}", delete(delete_verified_link))
         // Custom profile sections (extension point).
         .route(
             "/users/{username}/sections",
@@ -79,9 +73,12 @@ async fn list_experiences(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     // Public view: only public sections.
-    let items =
-        noombat_identity::profile::list_experiences(&state.pool, actor.id, &SectionVisibility::Public)
-            .await?;
+    let items = noombat_identity::profile::list_experiences(
+        &state.pool,
+        actor.id,
+        &SectionVisibility::Public,
+    )
+    .await?;
     Ok((StatusCode::OK, Json(items)))
 }
 
@@ -128,9 +125,12 @@ async fn list_educations(
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let items =
-        noombat_identity::profile::list_educations(&state.pool, actor.id, &SectionVisibility::Public)
-            .await?;
+    let items = noombat_identity::profile::list_educations(
+        &state.pool,
+        actor.id,
+        &SectionVisibility::Public,
+    )
+    .await?;
     Ok((StatusCode::OK, Json(items)))
 }
 
@@ -363,8 +363,7 @@ async fn resolve_doi(
 ) -> Result<impl IntoResponse, ApiError> {
     let doi = format!("{prefix}/{suffix}");
     let mailto = format!("admin@{}", state.domain);
-    let meta =
-        noombat_identity::doi_client::resolve(&state.http_client, &doi, &mailto).await?;
+    let meta = noombat_identity::doi_client::resolve(&state.http_client, &doi, &mailto).await?;
     Ok((StatusCode::OK, Json(meta)))
 }
 
@@ -372,10 +371,7 @@ async fn resolve_doi(
 
 /// Fetch the actor's current public skills and re-index the profile
 /// in Meilisearch. Errors are logged, not propagated.
-async fn reindex_profile_skills(
-    state: &AppState,
-    actor: &noombat_core::actor::Actor,
-) {
+async fn reindex_profile_skills(state: &AppState, actor: &noombat_core::actor::Actor) {
     let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
         .await
         .unwrap_or_default();

@@ -38,10 +38,9 @@ impl IntoResponse for ApiError {
                 (StatusCode::UNAUTHORIZED, ApError::signature_failed())
             }
             NoombatError::Forbidden => (StatusCode::FORBIDDEN, ApError::bad_request("forbidden")),
-            NoombatError::ServiceUnavailable(detail) => (
-                StatusCode::SERVICE_UNAVAILABLE,
-                ApError::internal(detail),
-            ),
+            NoombatError::ServiceUnavailable(detail) => {
+                (StatusCode::SERVICE_UNAVAILABLE, ApError::internal(detail))
+            }
             _ => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 ApError::internal("an internal error occurred"),

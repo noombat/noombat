@@ -77,12 +77,11 @@ pub async fn list_links(pool: &PgPool, actor_id: Uuid) -> Result<Vec<VerifiedLin
 
 /// Remove a verified link.
 pub async fn delete_link(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result =
-        sqlx::query("DELETE FROM verified_links WHERE id = $1 AND actor_id = $2")
-            .bind(id)
-            .bind(actor_id)
-            .execute(pool)
-            .await?;
+    let result = sqlx::query("DELETE FROM verified_links WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
@@ -106,9 +105,7 @@ pub async fn verify_link(
     info!(url = %link.url, "verifying rel=\"me\" link");
 
     let html = match client.get(&link.url).send().await {
-        Ok(resp) if resp.status().is_success() => {
-            resp.text().await.unwrap_or_default()
-        }
+        Ok(resp) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
         Ok(resp) => {
             warn!(url = %link.url, status = resp.status().as_u16(), "verification fetch failed");
             mark_checked(pool, link.id, false).await?;
@@ -197,12 +194,10 @@ pub async fn reverify_stale_links(
 
     let mut count = 0u64;
     for link in &links {
-        let username = sqlx::query_scalar::<_, String>(
-            "SELECT username FROM actors WHERE id = $1",
-        )
-        .bind(link.actor_id)
-        .fetch_optional(pool)
-        .await?;
+        let username = sqlx::query_scalar::<_, String>("SELECT username FROM actors WHERE id = $1")
+            .bind(link.actor_id)
+            .fetch_optional(pool)
+            .await?;
 
         if let Some(username) = username {
             let profile_url = format!("https://{domain}/users/{username}");
@@ -234,8 +229,7 @@ mod tests {
 
     #[test]
     fn finds_rel_me_href_first() {
-        let html =
-            r#"<a href="https://noombat.social/users/alice" rel="me">Noombat</a>"#;
+        let html = r#"<a href="https://noombat.social/users/alice" rel="me">Noombat</a>"#;
         assert!(check_rel_me(html, "https://noombat.social/users/alice"));
     }
 

@@ -27,11 +27,7 @@ pub struct DoiMetadata {
 /// The `mailto` address is included in CrossRef requests per their
 /// [polite-pool guidelines](https://github.com/CrossRef/rest-api-doc#good-manners--more-reliable-service),
 /// which grant higher rate limits to identifiable callers.
-pub async fn resolve(
-    client: &reqwest::Client,
-    doi: &str,
-    mailto: &str,
-) -> Result<DoiMetadata> {
+pub async fn resolve(client: &reqwest::Client, doi: &str, mailto: &str) -> Result<DoiMetadata> {
     info!(doi, "resolving DOI metadata");
 
     match resolve_crossref(client, doi, mailto).await {

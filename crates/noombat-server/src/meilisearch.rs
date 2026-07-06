@@ -53,7 +53,11 @@ impl MeilisearchBackend {
                 .create_index(name, Some("id"))
                 .await
                 .map_err(|e| NoombatError::Internal(format!("meilisearch create_index: {e}")))?;
-            debug!(index = name, task_uid = task.task_uid, "index creation enqueued");
+            debug!(
+                index = name,
+                task_uid = task.task_uid,
+                "index creation enqueued"
+            );
 
             // Wait for index creation before configuring attributes.
             task.wait_for_completion(
@@ -62,21 +66,18 @@ impl MeilisearchBackend {
                 Some(Duration::from_secs(30)),
             )
             .await
-            .map_err(|e| {
-                NoombatError::Internal(format!(
-                    "meilisearch create_index wait: {e}"
-                ))
-            })?;
+            .map_err(|e| NoombatError::Internal(format!("meilisearch create_index wait: {e}")))?;
 
             let index = self.client.index(name);
-            let searchable_task = index
-                .set_searchable_attributes(&searchable)
-                .await
-                .map_err(|e| {
-                    NoombatError::Internal(format!(
-                        "meilisearch set_searchable_attributes: {e}"
-                    ))
-                })?;
+            let searchable_task =
+                index
+                    .set_searchable_attributes(&searchable)
+                    .await
+                    .map_err(|e| {
+                        NoombatError::Internal(format!(
+                            "meilisearch set_searchable_attributes: {e}"
+                        ))
+                    })?;
 
             // Profiles and jobs expose fields for filtering.
             let filterable: Vec<&str> = match name {
@@ -112,9 +113,7 @@ impl MeilisearchBackend {
                 )
                 .await
                 .map_err(|e| {
-                    NoombatError::Internal(format!(
-                        "meilisearch index setup wait: {e}"
-                    ))
+                    NoombatError::Internal(format!("meilisearch index setup wait: {e}"))
                 })?;
 
             debug!(index = name, "index ready");
@@ -139,7 +138,11 @@ impl SearchBackend for MeilisearchBackend {
             idx.add_or_replace(&docs, Some("id"))
                 .await
                 .map_err(|e| NoombatError::Internal(format!("meilisearch upsert: {e}")))?;
-            debug!(index = index.as_str(), id = id.as_str(), "upserted document");
+            debug!(
+                index = index.as_str(),
+                id = id.as_str(),
+                "upserted document"
+            );
             Ok(())
         })
     }

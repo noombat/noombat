@@ -80,10 +80,7 @@ pub fn index_post(
 }
 
 /// Index a job listing in Meilisearch (fire-and-forget).
-pub fn index_job(
-    search: &Option<Arc<dyn SearchBackend>>,
-    job: &noombat_jobs::JobListing,
-) {
+pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::JobListing) {
     let Some(backend) = search.clone() else {
         return;
     };
@@ -105,11 +102,7 @@ pub fn index_job(
 }
 
 /// Remove a document from a Meilisearch index (fire-and-forget).
-pub fn remove_from_index(
-    search: &Option<Arc<dyn SearchBackend>>,
-    index: &str,
-    id: &str,
-) {
+pub fn remove_from_index(search: &Option<Arc<dyn SearchBackend>>, index: &str, id: &str) {
     let Some(backend) = search.clone() else {
         return;
     };

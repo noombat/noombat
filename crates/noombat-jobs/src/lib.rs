@@ -177,13 +177,11 @@ pub async fn list_published_jobs(
 
 /// Delete a job listing owned by the given actor.
 pub async fn delete_job(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query(
-        "DELETE FROM job_listings WHERE id = $1 AND actor_id = $2",
-    )
-    .bind(id)
-    .bind(actor_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM job_listings WHERE id = $1 AND actor_id = $2")
+        .bind(id)
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {

@@ -28,9 +28,8 @@ pub struct DoiReference {
 /// The DOI itself (the `10.xxxx/...` part) is captured in group 1.
 /// DOI syntax: `10.` followed by a registrant code (digits), then `/`,
 /// then a suffix of non-whitespace characters.
-static DOI_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"(?:https?://doi\.org/|doi:)(10\.\d{4,}/[^\s),]+)").unwrap()
-});
+static DOI_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?:https?://doi\.org/|doi:)(10\.\d{4,}/[^\s),]+)").unwrap());
 
 /// Detect DOI references in a text fragment.
 pub fn detect_in_text(text: &str) -> Vec<DoiReference> {
@@ -98,8 +97,7 @@ mod tests {
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].doi, "10.1000/abc123");
         assert_eq!(
-            refs[0].source_uri,
-            "https://doi.org/10.1000/abc123",
+            refs[0].source_uri, "https://doi.org/10.1000/abc123",
             "source_uri must not retain trailing punctuation stripped from doi"
         );
     }

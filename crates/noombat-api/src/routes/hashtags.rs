@@ -30,9 +30,7 @@ async fn list_followed(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username)
-            .await?;
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     let tags = hashtags::list_followed_hashtags(&state.pool, actor.id).await?;
     Ok(Json(tags))
@@ -50,9 +48,7 @@ async fn follow(
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
 
-    let actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username)
-            .await?;
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     let tag = hashtags::follow_hashtag(&state.pool, actor.id, &body.name).await?;
     Ok((StatusCode::OK, Json(tag)))
@@ -69,9 +65,7 @@ async fn unfollow(
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
 
-    let actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username)
-            .await?;
+    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     hashtags::unfollow_hashtag(&state.pool, actor.id, &tag).await?;
     Ok(StatusCode::NO_CONTENT)
