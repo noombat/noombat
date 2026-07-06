@@ -11,8 +11,8 @@ noombat-core = { workspace = true }
 noombat-markup = { workspace = true }
 chrono = { workspace = true }
 rand = { workspace = true }
-regex = { workspace = true }
 reqwest = { workspace = true }
+scraper = { workspace = true }
 rsa = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

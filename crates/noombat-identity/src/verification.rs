@@ -6,29 +6,16 @@
 //! profile using `<a rel="me" href="...">` or `<link rel="me" href="...">`.
 
 use noombat_core::error::{NoombatError, Result};
-use regex::Regex;
+use scraper::{Html, Selector};
 use sqlx::PgPool;
 use std::sync::LazyLock;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-/// Regex to find `rel="me"` links in HTML.
-///
-/// Matches `<a ...>` or `<link ...>` elements whose `rel` attribute
-/// contains `me` and captures the `href` value.
-static REL_ME_RE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"<(?:a|link)\s[^>]*\brel\s*=\s*"[^"]*\bme\b[^"]*"[^>]*\bhref\s*=\s*"([^"]+)"[^>]*/?\s*>"#,
-    )
-    .unwrap()
-});
-
-/// Also match when href comes before rel.
-static REL_ME_RE_ALT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(
-        r#"<(?:a|link)\s[^>]*\bhref\s*=\s*"([^"]+)"[^>]*\brel\s*=\s*"[^"]*\bme\b[^"]*"[^>]*/?\s*>"#,
-    )
-    .unwrap()
+/// CSS selector matching `<a>` and `<link>` elements whose `rel`
+/// attribute contains `me`.
+static REL_ME_SELECTOR: LazyLock<Selector> = LazyLock::new(|| {
+    Selector::parse("a[rel~=me][href], link[rel~=me][href]").unwrap()
 });
 
 /// A row from the `verified_links` table.
@@ -132,17 +119,15 @@ pub async fn verify_link(
 
 /// Check whether the HTML body contains a `rel="me"` link pointing
 /// to the given profile URL.
+///
+/// Uses the `scraper` crate (backed by `html5ever`) to parse the HTML,
+/// handling arbitrary attribute ordering, single-quoted values,
+/// multi-line elements, and other edge cases that regex cannot cover.
 fn check_rel_me(html: &str, profile_url: &str) -> bool {
-    for cap in REL_ME_RE.captures_iter(html) {
-        if let Some(href) = cap.get(1) {
-            if href.as_str() == profile_url {
-                return true;
-            }
-        }
-    }
-    for cap in REL_ME_RE_ALT.captures_iter(html) {
-        if let Some(href) = cap.get(1) {
-            if href.as_str() == profile_url {
+    let document = Html::parse_document(html);
+    for element in document.select(&REL_ME_SELECTOR) {
+        if let Some(href) = element.value().attr("href") {
+            if href == profile_url {
                 return true;
             }
         }
@@ -243,5 +228,26 @@ mod tests {
     fn does_not_match_missing_rel_me() {
         let html = r#"<a href="https://noombat.social/users/alice">link</a>"#;
         assert!(!check_rel_me(html, "https://noombat.social/users/alice"));
+    }
+
+    #[test]
+    fn finds_rel_me_single_quotes() {
+        let html = "<a rel='me' href='https://noombat.social/users/alice'>Noombat</a>";
+        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+    }
+
+    #[test]
+    fn finds_rel_me_multiline() {
+        let html = r#"<a
+            rel="me"
+            href="https://noombat.social/users/alice"
+        >Noombat</a>"#;
+        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+    }
+
+    #[test]
+    fn finds_rel_me_among_multiple_rels() {
+        let html = r#"<a rel="noopener me" href="https://noombat.social/users/alice">link</a>"#;
+        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
     }
 }
