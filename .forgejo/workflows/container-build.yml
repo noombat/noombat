@@ -9,6 +9,7 @@ on:
   push:
     branches: [main]
     paths:
+      - ".forgejo/workflows/container-build.yml"
       - "Dockerfile"
       - "compose.yml"
       - "Cargo.toml"
@@ -19,6 +20,7 @@ on:
   pull_request:
     branches: [main]
     paths:
+      - ".forgejo/workflows/container-build.yml"
       - "Dockerfile"
       - "compose.yml"
       - "Cargo.toml"
