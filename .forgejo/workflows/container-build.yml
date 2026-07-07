@@ -31,15 +31,12 @@ jobs:
   container-build:
     name: Container image build
     runs-on: ubuntu-latest
+    container:
+      image: docker:27-cli
+      options: >-
+        -v /var/run/docker.sock:/var/run/docker.sock
+        -v /run/podman/podman.sock:/var/run/docker.sock
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Build container image
-        run: |
-          if command -v docker &>/dev/null; then
-            docker build --tag noombat:ci-test .
-          elif command -v podman &>/dev/null; then
-            podman build --tag noombat:ci-test .
-          else
-            echo "::error::Neither docker nor podman found on this runner"
-            exit 1
-          fi
+        run: docker build --tag noombat:ci-test .
