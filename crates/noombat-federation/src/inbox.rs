@@ -36,6 +36,7 @@ pub async fn process_activity(
         types::REJECT => handle_reject(pool, http_client, &activity).await,
         types::ANNOUNCE => handle_announce(pool, http_client, &activity).await,
         types::LIKE => handle_like(pool, http_client, &activity).await,
+        types::BLOCK => handle_block(pool, http_client, &activity).await,
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
             Ok(())
@@ -235,11 +236,13 @@ async fn handle_undo(
                 .ok_or_else(|| NoombatError::BadRequest("Undo Like: missing id".into()))?;
 
             let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
-            sqlx::query("DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2")
-                .bind(inner_ap_id)
-                .bind(remote_actor.id)
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2",
+            )
+            .bind(inner_ap_id)
+            .bind(remote_actor.id)
+            .execute(pool)
+            .await?;
             info!(ap_id = %inner_ap_id, "like undone");
         }
         "Announce" => {
@@ -250,12 +253,43 @@ async fn handle_undo(
                 .ok_or_else(|| NoombatError::BadRequest("Undo Announce: missing id".into()))?;
 
             let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
-            sqlx::query("DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2")
-                .bind(inner_ap_id)
-                .bind(remote_actor.id)
-                .execute(pool)
-                .await?;
+            sqlx::query(
+                "DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2",
+            )
+            .bind(inner_ap_id)
+            .bind(remote_actor.id)
+            .execute(pool)
+            .await?;
             info!(ap_id = %inner_ap_id, "boost undone");
+        }
+        "Block" => {
+            // The inner object of Undo { Block } is the blocked actor's URI.
+            let target_uri = activity
+                .object
+                .get("object")
+                .and_then(|v| v.as_str())
+                .ok_or_else(|| {
+                    NoombatError::BadRequest("Undo Block: missing inner object".into())
+                })?;
+
+            let target_username = extract_local_username(target_uri)
+                .ok_or_else(|| NoombatError::BadRequest("cannot parse target actor URI".into()))?;
+
+            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            let local_actor = repo::find_local_by_username(pool, target_username).await?;
+
+            sqlx::query(
+                "DELETE FROM blocks WHERE actor_id = $1 AND target_id = $2",
+            )
+            .bind(remote_actor.id)
+            .bind(local_actor.id)
+            .execute(pool)
+            .await?;
+            info!(
+                actor = %remote_actor.ap_id,
+                target = %local_actor.ap_id,
+                "block undone"
+            );
         }
         other => {
             warn!(inner_type = other, "unsupported Undo target; ignoring");
@@ -477,10 +511,12 @@ async fn handle_announce(
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
     // Look up the boosted post locally.
-    let post = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
-        .bind(object_uri)
-        .fetch_optional(pool)
-        .await?;
+    let post = sqlx::query_scalar::<_, uuid::Uuid>(
+        r#"SELECT id FROM posts WHERE ap_id = $1"#,
+    )
+    .bind(object_uri)
+    .fetch_optional(pool)
+    .await?;
 
     let post_id = match post {
         Some(id) => id,
@@ -524,10 +560,12 @@ async fn handle_like(
 
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
-    let post_id = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
-        .bind(object_uri)
-        .fetch_optional(pool)
-        .await?;
+    let post_id = sqlx::query_scalar::<_, uuid::Uuid>(
+        r#"SELECT id FROM posts WHERE ap_id = $1"#,
+    )
+    .bind(object_uri)
+    .fetch_optional(pool)
+    .await?;
 
     let post_id = match post_id {
         Some(id) => id,
@@ -551,6 +589,52 @@ async fn handle_like(
     .await?;
 
     info!(actor = %remote_actor.ap_id, post = %object_uri, "like recorded");
+    Ok(())
+}
+
+// ..... BLOCK .....
+
+async fn handle_block(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    // The `object` of a Block is the URI of the actor being blocked.
+    let target_uri = activity
+        .object
+        .as_str()
+        .or_else(|| activity.object.get("id").and_then(|v| v.as_str()))
+        .ok_or_else(|| NoombatError::BadRequest("Block: missing target actor id".into()))?;
+
+    let target_username = extract_local_username(target_uri)
+        .ok_or_else(|| NoombatError::BadRequest("cannot parse target actor URI".into()))?;
+
+    info!(actor = %activity.actor, target = %target_uri, "received Block");
+
+    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let local_actor = repo::find_local_by_username(pool, target_username).await?;
+
+    // Persist the block (idempotent).
+    sqlx::query(
+        r#"INSERT INTO blocks (id, actor_id, target_id)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (actor_id, target_id) DO NOTHING"#,
+    )
+    .bind(uuid::Uuid::new_v4())
+    .bind(remote_actor.id)
+    .bind(local_actor.id)
+    .execute(pool)
+    .await?;
+
+    // Sever any follow relationships in both directions.
+    repo::delete_follow(pool, remote_actor.id, local_actor.id).await?;
+    repo::delete_follow(pool, local_actor.id, remote_actor.id).await?;
+
+    info!(
+        actor = %remote_actor.ap_id,
+        target = %local_actor.ap_id,
+        "block recorded; mutual follows severed"
+    );
     Ok(())
 }
 
