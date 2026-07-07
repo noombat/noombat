@@ -28,6 +28,9 @@ pub struct Principal {
     pub entity_uid: String,
     /// The local username, if the principal maps to a local actor.
     pub username: Option<String>,
+    /// Instance-level role (`"user"`, `"moderator"`, `"admin"`), populated
+    /// from the `actors` table when the principal is a local actor.
+    pub instance_role: Option<String>,
 }
 
 /// Axum middleware function (for use with [`axum::middleware::from_fn_with_state`]).
@@ -39,6 +42,25 @@ pub async fn authorisation(
     // ..... Resolve principal .....
 
     let principal = resolve_principal(&state, &request);
+
+    // Look up instance_role for local principals (single indexed query).
+    let principal = match principal {
+        Some(mut p) => {
+            if let Some(ref username) = p.username {
+                if let Ok(role) = sqlx::query_scalar::<_, String>(
+                    "SELECT instance_role FROM actors WHERE username = $1 AND is_local = TRUE",
+                )
+                .bind(username.as_str())
+                .fetch_optional(&state.pool)
+                .await
+                {
+                    p.instance_role = role;
+                }
+            }
+            Some(p)
+        }
+        None => None,
+    };
 
     if let Some(ref p) = principal {
         request.extensions_mut().insert(p.clone());
@@ -80,6 +102,9 @@ pub async fn authorisation(
 
     let mut context = AuthContext::new();
     context.insert("is_owner".into(), is_owner.to_string());
+    if let Some(ref role) = principal.instance_role {
+        context.insert("instance_role".into(), role.clone());
+    }
 
     let decision = state
         .auth
@@ -138,6 +163,7 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
     Some(Principal {
         entity_uid,
         username,
+        instance_role: None,
     })
 }
 

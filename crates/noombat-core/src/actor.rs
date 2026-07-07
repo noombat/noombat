@@ -43,6 +43,10 @@ pub struct Actor {
     pub is_local: bool,
     /// Remote actors only: their declared ActivityPub inbox URI.
     pub inbox_url: Option<String>,
+    /// Instance-level role: `"user"`, `"moderator"`, or `"admin"`.
+    pub instance_role: String,
+    /// Moderation state: `"active"`, `"silenced"`, or `"suspended"`.
+    pub actor_status: String,
     pub chatmail_addr: Option<String>,
     pub orcid: Option<String>,
     pub actor_privacy: ActorPrivacy,

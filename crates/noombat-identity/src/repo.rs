@@ -39,6 +39,8 @@ struct ActorRow {
     domain: String,
     is_local: bool,
     inbox_url: Option<String>,
+    instance_role: String,
+    actor_status: String,
     chatmail_addr: Option<String>,
     orcid: Option<String>,
     actor_privacy: serde_json::Value,
@@ -77,6 +79,8 @@ impl ActorRow {
             domain: self.domain,
             is_local: self.is_local,
             inbox_url: self.inbox_url,
+            instance_role: self.instance_role,
+            actor_status: self.actor_status,
             chatmail_addr: self.chatmail_addr,
             orcid: self.orcid,
             actor_privacy,
@@ -134,6 +138,8 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         domain: row.domain,
         is_local: row.is_local,
         inbox_url: None,
+        instance_role: "user".to_owned(),
+        actor_status: "active".to_owned(),
         chatmail_addr: None,
         orcid: None,
         actor_privacy: privacy,
@@ -149,7 +155,8 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
-               inbox_url, chatmail_addr, orcid, actor_privacy,
+               inbox_url, instance_role, actor_status,
+               chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE username = $1 AND is_local = TRUE"#,
@@ -169,7 +176,8 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
-               inbox_url, chatmail_addr, orcid, actor_privacy,
+               inbox_url, instance_role, actor_status,
+               chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE ap_id = $1"#,
@@ -267,7 +275,7 @@ pub async fn list_public_posts(
     offset: i64,
 ) -> Result<Vec<PostSummary>> {
     let rows = sqlx::query_as::<_, PostSummary>(
-        r#"SELECT ap_id, ap_object FROM posts
+        r#"SELECT id, ap_id, ap_object FROM posts
            WHERE actor_id = $1 AND visibility = 'public'
            ORDER BY created_at DESC
            LIMIT $2 OFFSET $3"#,
@@ -505,7 +513,8 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
-               inbox_url, chatmail_addr, orcid, actor_privacy,
+               inbox_url, instance_role, actor_status,
+               chatmail_addr, orcid, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE id = $1"#,
