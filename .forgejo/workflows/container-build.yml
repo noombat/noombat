@@ -34,4 +34,12 @@ jobs:
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Build container image
-        run: docker build --tag noombat:ci-test .
+        run: |
+          if command -v docker &>/dev/null; then
+            docker build --tag noombat:ci-test .
+          elif command -v podman &>/dev/null; then
+            podman build --tag noombat:ci-test .
+          else
+            echo "::error::Neither docker nor podman found on this runner"
+            exit 1
+          fi
