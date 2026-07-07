@@ -146,8 +146,7 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
 
     let token = header.strip_prefix("Bearer ")?;
     // Constant-time comparison to prevent timing side-channel attacks.
-    if token.len() != expected.len()
-        || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
+    if token.len() != expected.len() || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
     {
         return None;
     }
