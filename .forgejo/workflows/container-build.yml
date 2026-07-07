@@ -1,0 +1,37 @@
+# Verify that the Dockerfile builds successfully.
+#
+# Gated to paths that affect the container image.
+# Does not push, i.e. the image is discarded after the job.
+
+name: Container build
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "compose.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**/Cargo.toml"
+      - "templates/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - "Dockerfile"
+      - "compose.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**/Cargo.toml"
+      - "templates/**"
+
+jobs:
+  container-build:
+    name: Container image build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Build container image
+        run: docker build --tag noombat:ci-test .

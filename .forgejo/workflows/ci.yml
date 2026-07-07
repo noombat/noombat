@@ -1,6 +1,6 @@
 # Forgejo Actions CI pipeline for Codeberg.
 #
-# Jobs `fmt`, `reuse`, and `deny` run on Codeberg's hosted runners
+# Jobs `fmt` and `reuse` run on Codeberg's hosted runners
 # (`codeberg-small`). They require no infrastructure and perform no
 # Rust compilation.
 #
