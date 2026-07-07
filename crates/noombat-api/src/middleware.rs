@@ -12,6 +12,7 @@ use axum::extract::State;
 use axum::http::{header::AUTHORIZATION, Method, Request, StatusCode};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use subtle::ConstantTimeEq;
 use tracing::{debug, warn};
 
 use noombat_core::auth::{AuthContext, Decision};
@@ -144,7 +145,10 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
         .and_then(|v| v.to_str().ok())?;
 
     let token = header.strip_prefix("Bearer ")?;
-    if token != expected {
+    // Constant-time comparison to prevent timing side-channel attacks.
+    if token.len() != expected.len()
+        || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
+    {
         return None;
     }
 
