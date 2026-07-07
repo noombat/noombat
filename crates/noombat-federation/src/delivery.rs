@@ -72,13 +72,29 @@ pub async fn enqueue(
 /// On transient failure, applies exponential backoff up to a maximum of
 /// 10 attempts.
 pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
+    // Atomically claim rows by advancing `next_retry` one hour into
+    // the future. The CTE selects and locks candidate rows; the
+    // surrounding UPDATE marks them as in-progress before the
+    // implicit transaction commits. Concurrent workers calling the
+    // same query will skip these rows (SKIP LOCKED) or see the
+    // advanced `next_retry` and ignore them.
+    //
+    // If the process crashes before delivery completes, the rows
+    // become eligible again once the one-hour claim window expires.
     let rows = sqlx::query_as::<_, DeliveryRow>(
-        r#"SELECT id, actor_id, payload, target_inbox, attempts
-           FROM delivery_queue
-           WHERE next_retry <= now() AND attempts < 10
-           ORDER BY next_retry ASC
-           LIMIT 50
-           FOR UPDATE SKIP LOCKED"#,
+        r#"WITH claimed AS (
+               SELECT id FROM delivery_queue
+               WHERE next_retry <= now() AND attempts < 10
+               ORDER BY next_retry ASC
+               LIMIT 50
+               FOR UPDATE SKIP LOCKED
+           )
+           UPDATE delivery_queue dq
+           SET next_retry = now() + interval '1 hour'
+           FROM claimed
+           WHERE dq.id = claimed.id
+           RETURNING dq.id, dq.actor_id, dq.payload,
+                     dq.target_inbox, dq.attempts"#,
     )
     .fetch_all(pool)
     .await;
