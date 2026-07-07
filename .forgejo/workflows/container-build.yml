@@ -37,9 +37,11 @@ jobs:
     container:
       image: node:22-alpine
       options: "-v /var/run/docker.sock:/var/run/docker.sock"
+    env:
+      DOCKER_BUILDKIT: "1"
     steps:
       - name: Install dependencies
-        run: apk add --no-cache docker-cli git
+        run: apk add --no-cache docker-cli docker-cli-buildx git
       - uses: https://code.forgejo.org/actions/checkout@v4
       - name: Build container image
         run: docker build --tag noombat:ci-test .
