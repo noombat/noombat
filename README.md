@@ -83,7 +83,7 @@ noombat/
 ├── migrations/                   # SQL migrations (sqlx).
 ├── policies/                     # Cedar authorisation policies and schema.
 ├── templates/                    # Typst CV templates.
-├── docker-compose.yml
+├── compose.yml
 ├── noombat.toml                  # Default configuration.
 └── Dockerfile
 ```

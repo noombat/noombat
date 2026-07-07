@@ -28,7 +28,7 @@ path = [
     "noombat.toml",
     ".env.example",
     ".gitignore",
-    "docker-compose.yml",
+    "compose.yml",
     # Database migrations.
     "migrations/**",
     # Cedar authorisation policies.
