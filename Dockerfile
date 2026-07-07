@@ -37,13 +37,21 @@ COPY --from=frontend /build/frontend/dist frontend/dist
 # Build in release mode.
 RUN cargo build --release --bin noombat
 
+# ..... TYPST BINARY .....
+# Copy the pre-built Typst CLI from the official container image.
+# Pinned to the release series used by the project; bump when upgrading.
+FROM ghcr.io/typst/typst:v0.15.0 AS typst
+
 # ..... RUNTIME .....
 FROM debian:bookworm-slim
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates && \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        fonts-libertinus && \
     rm -rf /var/lib/apt/lists/*
 
+COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY --from=builder /build/target/release/noombat /usr/local/bin/noombat
 COPY --from=builder /build/migrations /opt/noombat/migrations
 COPY --from=builder /build/templates /opt/noombat/templates
