@@ -1,19 +1,24 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! CV PDF download endpoint.
+//!
+//! Access control is enforced by the authorisation middleware via the
+//! `download_cv` Cedar policy (see `policies/noombat.cedar`). This
+//! handler determines *which sections* to include based on the
+//! requester's relationship to the profile owner.
 
 use axum::extract::{Path, Query, State};
 use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use noombat_core::error::NoombatError;
-use noombat_core::privacy::{CvDownload, SectionVisibility};
+use noombat_core::privacy::SectionVisibility;
 use serde::Deserialize;
 
-use crate::auth::verify_bearer_token;
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 /// Query parameters for `GET /users/{username}/cv`.
@@ -42,13 +47,21 @@ pub fn router() -> Router<AppState> {
 
 /// `GET /users/{username}/cv?template=default`
 ///
-/// Generates and streams a PDF curriculum vitae. Access is governed by
-/// the `cv_download` privacy setting: `public` (anyone), `followers`
-/// (accepted followers only), or `self` (profile owner only).
+/// Generates and streams a PDF curriculum vitae.
+///
+/// The authorisation middleware has already evaluated the `download_cv`
+/// Cedar policy before this handler runs. The handler determines the
+/// maximum section visibility to include:
+///
+/// | Requester   | Sections included                  |
+/// |-------------|------------------------------------|
+/// | Owner       | `public` + `followers` + `private` |
+/// | Follower    | `public` + `followers`             |
+/// | Anyone else | `public`                           |
 async fn download_cv(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Query(params): Query<CvParams>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
@@ -64,36 +77,33 @@ async fn download_cv(
         )));
     }
 
-    // Determine the requester's relationship to the actor.
-    let (max_vis, is_owner) = match actor.actor_privacy.cv_download {
-        CvDownload::Public => {
-            // Anyone may download; include only public sections.
-            (SectionVisibility::Public, false)
-        }
-        CvDownload::Followers => {
-            // Must be an accepted follower (or the owner).
-            let is_owner = verify_bearer_token(&headers, &state.admin_token).is_ok();
-            if !is_owner {
-                // TODO: Verify the requester's follow
-                // relationship via HTTP Signatures.
-                return Err(ApiError(NoombatError::Forbidden));
-            }
-            (SectionVisibility::Private, true)
-        }
-        CvDownload::SelfOnly => {
-            if verify_bearer_token(&headers, &state.admin_token).is_err() {
-                return Err(ApiError(NoombatError::Forbidden));
-            }
-            (SectionVisibility::Private, true)
-        }
-    };
+    // Determine the maximum section visibility based on the
+    // requester's relationship to the profile owner.
+    //
+    // The middleware has already populated `Principal.is_follower_of_target`
+    // via `fetch_privacy_context`, so no additional database query is
+    // required here.
+    let principal_username = principal
+        .as_ref()
+        .and_then(|p| p.username.as_deref());
 
-    // When the owner downloads their own CV, include all sections
-    // (including private ones intended solely for the CV).
+    let is_owner = principal_username
+        .map(|u| u == username)
+        .unwrap_or(false);
+
+    let is_follower = principal
+        .as_ref()
+        .and_then(|p| p.is_follower_of_target)
+        .unwrap_or(false);
+
     let effective_vis = if is_owner {
+        // The owner's own CV includes all sections, including
+        // `private` entries intended solely for the CV.
         SectionVisibility::Private
+    } else if is_follower {
+        SectionVisibility::Followers
     } else {
-        max_vis
+        SectionVisibility::Public
     };
 
     let template_dir = std::path::Path::new("templates");
