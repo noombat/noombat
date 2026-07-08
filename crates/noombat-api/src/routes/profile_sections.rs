@@ -91,6 +91,7 @@ async fn create_experience(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let exp = noombat_identity::profile::create_experience(&state.pool, actor.id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(exp)))
 }
 
@@ -102,6 +103,7 @@ async fn delete_experience(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_experience(&state.pool, actor.id, id).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -115,6 +117,7 @@ async fn update_experience(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let exp =
         noombat_identity::profile::update_experience(&state.pool, actor.id, id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(exp)))
 }
 
@@ -143,6 +146,7 @@ async fn create_education(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let edu = noombat_identity::profile::create_education(&state.pool, actor.id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(edu)))
 }
 
@@ -154,6 +158,7 @@ async fn delete_education(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_education(&state.pool, actor.id, id).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -167,6 +172,7 @@ async fn update_education(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let edu =
         noombat_identity::profile::update_education(&state.pool, actor.id, id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(edu)))
 }
 
@@ -205,6 +211,7 @@ async fn add_skill(
 
     // Re-index profile with updated skills (fire-and-forget).
     reindex_profile_skills(&state, &actor).await;
+    enqueue_profile_update(&state, &actor).await;
 
     Ok((StatusCode::CREATED, Json(skill)))
 }
@@ -220,6 +227,7 @@ async fn delete_skill(
 
     // Re-index profile with updated skills (fire-and-forget).
     reindex_profile_skills(&state, &actor).await;
+    enqueue_profile_update(&state, &actor).await;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -304,6 +312,7 @@ async fn create_publication(
 
     let pub_ =
         noombat_identity::profile::create_publication(&state.pool, actor.id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(pub_)))
 }
 
@@ -315,6 +324,7 @@ async fn delete_publication(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_publication(&state.pool, actor.id, id).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -344,20 +354,26 @@ async fn add_verified_link(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let link = noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
 
-    // Trigger immediate verification (non-blocking).
-    let pool = state.pool.clone();
-    let client = state.http_client.clone();
+    // Trigger immediate verification (non-blocking). If verification
+    // succeeds, emit an Update activity so that followers learn about
+    // the newly verified link.
+    let bg_state = state.clone();
+    let bg_actor = actor.clone();
     let ap_url = format!("https://{}/users/{}", state.domain, username);
     let human_url = format!("https://{}/@{}", state.domain, username);
     let link_clone = link.clone();
     tokio::spawn(async move {
-        let _ = noombat_identity::verification::verify_link(
-            &pool,
-            &client,
+        let verified = noombat_identity::verification::verify_link(
+            &bg_state.pool,
+            &bg_state.http_client,
             &link_clone,
             &[&ap_url, &human_url],
         )
         .await;
+
+        if matches!(verified, Ok(true)) {
+            enqueue_profile_update(&bg_state, &bg_actor).await;
+        }
     });
 
     Ok((StatusCode::CREATED, Json(link)))
@@ -371,6 +387,7 @@ async fn delete_verified_link(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::verification::delete_link(&state.pool, actor.id, id).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -400,6 +417,7 @@ async fn create_custom_section(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let section =
         noombat_identity::profile::create_custom_section(&state.pool, actor.id, &params).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(section)))
 }
 
@@ -411,6 +429,7 @@ async fn delete_custom_section(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_custom_section(&state.pool, actor.id, id).await?;
+    enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -436,6 +455,81 @@ async fn reindex_profile_skills(state: &AppState, actor: &noombat_core::actor::A
         .unwrap_or_default();
     let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
     crate::search_sync::index_profile(&state.search, actor, &names);
+}
+
+// ..... Profile Update activity federation .....
+
+/// Construct an `Update` activity for the actor's profile and enqueue
+/// it for delivery to all accepted followers.
+///
+/// The activity carries the full AP actor object so that remote
+/// instances refresh their cached copy.
+///
+/// Errors are logged, not propagated: a federation delivery failure
+/// must not block the local mutation that triggered it.
+async fn enqueue_profile_update(state: &AppState, actor: &noombat_core::actor::Actor) {
+    let update_id = format!(
+        "{}#update-{}",
+        actor.ap_id,
+        chrono::Utc::now().timestamp_millis()
+    );
+
+    let profile_url = format!("https://{}/@{}", state.domain, actor.username);
+
+    let update_activity = serde_json::json!({
+        "@context": noombat_ap::context::default_context(),
+        "id": update_id,
+        "type": "Update",
+        "actor": actor.ap_id,
+        "object": {
+            "id": actor.ap_id,
+            "type": match actor.actor_type {
+                noombat_core::actor::ActorType::Individual => "Person",
+                noombat_core::actor::ActorType::Company => "Organization",
+                noombat_core::actor::ActorType::Group => "Group",
+            },
+            "preferredUsername": actor.username,
+            "name": actor.display_name,
+            "summary": actor.summary_html,
+            "url": profile_url,
+            "inbox": format!("{}/inbox", actor.ap_id),
+            "outbox": format!("{}/outbox", actor.ap_id),
+            "followers": format!("{}/followers", actor.ap_id),
+            "following": format!("{}/following", actor.ap_id),
+            "publicKey": {
+                "id": format!("{}#main-key", actor.ap_id),
+                "owner": actor.ap_id,
+                "publicKeyPem": actor.public_key_pem,
+            },
+        },
+        "published": chrono::Utc::now().to_rfc3339(),
+    });
+
+    let inboxes = match noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                actor = %actor.ap_id,
+                error = %e,
+                "failed to fetch follower inboxes for profile Update"
+            );
+            return;
+        }
+    };
+
+    for inbox in inboxes {
+        if let Err(e) =
+            noombat_federation::delivery::enqueue(&state.pool, actor.id, &update_activity, &inbox)
+                .await
+        {
+            tracing::warn!(
+                actor = %actor.ap_id,
+                target_inbox = %inbox,
+                error = %e,
+                "failed to enqueue profile Update"
+            );
+        }
+    }
 }
 
 /// Parse a date string that may be partial: `"2024"`, `"2024-06"`, or `"2024-06-15"`.
