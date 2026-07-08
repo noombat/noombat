@@ -86,7 +86,7 @@ pub async fn verify_link(
     pool: &PgPool,
     client: &reqwest::Client,
     link: &VerifiedLink,
-    profile_url: &str,
+    profile_urls: &[&str],
 ) -> Result<bool> {
     info!(url = %link.url, "verifying rel=\"me\" link");
 
@@ -104,7 +104,7 @@ pub async fn verify_link(
         }
     };
 
-    let verified = check_rel_me(&html, profile_url);
+    let verified = check_rel_me(&html, profile_urls);
     mark_checked(pool, link.id, verified).await?;
 
     if verified {
@@ -117,16 +117,20 @@ pub async fn verify_link(
 }
 
 /// Check whether the HTML body contains a `rel="me"` link pointing
-/// to the given profile URL.
+/// to any of the given profile URLs.
+///
+/// Accepts multiple URLs so that the caller can pass both the AP ID
+/// (`/users/{username}`) and the human-facing URL (`/@{username}`);
+/// a match on either form constitutes verification.
 ///
 /// Uses the `scraper` crate (backed by `html5ever`) to parse the HTML,
 /// handling arbitrary attribute ordering, single-quoted values,
 /// multi-line elements, and other edge cases that regex cannot cover.
-fn check_rel_me(html: &str, profile_url: &str) -> bool {
+fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
     let document = Html::parse_document(html);
     for element in document.select(&REL_ME_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
-            if href == profile_url {
+            if profile_urls.iter().any(|url| href == *url) {
                 return true;
             }
         }
@@ -184,8 +188,9 @@ pub async fn reverify_stale_links(
             .await?;
 
         if let Some(username) = username {
-            let profile_url = format!("https://{domain}/users/{username}");
-            let _ = verify_link(pool, client, link, &profile_url).await;
+            let ap_url = format!("https://{domain}/users/{username}");
+            let human_url = format!("https://{domain}/@{username}");
+            let _ = verify_link(pool, client, link, &[&ap_url, &human_url]).await;
             count += 1;
         }
     }
@@ -197,42 +202,48 @@ pub async fn reverify_stale_links(
 mod tests {
     use super::*;
 
+    /// Both URL forms, as passed by `reverify_stale_links`.
+    const BOTH: &[&str] = &[
+        "https://noombat.social/users/alice",
+        "https://noombat.social/@alice",
+    ];
+
     #[test]
     fn finds_rel_me_link() {
         let html = r#"<html><body>
             <a rel="me" href="https://noombat.social/users/alice">Noombat</a>
         </body></html>"#;
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
     }
 
     #[test]
     fn finds_rel_me_link_element() {
         let html = r#"<link rel="me" href="https://noombat.social/users/alice" />"#;
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
     }
 
     #[test]
     fn finds_rel_me_href_first() {
         let html = r#"<a href="https://noombat.social/users/alice" rel="me">Noombat</a>"#;
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
     }
 
     #[test]
     fn does_not_match_wrong_url() {
         let html = r#"<a rel="me" href="https://other.example/alice">link</a>"#;
-        assert!(!check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(!check_rel_me(html, BOTH));
     }
 
     #[test]
     fn does_not_match_missing_rel_me() {
         let html = r#"<a href="https://noombat.social/users/alice">link</a>"#;
-        assert!(!check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(!check_rel_me(html, BOTH));
     }
 
     #[test]
     fn finds_rel_me_single_quotes() {
         let html = "<a rel='me' href='https://noombat.social/users/alice'>Noombat</a>";
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
     }
 
     #[test]
@@ -241,12 +252,31 @@ mod tests {
             rel="me"
             href="https://noombat.social/users/alice"
         >Noombat</a>"#;
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
     }
 
     #[test]
     fn finds_rel_me_among_multiple_rels() {
         let html = r#"<a rel="noopener me" href="https://noombat.social/users/alice">link</a>"#;
-        assert!(check_rel_me(html, "https://noombat.social/users/alice"));
+        assert!(check_rel_me(html, BOTH));
+    }
+
+    // ..... /@{username} form .....
+
+    #[test]
+    fn finds_rel_me_at_prefix_url() {
+        let html = r#"<a rel="me" href="https://noombat.social/@alice">Noombat</a>"#;
+        assert!(check_rel_me(html, BOTH));
+    }
+
+    #[test]
+    fn at_prefix_url_alone_is_sufficient() {
+        // Only the /@alice form is in the href; only that form is
+        // in the accepted list. Verification should still succeed.
+        let html = r#"<a rel="me" href="https://noombat.social/@alice">Noombat</a>"#;
+        assert!(check_rel_me(
+            html,
+            &["https://noombat.social/@alice"]
+        ));
     }
 }

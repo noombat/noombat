@@ -177,38 +177,30 @@ pub async fn authorisation(
 
     // Fetch privacy-related context for actions that reference it.
     if action_needs_privacy_context(&action) {
-        match fetch_privacy_context(&state.pool, &owner_username, principal_username).await {
-            Some(priv_ctx) => {
-                context.insert("discoverable".into(), priv_ctx.discoverable.to_string());
-                context.insert(
-                    "federate_profile".into(),
-                    priv_ctx.federate_profile.to_string(),
-                );
-                context.insert("cv_download".into(), priv_ctx.cv_download);
-                context.insert("is_follower".into(), priv_ctx.is_follower.to_string());
+        if let Some(priv_ctx) =
+            fetch_privacy_context(&state.pool, &owner_username, principal_username).await
+        {
+            context.insert("discoverable".into(), priv_ctx.discoverable.to_string());
+            context.insert(
+                "federate_profile".into(),
+                priv_ctx.federate_profile.to_string(),
+            );
+            context.insert("cv_download".into(), priv_ctx.cv_download);
+            context.insert("is_follower".into(), priv_ctx.is_follower.to_string());
 
-                // Profile pages are always accessible via direct URL
-                // (`discoverable` controls search results, not direct access).
-                // Set `visibility` to `"public"` so that the `public-view` Cedar policy
-                // permits the request.
-                if action.contains("view") {
-                    context.insert("visibility".into(), "public".to_owned());
-                }
-
-                // Propagate the follower status to the principal extension
-                // so that downstream handlers (e.g. the CV handler) may
-                // read it without a redundant database query.
-                if let Some(ref mut p) = principal {
-                    p.is_follower_of_target = Some(priv_ctx.is_follower);
-                }
+            // Profile pages are always accessible via direct URL
+            // (`discoverable` controls search results, not direct access).
+            // Set `visibility` to `"public"` so that the `public-view` Cedar policy
+            // permits the request.
+            if action.contains("view") {
+                context.insert("visibility".into(), "public".to_owned());
             }
-            None => {
-                // The target actor does not exist. Skip policy evaluation
-                // and let the downstream handler produce the correct 404.
-                if let Some(ref p) = principal {
-                    request.extensions_mut().insert(p.clone());
-                }
-                return next.run(request).await;
+
+            // Propagate the follower status to the principal extension
+            // so that downstream handlers (e.g. the CV handler) may
+            // read it without a redundant database query.
+            if let Some(ref mut p) = principal {
+                p.is_follower_of_target = Some(priv_ctx.is_follower);
             }
         }
     }
@@ -275,11 +267,16 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
         return None;
     }
 
-    // Extract the username from the path (e.g. /users/alice/...).
+    // Extract the username from the path (e.g. /users/alice/... or /@alice).
     let path = request.uri().path();
     let username = path
         .strip_prefix("/users/")
         .and_then(|rest| rest.split('/').next())
+        .or_else(|| {
+            path.strip_prefix("/@")
+                .and_then(|rest| rest.split('/').next())
+                .filter(|u| !u.is_empty())
+        })
         .map(String::from);
 
     let entity_uid = match &username {
@@ -309,10 +306,18 @@ fn action_needs_privacy_context(action: &str) -> bool {
 /// collections, feed pages, and inbound federation (authenticated
 /// via HTTP Signatures rather than bearer tokens).
 fn map_route(method: &Method, path: &str) -> Option<(String, String, String)> {
-    // Only /users/{username}[/...] routes are policy-evaluated.
-    let rest = path.strip_prefix("/users/")?;
-    let username = rest.split('/').next()?;
-    let subpath = &rest[username.len()..]; // "" or "/..." after username
+    // Extract the username from either /users/{username}[/...] or
+    // /@{username} (the human-facing profile URL).
+    let (username, subpath) = if let Some(rest) = path.strip_prefix("/users/") {
+        let username = rest.split('/').next()?;
+        let subpath = &rest[username.len()..]; // "" or "/..." after username
+        (username, subpath)
+    } else if let Some(rest) = path.strip_prefix("/@") {
+        let username = rest.split('/').next().filter(|u| !u.is_empty())?;
+        (username, "")
+    } else {
+        return None;
+    };
 
     let resource = format!(r#"Noombat::Profile::"{username}""#);
 
@@ -418,5 +423,21 @@ mod tests {
     #[test]
     fn action_does_not_need_privacy_context_for_edit() {
         assert!(!action_needs_privacy_context(r#"Noombat::Action::"edit""#));
+    }
+
+    // ..... /@{username} (human-facing profile URL) .....
+
+    #[test]
+    fn at_prefix_profile_maps_to_view() {
+        let (action, resource, owner) = map_route(&Method::GET, "/@alice").unwrap();
+        assert!(action.contains("view"));
+        assert!(resource.contains("alice"));
+        assert_eq!(owner, "alice");
+    }
+
+    #[test]
+    fn at_prefix_bare_slash_is_unmapped() {
+        // `/@` alone has no username.
+        assert!(map_route(&Method::GET, "/@").is_none());
     }
 }

@@ -347,11 +347,14 @@ async fn add_verified_link(
     // Trigger immediate verification (non-blocking).
     let pool = state.pool.clone();
     let client = state.http_client.clone();
-    let profile_url = format!("https://{}/users/{}", state.domain, username);
+    let ap_url = format!("https://{}/users/{}", state.domain, username);
+    let human_url = format!("https://{}/@{}", state.domain, username);
     let link_clone = link.clone();
     tokio::spawn(async move {
         let _ =
-            noombat_identity::verification::verify_link(&pool, &client, &link_clone, &profile_url)
+            noombat_identity::verification::verify_link(
+                &pool, &client, &link_clone, &[&ap_url, &human_url],
+            )
                 .await;
     });
 

@@ -36,6 +36,11 @@ pub fn router() -> Router<AppState> {
         )
         .route("/users/{username}/followers", get(get_followers))
         .route("/users/{username}/following", get(get_following))
+        // Human-facing profile URL. Serves the same HTML profile page
+        // as GET /users/{username}. Content-negotiates AP JSON like
+        // Mastodon's /@{username} endpoint; the canonical AP `id`
+        // remains at /users/{username}.
+        .route("/@{username}", get(get_actor_human))
 }
 
 // ..... HELPERS .....
@@ -115,7 +120,7 @@ async fn get_actor(
                 owner: actor.ap_id.clone(),
                 public_key_pem: actor.public_key_pem.clone(),
             },
-            url: Some(actor.ap_id.clone()),
+            url: Some(format!("https://{}/@{}", &state.domain, &actor.username)),
             attachment,
             endpoints: None,
         };
@@ -172,7 +177,25 @@ async fn get_actor(
     Ok(page.into_response())
 }
 
-// ..... GET /users/{username}/outbox .....
+// ..... GET /@{username} .....
+//
+// Human-facing profile URL. Delegates to `get_actor` which handles
+// both AP JSON and HTML responses via content negotiation. When a
+// Fediverse client sends `Accept: application/activity+json` to
+// this path, it receives the AP actor object, i.e. this is harmless
+// (the canonical `id` still points to `/users/{username}`) and
+// matches the behaviour of Mastodon, which serves AP JSON at
+// `/@{username}` as well.
+
+async fn get_actor_human(
+    state: State<AppState>,
+    path: Path<String>,
+    headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+    get_actor(state, path, headers).await
+}
+
+// ..... GET /users/{username}/outbox .......
 
 async fn get_outbox(
     State(state): State<AppState>,
