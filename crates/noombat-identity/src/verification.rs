@@ -130,7 +130,7 @@ fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
     let document = Html::parse_document(html);
     for element in document.select(&REL_ME_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
-            if profile_urls.iter().any(|url| href == *url) {
+            if profile_urls.contains(&href) {
                 return true;
             }
         }
