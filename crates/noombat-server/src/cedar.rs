@@ -221,8 +221,8 @@ mod tests {
     // would cause `CedarBackend::new` to fail.
 
     fn production_backend() -> CedarBackend {
-        let policy_src =
-            std::fs::read_to_string("policies/noombat.cedar").expect("failed to read noombat.cedar");
+        let policy_src = std::fs::read_to_string("policies/noombat.cedar")
+            .expect("failed to read noombat.cedar");
         let schema_src = std::fs::read_to_string("policies/noombat.cedarschema")
             .expect("failed to read noombat.cedarschema");
         CedarBackend::new(&policy_src, Some(&schema_src))

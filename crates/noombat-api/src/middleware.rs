@@ -168,10 +168,7 @@ pub async fn authorisation(
 
     let mut context = AuthContext::new();
     context.insert("is_owner".into(), is_owner.to_string());
-    context.insert(
-        "is_authenticated".into(),
-        principal.is_some().to_string(),
-    );
+    context.insert("is_authenticated".into(), principal.is_some().to_string());
 
     if let Some(ref p) = principal {
         if let Some(ref role) = p.instance_role {
