@@ -579,18 +579,29 @@ async fn handle_announce(
 
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
-    // Look up the boosted post locally.
-    let post = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
-        .bind(object_uri)
-        .fetch_optional(pool)
-        .await?;
-
-    let post_id = match post {
+    // Look up the boosted post locally; if absent, fetch it from the
+    // remote instance so that boosts of non-local content are visible
+    // in timelines. This mirrors Mastodon's dereference-on-boost
+    // behaviour.
+    let post_id = match sqlx::query_scalar::<_, uuid::Uuid>(
+        r#"SELECT id FROM posts WHERE ap_id = $1"#,
+    )
+    .bind(object_uri)
+    .fetch_optional(pool)
+    .await?
+    {
         Some(id) => id,
-        None => {
-            warn!(object = %object_uri, "Announce references unknown post; ignoring");
-            return Ok(());
-        }
+        None => match fetch_and_persist_remote_post(pool, http_client, object_uri).await {
+            Ok(id) => id,
+            Err(e) => {
+                warn!(
+                    object = %object_uri,
+                    error = %e,
+                    "Announce: failed to fetch remote post; ignoring"
+                );
+                return Ok(());
+            }
+        },
     };
 
     let boost_ap_id = &activity.id;
@@ -608,6 +619,149 @@ async fn handle_announce(
 
     info!(actor = %remote_actor.ap_id, post = %object_uri, "boost recorded");
     Ok(())
+}
+
+/// Fetch a remote post by its AP URI, resolve its author, persist both,
+/// and return the new post's local UUID.
+///
+/// Used by [`handle_announce`] when the boosted object is not already
+/// known locally. The fetched object must be a `Note` or `Article`;
+/// other types are rejected.
+async fn fetch_and_persist_remote_post(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    object_uri: &str,
+) -> Result<uuid::Uuid> {
+    let response = http_client
+        .get(object_uri)
+        .header("Accept", "application/activity+json")
+        .send()
+        .await
+        .map_err(|e| NoombatError::Federation(format!("failed to fetch {object_uri}: {e}")))?;
+
+    if !response.status().is_success() {
+        return Err(NoombatError::Federation(format!(
+            "remote object returned HTTP {}",
+            response.status()
+        )));
+    }
+
+    let object: serde_json::Value = response
+        .json()
+        .await
+        .map_err(|e| NoombatError::Federation(format!("invalid object JSON: {e}")))?;
+
+    let object_type = object
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let post_type = match object_type {
+        "Note" => "note",
+        "Article" => "article",
+        _ => {
+            return Err(NoombatError::Federation(format!(
+                "Announce references unsupported object type: {object_type}"
+            )));
+        }
+    };
+
+    let ap_id = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| NoombatError::Federation("fetched object missing id".into()))?;
+
+    // `attributedTo` may be a single URI string (Mastodon) or an array
+    // of URIs or objects (Lemmy, PeerTube). Extract the first usable
+    // string in either case.
+    let author_uri = object
+        .get("attributedTo")
+        .and_then(|v| {
+            v.as_str().or_else(|| {
+                v.as_array()
+                    .and_then(|arr| arr.iter().find_map(|item| item.as_str()))
+            })
+        })
+        .ok_or_else(|| NoombatError::Federation("fetched object missing attributedTo".into()))?;
+
+    let content_html = object
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    let content_md = object
+        .get("source")
+        .and_then(|src| {
+            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+            if media == "text/markdown" {
+                src.get("content").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(content_html);
+
+    let title = object
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    let featured_image_url = extract_image_url(&object);
+
+    // Derive visibility from the object's own to/cc addressing.
+    let to = extract_string_array(&object, "to");
+    let cc = extract_string_array(&object, "cc");
+    let visibility = derive_visibility(&to, &cc);
+
+    // Resolve the author (creates a remote actor record if needed).
+    let author = resolve_remote_actor(pool, http_client, author_uri).await?;
+
+    let remote_post = repo::RemotePost {
+        actor_id: author.id,
+        ap_id: ap_id.to_owned(),
+        post_type: post_type.to_owned(),
+        title,
+        featured_image_url,
+        content_md: content_md.to_owned(),
+        content_html: content_html.to_owned(),
+        visibility,
+        ap_object: object.clone(),
+    };
+
+    // Persist the post. If it was inserted by a concurrent request in
+    // the meantime, `create_remote_post` returns `None`; fall back to
+    // a lookup.
+    let post_id = match repo::create_remote_post(pool, &remote_post).await? {
+        Some(id) => {
+            // Link hashtags from the tag array (best-effort).
+            let hashtag_names = extract_hashtags_from_tags(&object);
+            if !hashtag_names.is_empty() {
+                if let Err(e) =
+                    noombat_identity::hashtags::link_post_hashtags(pool, id, &hashtag_names).await
+                {
+                    warn!(ap_id, "failed to link hashtags for fetched post: {e}");
+                }
+            }
+            info!(ap_id, "remote post fetched and persisted via Announce");
+            id
+        }
+        None => {
+            // Concurrent insert; look up the existing row.
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                r#"SELECT id FROM posts WHERE ap_id = $1"#,
+            )
+            .bind(ap_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| {
+                NoombatError::Internal(format!(
+                    "post {ap_id} not found after concurrent insert: {e}"
+                ))
+            })?
+        }
+    };
+
+    Ok(post_id)
 }
 
 // ..... LIKE .....
