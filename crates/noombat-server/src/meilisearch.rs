@@ -42,10 +42,7 @@ impl MeilisearchBackend {
             ),
             ("posts", vec!["content"]),
             ("groups", vec!["name", "description", "tags"]),
-            (
-                "events",
-                vec!["title", "description", "location_name"],
-            ),
+            ("events", vec!["title", "description", "location_name"]),
         ];
 
         for (name, searchable) in indices {
@@ -121,9 +118,7 @@ impl MeilisearchBackend {
                     .set_sortable_attributes(&sortable)
                     .await
                     .map_err(|e| {
-                        NoombatError::Internal(format!(
-                            "meilisearch set_sortable_attributes: {e}"
-                        ))
+                        NoombatError::Internal(format!("meilisearch set_sortable_attributes: {e}"))
                     })?;
             }
 

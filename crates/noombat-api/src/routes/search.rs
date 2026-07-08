@@ -46,7 +46,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/search", get(search))
 }
 
-/// `GET /search?q=…&index=…&filter=…&limit=…&offset=…`
+/// `GET /search?q=...&index=...&filter=...&limit=...&offset=...`
 ///
 /// Returns a JSON array of matching documents. Responds with
 /// `503 Service Unavailable` when no search backend is configured.

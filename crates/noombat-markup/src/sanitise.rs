@@ -15,7 +15,7 @@
 //! This is safe in the current pipeline because user-authored raw HTML
 //! is **not** passed through: the `render()` function in `lib.rs` does
 //! not enable `pulldown_cmark::Options::ENABLE_HTML`, so user HTML is
-//! entity-encoded by the parser. The only source of `<span style="…">`
+//! entity-encoded by the parser. The only source of `<span style="...">`
 //! in the sanitiser's input is the trusted KaTeX renderer.
 //!
 //! **If `ENABLE_HTML` is ever enabled** (e.g., for Article content),

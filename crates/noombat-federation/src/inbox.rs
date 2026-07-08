@@ -583,26 +583,25 @@ async fn handle_announce(
     // remote instance so that boosts of non-local content are visible
     // in timelines. This mirrors Mastodon's dereference-on-boost
     // behaviour.
-    let post_id = match sqlx::query_scalar::<_, uuid::Uuid>(
-        r#"SELECT id FROM posts WHERE ap_id = $1"#,
-    )
-    .bind(object_uri)
-    .fetch_optional(pool)
-    .await?
-    {
-        Some(id) => id,
-        None => match fetch_and_persist_remote_post(pool, http_client, object_uri).await {
-            Ok(id) => id,
-            Err(e) => {
-                warn!(
-                    object = %object_uri,
-                    error = %e,
-                    "Announce: failed to fetch remote post; ignoring"
-                );
-                return Ok(());
-            }
-        },
-    };
+    let post_id =
+        match sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
+            .bind(object_uri)
+            .fetch_optional(pool)
+            .await?
+        {
+            Some(id) => id,
+            None => match fetch_and_persist_remote_post(pool, http_client, object_uri).await {
+                Ok(id) => id,
+                Err(e) => {
+                    warn!(
+                        object = %object_uri,
+                        error = %e,
+                        "Announce: failed to fetch remote post; ignoring"
+                    );
+                    return Ok(());
+                }
+            },
+        };
 
     let boost_ap_id = &activity.id;
     sqlx::query(
@@ -651,10 +650,7 @@ async fn fetch_and_persist_remote_post(
         .await
         .map_err(|e| NoombatError::Federation(format!("invalid object JSON: {e}")))?;
 
-    let object_type = object
-        .get("type")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
 
     let post_type = match object_type {
         "Note" => "note",
@@ -684,10 +680,7 @@ async fn fetch_and_persist_remote_post(
         })
         .ok_or_else(|| NoombatError::Federation("fetched object missing attributedTo".into()))?;
 
-    let content_html = object
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
     let content_md = object
         .get("source")
@@ -747,17 +740,15 @@ async fn fetch_and_persist_remote_post(
         }
         None => {
             // Concurrent insert; look up the existing row.
-            sqlx::query_scalar::<_, uuid::Uuid>(
-                r#"SELECT id FROM posts WHERE ap_id = $1"#,
-            )
-            .bind(ap_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| {
-                NoombatError::Internal(format!(
-                    "post {ap_id} not found after concurrent insert: {e}"
-                ))
-            })?
+            sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
+                .bind(ap_id)
+                .fetch_one(pool)
+                .await
+                .map_err(|e| {
+                    NoombatError::Internal(format!(
+                        "post {ap_id} not found after concurrent insert: {e}"
+                    ))
+                })?
         }
     };
 
@@ -962,7 +953,7 @@ fn extract_image_url(object: &serde_json::Value) -> Option<String> {
 /// hashtags as:
 ///
 /// ```json
-/// { "type": "Hashtag", "name": "#rust", "href": "https://…/tags/rust" }
+/// { "type": "Hashtag", "name": "#rust", "href": "https://.../tags/rust" }
 /// ```
 ///
 /// Returns a `Vec<String>` of normalised names (lowercase, leading
@@ -1063,10 +1054,7 @@ mod tests {
 
     #[test]
     fn extract_local_username_rejects_bare_domain() {
-        assert_eq!(
-            extract_local_username("https://noombat.social"),
-            None
-        );
+        assert_eq!(extract_local_username("https://noombat.social"), None);
     }
 
     #[test]
