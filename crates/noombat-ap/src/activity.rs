@@ -35,4 +35,8 @@ pub mod types {
     pub const ANNOUNCE: &str = "Announce";
     pub const LIKE: &str = "Like";
     pub const BLOCK: &str = "Block";
+    pub const MOVE: &str = "Move";
+    pub const ADD: &str = "Add";
+    pub const REMOVE: &str = "Remove";
+    pub const FLAG: &str = "Flag";
 }
