@@ -177,30 +177,38 @@ pub async fn authorisation(
 
     // Fetch privacy-related context for actions that reference it.
     if action_needs_privacy_context(&action) {
-        if let Some(priv_ctx) =
-            fetch_privacy_context(&state.pool, &owner_username, principal_username).await
-        {
-            context.insert("discoverable".into(), priv_ctx.discoverable.to_string());
-            context.insert(
-                "federate_profile".into(),
-                priv_ctx.federate_profile.to_string(),
-            );
-            context.insert("cv_download".into(), priv_ctx.cv_download);
-            context.insert("is_follower".into(), priv_ctx.is_follower.to_string());
+        match fetch_privacy_context(&state.pool, &owner_username, principal_username).await {
+            Some(priv_ctx) => {
+                context.insert("discoverable".into(), priv_ctx.discoverable.to_string());
+                context.insert(
+                    "federate_profile".into(),
+                    priv_ctx.federate_profile.to_string(),
+                );
+                context.insert("cv_download".into(), priv_ctx.cv_download);
+                context.insert("is_follower".into(), priv_ctx.is_follower.to_string());
 
-            // Profile pages are always accessible via direct URL
-            // (`discoverable` controls search results, not direct access).
-            // Set `visibility` to `"public"` so that the `public-view` Cedar policy
-            // permits the request.
-            if action.contains("view") {
-                context.insert("visibility".into(), "public".to_owned());
+                // Profile pages are always accessible via direct URL
+                // (`discoverable` controls search results, not direct access).
+                // Set `visibility` to `"public"` so that the `public-view` Cedar policy
+                // permits the request.
+                if action.contains("view") {
+                    context.insert("visibility".into(), "public".to_owned());
+                }
+
+                // Propagate the follower status to the principal extension
+                // so that downstream handlers (e.g. the CV handler) may
+                // read it without a redundant database query.
+                if let Some(ref mut p) = principal {
+                    p.is_follower_of_target = Some(priv_ctx.is_follower);
+                }
             }
-
-            // Propagate the follower status to the principal extension
-            // so that downstream handlers (e.g. the CV handler) may
-            // read it without a redundant database query.
-            if let Some(ref mut p) = principal {
-                p.is_follower_of_target = Some(priv_ctx.is_follower);
+            None => {
+                // The target actor does not exist. Skip policy evaluation
+                // and let the downstream handler produce the correct 404.
+                if let Some(ref p) = principal {
+                    request.extensions_mut().insert(p.clone());
+                }
+                return next.run(request).await;
             }
         }
     }
