@@ -19,7 +19,7 @@ use noombat_ap::object::{ApActor, ApPublicKey};
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
-use crate::i18n::{negotiate_locale, I18n};
+use crate::i18n::I18n;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -61,6 +61,7 @@ async fn get_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
+    i18n: I18n,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
@@ -133,9 +134,6 @@ async fn get_actor(
             .into_response());
     }
 
-    let i18n = I18n {
-        locale: negotiate_locale(&headers),
-    };
     let display_name = actor
         .display_name
         .clone()
@@ -191,8 +189,9 @@ async fn get_actor_human(
     state: State<AppState>,
     path: Path<String>,
     headers: HeaderMap,
+    i18n: I18n,
 ) -> Result<impl IntoResponse, ApiError> {
-    get_actor(state, path, headers).await
+    get_actor(state, path, headers, i18n).await
 }
 
 // ..... GET /users/{username}/outbox .......

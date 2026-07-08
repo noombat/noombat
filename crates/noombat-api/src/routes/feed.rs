@@ -9,13 +9,12 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::extract::{Query, State};
-use axum::http::HeaderMap;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::Router;
 use serde::Deserialize;
 
-use crate::i18n::{negotiate_locale, I18n};
+use crate::i18n::I18n;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -40,10 +39,7 @@ fn default_page() -> u32 {
 const PAGE_SIZE: i64 = 20;
 
 /// Full feed page (initial load).
-async fn feed_page(headers: HeaderMap) -> impl IntoResponse {
-    let i18n = I18n {
-        locale: negotiate_locale(&headers),
-    };
+async fn feed_page(i18n: I18n) -> impl IntoResponse {
     FeedPage { i18n }
 }
 
@@ -54,12 +50,8 @@ async fn feed_page(headers: HeaderMap) -> impl IntoResponse {
 async fn feed_partial(
     State(state): State<AppState>,
     Query(query): Query<FeedQuery>,
-    headers: HeaderMap,
+    i18n: I18n,
 ) -> impl IntoResponse {
-    let i18n = I18n {
-        locale: negotiate_locale(&headers),
-    };
-
     let offset = (query.page.saturating_sub(1) as i64) * PAGE_SIZE;
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
 

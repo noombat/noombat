@@ -18,10 +18,34 @@ pub const DEFAULT_LOCALE: &str = "en-US";
 ///
 /// Templates use `{{ i18n.t("key") }}` for simple strings and
 /// `{{ i18n.tf("key", &[("name", value)]) }}` for interpolated strings.
+///
+/// `I18n` implements [`axum::extract::FromRequestParts`], so handlers
+/// may receive it as an extractor parameter:
+///
+/// ```ignore
+/// async fn my_handler(i18n: I18n) -> impl IntoResponse { ... }
+/// ```
+///
+/// The locale is negotiated from the `Accept-Language` header on every
+/// request, falling back to [`DEFAULT_LOCALE`].
 #[derive(Clone)]
 pub struct I18n {
     /// The BCP 47 locale tag (e.g. `"pt-BR"`).
     pub locale: String,
+}
+
+// Axum extractor: negotiate locale from the request headers.
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for I18n {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(I18n {
+            locale: negotiate_locale(&parts.headers),
+        })
+    }
 }
 
 impl I18n {

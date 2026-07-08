@@ -17,7 +17,7 @@ use noombat_ap::context::AS_CONTEXT;
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
-use crate::i18n::{negotiate_locale, I18n};
+use crate::i18n::I18n;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -28,6 +28,7 @@ async fn get_post(
     State(state): State<AppState>,
     Path((username, post_id)): Path<(String, Uuid)>,
     headers: HeaderMap,
+    i18n: I18n,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
         r#"SELECT p.id, p.ap_id, p.content_html, p.ap_object, p.created_at,
@@ -68,9 +69,6 @@ async fn get_post(
             .into_response());
     }
 
-    let i18n = I18n {
-        locale: negotiate_locale(&headers),
-    };
     let author_display = row
         .display_name
         .clone()
