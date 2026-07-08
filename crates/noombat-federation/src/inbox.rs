@@ -337,6 +337,17 @@ async fn handle_create(
 
     info!(actor = %activity.actor, object_type, ap_id, "received Create");
 
+    // ..... ARTICLE-SPECIFIC FIELDS .....
+    //
+    // Articles carry a title in the `name` property (ActivityStreams)
+    // and may carry a featured image as the `image` property (used by
+    // Ghost) or as the first `Image`-typed element in `attachment`
+    // (used by WordPress, Mastodon, and others).
+
+    let title = object.get("name").and_then(|v| v.as_str()).map(String::from);
+
+    let featured_image_url = extract_image_url(object);
+
     // Resolve the remote author.
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
@@ -361,14 +372,39 @@ async fn handle_create(
         actor_id: remote_actor.id,
         ap_id: ap_id.to_owned(),
         post_type: post_type.to_owned(),
+        title,
+        featured_image_url,
         content_md: content_md.to_owned(),
         content_html: content_html.to_owned(),
         visibility,
         ap_object: activity.object.clone(),
     };
 
-    repo::create_remote_post(pool, &remote_post).await?;
-    info!(ap_id, "remote post persisted");
+    let post_id = repo::create_remote_post(pool, &remote_post).await?;
+
+    // ..... HASHTAG LINKING .....
+    //
+    // The ActivityPub `tag` array carries `Hashtag` objects (the same
+    // format used by Mastodon, Lemmy, and others):
+    //
+    //   { "type": "Hashtag", "name": "#rust", "href": "https://..." }
+    //
+    // Extract the names and link them to the newly persisted post so
+    // that hashtag-following feeds include federated content.
+
+    if let Some(post_id) = post_id {
+        let hashtag_names = extract_hashtags_from_tags(object);
+        if !hashtag_names.is_empty() {
+            if let Err(e) =
+                noombat_identity::hashtags::link_post_hashtags(pool, post_id, &hashtag_names).await
+            {
+                warn!(ap_id, "failed to link hashtags for remote post: {e}");
+            }
+        }
+        info!(ap_id, "remote post persisted");
+    } else {
+        info!(ap_id, "remote post already known; skipped");
+    }
 
     Ok(())
 }
@@ -703,6 +739,81 @@ fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<Stri
     }
 }
 
+// ..... ARTICLE FIELD EXTRACTION .....
+
+/// Extract a featured-image URL from an inbound ActivityPub object.
+///
+/// Checks two locations, in order:
+///
+/// 1. The `image` property: used by Ghost and some CMS-based
+///    Fediverse publishers. May be a bare URL string or an object
+///    with a `url` field.
+/// 2. The first element of the `attachment` array whose `type` is
+///    `"Image"`: used by WordPress and Mastodon.
+///
+/// Returns `None` if neither location contains a usable URL.
+fn extract_image_url(object: &serde_json::Value) -> Option<String> {
+    // 1. `image` property (string or object).
+    if let Some(image) = object.get("image") {
+        if let Some(url) = image.as_str() {
+            return Some(url.to_owned());
+        }
+        if let Some(url) = image.get("url").and_then(|v| v.as_str()) {
+            return Some(url.to_owned());
+        }
+    }
+
+    // 2. First `Image` in `attachment`.
+    if let Some(attachments) = object.get("attachment").and_then(|v| v.as_array()) {
+        for att in attachments {
+            let att_type = att.get("type").and_then(|v| v.as_str()).unwrap_or("");
+            if att_type == "Image" {
+                if let Some(url) = att.get("url").and_then(|v| v.as_str()) {
+                    return Some(url.to_owned());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+// ..... HASHTAG EXTRACTION FROM TAG ARRAY .....
+
+/// Extract hashtag names from the `tag` array of an inbound object.
+///
+/// Mastodon, Lemmy, GotoSocial, and other Fediverse software include
+/// hashtags as:
+///
+/// ```json
+/// { "type": "Hashtag", "name": "#rust", "href": "https://…/tags/rust" }
+/// ```
+///
+/// Returns a `Vec<String>` of normalised names (lowercase, leading
+/// `#` stripped), suitable for passing to
+/// [`noombat_identity::hashtags::link_post_hashtags`].
+fn extract_hashtags_from_tags(object: &serde_json::Value) -> Vec<String> {
+    let tags = match object.get("tag").and_then(|v| v.as_array()) {
+        Some(arr) => arr,
+        None => return Vec::new(),
+    };
+
+    tags.iter()
+        .filter_map(|tag| {
+            let tag_type = tag.get("type").and_then(|v| v.as_str())?;
+            if tag_type != "Hashtag" {
+                return None;
+            }
+            let name = tag.get("name").and_then(|v| v.as_str())?;
+            let stripped = name.strip_prefix('#').unwrap_or(name);
+            if stripped.is_empty() {
+                return None;
+            }
+            Some(stripped.to_lowercase())
+        })
+        .collect()
+}
+
 // ..... TESTS .....
 
 #[cfg(test)]
@@ -798,5 +909,111 @@ mod tests {
     fn extract_string_array_missing_key() {
         let obj = serde_json::json!({});
         assert_eq!(extract_string_array(&obj, "to"), None);
+    }
+
+    // ..... extract_image_url .....
+
+    #[test]
+    fn image_url_from_string_property() {
+        let obj = serde_json::json!({
+            "type": "Article",
+            "image": "https://example.com/photo.jpg"
+        });
+        assert_eq!(
+            extract_image_url(&obj),
+            Some("https://example.com/photo.jpg".to_owned())
+        );
+    }
+
+    #[test]
+    fn image_url_from_object_property() {
+        let obj = serde_json::json!({
+            "type": "Article",
+            "image": { "type": "Image", "url": "https://example.com/photo.jpg" }
+        });
+        assert_eq!(
+            extract_image_url(&obj),
+            Some("https://example.com/photo.jpg".to_owned())
+        );
+    }
+
+    #[test]
+    fn image_url_from_attachment_array() {
+        let obj = serde_json::json!({
+            "type": "Article",
+            "attachment": [
+                { "type": "Document", "url": "https://example.com/file.pdf" },
+                { "type": "Image", "url": "https://example.com/photo.jpg" }
+            ]
+        });
+        assert_eq!(
+            extract_image_url(&obj),
+            Some("https://example.com/photo.jpg".to_owned())
+        );
+    }
+
+    #[test]
+    fn image_url_prefers_image_property_over_attachment() {
+        let obj = serde_json::json!({
+            "type": "Article",
+            "image": "https://example.com/featured.jpg",
+            "attachment": [
+                { "type": "Image", "url": "https://example.com/other.jpg" }
+            ]
+        });
+        assert_eq!(
+            extract_image_url(&obj),
+            Some("https://example.com/featured.jpg".to_owned())
+        );
+    }
+
+    #[test]
+    fn image_url_none_when_absent() {
+        let obj = serde_json::json!({ "type": "Note", "content": "hello" });
+        assert_eq!(extract_image_url(&obj), None);
+    }
+
+    // ..... extract_hashtags_from_tags .....
+
+    #[test]
+    fn hashtags_from_tag_array() {
+        let obj = serde_json::json!({
+            "type": "Note",
+            "tag": [
+                { "type": "Hashtag", "name": "#Rust", "href": "https://example.com/tags/rust" },
+                { "type": "Mention", "name": "@alice", "href": "https://example.com/users/alice" },
+                { "type": "Hashtag", "name": "#ActivityPub" }
+            ]
+        });
+        let tags = extract_hashtags_from_tags(&obj);
+        assert_eq!(tags, vec!["rust".to_owned(), "activitypub".to_owned()]);
+    }
+
+    #[test]
+    fn hashtags_without_leading_hash() {
+        let obj = serde_json::json!({
+            "tag": [
+                { "type": "Hashtag", "name": "noHash" }
+            ]
+        });
+        let tags = extract_hashtags_from_tags(&obj);
+        assert_eq!(tags, vec!["nohash".to_owned()]);
+    }
+
+    #[test]
+    fn hashtags_empty_when_no_tag_array() {
+        let obj = serde_json::json!({ "type": "Note" });
+        assert!(extract_hashtags_from_tags(&obj).is_empty());
+    }
+
+    #[test]
+    fn hashtags_skips_empty_names() {
+        let obj = serde_json::json!({
+            "tag": [
+                { "type": "Hashtag", "name": "#" },
+                { "type": "Hashtag", "name": "" }
+            ]
+        });
+        assert!(extract_hashtags_from_tags(&obj).is_empty());
     }
 }
