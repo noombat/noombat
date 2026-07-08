@@ -20,6 +20,8 @@ namespace Noombat {
 
     entity Report;
 
+    entity Application in [JobListing];
+
     entity Instance;
 
     // Common context record carried with every authorisation request.
@@ -72,6 +74,12 @@ namespace Noombat {
     };
 
     action "manage_job" appliesTo {
+        principal: [Actor],
+        resource: [JobListing],
+        context: AuthContext,
+    };
+
+    action "apply" appliesTo {
         principal: [Actor],
         resource: [JobListing],
         context: AuthContext,

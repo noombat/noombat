@@ -107,6 +107,18 @@ permit(
     context.is_owner == "true"
 };
 
+// ..... Job applications .....
+
+// Any authenticated actor may apply to a job listing.
+@id("authenticated-may-apply")
+permit(
+    principal,
+    action == Noombat::Action::"apply",
+    resource
+) when {
+    context.is_authenticated == "true"
+};
+
 // ..... Profile discoverability .....
 
 // A profile may appear in search results only when discoverable.
