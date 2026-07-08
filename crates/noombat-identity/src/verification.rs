@@ -274,9 +274,6 @@ mod tests {
         // Only the /@alice form is in the href; only that form is
         // in the accepted list. Verification should still succeed.
         let html = r#"<a rel="me" href="https://noombat.social/@alice">Noombat</a>"#;
-        assert!(check_rel_me(
-            html,
-            &["https://noombat.social/@alice"]
-        ));
+        assert!(check_rel_me(html, &["https://noombat.social/@alice"]));
     }
 }

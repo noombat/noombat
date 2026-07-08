@@ -344,7 +344,10 @@ async fn handle_create(
     // Ghost) or as the first `Image`-typed element in `attachment`
     // (used by WordPress, Mastodon, and others).
 
-    let title = object.get("name").and_then(|v| v.as_str()).map(String::from);
+    let title = object
+        .get("name")
+        .and_then(|v| v.as_str())
+        .map(String::from);
 
     let featured_image_url = extract_image_url(object);
 

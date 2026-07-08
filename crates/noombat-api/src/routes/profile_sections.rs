@@ -351,11 +351,13 @@ async fn add_verified_link(
     let human_url = format!("https://{}/@{}", state.domain, username);
     let link_clone = link.clone();
     tokio::spawn(async move {
-        let _ =
-            noombat_identity::verification::verify_link(
-                &pool, &client, &link_clone, &[&ap_url, &human_url],
-            )
-                .await;
+        let _ = noombat_identity::verification::verify_link(
+            &pool,
+            &client,
+            &link_clone,
+            &[&ap_url, &human_url],
+        )
+        .await;
     });
 
     Ok((StatusCode::CREATED, Json(link)))
