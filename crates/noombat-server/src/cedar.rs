@@ -221,12 +221,13 @@ mod tests {
     // would cause `CedarBackend::new` to fail.
 
     fn production_backend() -> CedarBackend {
-        let policy_src = std::fs::read_to_string("policies/noombat.cedar")
-            .expect("failed to read noombat.cedar");
-        let schema_src = std::fs::read_to_string("policies/noombat.cedarschema")
-            .expect("failed to read noombat.cedarschema");
-        CedarBackend::new(&policy_src, Some(&schema_src))
-            .expect("production policies must parse against the schema")
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let policies_dir = manifest_dir.join("../../policies");
+        load_cedar_backend(
+            &policies_dir.join("noombat.cedar"),
+            Some(&policies_dir.join("noombat.cedarschema")),
+        )
+        .expect("production policies must parse against the schema")
     }
 
     #[test]
