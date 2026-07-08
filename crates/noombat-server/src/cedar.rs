@@ -212,4 +212,153 @@ mod tests {
         );
         assert_eq!(d, Decision::Deny);
     }
+
+    // ..... Production policy + schema validation .....
+    //
+    // These tests load the actual Cedar files from the repository and
+    // verify that the policies parse against the schema. A typo in an
+    // action name, a missing context attribute, or a type mismatch
+    // would cause `CedarBackend::new` to fail.
+
+    fn production_backend() -> CedarBackend {
+        let policy_src =
+            std::fs::read_to_string("policies/noombat.cedar").expect("failed to read noombat.cedar");
+        let schema_src = std::fs::read_to_string("policies/noombat.cedarschema")
+            .expect("failed to read noombat.cedarschema");
+        CedarBackend::new(&policy_src, Some(&schema_src))
+            .expect("production policies must parse against the schema")
+    }
+
+    #[test]
+    fn production_policies_parse_against_schema() {
+        // If this panics, the policy or schema file has a structural
+        // error (misspelled action, unknown entity type, context
+        // attribute type mismatch, etc.).
+        let _b = production_backend();
+    }
+
+    #[test]
+    fn production_owner_may_edit() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "true".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"alice""#,
+            r#"Noombat::Action::"edit""#,
+            r#"Noombat::Profile::"alice""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn production_public_view_permitted() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "false".into());
+        ctx.insert("visibility".into(), "public".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"anonymous""#,
+            r#"Noombat::Action::"view""#,
+            r#"Noombat::Profile::"alice""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn production_anonymous_report_denied() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "false".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"anonymous""#,
+            r#"Noombat::Action::"report""#,
+            r#"Noombat::Post::"post-1""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Deny);
+    }
+
+    #[test]
+    fn production_authenticated_report_permitted() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"bob""#,
+            r#"Noombat::Action::"report""#,
+            r#"Noombat::Post::"post-1""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn production_cv_download_self_only() {
+        let b = production_backend();
+
+        // Owner may download their own self-only CV.
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "true".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        ctx.insert("cv_download".into(), "self".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"alice""#,
+            r#"Noombat::Action::"download_cv""#,
+            r#"Noombat::Profile::"alice""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Permit);
+
+        // Non-owner is denied even when authenticated.
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        ctx.insert("cv_download".into(), "self".into());
+        ctx.insert("is_follower".into(), "true".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"bob""#,
+            r#"Noombat::Action::"download_cv""#,
+            r#"Noombat::Profile::"alice""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Deny);
+    }
+
+    #[test]
+    fn production_moderator_may_resolve_report() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        ctx.insert("instance_role".into(), "moderator".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"mod1""#,
+            r#"Noombat::Action::"resolve_report""#,
+            r#"Noombat::Report::"report-1""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Permit);
+    }
+
+    #[test]
+    fn production_user_cannot_resolve_report() {
+        let b = production_backend();
+        let mut ctx = AuthContext::new();
+        ctx.insert("is_owner".into(), "false".into());
+        ctx.insert("is_authenticated".into(), "true".into());
+        ctx.insert("instance_role".into(), "user".into());
+        let d = b.is_authorised(
+            r#"Noombat::Actor::"bob""#,
+            r#"Noombat::Action::"resolve_report""#,
+            r#"Noombat::Report::"report-1""#,
+            &ctx,
+        );
+        assert_eq!(d, Decision::Deny);
+    }
 }
