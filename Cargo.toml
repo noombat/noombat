@@ -94,6 +94,9 @@ regex = "1"
 # Search.
 meilisearch-sdk = "0.28"
 
+# Redis (session store, rate-limit counters).
+redis = { version = "1.3", features = ["tokio-comp", "connection-manager"] }
+
 # URL parsing (domain verification, DOI).
 url = "2"
 

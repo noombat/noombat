@@ -10,7 +10,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 
 use noombat_ap::activity::Activity;
-use noombat_federation::{inbox, nodeinfo, webfinger};
+use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -154,12 +154,47 @@ async fn inbox_handler(
     let remote_actor =
         inbox::resolve_remote_actor(&state.pool, &state.http_client, actor_uri).await?;
 
-    noombat_federation::http_sig::verify_signature_async(
-        remote_actor.public_key_pem.clone(),
-        parsed.signature.clone(),
-        signing_string,
+    // ..... PER-DOMAIN FEDERATION RATE LIMIT .....
+    //
+    // Enforce a stricter rate limit on inbound deliveries keyed by the
+    // sending domain rather than the remote IP (federation traffic is
+    // often relayed through proxies).  Uses an atomic Lua script to
+    // avoid the INCR/EXPIRE race condition.
+
+    if let Some(mut redis) = state.redis.clone() {
+        let domain = actor_uri
+            .strip_prefix("https://")
+            .or_else(|| actor_uri.strip_prefix("http://"))
+            .and_then(|rest| rest.split('/').next())
+            .unwrap_or("unknown");
+
+        let key = format!("rl:fed:{domain}");
+        let fed_window_secs: i64 = 60;
+        let fed_limit: i64 = 300;
+
+        let result: Vec<i64> = redis::cmd("EVAL")
+            .arg(
+                r"local count = redis.call('INCR', KEYS[1])
+                  if count == 1 then
+                      redis.call('EXPIRE', KEYS[1], ARGV[1])
+                  end
+                  return count",
+            )
+            .arg(1i64)
+            .arg(&key)
+            .arg(fed_window_secs)
+            .query_async(&mut redis)
+            .await
+            .unwrap_or_default();
+
+        let count = result.first().copied().unwrap_or(0);
+        if count > fed_limit {
+            return Err(NoombatError::ServiceUnavailable(
+                "federation rate limit exceeded".into(),
     )
-    .await?;
+            .into());
+        }
+    }
 
     // ..... PROCESS THE VERIFIED ACTIVITY .....
 

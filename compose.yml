@@ -8,6 +8,7 @@ services:
       NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
+      NOOMBAT_REDIS_URL: redis://redis:6379
     ports:
       - "8443:8443"
     depends_on:

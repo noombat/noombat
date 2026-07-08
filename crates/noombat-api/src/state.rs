@@ -6,6 +6,7 @@ use std::sync::Arc;
 
 use noombat_core::auth::AuthorisationBackend;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
+use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 
 /// Application-wide state, injected into Axum handlers via [`axum::extract::State`].
@@ -24,4 +25,8 @@ pub struct AppState {
     pub search: Option<Arc<dyn noombat_core::extension::SearchBackend>>,
     /// Instance-level feature flags exposed via NodeInfo.
     pub nodeinfo_features: NodeInfoFeatures,
+    /// Redis connection (optional). Used for rate limiting and
+    /// session storage. `None` when `NOOMBAT_REDIS_URL` is not
+    /// configured.
+    pub redis: Option<ConnectionManager>,
 }

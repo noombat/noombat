@@ -75,6 +75,9 @@ struct Config {
     /// Whether article (long-form post) support is enabled (default `false`).
     #[serde(default)]
     articles_enabled: bool,
+    /// Redis connection URL (e.g. `redis://redis:6379`).
+    /// If unset, rate limiting and session storage are disabled.
+    redis_url: Option<String>,
 }
 
 fn default_host() -> String {
@@ -237,6 +240,30 @@ async fn main() -> anyhow::Result<()> {
             None
         };
 
+    // Redis connection (optional).
+    let redis: Option<redis::aio::ConnectionManager> =
+        if let Some(ref redis_url) = config.redis_url {
+            match redis::Client::open(redis_url.as_str()) {
+                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+                    Ok(mgr) => {
+                        info!(url = %redis_url, "Redis connection established");
+                        Some(mgr)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Redis connection failed (rate limiting disabled): {e}");
+                        None
+                    }
+                },
+                Err(e) => {
+                    tracing::warn!("invalid Redis URL (rate limiting disabled): {e}");
+                    None
+                }
+            }
+        } else {
+            info!("no NOOMBAT_REDIS_URL configured; rate limiting disabled");
+            None
+        };
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -252,6 +279,7 @@ async fn main() -> anyhow::Result<()> {
             events_enabled: config.events_enabled,
             articles_enabled: config.articles_enabled,
         },
+        redis,
     };
     let app = noombat_api::build_router(state);
 
@@ -260,9 +288,12 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(addr).await?;
     info!(%addr, "listening");
 
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal())
-        .await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await?;
 
     info!("server shut down");
     Ok(())

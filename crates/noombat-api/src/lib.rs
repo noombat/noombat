@@ -10,6 +10,7 @@ pub mod auth;
 pub mod error;
 pub mod i18n;
 pub mod middleware;
+pub mod rate_limit;
 pub mod routes;
 pub mod search_sync;
 pub mod state;
@@ -39,6 +40,10 @@ pub fn build_router(state: AppState) -> Router {
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::authorisation,
+        ))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            rate_limit::rate_limit,
         ))
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http())
