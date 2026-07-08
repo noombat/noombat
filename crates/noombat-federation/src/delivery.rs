@@ -3,16 +3,21 @@
 //! Delivery queue worker for outbound ActivityPub activities.
 
 use std::sync::Arc;
+use std::time::Duration;
 
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
 use chrono::{TimeDelta, Utc};
+use http_signature_normalization_reqwest::prelude::*;
+use rsa::pkcs8::DecodePrivateKey;
+use rsa::signature::{SignatureEncoding, Signer};
+use sha2::Digest as _;
 use serde_json::Value;
 use sqlx::{FromRow, PgPool};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
 use tracing::{error, info, warn};
 use uuid::Uuid;
-
-use crate::http_sig;
 
 /// Maximum number of concurrent outbound HTTP deliveries per poll cycle.
 const MAX_CONCURRENT_DELIVERIES: usize = 10;
@@ -160,21 +165,26 @@ async fn fetch_signing_credentials(
     })
 }
 
-/// Extract the host and path components from a URL string.
+/// Build the signing [`Config`] for outbound deliveries.
 ///
-/// Returns `(host, path)` or `None` if the URL cannot be parsed.
-fn parse_inbox_url(url: &str) -> Option<(String, String)> {
-    let rest = url
-        .strip_prefix("https://")
-        .or_else(|| url.strip_prefix("http://"))?;
-    let (host, path) = match rest.find('/') {
-        Some(idx) => (rest[..idx].to_owned(), rest[idx..].to_owned()),
-        None => (rest.to_owned(), "/".to_owned()),
-    };
-    Some((host, path))
+/// [`mastodon_compat()`][Config::mastodon_compat] produces `rsa-sha256`
+/// signatures with `(request-target)`, `host`, and `date` headers, i.e. the
+/// format accepted by all deployed Fediverse software.
+/// [`require_digest()`][Config::require_digest] additionally signs the
+/// `Digest` header, as required by Mastodon for POST requests.
+fn signing_config() -> Config {
+    Config::default()
+        .mastodon_compat()
+        .require_digest()
+        .set_expiration(Duration::from_secs(30))
 }
 
 /// Attempt delivery of a single activity to a remote inbox.
+///
+/// The `http-signature-normalization-reqwest` crate's [`Sign`] trait
+/// handles signing-string construction, `Date`/`Digest`/`Signature`
+/// header attachment, and `spawn_blocking` offload (via the default
+/// [`DefaultSpawner`]).
 async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: DeliveryRow) {
     // Fetch signing credentials for the sending actor.
     let creds = match fetch_signing_credentials(pool, row.actor_id).await {
@@ -186,34 +196,38 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
         }
     };
 
-    // Parse the target inbox URL into host and path for signing.
-    let (host, path) = match parse_inbox_url(&row.target_inbox) {
-        Some(parts) => parts,
-        None => {
-            error!(target_inbox = %row.target_inbox, "malformed inbox URL; dropping");
-            let _ = sqlx::query("DELETE FROM delivery_queue WHERE id = $1")
-                .bind(row.id)
-                .execute(pool)
-                .await;
-            return;
-        }
-    };
+    let body = serde_json::to_string(&row.payload).unwrap_or_default();
 
-    let body = serde_json::to_vec(&row.payload).unwrap_or_default();
-    let body_digest = http_sig::digest_body(&body);
+    // Build the request with an HTTP Signature via the Sign trait.
+    //
+    // `signature_with_digest` computes the SHA-256 body digest,
+    // attaches the `Digest`, `Date`, and `Signature` headers, and
+    // returns a ready-to-send `reqwest::Request`.
+    let private_key_pem = creds.private_key_pem.clone();
+    let signed_request = http_client
+        .post(&row.target_inbox)
+        .header("Content-Type", "application/activity+json")
+        .signature_with_digest(
+            signing_config(),
+            creds.key_id.clone(),
+            sha2::Sha256::new(),
+            body,
+            move |signing_string| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+                let private_key =
+                    rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem)
+                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
+                            Box::new(e)
+                        })?;
+                let signing_key =
+                    rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key);
+                let signature = signing_key.sign(signing_string.as_bytes());
+                Ok(BASE64.encode(signature.to_bytes()))
+            },
+        )
+        .await;
 
-    // Sign the request (CPU-bound; offloaded to a blocking thread).
-    let signed = match http_sig::sign_request_async(
-        creds.key_id,
-        creds.private_key_pem,
-        "post".to_owned(),
-        path.clone(),
-        host.clone(),
-        Some(body_digest.clone()),
-    )
-    .await
-    {
-        Ok(s) => s,
+    let signed_request = match signed_request {
+        Ok(r) => r,
         Err(e) => {
             error!(target_inbox = %row.target_inbox, "failed to sign request: {e}");
             schedule_retry(pool, row.id, row.attempts).await;
@@ -221,16 +235,7 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
         }
     };
 
-    let result = http_client
-        .post(&row.target_inbox)
-        .header("Content-Type", "application/activity+json")
-        .header("Host", &host)
-        .header("Date", &signed.date)
-        .header("Digest", format!("SHA-256={body_digest}"))
-        .header("Signature", &signed.signature_header)
-        .body(body)
-        .send()
-        .await;
+    let result = http_client.execute(signed_request).await;
 
     match result {
         Ok(resp) if resp.status().is_success() => {
@@ -286,48 +291,4 @@ async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
     .await;
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn parse_inbox_url_https_with_path() {
-        let result = parse_inbox_url("https://mastodon.social/users/alice/inbox");
-        assert_eq!(
-            result,
-            Some((
-                "mastodon.social".to_owned(),
-                "/users/alice/inbox".to_owned()
-            ))
-        );
-    }
-
-    #[test]
-    fn parse_inbox_url_http_with_port() {
-        let result = parse_inbox_url("http://localhost:8443/inbox");
-        assert_eq!(
-            result,
-            Some(("localhost:8443".to_owned(), "/inbox".to_owned()))
-        );
-    }
-
-    #[test]
-    fn parse_inbox_url_no_path() {
-        let result = parse_inbox_url("https://example.org");
-        assert_eq!(result, Some(("example.org".to_owned(), "/".to_owned())));
-    }
-
-    #[test]
-    fn parse_inbox_url_preserves_query() {
-        let result = parse_inbox_url("https://example.org/inbox?shared=true");
-        assert_eq!(
-            result,
-            Some(("example.org".to_owned(), "/inbox?shared=true".to_owned()))
-        );
-    }
-
-    #[test]
-    fn parse_inbox_url_no_scheme() {
-        assert_eq!(parse_inbox_url("example.org/inbox"), None);
-    }
-}

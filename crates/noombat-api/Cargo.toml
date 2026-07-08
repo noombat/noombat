@@ -28,3 +28,7 @@ reqwest = { workspace = true }
 rust-i18n = { workspace = true }
 subtle = { workspace = true }
 redis = { workspace = true }
+http-signature-normalization = { workspace = true }
+rsa = { workspace = true }
+sha2 = { workspace = true }
+base64 = { workspace = true }

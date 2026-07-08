@@ -71,6 +71,10 @@ sha2 = "0.10"
 base64 = "0.22"
 rand = "0.8"
 
+# HTTP Signatures.
+http-signature-normalization = "0.7"
+http-signature-normalization-reqwest = { version = "0.14", default-features = false, features = ["sha-2", "default-spawner"] }
+
 # Types.
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }

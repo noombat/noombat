@@ -6,7 +6,7 @@
 //! and HTTP Signature verification.
 
 pub mod delivery;
-pub mod http_sig;
+pub mod digest;
 pub mod inbox;
 pub mod nodeinfo;
 pub mod webfinger;

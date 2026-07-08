@@ -2,15 +2,23 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Federation-facing routes: WebFinger, NodeInfo, and actor inbox.
 
+use std::collections::BTreeMap;
+
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::engine::general_purpose::STANDARD as BASE64;
+use base64::Engine as _;
+use http_signature_normalization::Config as SigConfig;
+use rsa::pkcs8::DecodePublicKey;
+use rsa::signature::Verifier;
 use serde::Deserialize;
 
 use noombat_ap::activity::Activity;
 use noombat_core::error::NoombatError;
+use noombat_federation::{digest, inbox, nodeinfo, webfinger};
 
 use crate::error::ApiError;
 use crate::state::AppState;
@@ -109,50 +117,109 @@ async fn inbox_handler(
 
     // ..... HTTP SIGNATURE VERIFICATION .....
     //
-    // Parse the Signature header, reconstruct the signing string,
-    // resolve the remote actor's public key, and verify.
+    // The default `SigConfig` accepts both `hs2019` signatures (with
+    // `(created)` and `(expires)` pseudo-headers) and legacy `rsa-sha256`
+    // signatures (with `date`), providing forward compatibility with
+    // implementations that adopt newer drafts.
+    let config = SigConfig::default();
 
-    let sig_header = headers
-        .get("signature")
-        .and_then(|v| v.to_str().ok())
-        .ok_or(noombat_core::error::NoombatError::SignatureVerification)?;
-
-    let parsed = noombat_federation::http_sig::parse_signature_header(sig_header)?;
-
-    // Collect request headers needed for signing string reconstruction.
-    let mut request_headers: Vec<(String, String)> = Vec::new();
+    // Collect HTTP headers into the `BTreeMap<String, String>` that the
+    // library expects. The library extracts and parses the `Signature`
+    // (or `Authorization`) header internally.
+    let mut sig_headers = BTreeMap::new();
     for (name, value) in headers.iter() {
         if let Ok(v) = value.to_str() {
-            request_headers.push((name.as_str().to_owned(), v.to_owned()));
-        }
-    }
-
-    // Verify the body digest if the signing string includes it.
-    if parsed.headers.iter().any(|h| h == "digest") {
-        let expected_digest = headers
-            .get("digest")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("SHA-256="))
-            .ok_or(noombat_core::error::NoombatError::SignatureVerification)?;
-        let actual_digest = noombat_federation::http_sig::digest_body(&body);
-        if expected_digest != actual_digest {
-            return Err(noombat_core::error::NoombatError::SignatureVerification.into());
+            sig_headers.insert(name.as_str().to_owned(), v.to_owned());
         }
     }
 
     let path = format!("/users/{username}/inbox");
-    let signing_string = noombat_federation::http_sig::reconstruct_signing_string(
-        &parsed.headers,
-        "post",
-        &path,
-        &request_headers,
-    )?;
+    let unverified = config
+        .begin_verify("POST", &path, sig_headers)
+        .map_err(|e| NoombatError::Federation(format!("signature parse/validate: {e}")))?;
 
-    // Resolve the remote actor's public key from the key_id URI.
-    // The key_id typically ends with `#main-key`; strip it to get the actor URI.
-    let actor_uri = parsed.key_id.split('#').next().unwrap_or(&parsed.key_id);
+    // Verify the body digest. The library handles signing-string
+    // construction but does not verify the body digest itself; that
+    // remains the caller's responsibility. The Digest header is
+    // mandatory on POST requests per Mastodon's requirements.
+    let digest_header = headers
+        .get("digest")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(NoombatError::SignatureVerification)?;
+    let expected_digest = digest_header
+        .strip_prefix("SHA-256=")
+        .ok_or(NoombatError::SignatureVerification)?;
+    let actual_digest = digest::sha256(&body);
+    if expected_digest != actual_digest {
+        return Err(NoombatError::SignatureVerification.into());
+    }
+
+    // Resolve the remote actor's public key via the `key_id` exposed
+    // by the `Unverified` type. The key_id typically ends with
+    // `#main-key`; strip the fragment to obtain the actor URI.
+    let key_id = unverified.key_id().to_owned();
+    let actor_uri = key_id.split('#').next().unwrap_or(&key_id);
+
+    // ..... DOMAIN RESTRICTION ENFORCEMENT .....
+    //
+    // Check the `domain_restrictions` table before incurring the cost
+    // of actor resolution and cryptographic signature verification.
+    // A blocked domain's activities are rejected outright.
+    if let Some(sending_domain) = inbox::extract_domain(actor_uri) {
+        let restriction: Option<String> = sqlx::query_scalar(
+            "SELECT restriction FROM domain_restrictions WHERE domain = $1",
+        )
+        .bind(&sending_domain)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        if restriction.as_deref() == Some("block") {
+            return Err(NoombatError::Forbidden.into());
+        }
+        // "silence" restrictions are not enforced at the inbox level;
+        // silenced domains are excluded from public timelines by the
+        // feed and search queries.
+    }
+
     let remote_actor =
         inbox::resolve_remote_actor(&state.pool, &state.http_client, actor_uri).await?;
+
+    // Perform the cryptographic verification. The `Unverified::verify`
+    // closure receives `(&str, &str)`, i.e. the base64-encoded signature
+    // and the reconstructed signing string. The RSA modular
+    // exponentiation is CPU-bound work and is offloaded from the Tokio
+    // runtime via `spawn_blocking`.
+    let public_key_pem = remote_actor.public_key_pem.clone();
+    let verified = unverified.verify(|signature_b64, signing_string| {
+        // Clone the borrowed slices to owned Strings so the blocking
+        // closure satisfies the 'static bound.
+        let sig_b64 = signature_b64.to_owned();
+        let sig_str = signing_string.to_owned();
+
+        tokio::task::block_in_place(move || {
+            let Ok(public_key) = rsa::RsaPublicKey::from_public_key_pem(&public_key_pem) else {
+                return false;
+            };
+            let verifying_key =
+                rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
+
+            let Ok(sig_bytes) = BASE64.decode(&sig_b64) else {
+                return false;
+            };
+            let Ok(signature) = rsa::pkcs1v15::Signature::try_from(sig_bytes.as_slice()) else {
+                return false;
+            };
+
+            verifying_key
+                .verify(sig_str.as_bytes(), &signature)
+                .is_ok()
+        })
+    });
+
+    if !verified {
+        return Err(NoombatError::SignatureVerification.into());
+    }
 
     // ..... PER-DOMAIN FEDERATION RATE LIMIT .....
     //
@@ -191,7 +258,7 @@ async fn inbox_handler(
         if count > fed_limit {
             return Err(NoombatError::ServiceUnavailable(
                 "federation rate limit exceeded".into(),
-    )
+            )
             .into());
         }
     }
@@ -199,7 +266,7 @@ async fn inbox_handler(
     // ..... PROCESS THE VERIFIED ACTIVITY .....
 
     let activity: Activity = serde_json::from_slice(&body)
-        .map_err(|e| noombat_core::error::NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
+        .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
 
     inbox::process_activity(&state.pool, &state.http_client, activity).await?;
     Ok(StatusCode::ACCEPTED)
