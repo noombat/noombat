@@ -25,6 +25,7 @@ namespace Noombat {
     // Common context record carried with every authorisation request.
     type AuthContext = {
         is_owner: String,
+        is_authenticated?: String,
         visibility?: String,
         cv_download?: String,
         is_follower?: String,

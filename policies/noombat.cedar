@@ -174,13 +174,13 @@ permit(
 // ..... Reporting .....
 
 // Any authenticated actor may report content.
-@id("anyone-may-report")
+@id("authenticated-may-report")
 permit(
     principal,
     action == Noombat::Action::"report",
     resource
 ) when {
-    true
+    context.is_authenticated == "true"
 };
 
 // ..... Instance moderation .....
