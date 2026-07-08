@@ -698,10 +698,8 @@ fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<Stri
         } else {
             Some(strings)
         }
-    } else if let Some(s) = field.as_str() {
-        Some(vec![s.to_owned()])
     } else {
-        None
+        field.as_str().map(|s| vec![s.to_owned()])
     }
 }
 
