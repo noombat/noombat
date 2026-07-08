@@ -22,7 +22,7 @@ export default defineConfig({
         // references it with a fixed <script src="/assets/htmx.js">.
         assetFileNames: "assets/[name][extname]",
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === "htmx") {
+          if (chunkInfo.name === "htmx" || chunkInfo.name === "editor") {
             return "assets/[name].js";
           }
           return "assets/[name]-[hash].js";

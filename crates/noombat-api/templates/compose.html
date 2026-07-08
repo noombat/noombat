@@ -1,0 +1,41 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ i18n.t("compose_title") }} — {{ i18n.t("nav_brand") }}{% endblock %}
+
+{% block head %}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("compose_heading") }}</h1>
+        <form method="post"
+              action="/users/{{ username }}/outbox"
+              aria-label="{{ i18n.t("aria_compose") }}"
+              class="space-y-4">
+            <div id="editor-mount"
+                 data-name="content"
+                 data-placeholder="{{ i18n.t("compose_placeholder") }}"
+                 data-rows="16"
+                 data-locale="{{ i18n.lang_attr() }}">
+                <!-- Fallback for clients without JavaScript. -->
+                <noscript>
+                    <textarea name="content"
+                              rows="16"
+                              class="w-full border border-border rounded p-3 font-mono text-sm bg-bg text-fg"
+                              placeholder="{{ i18n.t("compose_placeholder") }}"></textarea>
+                </noscript>
+            </div>
+            <div class="flex justify-end">
+                <button type="submit"
+                        class="bg-accent text-white px-6 py-2 rounded hover:opacity-90
+                               focus-visible:outline focus-visible:outline-2
+                               focus-visible:outline-offset-2 focus-visible:outline-focus
+                               min-h-[44px] min-w-[44px]">
+                    {{ i18n.t("compose_submit") }}
+                </button>
+            </div>
+        </form>
+
+        <script type="module" src="/assets/editor.js"></script>
+{% endblock %}

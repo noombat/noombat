@@ -30,3 +30,10 @@ aria_nav_main: "Main"
 aria_post_by: "Post by %{name}"
 aria_fediverse_handle: "Fediverse handle"
 aria_about: "About"
+
+# Compose.
+compose_title: "New Post"
+compose_heading: "New Post"
+compose_submit: "Publish"
+compose_placeholder: "Write Markdown here... Use $...$ for inline math, $$...$$ for display math."
+aria_compose: "Post composer"

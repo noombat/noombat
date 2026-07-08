@@ -8,8 +8,8 @@ nav_brand: "Noombat"
 # Feed.
 feed_title: "Feed"
 feed_heading: "Feed"
-feed_loading: "Carregando…"
-feed_loading_more: "Carregando mais…"
+feed_loading: "Carregando..."
+feed_loading_more: "Carregando mais..."
 feed_permalink: "Link permanente"
 
 # Publicação.
@@ -30,3 +30,10 @@ aria_nav_main: "Principal"
 aria_post_by: "Publicação de %{name}"
 aria_fediverse_handle: "Identificador no Fediverso"
 aria_about: "Sobre"
+
+# Compor.
+compose_title: "Nova Publicação"
+compose_heading: "Nova Publicação"
+compose_submit: "Publicar"
+compose_placeholder: "Escreva Markdown aqui... Use $...$ para fórmulas em linha, $$...$$ para fórmulas em destaque."
+aria_compose: "Compositor de publicação"
