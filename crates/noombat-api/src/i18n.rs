@@ -47,10 +47,9 @@ impl I18n {
 
     /// The BCP 47 language tag for the HTML `lang` attribute.
     ///
-    /// Returns the lowercase primary subtag (e.g. `"en"` for `"en-US"`,
-    /// `"pt"` for `"pt-BR"`).
+    /// Returns the full negotiated locale (e.g. `"en-US"`, `"pt-BR"`).
     pub fn lang_attr(&self) -> &str {
-        self.locale.split('-').next().unwrap_or("en")
+        &self.locale
     }
 }
 
@@ -156,5 +155,18 @@ mod tests {
     fn case_insensitive() {
         assert_eq!(negotiate_locale(&headers_with("PT-br")), "pt-BR");
         assert_eq!(negotiate_locale(&headers_with("EN-au")), "en-AU");
+    }
+
+    #[test]
+    fn lang_attr_returns_full_bcp47_tag() {
+        let i18n = I18n {
+            locale: "pt-BR".to_owned(),
+        };
+        assert_eq!(i18n.lang_attr(), "pt-BR");
+
+        let i18n_en = I18n {
+            locale: "en-US".to_owned(),
+        };
+        assert_eq!(i18n_en.lang_attr(), "en-US");
     }
 }
