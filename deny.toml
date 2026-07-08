@@ -46,6 +46,16 @@ allow = [
 ]
 unused-allowed-license = "allow"
 
+# The http-signature-normalization crates declare their licence using the
+# deprecated SPDX identifier "AGPL-3.0" (without the suffix).
+[[licenses.exceptions]]
+allow = ["AGPL-3.0"]
+crate = "http-signature-normalization"
+
+[[licenses.exceptions]]
+allow = ["AGPL-3.0"]
+crate = "http-signature-normalization-reqwest"
+
 [bans]
 multiple-versions = "warn"
 wildcards = "deny"
