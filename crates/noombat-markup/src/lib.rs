@@ -74,6 +74,23 @@ pub fn render(input: &str) -> MarkupOutput {
     }
 }
 
+/// Async wrapper that offloads [`render`] to a blocking thread pool.
+///
+/// The `katex` crate embeds QuickJS for server-side LaTeX rendering,
+/// which is CPU-bound (typically 1-10 ms per math expression).
+/// Calling [`render`] directly on a Tokio worker thread would starve
+/// the runtime under load. This wrapper uses
+/// [`tokio::task::spawn_blocking`] to prevent that.
+pub async fn render_async(input: String) -> noombat_core::error::Result<MarkupOutput> {
+    tokio::task::spawn_blocking(move || render(&input))
+        .await
+        .map_err(|e| {
+            noombat_core::error::NoombatError::Internal(format!(
+                "markup render task failed: {e}"
+            ))
+        })
+}
+
 /// Transform a single pulldown-cmark event.
 ///
 /// - `InlineMath` or `DisplayMath` to KaTeX-rendered HTML fragment.

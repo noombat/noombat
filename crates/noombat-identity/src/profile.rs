@@ -49,7 +49,7 @@ pub async fn create_experience(
     validate_section_visibility(visibility)?;
 
     // Render Markdown description if provided.
-    let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref());
+    let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref()).await?;
 
     let ap_object = build_experience_ap_object(
         &id,
@@ -176,7 +176,7 @@ pub async fn update_experience(
         Some(inner) => inner.as_deref(),
         None => current.description_md.as_deref(),
     };
-    let (desc_md, desc_html) = render_optional_markdown(desc_md_source);
+    let (desc_md, desc_html) = render_optional_markdown(desc_md_source).await?;
 
     let ap_object = build_experience_ap_object(
         &id,
@@ -254,7 +254,7 @@ pub async fn create_education(
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
 
-    let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref());
+    let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref()).await?;
 
     let ap_object = serde_json::json!({
         "type": "noombat:Education",
@@ -392,7 +392,7 @@ pub async fn update_education(
         Some(inner) => inner.as_deref(),
         None => current.description_md.as_deref(),
     };
-    let (desc_md, desc_html) = render_optional_markdown(desc_md_source);
+    let (desc_md, desc_html) = render_optional_markdown(desc_md_source).await?;
 
     let ap_object = serde_json::json!({
         "type": "noombat:Education",
@@ -562,7 +562,7 @@ pub async fn create_publication(
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
 
-    let (abs_md, abs_html) = render_optional_markdown(params.abstract_md.as_deref());
+    let (abs_md, abs_html) = render_optional_markdown(params.abstract_md.as_deref()).await?;
     let now = chrono::Utc::now();
 
     let ap_object = serde_json::json!({
@@ -702,7 +702,7 @@ pub async fn create_custom_section(
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
 
-    let (content_md, content_html) = render_optional_markdown(params.content_md.as_deref());
+    let (content_md, content_html) = render_optional_markdown(params.content_md.as_deref()).await?;
 
     let ap_object = serde_json::json!({
         "type": "noombat:CustomSection",
@@ -805,13 +805,17 @@ fn visibility_filter(max: &SectionVisibility) -> Vec<String> {
 /// Render an optional Markdown field through the markup pipeline.
 ///
 /// Returns `(source, html)`. If the input is `None`, both are `None`.
-fn render_optional_markdown(input: Option<&str>) -> (Option<String>, Option<String>) {
+/// Offloaded to a blocking thread because KaTeX embeds QuickJS.
+async fn render_optional_markdown(
+    input: Option<&str>,
+) -> noombat_core::error::Result<(Option<String>, Option<String>)> {
     match input {
         Some(md) => {
-            let output = noombat_markup::render(md);
-            (Some(md.to_owned()), Some(output.html))
+            let source = md.to_owned();
+            let output = noombat_markup::render_async(source.clone()).await?;
+            Ok((Some(source), Some(output.html)))
         }
-        None => (None, None),
+        None => Ok((None, None)),
     }
 }
 

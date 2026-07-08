@@ -282,7 +282,8 @@ async fn post_outbox(
     );
 
     // Render Markdown through the noombat-markup pipeline.
-    let markup_output = noombat_markup::render(&body.content);
+    // Offloaded to a blocking thread because KaTeX embeds QuickJS.
+    let markup_output = noombat_markup::render_async(body.content.clone()).await?;
     let content_html = markup_output.html;
     let hashtags = markup_output.hashtags;
 
@@ -413,10 +414,10 @@ async fn patch_actor(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     // Render Markdown summary through the noombat-markup pipeline.
-    let summary_html = body
-        .summary_md
-        .as_ref()
-        .map(|md| noombat_markup::render(md).html);
+    let summary_html = match body.summary_md.as_deref() {
+        Some(md) => Some(noombat_markup::render_async(md.to_owned()).await?.html),
+        None => None,
+    };
 
     let params = noombat_identity::repo::UpdateActor {
         display_name: body.display_name,

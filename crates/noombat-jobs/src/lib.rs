@@ -63,7 +63,7 @@ pub async fn create_job(
 ) -> Result<JobListing> {
     let id = Uuid::new_v4();
     let ap_id = format!("https://{domain}/jobs/{id}");
-    let output = noombat_markup::render(&params.description_md);
+    let output = noombat_markup::render_async(params.description_md.clone()).await?;
 
     let requirements_json = params
         .requirements
@@ -234,7 +234,7 @@ pub async fn update_job(
 
     let (desc_md, desc_html) = match &params.description_md {
         Some(md) => {
-            let output = noombat_markup::render(md);
+            let output = noombat_markup::render_async(md.clone()).await?;
             (md.as_str(), output.html)
         }
         None => (
