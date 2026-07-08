@@ -108,8 +108,27 @@ pub fn extract_domain(uri: &str) -> Option<String> {
 }
 
 /// Extract the local username from an actor URI.
+///
+/// Accepts URIs of the form `https://{domain}/users/{username}` (with
+/// an optional trailing slash). Returns `None` if the URI does not
+/// contain a `/users/` segment or if the extracted username is empty.
 fn extract_local_username(actor_uri: &str) -> Option<&str> {
-    actor_uri.rsplit('/').next()
+    // Strip the scheme and domain prefix, leaving `/users/{username}[/]`.
+    let path = actor_uri
+        .strip_prefix("https://")
+        .or_else(|| actor_uri.strip_prefix("http://"))
+        .and_then(|rest| rest.find('/').map(|pos| &rest[pos..]))?;
+
+    let after_users = path.strip_prefix("/users/")?;
+    let username = after_users.strip_suffix('/').unwrap_or(after_users);
+
+    // Reject empty usernames and paths with additional segments
+    // (e.g. `/users/alice/inbox` contains '/' after stripping).
+    if username.is_empty() || username.contains('/') {
+        return None;
+    }
+
+    Some(username)
 }
 
 // ..... FOLLOW .....
@@ -844,6 +863,55 @@ mod tests {
         assert_eq!(
             extract_local_username("https://noombat.social/users/alice"),
             Some("alice")
+        );
+    }
+
+    #[test]
+    fn extract_local_username_with_port() {
+        assert_eq!(
+            extract_local_username("http://localhost:8443/users/alice"),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn extract_local_username_trailing_slash() {
+        assert_eq!(
+            extract_local_username("https://noombat.social/users/alice/"),
+            Some("alice")
+        );
+    }
+
+    #[test]
+    fn extract_local_username_rejects_subpath() {
+        // `/users/alice/inbox` has an additional segment; must return None.
+        assert_eq!(
+            extract_local_username("https://noombat.social/users/alice/inbox"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_local_username_rejects_non_users_path() {
+        assert_eq!(
+            extract_local_username("https://noombat.social/@alice"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_local_username_rejects_empty() {
+        assert_eq!(
+            extract_local_username("https://noombat.social/users/"),
+            None
+        );
+    }
+
+    #[test]
+    fn extract_local_username_rejects_bare_domain() {
+        assert_eq!(
+            extract_local_username("https://noombat.social"),
+            None
         );
     }
 
