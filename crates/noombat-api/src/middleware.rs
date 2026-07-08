@@ -203,6 +203,14 @@ pub async fn authorisation(
             if let Some(ref mut p) = principal {
                 p.is_follower_of_target = Some(priv_ctx.is_follower);
             }
+        } else {
+            // The target actor does not exist. Pass through so that
+            // the handler produces the appropriate 404 response rather
+            // than the middleware returning a misleading 403.
+            if let Some(ref p) = principal {
+                request.extensions_mut().insert(p.clone());
+            }
+            return next.run(request).await;
         }
     }
 
