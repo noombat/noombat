@@ -350,8 +350,7 @@ mod tests {
 
     #[test]
     fn post_outbox_maps_to_create_post() {
-        let (action, resource, owner) =
-            map_route(&Method::POST, "/users/alice/outbox").unwrap();
+        let (action, resource, owner) = map_route(&Method::POST, "/users/alice/outbox").unwrap();
         assert!(action.contains("create_post"));
         assert!(resource.contains("alice"));
         assert_eq!(owner, "alice");
@@ -376,8 +375,7 @@ mod tests {
 
     #[test]
     fn get_cv_maps_to_download_cv() {
-        let (action, resource, owner) =
-            map_route(&Method::GET, "/users/alice/cv").unwrap();
+        let (action, resource, owner) = map_route(&Method::GET, "/users/alice/cv").unwrap();
         assert!(action.contains("download_cv"));
         assert!(resource.contains("alice"));
         assert_eq!(owner, "alice");
@@ -385,8 +383,7 @@ mod tests {
 
     #[test]
     fn get_profile_maps_to_view() {
-        let (action, resource, owner) =
-            map_route(&Method::GET, "/users/alice").unwrap();
+        let (action, resource, owner) = map_route(&Method::GET, "/users/alice").unwrap();
         assert!(action.contains("view"));
         assert!(resource.contains("alice"));
         assert_eq!(owner, "alice");
@@ -407,15 +404,11 @@ mod tests {
 
     #[test]
     fn action_needs_privacy_context_for_view() {
-        assert!(action_needs_privacy_context(
-            r#"Noombat::Action::"view""#
-        ));
+        assert!(action_needs_privacy_context(r#"Noombat::Action::"view""#));
     }
 
     #[test]
     fn action_does_not_need_privacy_context_for_edit() {
-        assert!(!action_needs_privacy_context(
-            r#"Noombat::Action::"edit""#
-        ));
+        assert!(!action_needs_privacy_context(r#"Noombat::Action::"edit""#));
     }
 }

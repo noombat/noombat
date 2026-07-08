@@ -11,8 +11,8 @@ use chrono::{TimeDelta, Utc};
 use http_signature_normalization_reqwest::prelude::*;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer};
-use sha2::Digest as _;
 use serde_json::Value;
+use sha2::Digest as _;
 use sqlx::{FromRow, PgPool};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -213,13 +213,9 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
             sha2::Sha256::new(),
             body,
             move |signing_string| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-                let private_key =
-                    rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem)
-                        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> {
-                            Box::new(e)
-                        })?;
-                let signing_key =
-                    rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key);
+                let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem)
+                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+                let signing_key = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key);
                 let signature = signing_key.sign(signing_string.as_bytes());
                 Ok(BASE64.encode(signature.to_bytes()))
             },
@@ -290,5 +286,3 @@ async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
     .execute(pool)
     .await;
 }
-
-

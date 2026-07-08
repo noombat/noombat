@@ -85,9 +85,7 @@ pub async fn render_async(input: String) -> noombat_core::error::Result<MarkupOu
     tokio::task::spawn_blocking(move || render(&input))
         .await
         .map_err(|e| {
-            noombat_core::error::NoombatError::Internal(format!(
-                "markup render task failed: {e}"
-            ))
+            noombat_core::error::NoombatError::Internal(format!("markup render task failed: {e}"))
         })
 }
 

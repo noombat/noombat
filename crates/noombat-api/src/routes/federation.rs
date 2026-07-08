@@ -166,13 +166,12 @@ async fn inbox_handler(
     // of actor resolution and cryptographic signature verification.
     // A blocked domain's activities are rejected outright.
     if let Some(sending_domain) = inbox::extract_domain(actor_uri) {
-        let restriction: Option<String> = sqlx::query_scalar(
-            "SELECT restriction FROM domain_restrictions WHERE domain = $1",
-        )
-        .bind(&sending_domain)
-        .fetch_optional(&state.pool)
-        .await
-        .unwrap_or(None);
+        let restriction: Option<String> =
+            sqlx::query_scalar("SELECT restriction FROM domain_restrictions WHERE domain = $1")
+                .bind(&sending_domain)
+                .fetch_optional(&state.pool)
+                .await
+                .unwrap_or(None);
 
         if restriction.as_deref() == Some("block") {
             return Err(NoombatError::Forbidden.into());
@@ -201,8 +200,7 @@ async fn inbox_handler(
             let Ok(public_key) = rsa::RsaPublicKey::from_public_key_pem(&public_key_pem) else {
                 return false;
             };
-            let verifying_key =
-                rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
+            let verifying_key = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
 
             let Ok(sig_bytes) = BASE64.decode(&sig_b64) else {
                 return false;
@@ -211,9 +209,7 @@ async fn inbox_handler(
                 return false;
             };
 
-            verifying_key
-                .verify(sig_str.as_bytes(), &signature)
-                .is_ok()
+            verifying_key.verify(sig_str.as_bytes(), &signature).is_ok()
         })
     });
 
@@ -256,10 +252,9 @@ async fn inbox_handler(
 
         let count = result.first().copied().unwrap_or(0);
         if count > fed_limit {
-            return Err(NoombatError::ServiceUnavailable(
-                "federation rate limit exceeded".into(),
-            )
-            .into());
+            return Err(
+                NoombatError::ServiceUnavailable("federation rate limit exceeded".into()).into(),
+            );
         }
     }
 

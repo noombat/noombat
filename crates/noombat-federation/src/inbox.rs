@@ -689,7 +689,10 @@ fn list_contains_public(list: &Option<Vec<String>>) -> bool {
 fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<String>> {
     let field = value.get(key)?;
     if let Some(arr) = field.as_array() {
-        let strings: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        let strings: Vec<String> = arr
+            .iter()
+            .filter_map(|v| v.as_str().map(String::from))
+            .collect();
         if strings.is_empty() {
             None
         } else {
@@ -747,7 +750,7 @@ mod tests {
     #[test]
     fn visibility_unlisted_public_in_cc() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned(),
+            "https://noombat.social/users/alice/followers".to_owned()
         ]);
         let cc = Some(vec![AS_PUBLIC.to_owned()]);
         assert_eq!(derive_visibility(&to, &cc), "unlisted");
@@ -756,7 +759,7 @@ mod tests {
     #[test]
     fn visibility_unlisted_shorthand_in_cc() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned(),
+            "https://noombat.social/users/alice/followers".to_owned()
         ]);
         let cc = Some(vec!["Public".to_owned()]);
         assert_eq!(derive_visibility(&to, &cc), "unlisted");
@@ -765,7 +768,7 @@ mod tests {
     #[test]
     fn visibility_followers_no_public() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned(),
+            "https://noombat.social/users/alice/followers".to_owned()
         ]);
         assert_eq!(derive_visibility(&to, &None), "followers");
     }

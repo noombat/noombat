@@ -83,13 +83,9 @@ async fn download_cv(
     // The middleware has already populated `Principal.is_follower_of_target`
     // via `fetch_privacy_context`, so no additional database query is
     // required here.
-    let principal_username = principal
-        .as_ref()
-        .and_then(|p| p.username.as_deref());
+    let principal_username = principal.as_ref().and_then(|p| p.username.as_deref());
 
-    let is_owner = principal_username
-        .map(|u| u == username)
-        .unwrap_or(false);
+    let is_owner = principal_username.map(|u| u == username).unwrap_or(false);
 
     let is_follower = principal
         .as_ref()

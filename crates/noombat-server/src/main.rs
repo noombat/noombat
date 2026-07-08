@@ -241,28 +241,28 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Redis connection (optional).
-    let redis: Option<redis::aio::ConnectionManager> =
-        if let Some(ref redis_url) = config.redis_url {
-            match redis::Client::open(redis_url.as_str()) {
-                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
-                    Ok(mgr) => {
-                        info!(url = %redis_url, "Redis connection established");
-                        Some(mgr)
-                    }
-                    Err(e) => {
-                        tracing::warn!("Redis connection failed (rate limiting disabled): {e}");
-                        None
-                    }
-                },
+    let redis: Option<redis::aio::ConnectionManager> = if let Some(ref redis_url) = config.redis_url
+    {
+        match redis::Client::open(redis_url.as_str()) {
+            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+                Ok(mgr) => {
+                    info!(url = %redis_url, "Redis connection established");
+                    Some(mgr)
+                }
                 Err(e) => {
-                    tracing::warn!("invalid Redis URL (rate limiting disabled): {e}");
+                    tracing::warn!("Redis connection failed (rate limiting disabled): {e}");
                     None
                 }
+            },
+            Err(e) => {
+                tracing::warn!("invalid Redis URL (rate limiting disabled): {e}");
+                None
             }
-        } else {
-            info!("no NOOMBAT_REDIS_URL configured; rate limiting disabled");
-            None
-        };
+        }
+    } else {
+        info!("no NOOMBAT_REDIS_URL configured; rate limiting disabled");
+        None
+    };
 
     let state = AppState {
         pool,
