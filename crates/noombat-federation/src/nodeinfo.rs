@@ -36,6 +36,8 @@ pub struct NodeInfoParams {
     pub active_month: u64,
     pub active_half_year: u64,
     pub local_posts: u64,
+    /// Number of currently active (published, non-expired) job listings.
+    pub active_job_listings: u64,
     pub open_registrations: bool,
     /// Instance-level feature flags exposed in the `metadata` object.
     pub features: NodeInfoFeatures,
@@ -63,9 +65,11 @@ pub fn build(params: &NodeInfoParams) -> Value {
             "noombat:Education",
             "noombat:Skill",
             "noombat:Publication",
-            "noombat:Application"
+            "noombat:Application",
+            "noombat:EventExtensions"
         ],
         "noombat:jobListingsEnabled": true,
+        "noombat:activeJobListings": params.active_job_listings,
         "noombat:chatmailAvailable": params.features.chatmail_available,
         "noombat:groupsEnabled": params.features.groups_enabled,
         "noombat:eventsEnabled": params.features.events_enabled,
@@ -115,6 +119,7 @@ mod tests {
             active_month: 5,
             active_half_year: 8,
             local_posts: 42,
+            active_job_listings: 7,
             open_registrations: true,
             features: NodeInfoFeatures::default(),
         };
@@ -123,6 +128,7 @@ mod tests {
         assert_eq!(doc["usage"]["users"]["total"], 10);
         assert_eq!(doc["usage"]["localPosts"], 42);
         assert_eq!(doc["openRegistrations"], true);
+        assert_eq!(doc["metadata"]["noombat:activeJobListings"], 7);
     }
 
     #[test]
@@ -132,6 +138,7 @@ mod tests {
             active_month: 1,
             active_half_year: 1,
             local_posts: 0,
+            active_job_listings: 0,
             open_registrations: false,
             features: NodeInfoFeatures {
                 chatmail_available: true,

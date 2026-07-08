@@ -14,3 +14,6 @@ pub const SKILL: &str = "noombat:Skill";
 pub const PUBLICATION: &str = "noombat:Publication";
 /// Custom object type: a job application (private, C2S only).
 pub const APPLICATION: &str = "noombat:Application";
+/// Extension namespace for Event-specific fields (virtual URL, organiser,
+/// RSVP status) not covered by the base ActivityStreams `Event` type.
+pub const EVENT_EXTENSIONS: &str = "noombat:EventExtensions";
