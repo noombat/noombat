@@ -91,7 +91,14 @@ pub async fn verify_link(
     info!(url = %link.url, "verifying rel=\"me\" link");
 
     let html = match client.get(&link.url).send().await {
-        Ok(resp) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
+        Ok(resp) if resp.status().is_success() => match resp.text().await {
+            Ok(body) => body,
+            Err(e) => {
+                warn!(url = %link.url, "verification body decode error: {e}");
+                mark_checked(pool, link.id, false).await?;
+                return Ok(false);
+            }
+        },
         Ok(resp) => {
             warn!(url = %link.url, status = resp.status().as_u16(), "verification fetch failed");
             mark_checked(pool, link.id, false).await?;
@@ -130,7 +137,7 @@ fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
     let document = Html::parse_document(html);
     for element in document.select(&REL_ME_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
-            if profile_urls.iter().any(|url| href == *url) {
+            if profile_urls.contains(&href) {
                 return true;
             }
         }
