@@ -41,6 +41,11 @@ impl MeilisearchBackend {
                 vec!["title", "company", "description", "requirements"],
             ),
             ("posts", vec!["content"]),
+            ("groups", vec!["name", "description", "tags"]),
+            (
+                "events",
+                vec!["title", "description", "location_name"],
+            ),
         ];
 
         for (name, searchable) in indices {
@@ -76,33 +81,56 @@ impl MeilisearchBackend {
                         ))
                     })?;
 
-            // Profiles and jobs expose fields for filtering.
+            // Filterable attributes enable faceted search (e.g. remote-only
+            // jobs, visibility-scoped profiles, date-range events).
             let filterable: Vec<&str> = match name {
                 "profiles" => vec!["visibility", "actor_type"],
                 "jobs" => vec!["status", "actor_id", "remote"],
                 "posts" => vec!["actor_id", "visibility"],
+                "groups" => vec!["actor_id"],
+                "events" => vec!["actor_id", "group_id", "start_time"],
                 _ => vec![],
             };
 
-            // Determine the last task to await, i.e. either the filterable
-            // task or the searchable task.
-            let final_task = if !filterable.is_empty() {
-                index
+            // Sortable attributes enable `sort` parameters at search time
+            // (e.g. `sort=["start_time:asc"]` for upcoming events).
+            let sortable: Vec<&str> = match name {
+                "events" => vec!["start_time"],
+                "jobs" => vec!["created_at"],
+                _ => vec![],
+            };
+
+            // Enqueue filterable and sortable settings; track the last
+            // task so that a single `wait_for_completion` call at the
+            // end guarantees all prior tasks have also completed.
+            let mut last_task = searchable_task;
+
+            if !filterable.is_empty() {
+                last_task = index
                     .set_filterable_attributes(&filterable)
                     .await
                     .map_err(|e| {
                         NoombatError::Internal(format!(
                             "meilisearch set_filterable_attributes: {e}"
                         ))
-                    })?
-            } else {
-                searchable_task
-            };
+                    })?;
+            }
+
+            if !sortable.is_empty() {
+                last_task = index
+                    .set_sortable_attributes(&sortable)
+                    .await
+                    .map_err(|e| {
+                        NoombatError::Internal(format!(
+                            "meilisearch set_sortable_attributes: {e}"
+                        ))
+                    })?;
+            }
 
             // Meilisearch processes tasks per index sequentially, so
             // awaiting the last enqueued task guarantees all prior
             // tasks for this index have also completed.
-            final_task
+            last_task
                 .wait_for_completion(
                     &self.client,
                     Some(Duration::from_millis(200)),

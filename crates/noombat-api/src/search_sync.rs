@@ -92,6 +92,7 @@ pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::Jo
         "location": job.location,
         "remote": job.remote,
         "status": if job.published_at.is_some() { "published" } else { "draft" },
+        "created_at": job.created_at.to_rfc3339(),
     });
     let id = job.id.to_string();
     tokio::spawn(async move {
