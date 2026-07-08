@@ -7,6 +7,13 @@ use serde_json::{json, Value};
 /// The standard ActivityStreams context URI.
 pub const AS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";
 
+/// The ActivityStreams Public collection URI.
+///
+/// When present in the `to` field of an activity, the object is public.
+/// When present only in `cc`, the object is unlisted.
+/// Absence from both indicates followers-only (or direct) addressing.
+pub const AS_PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
+
 /// The W3C Security Vocabulary context URI.
 pub const SECURITY_CONTEXT: &str = "https://w3id.org/security/v1";
 

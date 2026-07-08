@@ -443,6 +443,8 @@ pub struct RemotePost {
     /// property (when available), otherwise a copy of `content_html`.
     pub content_md: String,
     pub content_html: String,
+    /// Visibility derived from the activity's `to`/`cc` addressing.
+    pub visibility: String,
     pub ap_object: serde_json::Value,
 }
 
@@ -453,7 +455,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<()> 
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, content_md, content_html,
                 visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, 'public', $7)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
            ON CONFLICT (ap_id) DO NOTHING"#,
     )
     .bind(id)
@@ -462,6 +464,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<()> 
     .bind(&post.post_type)
     .bind(&post.content_md)
     .bind(&post.content_html)
+    .bind(&post.visibility)
     .bind(&post.ap_object)
     .execute(pool)
     .await?;

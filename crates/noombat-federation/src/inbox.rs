@@ -3,7 +3,7 @@
 //! Inbox handler for processing inbound ActivityPub activities.
 
 use noombat_ap::activity::{types, Activity};
-use noombat_ap::context::default_context;
+use noombat_ap::context::{default_context, AS_PUBLIC};
 use noombat_ap::object::ApActor;
 use noombat_core::actor::Actor;
 use noombat_core::error::{NoombatError, Result};
@@ -100,7 +100,7 @@ pub async fn resolve_remote_actor(
 }
 
 /// Extract the domain from a URI (e.g. `https://noombat.social/users/alice` to `noombat.social`).
-fn extract_domain(uri: &str) -> Option<String> {
+pub fn extract_domain(uri: &str) -> Option<String> {
     uri.strip_prefix("https://")
         .or_else(|| uri.strip_prefix("http://"))
         .and_then(|rest| rest.split('/').next())
@@ -340,6 +340,22 @@ async fn handle_create(
     // Resolve the remote author.
     let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
+    // Derive visibility from the activity's to/cc addressing.
+    //
+    // Some implementations place to/cc only on the inner object (the
+    // Note or Article) rather than on the wrapping Create activity.
+    // Fall back to the inner object's addressing when the envelope
+    // fields are absent.
+    let to = activity
+        .to
+        .clone()
+        .or_else(|| extract_string_array(&activity.object, "to"));
+    let cc = activity
+        .cc
+        .clone()
+        .or_else(|| extract_string_array(&activity.object, "cc"));
+    let visibility = derive_visibility(&to, &cc);
+
     // Persist the remote post.
     let remote_post = repo::RemotePost {
         actor_id: remote_actor.id,
@@ -347,6 +363,7 @@ async fn handle_create(
         post_type: post_type.to_owned(),
         content_md: content_md.to_owned(),
         content_html: content_html.to_owned(),
+        visibility,
         ap_object: activity.object.clone(),
     };
 
@@ -628,6 +645,63 @@ async fn handle_block(
     Ok(())
 }
 
+// ..... VISIBILITY DERIVATION .....
+
+/// Derive post visibility from the `to` and `cc` addressing arrays of
+/// an inbound ActivityPub activity.
+///
+/// The ActivityStreams Public collection URI ([`AS_PUBLIC`]) determines
+/// the audience:
+///
+/// | `to` contains Public | `cc` contains Public | Result       |
+/// |----------------------|----------------------|--------------|
+/// | yes                  | —                    | `"public"`   |
+/// | no                   | yes                  | `"unlisted"` |
+/// | no                   | no                   | `"followers"`|
+///
+/// Some implementations use the shorthand `"Public"` (case-insensitive)
+/// in place of the full URI; this function accepts both forms.
+fn derive_visibility(to: &Option<Vec<String>>, cc: &Option<Vec<String>>) -> String {
+    if list_contains_public(to) {
+        "public".to_owned()
+    } else if list_contains_public(cc) {
+        "unlisted".to_owned()
+    } else {
+        "followers".to_owned()
+    }
+}
+
+/// Whether an addressing list contains the ActivityStreams Public
+/// collection URI or the `"Public"` shorthand.
+fn list_contains_public(list: &Option<Vec<String>>) -> bool {
+    list.as_ref().is_some_and(|items| {
+        items
+            .iter()
+            .any(|uri| uri == AS_PUBLIC || uri.eq_ignore_ascii_case("Public"))
+    })
+}
+
+/// Extract an addressing field (`to` or `cc`) from a JSON object.
+///
+/// ActivityStreams allows addressing to be either an array of strings
+/// or a single string. This function normalises both forms into
+/// `Option<Vec<String>>`.
+fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+    let field = value.get(key)?;
+    if let Some(arr) = field.as_array() {
+        let strings: Vec<String> = arr.iter().filter_map(|v| v.as_str().map(String::from)).collect();
+        if strings.is_empty() {
+            None
+        } else {
+            Some(strings)
+        }
+    } else if let Some(s) = field.as_str() {
+        Some(vec![s.to_owned()])
+    } else {
+        None
+    }
+}
+
 // ..... TESTS .....
 
 #[cfg(test)]
@@ -656,5 +730,72 @@ mod tests {
             extract_local_username("https://noombat.social/users/alice"),
             Some("alice")
         );
+    }
+
+    #[test]
+    fn visibility_public_in_to() {
+        let to = Some(vec![AS_PUBLIC.to_owned()]);
+        assert_eq!(derive_visibility(&to, &None), "public");
+    }
+
+    #[test]
+    fn visibility_public_shorthand_in_to() {
+        let to = Some(vec!["Public".to_owned()]);
+        assert_eq!(derive_visibility(&to, &None), "public");
+    }
+
+    #[test]
+    fn visibility_unlisted_public_in_cc() {
+        let to = Some(vec![
+            "https://noombat.social/users/alice/followers".to_owned(),
+        ]);
+        let cc = Some(vec![AS_PUBLIC.to_owned()]);
+        assert_eq!(derive_visibility(&to, &cc), "unlisted");
+    }
+
+    #[test]
+    fn visibility_unlisted_shorthand_in_cc() {
+        let to = Some(vec![
+            "https://noombat.social/users/alice/followers".to_owned(),
+        ]);
+        let cc = Some(vec!["Public".to_owned()]);
+        assert_eq!(derive_visibility(&to, &cc), "unlisted");
+    }
+
+    #[test]
+    fn visibility_followers_no_public() {
+        let to = Some(vec![
+            "https://noombat.social/users/alice/followers".to_owned(),
+        ]);
+        assert_eq!(derive_visibility(&to, &None), "followers");
+    }
+
+    #[test]
+    fn visibility_followers_empty_addressing() {
+        assert_eq!(derive_visibility(&None, &None), "followers");
+    }
+
+    #[test]
+    fn extract_string_array_from_array() {
+        let obj = serde_json::json!({
+            "to": ["https://www.w3.org/ns/activitystreams#Public"]
+        });
+        let result = extract_string_array(&obj, "to");
+        assert_eq!(result, Some(vec![AS_PUBLIC.to_owned()]));
+    }
+
+    #[test]
+    fn extract_string_array_from_single_string() {
+        let obj = serde_json::json!({
+            "to": "https://www.w3.org/ns/activitystreams#Public"
+        });
+        let result = extract_string_array(&obj, "to");
+        assert_eq!(result, Some(vec![AS_PUBLIC.to_owned()]));
+    }
+
+    #[test]
+    fn extract_string_array_missing_key() {
+        let obj = serde_json::json!({});
+        assert_eq!(extract_string_array(&obj, "to"), None);
     }
 }
