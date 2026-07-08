@@ -91,14 +91,7 @@ pub async fn verify_link(
     info!(url = %link.url, "verifying rel=\"me\" link");
 
     let html = match client.get(&link.url).send().await {
-        Ok(resp) if resp.status().is_success() => match resp.text().await {
-            Ok(body) => body,
-            Err(e) => {
-                warn!(url = %link.url, "verification body decode error: {e}");
-                mark_checked(pool, link.id, false).await?;
-                return Ok(false);
-            }
-        },
+        Ok(resp) if resp.status().is_success() => resp.text().await.unwrap_or_default(),
         Ok(resp) => {
             warn!(url = %link.url, status = resp.status().as_u16(), "verification fetch failed");
             mark_checked(pool, link.id, false).await?;
@@ -137,7 +130,7 @@ fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
     let document = Html::parse_document(html);
     for element in document.select(&REL_ME_SELECTOR) {
         if let Some(href) = element.value().attr("href") {
-            if profile_urls.contains(&href) {
+            if profile_urls.iter().any(|url| href == *url) {
                 return true;
             }
         }
@@ -171,12 +164,17 @@ async fn mark_checked(pool: &PgPool, link_id: Uuid, verified: bool) -> Result<()
 
 /// Background worker: re-verify all links that have not been checked
 /// within the given interval (in days).
+///
+/// Returns the set of actor UUIDs whose verification state changed
+/// during this sweep (either verified to unverified or unverified to
+/// verified). The caller may use these to broadcast `Update`
+/// activities so that followers see the updated verification badges.
 pub async fn reverify_stale_links(
     pool: &PgPool,
     client: &reqwest::Client,
     domain: &str,
     max_age_days: i32,
-) -> Result<u64> {
+) -> Result<Vec<Uuid>> {
     let links = sqlx::query_as::<_, VerifiedLink>(
         r#"SELECT vl.id, vl.actor_id, vl.url, vl.verified_at, vl.last_checked, vl.visibility
            FROM verified_links vl
@@ -187,7 +185,7 @@ pub async fn reverify_stale_links(
     .fetch_all(pool)
     .await?;
 
-    let mut count = 0u64;
+    let mut changed_actors: Vec<Uuid> = Vec::new();
     for link in &links {
         let username = sqlx::query_scalar::<_, String>("SELECT username FROM actors WHERE id = $1")
             .bind(link.actor_id)
@@ -195,14 +193,26 @@ pub async fn reverify_stale_links(
             .await?;
 
         if let Some(username) = username {
+            let was_verified = link.verified_at.is_some();
             let ap_url = format!("https://{domain}/users/{username}");
             let human_url = format!("https://{domain}/@{username}");
-            let _ = verify_link(pool, client, link, &[&ap_url, &human_url]).await;
-            count += 1;
+
+            let is_verified = verify_link(pool, client, link, &[&ap_url, &human_url])
+                .await
+                .unwrap_or(false);
+
+            if was_verified != is_verified {
+                changed_actors.push(link.actor_id);
+            }
         }
     }
 
-    Ok(count)
+    // Deduplicate: multiple links for the same actor may have changed
+    // in the same sweep.
+    changed_actors.sort();
+    changed_actors.dedup();
+
+    Ok(changed_actors)
 }
 
 #[cfg(test)]

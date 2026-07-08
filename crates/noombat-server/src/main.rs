@@ -173,8 +173,31 @@ async fn main() -> anyhow::Result<()> {
                 )
                 .await
                 {
-                    Ok(count) if count > 0 => {
-                        info!(count, "re-verified stale links");
+                    Ok(changed) if !changed.is_empty() => {
+                        info!(
+                            count = changed.len(),
+                            "re-verification sweep: links changed state"
+                        );
+                        // Broadcast an Update activity for each actor
+                        // whose verification state changed, so that
+                        // followers refresh their cached profile.
+                        for actor_id in &changed {
+                            match noombat_identity::repo::find_by_id(&pool, *actor_id).await {
+                                Ok(actor) => {
+                                    noombat_federation::update::enqueue_actor_update(
+                                        &pool, &actor, &domain,
+                                    )
+                                    .await;
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        %actor_id,
+                                        error = %e,
+                                        "failed to fetch actor for Update after re-verification"
+                                    );
+                                }
+                            }
+                        }
                     }
                     Err(e) => {
                         tracing::warn!("link re-verification sweep failed: {e}");

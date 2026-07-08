@@ -9,4 +9,5 @@ pub mod delivery;
 pub mod digest;
 pub mod inbox;
 pub mod nodeinfo;
+pub mod update;
 pub mod webfinger;
