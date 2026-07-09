@@ -494,34 +494,76 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
 // ..... ACTOR UPDATE .....
 
 /// Mutable fields for an actor update.
+///
+/// Each field uses `Option<Option<String>>`:
+/// - `None`: do not change this field.
+/// - `Some(None)`: set the field to `NULL` (clear it).
+/// - `Some(Some(value))`: set the field to `value`.
 pub struct UpdateActor {
-    pub display_name: Option<String>,
-    pub headline: Option<String>,
-    pub summary_md: Option<String>,
-    pub summary_html: Option<String>,
-    pub avatar_url: Option<String>,
-    pub header_url: Option<String>,
+    pub display_name: Option<Option<String>>,
+    pub headline: Option<Option<String>>,
+    pub summary_md: Option<Option<String>>,
+    pub summary_html: Option<Option<String>>,
+    pub avatar_url: Option<Option<String>>,
+    pub header_url: Option<Option<String>>,
 }
 
 /// Update a local actor's editable fields.
+///
+/// Only fields that are `Some(...)` are modified. A field set to
+/// `Some(None)` is explicitly cleared (set to `NULL`).
 pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -> Result<Actor> {
+    // Fetch the current row to merge with partial updates.
+    let current = find_by_id(pool, actor_id).await?;
+
+    if !current.is_local {
+        return Err(NoombatError::BadRequest(
+            "cannot update a remote actor".into(),
+        ));
+    }
+
+    let display_name = match &params.display_name {
+        Some(inner) => inner.as_deref(),
+        None => current.display_name.as_deref(),
+    };
+    let headline = match &params.headline {
+        Some(inner) => inner.as_deref(),
+        None => current.headline.as_deref(),
+    };
+    let summary_md = match &params.summary_md {
+        Some(inner) => inner.as_deref(),
+        None => current.summary_md.as_deref(),
+    };
+    let summary_html = match &params.summary_html {
+        Some(inner) => inner.as_deref(),
+        None => current.summary_html.as_deref(),
+    };
+    let avatar_url = match &params.avatar_url {
+        Some(inner) => inner.as_deref(),
+        None => current.avatar_url.as_deref(),
+    };
+    let header_url = match &params.header_url {
+        Some(inner) => inner.as_deref(),
+        None => current.header_url.as_deref(),
+    };
+
     sqlx::query(
         r#"UPDATE actors SET
-               display_name = COALESCE($2, display_name),
-               headline = COALESCE($3, headline),
-               summary_md = COALESCE($4, summary_md),
-               summary_html = COALESCE($5, summary_html),
-               avatar_url = COALESCE($6, avatar_url),
-               header_url = COALESCE($7, header_url)
+               display_name = $2,
+               headline = $3,
+               summary_md = $4,
+               summary_html = $5,
+               avatar_url = $6,
+               header_url = $7
            WHERE id = $1 AND is_local = TRUE"#,
     )
     .bind(actor_id)
-    .bind(&params.display_name)
-    .bind(&params.headline)
-    .bind(&params.summary_md)
-    .bind(&params.summary_html)
-    .bind(&params.avatar_url)
-    .bind(&params.header_url)
+    .bind(display_name)
+    .bind(headline)
+    .bind(summary_md)
+    .bind(summary_html)
+    .bind(avatar_url)
+    .bind(header_url)
     .execute(pool)
     .await?;
 

@@ -510,10 +510,10 @@ async fn patch_actor(
     };
 
     let params = noombat_identity::repo::UpdateActor {
-        display_name: body.display_name,
-        headline: body.headline,
-        summary_md: body.summary_md,
-        summary_html,
+        display_name: body.display_name.map(Some),
+        headline: body.headline.map(Some),
+        summary_md: body.summary_md.map(Some),
+        summary_html: summary_html.map(Some),
         avatar_url: None,
         header_url: None,
     };
