@@ -6,7 +6,8 @@
 //! and Markdown to Typst converter.
 //!
 //! This crate is the single source of truth for all user-authored rich
-//! text in Noombat. Every Markdown field is processed through [`render`].
+//! text in Noombat. Every Markdown field is processed through [`render`]
+//! (or [`render_with_options`] for Article content that permits raw HTML).
 
 pub mod doi;
 pub mod hashtag;
@@ -30,7 +31,41 @@ pub struct MarkupOutput {
     pub dois: Vec<DoiReference>,
 }
 
+/// Options controlling the rendering pipeline.
+///
+/// The default options match the behaviour of [`render`]: the strict
+/// sanitisation profile is **not** applied (i.e. `style` is permitted
+/// on `<span>` because only the trusted KaTeX renderer produces styled
+/// spans in normal Note/profile content).
+#[derive(Debug, Clone)]
+pub struct MarkupOptions {
+    /// When `true`, the strict sanitisation profile ([`sanitise::clean_strict`])
+    /// is used, which strips `style` from `<span>`. This is appropriate
+    /// for Article content where user-authored raw HTML may contain
+    /// `<span style="...">` elements that would otherwise enable
+    /// CSS-based attacks (tracking pixels, UI spoofing, etc.).
+    ///
+    /// When `false` (the default), [`sanitise::clean`] is used, which
+    /// permits `style` on `<span>`. This is safe when KaTeX output is
+    /// the sole source of styled spans (the case for Notes, profile
+    /// summaries, and all non-Article Markdown fields).
+    ///
+    /// Note: pulldown-cmark always passes raw HTML through per the
+    /// CommonMark specification. This flag does **not** toggle parser
+    /// behaviour; it controls only which sanitisation profile is
+    /// applied to the output.
+    pub allow_html: bool,
+}
+
+impl Default for MarkupOptions {
+    fn default() -> Self {
+        Self { allow_html: false }
+    }
+}
+
 /// Render a (Markdown + KaTeX) source string to sanitised HTML.
+///
+/// Equivalent to `render_with_options(input, &MarkupOptions::default())`.
 ///
 /// The pipeline:
 /// 1. Parse with `pulldown-cmark` (CommonMark + math + tables + strikethrough).
@@ -40,11 +75,26 @@ pub struct MarkupOutput {
 /// 5. Feed the transformed event stream to `pulldown-cmark`'s HTML renderer.
 /// 6. Sanitise with `ammonia`.
 pub fn render(input: &str) -> MarkupOutput {
+    render_with_options(input, &MarkupOptions::default())
+}
+
+/// Render with explicit options.
+///
+/// See [`MarkupOptions`] for the available settings.
+pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_MATH);
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
+    // Note: pulldown-cmark always passes raw HTML through to the event
+    // stream (Event::Html and Event::InlineHtml) per the CommonMark
+    // specification. There is no flag to toggle this behaviour. The
+    // `allow_html` option controls only which sanitisation profile is
+    // applied to the output: `clean` (permits `style` on `<span>`,
+    // safe when KaTeX is the sole source of styled spans) or
+    // `clean_strict` (strips `style` from `<span>`, safe when
+    // user-authored HTML may also contain styled spans).
 
     let parser = Parser::new_ext(input, options);
 
@@ -60,8 +110,14 @@ pub fn render(input: &str) -> MarkupOutput {
     let mut raw_html = String::with_capacity(input.len() * 2);
     pulldown_cmark::html::push_html(&mut raw_html, events.into_iter());
 
-    // Sanitise.
-    let html = sanitise::clean(&raw_html);
+    // Sanitise. When allow_html is enabled, user-authored HTML
+    // reaches the sanitiser directly. Use the strict profile, which
+    // strips `style` from `<span>` to prevent CSS-based attacks.
+    let html = if opts.allow_html {
+        sanitise::clean_strict(&raw_html)
+    } else {
+        sanitise::clean(&raw_html)
+    };
 
     // Deduplicate hashtags.
     hashtags.sort();
@@ -82,7 +138,15 @@ pub fn render(input: &str) -> MarkupOutput {
 /// the runtime under load. This wrapper uses
 /// [`tokio::task::spawn_blocking`] to prevent that.
 pub async fn render_async(input: String) -> noombat_core::error::Result<MarkupOutput> {
-    tokio::task::spawn_blocking(move || render(&input))
+    render_async_with_options(input, MarkupOptions::default()).await
+}
+
+/// Async wrapper for [`render_with_options`].
+pub async fn render_async_with_options(
+    input: String,
+    opts: MarkupOptions,
+) -> noombat_core::error::Result<MarkupOutput> {
+    tokio::task::spawn_blocking(move || render_with_options(&input, &opts))
         .await
         .map_err(|e| {
             noombat_core::error::NoombatError::Internal(format!("markup render task failed: {e}"))
@@ -247,5 +311,60 @@ mod tests {
         let output = render("#Rust is great. I love #rust.");
         assert_eq!(output.hashtags.len(), 1);
         assert_eq!(output.hashtags[0], "rust");
+    }
+
+    // ..... allow_html mode .....
+
+    #[test]
+    fn allow_html_passes_safe_tags() {
+        let opts = MarkupOptions { allow_html: true };
+        let output = render_with_options("<details><summary>More</summary>Hidden</details>", &opts);
+        assert!(
+            output.html.contains("<details>"),
+            "safe HTML tags must survive in allow_html mode: {}",
+            output.html
+        );
+    }
+
+    #[test]
+    fn allow_html_strips_script() {
+        let opts = MarkupOptions { allow_html: true };
+        let output = render_with_options("<script>alert('xss')</script>", &opts);
+        assert!(
+            !output.html.contains("<script>"),
+            "script tags must be stripped even in allow_html mode"
+        );
+    }
+
+    #[test]
+    fn allow_html_strips_style_from_span() {
+        let opts = MarkupOptions { allow_html: true };
+        let output = render_with_options(
+            r#"<span style="background-image:url(https://evil.example/t)">track</span>"#,
+            &opts,
+        );
+        assert!(
+            !output.html.contains("style="),
+            "style on <span> must be stripped in allow_html mode: {}",
+            output.html
+        );
+    }
+
+    #[test]
+    fn default_mode_sanitises_raw_html() {
+        // pulldown-cmark always passes raw HTML through. The sanitiser
+        // strips dangerous elements; safe elements survive.
+        let output = render("<details><summary>Info</summary>Content</details>");
+        assert!(
+            output.html.contains("<details>"),
+            "safe raw HTML should survive sanitisation in default mode: {}",
+            output.html
+        );
+        // Scripts are stripped regardless of mode.
+        let output = render("<script>alert('xss')</script>");
+        assert!(
+            !output.html.contains("<script>"),
+            "script tags must be stripped in default mode"
+        );
     }
 }

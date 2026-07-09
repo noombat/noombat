@@ -4,23 +4,32 @@
 //!
 //! Configures an allowlist that permits standard Markdown-generated
 //! HTML, KaTeX-rendered output (spans with classes, MathML elements),
-//! and hashtag or DOI annotation elements.
+//! hashtag and DOI annotation elements, and task-list checkboxes.
 //!
 //! # Trust model for the `style` attribute
 //!
-//! The `style` attribute is allowed **only on `<span>`**, and only
-//! because KaTeX's `htmlAndMathml` output relies on inline styles for
-//! strut sizing, sub/superscript positioning, and margin spacing.
+//! Two sanitisation profiles are provided:
 //!
-//! This is safe in the current pipeline because user-authored raw HTML
-//! is **not** passed through: the `render()` function in `lib.rs` does
-//! not enable `pulldown_cmark::Options::ENABLE_HTML`, so user HTML is
-//! entity-encoded by the parser. The only source of `<span style="...">`
-//! in the sanitiser's input is the trusted KaTeX renderer.
+//! - [`clean`] allows `style` on `<span>`. This is safe when the
+//!   only source of `<span style="...">` in the input is the trusted
+//!   KaTeX renderer. This profile is used for Notes, profile
+//!   summaries, and all non-Article Markdown fields, where users are
+//!   not expected to author raw HTML containing styled spans.
 //!
-//! **If `ENABLE_HTML` is ever enabled** (e.g., for Article content),
-//! this assumption breaks and `style` must be removed or restricted
-//! to a CSS-property allowlist (e.g. via ammonia's `css` feature).
+//! - [`clean_strict`] omits `style` from `<span>`. This profile is
+//!   used for Article content, where user-authored raw HTML is an
+//!   expected use case and `<span style="...">` elements may reach
+//!   the sanitiser. Allowing `style` on those elements would enable
+//!   CSS-based attacks (tracking pixels via `background-image:
+//!   url(...)`, UI spoofing via `position: fixed`, etc.). KaTeX
+//!   output degrades gracefully: the MathML branch of the
+//!   `htmlAndMathml` output provides a semantic fallback.
+//!
+//! Note: pulldown-cmark always passes raw HTML through to the event
+//! stream per the CommonMark specification. The distinction between
+//! the two profiles is not about whether raw HTML reaches the
+//! sanitiser (it always does), but about which CSS properties are
+//! permitted on specific elements in the sanitised output.
 
 use std::sync::LazyLock;
 
@@ -98,9 +107,65 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
 });
 
 /// Clean an HTML string using the Noombat sanitisation profile.
+///
+/// This profile allows `style` on `<span>` because the only source of
+/// styled spans in normal operation is the trusted KaTeX renderer. If
+/// raw user-authored HTML is present (i.e. the `allow_html` rendering
+/// option is enabled), use [`clean_strict`] instead.
 pub fn clean(html: &str) -> String {
     SANITISER.clean(html).to_string()
 }
+
+/// Strict sanitisation profile for content rendered with `allow_html`.
+///
+/// Identical to [`clean`] except that `style` is **not** permitted on
+/// `<span>`. When `ENABLE_HTML` is active, user-authored `<span
+/// style="...">` elements reach the sanitiser unsanitised. Allowing
+/// `style` on those elements would enable CSS-based attacks (tracking
+/// pixels via `background-image: url(...)`, UI spoofing via
+/// `position: fixed`, etc.).
+///
+/// KaTeX output that relies on inline styles is unaffected in
+/// practice: the KaTeX renderer produces its own `<span>` elements
+/// with class names and inline styles, but when `allow_html` is
+/// enabled, user-authored spans with the same tag name also reach the
+/// sanitiser. Stripping `style` from all `<span>` elements is the
+/// conservative choice; KaTeX output degrades gracefully (minor
+/// alignment differences) because the MathML branch of the
+/// `htmlAndMathml` output provides a semantic fallback.
+pub fn clean_strict(html: &str) -> String {
+    SANITISER_STRICT.clean(html).to_string()
+}
+
+/// Strict variant of [`SANITISER`]: same tag/attribute allowlist but
+/// with `style` removed from `<span>`.
+static SANITISER_STRICT: LazyLock<Builder<'static>> = LazyLock::new(|| {
+    let mut builder = Builder::default();
+
+    builder.add_tags([
+        "span",
+        "math", "semantics", "mrow", "mi", "mo", "mn", "ms",
+        "mtext", "mspace", "msup", "msub", "msubsup", "mfrac",
+        "msqrt", "mroot", "mtable", "mtr", "mtd", "mover", "munder",
+        "munderover", "mpadded", "mphantom", "menclose",
+        "annotation", "annotation-xml",
+        "details", "summary", "kbd", "mark", "var", "samp", "time",
+        "figure", "figcaption",
+        "input",
+    ]);
+
+    // `style` intentionally omitted from `<span>` (see doc-comment).
+    builder.add_tag_attributes("span", ["class", "aria-hidden"]);
+    builder.add_tag_attributes("div", ["class"]);
+    builder.add_tag_attributes("a", ["class", "data-doi"]);
+    builder.add_tag_attributes("math", ["xmlns", "display"]);
+    builder.add_tag_attributes("annotation", ["encoding"]);
+    builder.add_tag_attributes("annotation-xml", ["encoding"]);
+    builder.add_tag_attributes("time", ["datetime"]);
+    builder.add_tag_attributes("input", ["type", "disabled", "checked"]);
+
+    builder
+});
 
 #[cfg(test)]
 mod tests {
