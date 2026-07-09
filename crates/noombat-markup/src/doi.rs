@@ -27,9 +27,16 @@ pub struct DoiReference {
 ///
 /// The DOI itself (the `10.xxxx/...` part) is captured in group 1.
 /// DOI syntax: `10.` followed by a registrant code (digits), then `/`,
-/// then a suffix of non-whitespace characters.
+/// then a suffix of non-whitespace characters. The character class
+/// excludes `)`, `]`, and `,` so that DOIs embedded in Markdown link
+/// syntax (`[text](https://doi.org/10.1000/xyz)`) or parenthetical
+/// citations do not consume the surrounding delimiter.
 static DOI_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?:https?://doi\.org/|doi:)(10\.\d{4,}/[^\s),]+)").unwrap());
+    LazyLock::new(|| Regex::new(r"(?:https?://doi\.org/|doi:)(10\.\d{4,}/[^\s),\]]+)").unwrap());
+
+/// Characters stripped from the end of a matched DOI when they are
+/// unlikely to be part of the identifier (sentence-final punctuation).
+const TRAILING_PUNCT: &[char] = &['.', ',', ';', ':', '!', '?'];
 
 /// Detect DOI references in a text fragment.
 pub fn detect_in_text(text: &str) -> Vec<DoiReference> {
@@ -38,10 +45,10 @@ pub fn detect_in_text(text: &str) -> Vec<DoiReference> {
         .map(|cap| {
             let full_match = cap.get(0).unwrap().as_str();
             let doi = cap.get(1).unwrap().as_str();
-            // Strip trailing punctuation that is unlikely to be part of
-            // the DOI (period, comma, semicolon, closing parenthesis).
-            let doi = doi.trim_end_matches(['.', ',', ';', ')']);
-            let source_uri = full_match.trim_end_matches(['.', ',', ';', ')']);
+            // Strip trailing sentence-final punctuation that is
+            // unlikely to be part of the DOI.
+            let doi = doi.trim_end_matches(TRAILING_PUNCT);
+            let source_uri = full_match.trim_end_matches(TRAILING_PUNCT);
             DoiReference {
                 doi: doi.to_owned(),
                 source_uri: source_uri.to_owned(),
@@ -100,5 +107,39 @@ mod tests {
             refs[0].source_uri, "https://doi.org/10.1000/abc123",
             "source_uri must not retain trailing punctuation stripped from doi"
         );
+    }
+
+    #[test]
+    fn doi_in_markdown_link_parentheses() {
+        // Markdown link syntax: [text](https://doi.org/10.1000/xyz)
+        // The closing `)` must not be consumed by the regex.
+        let refs = detect_in_text("[paper](https://doi.org/10.1000/xyz)");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].doi, "10.1000/xyz");
+        assert_eq!(refs[0].source_uri, "https://doi.org/10.1000/xyz");
+    }
+
+    #[test]
+    fn doi_in_square_brackets() {
+        // Citation style: [doi:10.1000/xyz]
+        let refs = detect_in_text("[doi:10.1000/xyz]");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].doi, "10.1000/xyz");
+        assert_eq!(refs[0].source_uri, "doi:10.1000/xyz");
+    }
+
+    #[test]
+    fn doi_followed_by_closing_paren_and_period() {
+        // Parenthetical reference at end of sentence: (doi:10.1000/xyz).
+        let refs = detect_in_text("(doi:10.1000/xyz).");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].doi, "10.1000/xyz");
+    }
+
+    #[test]
+    fn doi_with_colon_suffix_stripped() {
+        let refs = detect_in_text("doi:10.1000/xyz:");
+        assert_eq!(refs.len(), 1);
+        assert_eq!(refs[0].doi, "10.1000/xyz");
     }
 }

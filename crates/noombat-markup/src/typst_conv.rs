@@ -146,11 +146,16 @@ fn write_end_tag(tag: &TagEnd, out: &mut String, list_stack: &mut Vec<ListKind>)
 }
 
 /// Escape characters that are special in Typst markup.
+///
+/// Typst uses `#` for function calls, `$` for math mode, `*` and `_`
+/// for bold and italic, `@` for references, `\` for escape sequences,
+/// and `` ` `` for raw/code spans. All must be backslash-escaped when
+/// they appear in plain text.
 fn escape_typst(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     for ch in input.chars() {
         match ch {
-            '#' | '$' | '*' | '_' | '@' | '\\' => {
+            '#' | '$' | '*' | '_' | '@' | '\\' | '`' => {
                 result.push('\\');
                 result.push(ch);
             }
@@ -200,6 +205,7 @@ mod tests {
     fn special_chars_escaped() {
         assert_eq!(escape_typst("$10"), "\\$10");
         assert_eq!(escape_typst("#tag"), "\\#tag");
+        assert_eq!(escape_typst("it`s"), "it\\`s");
     }
 
     #[test]
