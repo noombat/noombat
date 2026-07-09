@@ -9,6 +9,8 @@ services:
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
       NOOMBAT_REDIS_URL: redis://redis:6379
+      NOOMBAT_MEILI_URL: http://meilisearch:7700
+      NOOMBAT_MEILI_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
     ports:
       - "8443:8443"
     depends_on:
