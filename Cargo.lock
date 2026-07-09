@@ -2442,6 +2442,7 @@ dependencies = [
  "noombat-core",
  "noombat-federation",
  "noombat-identity",
+ "rand 0.8.6",
  "redis",
  "reqwest 0.13.4",
  "serde",
