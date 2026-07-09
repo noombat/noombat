@@ -13,7 +13,7 @@ COPY frontend/ frontend/
 COPY crates/noombat-api/templates/ crates/noombat-api/templates/
 
 WORKDIR /build/frontend
-RUN npm install -g pnpm && pnpm install && pnpm build
+RUN corepack enable && pnpm install && pnpm build
 
 # ..... RUST BUILD .....
 # The `rust:1-bookworm` tag tracks the latest stable Rust 1.x release,

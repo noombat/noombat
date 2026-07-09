@@ -264,7 +264,7 @@ jobs:
       - name: Build frontend assets
         working-directory: frontend
         run: |
-          npm install -g pnpm
+          corepack enable
           pnpm install
           pnpm build
 
