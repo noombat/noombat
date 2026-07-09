@@ -324,18 +324,18 @@ async fn post_outbox(
         "note" => false,
         "article" => true,
         _ => {
-            return Err(NoombatError::BadRequest(
-                "post_type must be note or article".into(),
-            )
-            .into());
+            return Err(
+                NoombatError::BadRequest("post_type must be note or article".into()).into(),
+            );
         }
     };
 
     // Articles require a title.
     if is_article && body.title.as_deref().map_or(true, str::is_empty) {
-        return Err(
-            NoombatError::BadRequest("article post_type requires a non-empty title".into()).into(),
-        );
+        return Err(NoombatError::BadRequest(
+            "article post_type requires a non-empty title".into(),
+        )
+        .into());
     }
 
     // Generate a unique AP ID for the post.
