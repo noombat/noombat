@@ -233,6 +233,16 @@ mod tests {
     }
 
     #[test]
+    fn task_list_checkboxes_preserved() {
+        let output = render("- [x] Done\n- [ ] Pending");
+        assert!(
+            output.html.contains("<input"),
+            "task-list checkbox must survive the full pipeline: {}",
+            output.html
+        );
+    }
+
+    #[test]
     fn hashtags_are_deduplicated() {
         let output = render("#Rust is great. I love #rust.");
         assert_eq!(output.hashtags.len(), 1);

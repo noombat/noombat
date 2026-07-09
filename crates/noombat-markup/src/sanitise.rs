@@ -70,6 +70,10 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
         "time",
         "figure",
         "figcaption",
+        // Task-list checkboxes emitted by pulldown-cmark when
+        // ENABLE_TASKLISTS is active. Only `type`, `disabled`, and
+        // `checked` are permitted (see tag-attribute section below).
+        "input",
     ]);
 
     // ..... Additional tag attributes .....
@@ -85,6 +89,10 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     builder.add_tag_attributes("annotation", ["encoding"]);
     builder.add_tag_attributes("annotation-xml", ["encoding"]);
     builder.add_tag_attributes("time", ["datetime"]);
+    // Task-list checkboxes: permit only the attributes that
+    // pulldown-cmark emits (`type="checkbox"`, `disabled`,
+    // `checked`). No other input types or attributes are allowed.
+    builder.add_tag_attributes("input", ["type", "disabled", "checked"]);
 
     builder
 });
@@ -148,6 +156,31 @@ mod tests {
         let result = clean(input);
         assert!(!result.contains("onclick"));
         assert!(result.contains("href"));
+    }
+
+    #[test]
+    fn allows_task_list_checkbox() {
+        // pulldown-cmark emits this for `- [x] Done`.
+        let input = r#"<li><input type="checkbox" disabled checked /> Done</li>"#;
+        let result = clean(input);
+        assert!(
+            result.contains(r#"<input"#),
+            "task-list checkbox must survive sanitisation: {result}"
+        );
+        assert!(result.contains("disabled"));
+        assert!(result.contains("checked"));
+    }
+
+    #[test]
+    fn strips_non_checkbox_input() {
+        // An <input type="text"> survives (the tag is allowlisted),
+        // but dangerous attributes must be stripped.
+        let input = r#"<input type="text" name="evil" value="xss">"#;
+        let result = clean(input);
+        // ammonia allows the tag but strips unknown attributes.
+        // `name` and `value` are not in the allowlist.
+        assert!(!result.contains("name="));
+        assert!(!result.contains("value="));
     }
 
     #[test]
