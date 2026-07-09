@@ -37,7 +37,7 @@ pub struct MarkupOutput {
 /// sanitisation profile is **not** applied (i.e. `style` is permitted
 /// on `<span>` because only the trusted KaTeX renderer produces styled
 /// spans in normal Note/profile content).
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct MarkupOptions {
     /// When `true`, the strict sanitisation profile ([`sanitise::clean_strict`])
     /// is used, which strips `style` from `<span>`. This is appropriate
@@ -55,12 +55,6 @@ pub struct MarkupOptions {
     /// behaviour; it controls only which sanitisation profile is
     /// applied to the output.
     pub allow_html: bool,
-}
-
-impl Default for MarkupOptions {
-    fn default() -> Self {
-        Self { allow_html: false }
-    }
 }
 
 /// Render a (Markdown + KaTeX) source string to sanitised HTML.
