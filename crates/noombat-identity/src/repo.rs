@@ -196,6 +196,10 @@ pub struct NewPost {
     pub actor_id: Uuid,
     pub ap_id: String,
     pub post_type: String,
+    /// Article title (ActivityStreams `name`). `None` for Notes.
+    pub title: Option<String>,
+    /// Featured image URL. Primarily relevant for Articles.
+    pub featured_image_url: Option<String>,
     pub content_md: String,
     pub content_html: String,
     pub visibility: String,
@@ -215,15 +219,17 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     let id = Uuid::new_v4();
     let row = sqlx::query_as::<_, PostSummary>(
         r#"INSERT INTO posts
-               (id, actor_id, ap_id, post_type, content_md, content_html,
-                visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+               (id, actor_id, ap_id, post_type, title, featured_image_url,
+                content_md, content_html, visibility, ap_object)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
            RETURNING id, ap_id, ap_object"#,
     )
     .bind(id)
     .bind(post.actor_id)
     .bind(&post.ap_id)
     .bind(&post.post_type)
+    .bind(&post.title)
+    .bind(&post.featured_image_url)
     .bind(&post.content_md)
     .bind(&post.content_html)
     .bind(&post.visibility)

@@ -230,8 +230,7 @@ async fn get_outbox(
 
 /// Request body for the C2S outbox POST.
 ///
-/// Accepts a simplified `Create { Note }` payload. The `content` field
-/// is plain text (Markdown processing to be added!).
+/// Accepts a simplified `Create { Note | Article }` payload.
 #[derive(Deserialize)]
 struct OutboxPostBody {
     content: String,
@@ -239,13 +238,25 @@ struct OutboxPostBody {
     /// Defaults to `"public"`.
     #[serde(default = "default_visibility")]
     visibility: String,
+    /// Post type: `"note"` (default) or `"article"`.
+    #[serde(default = "default_post_type")]
+    post_type: String,
+    /// Article title. Required when `post_type` is `"article"`;
+    /// ignored for Notes.
+    title: Option<String>,
+    /// Featured image URL (optional, primarily for Articles).
+    featured_image_url: Option<String>,
 }
 
 fn default_visibility() -> String {
     "public".to_owned()
 }
 
-/// Create a Note via the C2S outbox endpoint.
+fn default_post_type() -> String {
+    "note".to_owned()
+}
+
+/// Create a Note or Article via the C2S outbox endpoint.
 ///
 /// # Authentication
 ///
@@ -264,7 +275,20 @@ fn default_visibility() -> String {
 /// ```json
 /// {
 ///     "content": "Hello, Fediverse!",
-///     "visibility": "public"
+///     "visibility": "public",
+///     "post_type": "note"
+/// }
+/// ```
+///
+/// For an Article:
+///
+/// ```json
+/// {
+///     "content": "# My Article\n\nBody text in Markdown.",
+///     "visibility": "public",
+///     "post_type": "article",
+///     "title": "My Article",
+///     "featured_image_url": "https://example.com/image.jpg"
 /// }
 /// ```
 ///
@@ -295,8 +319,27 @@ async fn post_outbox(
         .into());
     }
 
-    // Generate a unique AP ID for the Note.
-    let note_id = format!(
+    // Validate post type.
+    let is_article = match body.post_type.as_str() {
+        "note" => false,
+        "article" => true,
+        _ => {
+            return Err(NoombatError::BadRequest(
+                "post_type must be note or article".into(),
+            )
+            .into());
+        }
+    };
+
+    // Articles require a title.
+    if is_article && body.title.as_deref().map_or(true, str::is_empty) {
+        return Err(
+            NoombatError::BadRequest("article post_type requires a non-empty title".into()).into(),
+        );
+    }
+
+    // Generate a unique AP ID for the post.
+    let post_id = format!(
         "https://{}/users/{}/posts/{}",
         state.domain,
         username,
@@ -305,11 +348,19 @@ async fn post_outbox(
 
     // Render Markdown through the noombat-markup pipeline.
     // Offloaded to a blocking thread because KaTeX embeds QuickJS.
-    let markup_output = noombat_markup::render_async(body.content.clone()).await?;
+    // Articles use the `allow_html` mode so that authors may embed
+    // limited raw HTML (tables with explicit attributes, <details>
+    // blocks, etc.); Notes use the default mode, where raw HTML is
+    // entity-escaped by pulldown-cmark.
+    let markup_opts = noombat_markup::MarkupOptions {
+        allow_html: is_article,
+    };
+    let markup_output =
+        noombat_markup::render_async_with_options(body.content.clone(), markup_opts).await?;
     let content_html = markup_output.html;
     let hashtags = markup_output.hashtags;
 
-    // Build the ActivityPub object.
+    // Build the ActivityPub addressing arrays.
     let mut to = vec![];
     let mut cc = vec![];
     match body.visibility.as_str() {
@@ -339,10 +390,13 @@ async fn post_outbox(
         })
         .collect();
 
-    let note_object = json!({
+    // ActivityStreams type: Note or Article.
+    let ap_type = if is_article { "Article" } else { "Note" };
+
+    let mut ap_object = json!({
         "@context": AS_CONTEXT,
-        "id": note_id,
-        "type": "Note",
+        "id": post_id,
+        "type": ap_type,
         "attributedTo": actor.ap_id,
         "content": content_html,
         "source": {
@@ -355,12 +409,24 @@ async fn post_outbox(
         "published": chrono::Utc::now().to_rfc3339()
     });
 
+    // Articles carry a title in the `name` property and may carry
+    // a featured image in the `image` property.
+    if let Some(ref title) = body.title {
+        ap_object["name"] = json!(title);
+    }
+    if let Some(ref image_url) = body.featured_image_url {
+        ap_object["image"] = json!({
+            "type": "Image",
+            "url": image_url
+        });
+    }
+
     let create_activity = json!({
         "@context": AS_CONTEXT,
-        "id": format!("{}/activity", note_id),
+        "id": format!("{}/activity", post_id),
         "type": "Create",
         "actor": actor.ap_id,
-        "object": note_object,
+        "object": ap_object,
         "to": to,
         "cc": cc,
         "published": chrono::Utc::now().to_rfc3339()
@@ -369,8 +435,10 @@ async fn post_outbox(
     // Persist the post locally.
     let new_post = noombat_identity::repo::NewPost {
         actor_id: actor.id,
-        ap_id: note_id.clone(),
-        post_type: "note".to_owned(),
+        ap_id: post_id.clone(),
+        post_type: body.post_type.clone(),
+        title: body.title.clone(),
+        featured_image_url: body.featured_image_url.clone(),
         content_md: body.content.clone(),
         content_html: content_html.clone(),
         visibility: body.visibility.clone(),
@@ -381,7 +449,7 @@ async fn post_outbox(
     // Link extracted hashtags to the newly created post.
     if !hashtags.is_empty() {
         // Resolve post UUID from the ap_id (last path segment).
-        if let Some(uuid_str) = note_id.rsplit('/').next() {
+        if let Some(uuid_str) = post_id.rsplit('/').next() {
             if let Ok(post_uuid) = uuid_str.parse::<Uuid>() {
                 let _ = noombat_identity::hashtags::link_post_hashtags(
                     &state.pool,
@@ -396,7 +464,7 @@ async fn post_outbox(
     // Index the post in Meilisearch (fire-and-forget; public only).
     crate::search_sync::index_post(
         &state.search,
-        &note_id,
+        &post_id,
         &actor.id.to_string(),
         &content_html,
         &body.visibility,
