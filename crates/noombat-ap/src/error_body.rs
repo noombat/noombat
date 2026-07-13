@@ -60,4 +60,34 @@ impl ApError {
             error_code: "INTERNAL_ERROR",
         }
     }
+
+    pub fn gone(detail: impl Into<String>) -> Self {
+        Self {
+            context: error_context(),
+            error_type: "Error",
+            summary: "gone",
+            content: detail.into(),
+            error_code: "GONE",
+        }
+    }
+
+    pub fn rate_limited() -> Self {
+        Self {
+            context: error_context(),
+            error_type: "Error",
+            summary: "rate_limited",
+            content: "Rate limit exceeded. Please retry later.".to_owned(),
+            error_code: "RATE_LIMITED",
+        }
+    }
+
+    pub fn move_rejected(detail: impl Into<String>) -> Self {
+        Self {
+            context: error_context(),
+            error_type: "Error",
+            summary: "move_rejected",
+            content: detail.into(),
+            error_code: "MOVE_REJECTED",
+        }
+    }
 }

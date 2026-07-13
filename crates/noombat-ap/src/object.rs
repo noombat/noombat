@@ -37,6 +37,13 @@ pub struct ApActor {
     pub attachment: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<Value>,
+    /// Target actor URI when this actor has migrated (Move activity).
+    #[serde(rename = "movedTo", skip_serializing_if = "Option::is_none")]
+    pub moved_to: Option<String>,
+    /// Prior actor URIs (aliases) that this actor claims as prior
+    /// identities, enabling inbound Move verification.
+    #[serde(rename = "alsoKnownAs", skip_serializing_if = "Option::is_none")]
+    pub also_known_as: Option<Vec<String>>,
 }
 
 /// The `publicKey` sub-object embedded in an actor.

@@ -17,3 +17,5 @@ pub const APPLICATION: &str = "noombat:Application";
 /// Extension namespace for Event-specific fields (virtual URL, organiser,
 /// RSVP status) not covered by the base ActivityStreams `Event` type.
 pub const EVENT_EXTENSIONS: &str = "noombat:EventExtensions";
+/// Custom property: canonical URI for cross-post de-duplication.
+pub const CANONICAL_URI: &str = "noombat:canonicalUri";

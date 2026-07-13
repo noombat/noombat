@@ -21,6 +21,13 @@ pub struct Activity {
     pub cc: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published: Option<String>,
+    /// Target of a `Move` or `Add` activity.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    /// Free-text content. Used by `Flag` activities to carry the report
+    /// reason or comment (Mastodon convention).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
 }
 
 /// Known activity type strings.
@@ -31,6 +38,7 @@ pub mod types {
     pub const FOLLOW: &str = "Follow";
     pub const ACCEPT: &str = "Accept";
     pub const REJECT: &str = "Reject";
+    pub const TENTATIVE_ACCEPT: &str = "TentativeAccept";
     pub const UNDO: &str = "Undo";
     pub const ANNOUNCE: &str = "Announce";
     pub const LIKE: &str = "Like";
