@@ -82,18 +82,18 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
     });
 
     // Attach noombat:* extension properties.
-    if let Some(salary_min) = listing.get("salary_min") {
-        if let Some(salary_max) = listing.get("salary_max") {
-            let currency = listing
-                .get("currency")
-                .and_then(|v| v.as_str())
-                .unwrap_or("USD");
-            object["noombat:salaryRange"] = json!({
-                "min": salary_min,
-                "max": salary_max,
-                "currency": currency,
-            });
-        }
+    if let Some(salary_min) = listing.get("salary_min")
+        && let Some(salary_max) = listing.get("salary_max")
+    {
+        let currency = listing
+            .get("currency")
+            .and_then(|v| v.as_str())
+            .unwrap_or("USD");
+        object["noombat:salaryRange"] = json!({
+            "min": salary_min,
+            "max": salary_max,
+            "currency": currency,
+        });
     }
     if let Some(requirements) = listing.get("requirements") {
         object["noombat:requirements"] = requirements.clone();
@@ -249,14 +249,14 @@ pub fn build_federated_actor(
         }));
     }
 
-    if actor.actor_privacy.chatmail_visible {
-        if let Some(ref addr) = actor.chatmail_addr {
-            attachments.push(json!({
-                "type": "PropertyValue",
-                "name": "Chat",
-                "value": addr,
-            }));
-        }
+    if actor.actor_privacy.chatmail_visible
+        && let Some(ref addr) = actor.chatmail_addr
+    {
+        attachments.push(json!({
+            "type": "PropertyValue",
+            "name": "Chat",
+            "value": addr,
+        }));
     }
 
     if !attachments.is_empty() {

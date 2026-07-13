@@ -459,12 +459,11 @@ async fn handle_create(
 
     if let Some(post_id) = post_id {
         let hashtag_names = extract_hashtags_from_tags(object);
-        if !hashtag_names.is_empty() {
-            if let Err(e) =
+        if !hashtag_names.is_empty()
+            && let Err(e) =
                 noombat_identity::hashtags::link_post_hashtags(pool, post_id, &hashtag_names).await
-            {
-                warn!(ap_id, "failed to link hashtags for remote post: {e}");
-            }
+        {
+            warn!(ap_id, "failed to link hashtags for remote post: {e}");
         }
         info!(ap_id, "remote post persisted");
     } else {
@@ -777,12 +776,11 @@ async fn fetch_and_persist_remote_post(
         Some(id) => {
             // Link hashtags from the tag array (best-effort).
             let hashtag_names = extract_hashtags_from_tags(&object);
-            if !hashtag_names.is_empty() {
-                if let Err(e) =
+            if !hashtag_names.is_empty()
+                && let Err(e) =
                     noombat_identity::hashtags::link_post_hashtags(pool, id, &hashtag_names).await
-                {
-                    warn!(ap_id, "failed to link hashtags for fetched post: {e}");
-                }
+            {
+                warn!(ap_id, "failed to link hashtags for fetched post: {e}");
             }
             info!(ap_id, "remote post fetched and persisted via Announce");
             id
@@ -983,10 +981,10 @@ fn extract_image_url(object: &serde_json::Value) -> Option<String> {
     if let Some(attachments) = object.get("attachment").and_then(|v| v.as_array()) {
         for att in attachments {
             let att_type = att.get("type").and_then(|v| v.as_str()).unwrap_or("");
-            if att_type == "Image" {
-                if let Some(url) = att.get("url").and_then(|v| v.as_str()) {
-                    return Some(url.to_owned());
-                }
+            if att_type == "Image"
+                && let Some(url) = att.get("url").and_then(|v| v.as_str())
+            {
+                return Some(url.to_owned());
             }
         }
     }

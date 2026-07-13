@@ -78,19 +78,19 @@ pub fn extract_canonical_uri(object: &serde_json::Value) -> Option<String> {
 /// instead), or `None` if the object is novel.
 pub async fn try_dedup(pool: &PgPool, object: &serde_json::Value) -> Result<Option<Uuid>> {
     // 1. Check for explicit canonical_uri match.
-    if let Some(canonical) = object.get(vocab::CANONICAL_URI).and_then(|v| v.as_str()) {
-        if let Some(id) = find_by_canonical_uri(pool, canonical).await? {
-            info!(canonical_uri = canonical, post_id = %id, "cross-post de-duplicated via canonical URI");
-            return Ok(Some(id));
-        }
+    if let Some(canonical) = object.get(vocab::CANONICAL_URI).and_then(|v| v.as_str())
+        && let Some(id) = find_by_canonical_uri(pool, canonical).await?
+    {
+        info!(canonical_uri = canonical, post_id = %id, "cross-post de-duplicated via canonical URI");
+        return Ok(Some(id));
     }
 
     // 2. Heuristic: check `url` field against canonical_uri and ap_id.
-    if let Some(url) = object.get("url").and_then(|v| v.as_str()) {
-        if let Some(id) = find_by_url_heuristic(pool, url).await? {
-            info!(url, post_id = %id, "cross-post de-duplicated via URL heuristic");
-            return Ok(Some(id));
-        }
+    if let Some(url) = object.get("url").and_then(|v| v.as_str())
+        && let Some(id) = find_by_url_heuristic(pool, url).await?
+    {
+        info!(url, post_id = %id, "cross-post de-duplicated via URL heuristic");
+        return Ok(Some(id));
     }
 
     Ok(None)
