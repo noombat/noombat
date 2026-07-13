@@ -10,6 +10,7 @@ pub mod delivery;
 pub mod digest;
 pub mod downgrade;
 pub mod inbox;
+pub mod move_actor;
 pub mod nodeinfo;
 pub mod relay;
 pub mod update;

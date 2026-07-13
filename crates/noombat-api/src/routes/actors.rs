@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use noombat_ap::context::{AS_CONTEXT, default_context};
+use noombat_ap::context::{default_context, AS_CONTEXT};
 use noombat_ap::object::{ApActor, ApPublicKey};
 use noombat_core::error::NoombatError;
 
@@ -99,6 +99,14 @@ async fn get_actor(
             None
         };
 
+        // Fetch aliases for the alsoKnownAs property (Move support).
+        let aliases = noombat_federation::move_actor::list_aliases(
+            &state.pool,
+            actor.id,
+        )
+        .await
+        .unwrap_or_default();
+
         let ap_actor = ApActor {
             context: Some(default_context()),
             id: actor.ap_id.clone(),
@@ -124,6 +132,12 @@ async fn get_actor(
             url: Some(format!("https://{}/@{}", &state.domain, &actor.username)),
             attachment,
             endpoints: None,
+            moved_to: actor.moved_to.clone(),
+            also_known_as: if aliases.is_empty() {
+                None
+            } else {
+                Some(aliases)
+            },
         };
 
         return Ok((
@@ -520,8 +534,16 @@ async fn patch_actor(
 
     let updated = noombat_identity::repo::update_actor(&state.pool, actor.id, &params).await?;
 
-    // Synchronise search index with current profile sections (fire-and-forget).
-    crate::search_sync::reindex_profile_from_db(&state.pool, &state.search, &updated).await;
+    // Synchronise search index with current skills (fire-and-forget).
+    let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
+        .await
+        .unwrap_or_default();
+    let search_data = crate::search_sync::ProfileSearchData {
+        skills: skills.into_iter().map(|s| s.name).collect(),
+        ..Default::default()
+    };
+    crate::search_sync::index_profile(&state.search, &updated, &search_data);
+
 
     Ok((
         StatusCode::OK,

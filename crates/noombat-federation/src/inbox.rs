@@ -37,6 +37,9 @@ pub async fn process_activity(
         types::ANNOUNCE => handle_announce(pool, http_client, &activity).await,
         types::LIKE => handle_like(pool, http_client, &activity).await,
         types::BLOCK => handle_block(pool, http_client, &activity).await,
+        types::MOVE => {
+            crate::move_actor::handle_inbound_move(pool, http_client, &activity).await
+        }
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
             Ok(())
