@@ -9,6 +9,7 @@ pub mod crosspost;
 pub mod delivery;
 pub mod digest;
 pub mod downgrade;
+pub mod flag;
 pub mod inbox;
 pub mod move_actor;
 pub mod nodeinfo;

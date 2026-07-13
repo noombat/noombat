@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Inbox handler for processing inbound ActivityPub activities.
 
-use noombat_ap::activity::{Activity, types};
-use noombat_ap::context::{AS_PUBLIC, default_context};
+use noombat_ap::activity::{types, Activity};
+use noombat_ap::context::{default_context, AS_PUBLIC};
 use noombat_ap::object::ApActor;
 use noombat_core::actor::Actor;
 use noombat_core::error::{NoombatError, Result};
@@ -39,6 +39,9 @@ pub async fn process_activity(
         types::BLOCK => handle_block(pool, http_client, &activity).await,
         types::MOVE => {
             crate::move_actor::handle_inbound_move(pool, http_client, &activity).await
+        }
+        types::FLAG => {
+            crate::flag::handle_inbound_flag(pool, http_client, &activity).await
         }
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
