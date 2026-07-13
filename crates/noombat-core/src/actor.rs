@@ -49,6 +49,8 @@ pub struct Actor {
     pub actor_status: String,
     pub chatmail_addr: Option<String>,
     pub orcid: Option<String>,
+    /// Target actor URI if this actor has migrated via a `Move` activity.
+    pub moved_to: Option<String>,
     pub actor_privacy: ActorPrivacy,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

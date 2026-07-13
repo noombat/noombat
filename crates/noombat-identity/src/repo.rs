@@ -43,6 +43,7 @@ struct ActorRow {
     actor_status: String,
     chatmail_addr: Option<String>,
     orcid: Option<String>,
+    moved_to: Option<String>,
     actor_privacy: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     updated_at: chrono::DateTime<chrono::Utc>,
@@ -58,7 +59,7 @@ impl ActorRow {
             other => {
                 return Err(NoombatError::Internal(format!(
                     "unknown actor type: {other}"
-                )));
+                )))
             }
         };
         let actor_privacy: ActorPrivacy = serde_json::from_value(self.actor_privacy)?;
@@ -83,6 +84,7 @@ impl ActorRow {
             actor_status: self.actor_status,
             chatmail_addr: self.chatmail_addr,
             orcid: self.orcid,
+            moved_to: self.moved_to,
             actor_privacy,
             created_at: self.created_at,
             updated_at: self.updated_at,
@@ -142,6 +144,7 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         actor_status: "active".to_owned(),
         chatmail_addr: None,
         orcid: None,
+        moved_to: None,
         actor_privacy: privacy,
         created_at: row.created_at,
         updated_at: row.updated_at,
@@ -156,7 +159,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, instance_role, actor_status,
-               chatmail_addr, orcid, actor_privacy,
+               chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE username = $1 AND is_local = TRUE"#,
@@ -177,7 +180,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, instance_role, actor_status,
-               chatmail_addr, orcid, actor_privacy,
+               chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE ap_id = $1"#,
@@ -578,7 +581,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, domain, is_local,
                inbox_url, instance_role, actor_status,
-               chatmail_addr, orcid, actor_privacy,
+               chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
            WHERE id = $1"#,

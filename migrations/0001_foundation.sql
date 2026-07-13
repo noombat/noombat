@@ -25,6 +25,7 @@ CREATE TABLE actors (
     chatmail_addr   TEXT,
     chatmail_cred   BYTEA,
     orcid           TEXT,
+    moved_to        TEXT, -- target actor URI if migrated via Move activity
     headline        TEXT,
     actor_privacy   JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -34,6 +35,16 @@ CREATE TABLE actors (
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
 CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain) WHERE is_local = TRUE;
 CREATE INDEX idx_actors_domain ON actors (domain);
+
+-- Actor aliases: URIs that this actor has declared as prior identities.
+-- Required by the Move protocol: the target actor must list the source
+-- actor as an alias before the Move is accepted (Mastodon convention).
+CREATE TABLE actor_aliases (
+    id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    alias    TEXT NOT NULL,
+    UNIQUE (actor_id, alias)
+);
 
 -- ..... PROFILE SECTIONS .....
 
@@ -343,6 +354,34 @@ CREATE TABLE reports (
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at     TIMESTAMPTZ,
     CHECK (target_actor_id IS NOT NULL OR target_post_id IS NOT NULL)
+);
+
+-- ..... RELAY SUBSCRIPTIONS .....
+
+-- Tracks ActivityPub relays to which this instance is subscribed.
+-- A relay receives all public activities and rebroadcasts them to
+-- subscribers, widening content discovery.
+CREATE TABLE relay_subscriptions (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    inbox_url   TEXT NOT NULL UNIQUE,
+    status      TEXT NOT NULL DEFAULT 'pending'
+                CHECK (status IN ('pending', 'accepted', 'rejected')),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ..... TOMBSTONED ACTORS .....
+
+-- When a remote actor returns 410 Gone, the federation service records
+-- the tombstone so that future resolution attempts short-circuit
+-- without an HTTP round-trip.
+--
+-- Tombstones should be pruned periodically (e.g. after 30 days) by a
+-- background worker so that actors who re-create their account on the
+-- same URI become resolvable again.
+CREATE TABLE tombstoned_actors (
+    ap_id         TEXT PRIMARY KEY,
+    tombstoned_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ..... DELIVERY QUEUE .....
