@@ -59,12 +59,42 @@ pub async fn resolve_remote_actor(
         return Ok(cached);
     }
 
+    // Check whether this actor has been tombstoned (410 Gone) before
+    // incurring an HTTP round-trip.
+    let is_tombstoned: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM tombstoned_actors WHERE ap_id = $1)",
+    )
+    .bind(actor_uri)
+    .fetch_one(pool)
+    .await
+    .unwrap_or(false);
+
+    if is_tombstoned {
+        return Err(NoombatError::Federation(format!(
+            "actor {actor_uri} is tombstoned (previously returned 410 Gone)"
+        )));
+    }
+
     let response = http_client
         .get(actor_uri)
         .header("Accept", "application/activity+json")
         .send()
         .await
         .map_err(|e| NoombatError::Federation(format!("failed to fetch {actor_uri}: {e}")))?;
+
+    if response.status().as_u16() == 410 {
+        // Record the tombstone for future short-circuiting.
+        let _ = sqlx::query(
+            "INSERT INTO tombstoned_actors (ap_id) VALUES ($1) \
+             ON CONFLICT (ap_id) DO NOTHING",
+        )
+        .bind(actor_uri)
+        .execute(pool)
+        .await;
+        return Err(NoombatError::Federation(format!(
+            "remote actor {actor_uri} returned 410 Gone; tombstoned"
+        )));
+    }
 
     if !response.status().is_success() {
         return Err(NoombatError::Federation(format!(
@@ -388,6 +418,18 @@ async fn handle_create(
         .clone()
         .or_else(|| extract_string_array(&activity.object, "cc"));
     let visibility = derive_visibility(&to, &cc);
+
+    // Cross-post de-duplication: if an existing local post matches
+    // the canonical URI or URL of the inbound object, link to it
+    // rather than creating a duplicate.
+    if let Ok(Some(existing_id)) = crate::crosspost::try_dedup(pool, &activity.object).await {
+        info!(
+            ap_id,
+            existing_id = %existing_id,
+            "inbound Create de-duplicated; skipping insertion"
+        );
+        return Ok(());
+    }
 
     // Persist the remote post.
     let remote_post = repo::RemotePost {
