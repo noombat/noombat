@@ -320,11 +320,10 @@ fn map_route(method: &Method, path: &str) -> Option<(String, String, String)> {
         let username = rest.split('/').next()?;
         let subpath = &rest[username.len()..]; // "" or "/..." after username
         (username, subpath)
-    } else if let Some(rest) = path.strip_prefix("/@") {
+    } else {
+        let rest = path.strip_prefix("/@")?;
         let username = rest.split('/').next().filter(|u| !u.is_empty())?;
         (username, "")
-    } else {
-        return None;
     };
 
     let resource = format!(r#"Noombat::Profile::"{username}""#);
