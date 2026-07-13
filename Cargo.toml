@@ -15,7 +15,7 @@ members = [
 ]
 
 [workspace.package]
-edition = "2021"
+edition = "2024"
 rust-version = "1.94.0"
 license = "AGPL-3.0-or-later"
 repository = "https://codeberg.org/noombat/noombat"
