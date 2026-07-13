@@ -14,8 +14,8 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use figment::providers::{Env, Format, Toml};
 use figment::Figment;
+use figment::providers::{Env, Format, Toml};
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;

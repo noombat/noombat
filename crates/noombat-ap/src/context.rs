@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! JSON-LD context constants for ActivityPub and Noombat extensions.
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The standard ActivityStreams context URI.
 pub const AS_CONTEXT: &str = "https://www.w3.org/ns/activitystreams";

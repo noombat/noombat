@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Inbox handler for processing inbound ActivityPub activities.
 
-use noombat_ap::activity::{types, Activity};
-use noombat_ap::context::{default_context, AS_PUBLIC};
+use noombat_ap::activity::{Activity, types};
+use noombat_ap::context::{AS_PUBLIC, default_context};
 use noombat_ap::object::ApActor;
 use noombat_core::actor::Actor;
 use noombat_core::error::{NoombatError, Result};
@@ -1072,7 +1072,7 @@ mod tests {
     #[test]
     fn visibility_unlisted_public_in_cc() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned()
+            "https://noombat.social/users/alice/followers".to_owned(),
         ]);
         let cc = Some(vec![AS_PUBLIC.to_owned()]);
         assert_eq!(derive_visibility(&to, &cc), "unlisted");
@@ -1081,7 +1081,7 @@ mod tests {
     #[test]
     fn visibility_unlisted_shorthand_in_cc() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned()
+            "https://noombat.social/users/alice/followers".to_owned(),
         ]);
         let cc = Some(vec!["Public".to_owned()]);
         assert_eq!(derive_visibility(&to, &cc), "unlisted");
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn visibility_followers_no_public() {
         let to = Some(vec![
-            "https://noombat.social/users/alice/followers".to_owned()
+            "https://noombat.social/users/alice/followers".to_owned(),
         ]);
         assert_eq!(derive_visibility(&to, &None), "followers");
     }

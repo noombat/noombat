@@ -11,7 +11,7 @@
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{header::AUTHORIZATION, Method, Request, StatusCode};
+use axum::http::{Method, Request, StatusCode, header::AUTHORIZATION};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json;

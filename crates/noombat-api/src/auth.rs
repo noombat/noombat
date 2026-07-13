@@ -4,8 +4,8 @@
 //!
 //! Centralises the development-only bearer-token check.
 
-use axum::http::header::AUTHORIZATION;
 use axum::http::HeaderMap;
+use axum::http::header::AUTHORIZATION;
 use noombat_core::error::NoombatError;
 use subtle::ConstantTimeEq;
 

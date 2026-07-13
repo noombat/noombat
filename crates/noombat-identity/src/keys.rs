@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! RSA key-pair generation for actor HTTP Signatures.
 
-use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 use rsa::RsaPrivateKey;
+use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 
 use noombat_core::error::{NoombatError, Result};
 

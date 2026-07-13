@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! SHA-256 body-digest computation for HTTP Signature verification.
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 
 /// Compute the SHA-256 digest of a body, returned as a Base64 string.
 ///

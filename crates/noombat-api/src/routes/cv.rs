@@ -7,12 +7,12 @@
 //! handler determines *which sections* to include based on the
 //! requester's relationship to the profile owner.
 
+use axum::Router;
 use axum::extract::{Path, Query, State};
-use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::http::StatusCode;
+use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use noombat_core::error::NoombatError;
 use noombat_core::privacy::SectionVisibility;
 use serde::Deserialize;

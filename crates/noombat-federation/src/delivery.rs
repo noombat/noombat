@@ -5,8 +5,8 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use base64::engine::general_purpose::STANDARD as BASE64;
 use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as BASE64;
 use chrono::{TimeDelta, Utc};
 use http_signature_normalization_reqwest::prelude::*;
 use rsa::pkcs8::DecodePrivateKey;

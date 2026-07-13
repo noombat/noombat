@@ -8,10 +8,10 @@
 
 use askama::Template;
 use askama_web::WebTemplate;
+use axum::Router;
 use axum::extract::{Query, State};
 use axum::response::IntoResponse;
 use axum::routing::get;
-use axum::Router;
 use serde::Deserialize;
 
 use crate::i18n::I18n;

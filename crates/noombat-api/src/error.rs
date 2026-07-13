@@ -2,9 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Maps [`NoombatError`] to Axum HTTP responses.
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use noombat_ap::error_body::ApError;
 use noombat_core::error::NoombatError;
 

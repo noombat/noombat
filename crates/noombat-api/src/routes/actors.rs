@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use noombat_ap::context::{default_context, AS_CONTEXT};
+use noombat_ap::context::{AS_CONTEXT, default_context};
 use noombat_ap::object::{ApActor, ApPublicKey};
 use noombat_core::error::NoombatError;
 

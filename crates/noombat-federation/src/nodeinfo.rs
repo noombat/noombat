@@ -3,7 +3,7 @@
 //! NodeInfo 2.1 response builder.
 
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// The NodeInfo well-known link relation.
 pub const NODEINFO_REL: &str = "http://nodeinfo.diaspora.software/ns/schema/2.1";

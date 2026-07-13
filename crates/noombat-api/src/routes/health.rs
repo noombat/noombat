@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Health-check endpoint.
 
+use axum::Router;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::get;
-use axum::Router;
 
 use crate::state::AppState;
 
