@@ -537,6 +537,12 @@ async fn handle_accept(
         return Ok(());
     }
 
+    // Check whether this is a relay accepting our subscription
+    // before proceeding with normal follow-accept logic.
+    if let Ok(true) = crate::relay::try_handle_relay_accept(pool, &activity.actor).await {
+        return Ok(());
+    }
+
     // The Follow's actor is the local user who sent the follow request.
     let follower_uri = activity
         .object
