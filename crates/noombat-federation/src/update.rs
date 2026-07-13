@@ -39,32 +39,40 @@ pub async fn enqueue_actor_update(pool: &PgPool, actor: &Actor, domain: &str) {
 
     let profile_url = format!("https://{domain}/@{}", actor.username);
 
+    let mut object = serde_json::json!({
+        "id": actor.ap_id,
+        "type": match actor.actor_type {
+            noombat_core::actor::ActorType::Individual => "Person",
+            noombat_core::actor::ActorType::Company => "Organization",
+            noombat_core::actor::ActorType::Group => "Group",
+        },
+        "preferredUsername": actor.username,
+        "name": actor.display_name,
+        "summary": actor.summary_html,
+        "url": profile_url,
+        "inbox": format!("{}/inbox", actor.ap_id),
+        "outbox": format!("{}/outbox", actor.ap_id),
+        "followers": format!("{}/followers", actor.ap_id),
+        "following": format!("{}/following", actor.ap_id),
+        "publicKey": {
+            "id": format!("{}#main-key", actor.ap_id),
+            "owner": actor.ap_id,
+            "publicKeyPem": actor.public_key_pem,
+        },
+        "noombat:ttl": crate::downgrade::DEFAULT_TTL_SECS,
+    });
+
+    // Include movedTo if the actor has migrated.
+    if let Some(ref target) = actor.moved_to {
+        object["movedTo"] = serde_json::json!(target);
+    }
+
     let update_activity = serde_json::json!({
         "@context": noombat_ap::context::default_context(),
         "id": update_id,
         "type": "Update",
         "actor": actor.ap_id,
-        "object": {
-            "id": actor.ap_id,
-            "type": match actor.actor_type {
-                noombat_core::actor::ActorType::Individual => "Person",
-                noombat_core::actor::ActorType::Company => "Organization",
-                noombat_core::actor::ActorType::Group => "Group",
-            },
-            "preferredUsername": actor.username,
-            "name": actor.display_name,
-            "summary": actor.summary_html,
-            "url": profile_url,
-            "inbox": format!("{}/inbox", actor.ap_id),
-            "outbox": format!("{}/outbox", actor.ap_id),
-            "followers": format!("{}/followers", actor.ap_id),
-            "following": format!("{}/following", actor.ap_id),
-            "publicKey": {
-                "id": format!("{}#main-key", actor.ap_id),
-                "owner": actor.ap_id,
-                "publicKeyPem": actor.public_key_pem,
-            },
-        },
+        "object": object,
         "published": chrono::Utc::now().to_rfc3339(),
     });
 

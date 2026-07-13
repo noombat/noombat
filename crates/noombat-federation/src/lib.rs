@@ -7,6 +7,7 @@
 
 pub mod delivery;
 pub mod digest;
+pub mod downgrade;
 pub mod inbox;
 pub mod nodeinfo;
 pub mod update;
