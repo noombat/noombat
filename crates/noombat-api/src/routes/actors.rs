@@ -117,16 +117,16 @@ async fn get_actor(
             summary: actor.summary_html.clone(),
             icon: None,
             image: None,
-            inbox: format!("{}/inbox", &actor.ap_id),
-            outbox: format!("{}/outbox", &actor.ap_id),
-            followers: Some(format!("{}/followers", &actor.ap_id)),
-            following: Some(format!("{}/following", &actor.ap_id)),
+            inbox: format!("{}/inbox", actor.ap_id),
+            outbox: format!("{}/outbox", actor.ap_id),
+            followers: Some(format!("{}/followers", actor.ap_id)),
+            following: Some(format!("{}/following", actor.ap_id)),
             public_key: ApPublicKey {
-                id: format!("{}#main-key", &actor.ap_id),
+                id: format!("{}#main-key", actor.ap_id),
                 owner: actor.ap_id.clone(),
                 public_key_pem: actor.public_key_pem.clone(),
             },
-            url: Some(format!("https://{}/@{}", &state.domain, &actor.username)),
+            url: Some(format!("https://{}/@{}", state.domain, actor.username)),
             attachment,
             endpoints: None,
             moved_to: actor.moved_to.clone(),
@@ -342,7 +342,7 @@ async fn post_outbox(
     };
 
     // Articles require a title.
-    if is_article && body.title.as_deref().map_or(true, str::is_empty) {
+    if is_article && body.title.as_deref().is_none_or(str::is_empty) {
         return Err(NoombatError::BadRequest(
             "article post_type requires a non-empty title".into(),
         )
