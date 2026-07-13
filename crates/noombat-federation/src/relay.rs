@@ -12,7 +12,7 @@
 
 use noombat_ap::context::default_context;
 use noombat_core::error::{NoombatError, Result};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::{FromRow, PgPool};
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -106,7 +106,10 @@ pub async fn unsubscribe(
         .execute(pool)
         .await?;
 
-    info!(relay = relay_inbox_url, "relay Undo Follow enqueued; subscription deleted");
+    info!(
+        relay = relay_inbox_url,
+        "relay Undo Follow enqueued; subscription deleted"
+    );
     Ok(())
 }
 

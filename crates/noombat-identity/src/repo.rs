@@ -59,7 +59,7 @@ impl ActorRow {
             other => {
                 return Err(NoombatError::Internal(format!(
                     "unknown actor type: {other}"
-                )))
+                )));
             }
         };
         let actor_privacy: ActorPrivacy = serde_json::from_value(self.actor_privacy)?;

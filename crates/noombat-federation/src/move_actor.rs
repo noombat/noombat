@@ -74,12 +74,11 @@ pub async fn remove_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Res
 
 /// Retrieve all aliases for a local actor.
 pub async fn list_aliases(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> {
-    let aliases = sqlx::query_scalar::<_, String>(
-        "SELECT alias FROM actor_aliases WHERE actor_id = $1",
-    )
-    .bind(actor_id)
-    .fetch_all(pool)
-    .await?;
+    let aliases =
+        sqlx::query_scalar::<_, String>("SELECT alias FROM actor_aliases WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_all(pool)
+            .await?;
     Ok(aliases)
 }
 
@@ -123,9 +122,7 @@ pub async fn initiate_move(
     // Deliver to all followers.
     let inboxes = noombat_identity::repo::get_follower_inboxes(pool, source_actor_id).await?;
     for inbox in inboxes {
-        if let Err(e) =
-            delivery::enqueue(pool, source_actor_id, &move_activity, &inbox).await
-        {
+        if let Err(e) = delivery::enqueue(pool, source_actor_id, &move_activity, &inbox).await {
             warn!(
                 target_inbox = %inbox,
                 error = %e,
@@ -218,11 +215,7 @@ pub async fn handle_inbound_move(
     let aliases = target_profile
         .get("alsoKnownAs")
         .and_then(|v| v.as_array())
-        .map(|arr| {
-            arr.iter()
-                .filter_map(|v| v.as_str())
-                .collect::<Vec<_>>()
-        })
+        .map(|arr| arr.iter().filter_map(|v| v.as_str()).collect::<Vec<_>>())
         .unwrap_or_default();
 
     if !aliases.contains(&source_uri.as_str()) {
@@ -291,8 +284,7 @@ pub async fn handle_inbound_move(
             "object": target_uri,
         });
 
-        if let Err(e) =
-            delivery::enqueue(pool, *follower_id, &follow_activity, &target_inbox).await
+        if let Err(e) = delivery::enqueue(pool, *follower_id, &follow_activity, &target_inbox).await
         {
             warn!(
                 follower = %follower.ap_id,

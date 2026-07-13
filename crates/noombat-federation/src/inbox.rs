@@ -2,8 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Inbox handler for processing inbound ActivityPub activities.
 
-use noombat_ap::activity::{types, Activity};
-use noombat_ap::context::{default_context, AS_PUBLIC};
+use noombat_ap::activity::{Activity, types};
+use noombat_ap::context::{AS_PUBLIC, default_context};
 use noombat_ap::object::ApActor;
 use noombat_core::actor::Actor;
 use noombat_core::error::{NoombatError, Result};
@@ -37,12 +37,8 @@ pub async fn process_activity(
         types::ANNOUNCE => handle_announce(pool, http_client, &activity).await,
         types::LIKE => handle_like(pool, http_client, &activity).await,
         types::BLOCK => handle_block(pool, http_client, &activity).await,
-        types::MOVE => {
-            crate::move_actor::handle_inbound_move(pool, http_client, &activity).await
-        }
-        types::FLAG => {
-            crate::flag::handle_inbound_flag(pool, http_client, &activity).await
-        }
+        types::MOVE => crate::move_actor::handle_inbound_move(pool, http_client, &activity).await,
+        types::FLAG => crate::flag::handle_inbound_flag(pool, http_client, &activity).await,
         other => {
             warn!(activity_type = other, "unsupported activity type; ignoring");
             Ok(())
@@ -67,13 +63,12 @@ pub async fn resolve_remote_actor(
 
     // Check whether this actor has been tombstoned (410 Gone) before
     // incurring an HTTP round-trip.
-    let is_tombstoned: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM tombstoned_actors WHERE ap_id = $1)",
-    )
-    .bind(actor_uri)
-    .fetch_one(pool)
-    .await
-    .unwrap_or(false);
+    let is_tombstoned: bool =
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM tombstoned_actors WHERE ap_id = $1)")
+            .bind(actor_uri)
+            .fetch_one(pool)
+            .await
+            .unwrap_or(false);
 
     if is_tombstoned {
         return Err(NoombatError::Federation(format!(

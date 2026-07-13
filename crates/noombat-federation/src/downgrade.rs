@@ -16,7 +16,7 @@ use noombat_ap::context::default_context;
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
 use noombat_core::privacy::SectionVisibility;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 /// Default profile data TTL in seconds (7 days).
 pub const DEFAULT_TTL_SECS: u64 = 604_800;
@@ -58,10 +58,7 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
         .get("remote")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let ap_id = listing
-        .get("ap_id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let ap_id = listing.get("ap_id").and_then(|v| v.as_str()).unwrap_or("");
 
     let location_label = if remote {
         format!("{location} (Remote)")
@@ -284,9 +281,7 @@ pub fn build_federated_actor(
             let key = format!("noombat:{}", section.section_type);
             // If multiple sections of the same type exist, collect
             // them into an array.
-            let entry = section_map
-                .entry(key)
-                .or_insert_with(|| json!([]));
+            let entry = section_map.entry(key).or_insert_with(|| json!([]));
             if let Some(arr) = entry.as_array_mut() {
                 arr.push(section.data.clone());
             }
@@ -323,15 +318,19 @@ mod tests {
         assert_eq!(types.len(), 2);
         assert_eq!(types[0], "Note");
         assert_eq!(types[1], vocab::JOB_LISTING);
-        assert!(object["content"]
-            .as_str()
-            .unwrap()
-            .contains("Rust Engineer"));
+        assert!(
+            object["content"]
+                .as_str()
+                .unwrap()
+                .contains("Rust Engineer")
+        );
         assert_eq!(object["noombat:salaryRange"]["currency"], "EUR");
-        assert!(object["source"]["mediaType"]
-            .as_str()
-            .unwrap()
-            .contains("markdown"));
+        assert!(
+            object["source"]["mediaType"]
+                .as_str()
+                .unwrap()
+                .contains("markdown")
+        );
     }
 
     #[test]
@@ -348,10 +347,7 @@ mod tests {
         let types = object["type"].as_array().unwrap();
         assert_eq!(types[1], vocab::PUBLICATION);
         assert_eq!(object["noombat:doi"], "10.1000/xyz123");
-        assert!(object["content"]
-            .as_str()
-            .unwrap()
-            .contains("doi.org"));
+        assert!(object["content"].as_str().unwrap().contains("doi.org"));
     }
 
     #[test]

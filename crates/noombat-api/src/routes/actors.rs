@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use noombat_ap::context::{default_context, AS_CONTEXT};
+use noombat_ap::context::{AS_CONTEXT, default_context};
 use noombat_ap::object::{ApActor, ApPublicKey};
 use noombat_core::error::NoombatError;
 
@@ -100,12 +100,9 @@ async fn get_actor(
         };
 
         // Fetch aliases for the alsoKnownAs property (Move support).
-        let aliases = noombat_federation::move_actor::list_aliases(
-            &state.pool,
-            actor.id,
-        )
-        .await
-        .unwrap_or_default();
+        let aliases = noombat_federation::move_actor::list_aliases(&state.pool, actor.id)
+            .await
+            .unwrap_or_default();
 
         let ap_actor = ApActor {
             context: Some(default_context()),
@@ -543,7 +540,6 @@ async fn patch_actor(
         ..Default::default()
     };
     crate::search_sync::index_profile(&state.search, &updated, &search_data);
-
 
     Ok((
         StatusCode::OK,

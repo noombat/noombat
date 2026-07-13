@@ -26,12 +26,10 @@ use uuid::Uuid;
 ///
 /// Returns the UUID of the matching post, if any.
 pub async fn find_by_canonical_uri(pool: &PgPool, canonical_uri: &str) -> Result<Option<Uuid>> {
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT id FROM posts WHERE canonical_uri = $1 LIMIT 1",
-    )
-    .bind(canonical_uri)
-    .fetch_optional(pool)
-    .await?;
+    let id = sqlx::query_scalar::<_, Uuid>("SELECT id FROM posts WHERE canonical_uri = $1 LIMIT 1")
+        .bind(canonical_uri)
+        .fetch_optional(pool)
+        .await?;
     Ok(id)
 }
 
@@ -69,10 +67,7 @@ pub fn extract_canonical_uri(object: &serde_json::Value) -> Option<String> {
     }
 
     // Fall back to the `url` property.
-    object
-        .get("url")
-        .and_then(|v| v.as_str())
-        .map(String::from)
+    object.get("url").and_then(|v| v.as_str()).map(String::from)
 }
 
 /// Attempt to de-duplicate an inbound object against existing local
@@ -83,10 +78,7 @@ pub fn extract_canonical_uri(object: &serde_json::Value) -> Option<String> {
 /// instead), or `None` if the object is novel.
 pub async fn try_dedup(pool: &PgPool, object: &serde_json::Value) -> Result<Option<Uuid>> {
     // 1. Check for explicit canonical_uri match.
-    if let Some(canonical) = object
-        .get(vocab::CANONICAL_URI)
-        .and_then(|v| v.as_str())
-    {
+    if let Some(canonical) = object.get(vocab::CANONICAL_URI).and_then(|v| v.as_str()) {
         if let Some(id) = find_by_canonical_uri(pool, canonical).await? {
             info!(canonical_uri = canonical, post_id = %id, "cross-post de-duplicated via canonical URI");
             return Ok(Some(id));
@@ -108,11 +100,7 @@ pub async fn try_dedup(pool: &PgPool, object: &serde_json::Value) -> Result<Opti
 ///
 /// Called when a local post is first created (to set its own canonical
 /// URI) or when a de-duplicated cross-post is linked.
-pub async fn set_canonical_uri(
-    pool: &PgPool,
-    post_id: Uuid,
-    canonical_uri: &str,
-) -> Result<()> {
+pub async fn set_canonical_uri(pool: &PgPool, post_id: Uuid, canonical_uri: &str) -> Result<()> {
     sqlx::query("UPDATE posts SET canonical_uri = $1 WHERE id = $2")
         .bind(canonical_uri)
         .bind(post_id)
@@ -124,12 +112,10 @@ pub async fn set_canonical_uri(
 /// Count the number of cross-posts (distinct instances sharing the
 /// same canonical content) for a given canonical URI.
 pub async fn count_crossposts(pool: &PgPool, canonical_uri: &str) -> Result<i64> {
-    let count = sqlx::query_scalar::<_, i64>(
-        "SELECT COUNT(*) FROM posts WHERE canonical_uri = $1",
-    )
-    .bind(canonical_uri)
-    .fetch_one(pool)
-    .await?;
+    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM posts WHERE canonical_uri = $1")
+        .bind(canonical_uri)
+        .fetch_one(pool)
+        .await?;
     Ok(count)
 }
 

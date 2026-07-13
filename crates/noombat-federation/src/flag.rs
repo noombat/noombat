@@ -9,7 +9,7 @@
 
 use noombat_ap::context::default_context;
 use noombat_core::error::Result;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sqlx::PgPool;
 use tracing::{info, warn};
 use uuid::Uuid;
@@ -75,8 +75,7 @@ pub async fn forward_report(
     delivery::enqueue(pool, instance_actor_id, &flag_activity, &remote_inbox).await?;
     info!(
         target = target_actor_ap_id,
-        remote_domain,
-        "Flag activity enqueued for remote instance"
+        remote_domain, "Flag activity enqueued for remote instance"
     );
     Ok(())
 }
@@ -148,8 +147,7 @@ pub async fn handle_inbound_flag(
     }
 
     // Resolve the remote reporter as an actor (for the reporter_id).
-    let reporter =
-        crate::inbox::resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let reporter = crate::inbox::resolve_remote_actor(pool, http_client, &activity.actor).await?;
 
     // Extract a reason from the content (best-effort parse).
     let (reason, comment) = parse_flag_content(content.unwrap_or("other"));
