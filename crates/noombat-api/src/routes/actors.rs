@@ -458,18 +458,16 @@ async fn post_outbox(
     noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
 
     // Link extracted hashtags to the newly created post.
-    if !hashtags.is_empty() {
-        // Resolve post UUID from the ap_id (last path segment).
-        if let Some(uuid_str) = post_id.rsplit('/').next() {
-            if let Ok(post_uuid) = uuid_str.parse::<Uuid>() {
-                let _ = noombat_identity::hashtags::link_post_hashtags(
-                    &state.pool,
-                    post_uuid,
-                    &hashtags,
-                )
-                .await;
-            }
-        }
+    if !hashtags.is_empty()
+        && let Some(uuid_str) = post_id.rsplit('/').next()
+        && let Ok(post_uuid) = uuid_str.parse::<Uuid>()
+    {
+        let _ = noombat_identity::hashtags::link_post_hashtags(
+            &state.pool,
+            post_uuid,
+            &hashtags,
+        )
+        .await;
     }
 
     // Index the post in Meilisearch (fire-and-forget; public only).

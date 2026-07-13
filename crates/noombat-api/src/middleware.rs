@@ -123,16 +123,15 @@ pub async fn authorisation(
     // Look up instance_role for local principals (single indexed query).
     let mut principal = match principal {
         Some(mut p) => {
-            if let Some(ref username) = p.username {
-                if let Ok(role) = sqlx::query_scalar::<_, String>(
+            if let Some(ref username) = p.username
+                && let Ok(role) = sqlx::query_scalar::<_, String>(
                     "SELECT instance_role FROM actors WHERE username = $1 AND is_local = TRUE",
                 )
                 .bind(username.as_str())
                 .fetch_optional(&state.pool)
                 .await
-                {
-                    p.instance_role = role;
-                }
+            {
+                p.instance_role = role;
             }
             Some(p)
         }
@@ -170,10 +169,10 @@ pub async fn authorisation(
     context.insert("is_owner".into(), is_owner.to_string());
     context.insert("is_authenticated".into(), principal.is_some().to_string());
 
-    if let Some(ref p) = principal {
-        if let Some(ref role) = p.instance_role {
-            context.insert("instance_role".into(), role.clone());
-        }
+    if let Some(ref p) = principal
+        && let Some(ref role) = p.instance_role
+    {
+        context.insert("instance_role".into(), role.clone());
     }
 
     // Fetch privacy-related context for actions that reference it.

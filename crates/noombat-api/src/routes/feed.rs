@@ -56,27 +56,23 @@ async fn feed_partial(
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
 
     // If a user is specified, fetch posts matching their followed hashtags.
-    if let Some(ref username) = query.user {
-        if let Ok(actor) =
+    if let Some(ref username) = query.user
+        && let Ok(actor) =
             noombat_identity::repo::find_local_by_username(&state.pool, username).await
+        && let Ok(tags) =
+            noombat_identity::hashtags::list_followed_hashtags(&state.pool, actor.id).await
+    {
+        let tag_ids: Vec<uuid::Uuid> = tags.iter().map(|t| t.id).collect();
+        if !tag_ids.is_empty()
+            && let Ok(ids) = noombat_identity::hashtags::posts_by_hashtags(
+                &state.pool,
+                &tag_ids,
+                PAGE_SIZE,
+                offset,
+            )
+            .await
         {
-            if let Ok(tags) =
-                noombat_identity::hashtags::list_followed_hashtags(&state.pool, actor.id).await
-            {
-                let tag_ids: Vec<uuid::Uuid> = tags.iter().map(|t| t.id).collect();
-                if !tag_ids.is_empty() {
-                    if let Ok(ids) = noombat_identity::hashtags::posts_by_hashtags(
-                        &state.pool,
-                        &tag_ids,
-                        PAGE_SIZE,
-                        offset,
-                    )
-                    .await
-                    {
-                        post_ids.extend(ids);
-                    }
-                }
-            }
+            post_ids.extend(ids);
         }
     }
 
