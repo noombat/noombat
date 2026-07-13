@@ -462,12 +462,8 @@ async fn post_outbox(
         && let Some(uuid_str) = post_id.rsplit('/').next()
         && let Ok(post_uuid) = uuid_str.parse::<Uuid>()
     {
-        let _ = noombat_identity::hashtags::link_post_hashtags(
-            &state.pool,
-            post_uuid,
-            &hashtags,
-        )
-        .await;
+        let _ =
+            noombat_identity::hashtags::link_post_hashtags(&state.pool, post_uuid, &hashtags).await;
     }
 
     // Index the post in Meilisearch (fire-and-forget; public only).
