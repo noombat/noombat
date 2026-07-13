@@ -14,17 +14,38 @@ use noombat_core::extension::SearchBackend;
 use serde_json::json;
 use tracing::warn;
 
+/// Flattened profile section data for the search index.
+///
+/// Each field contains the `public`-visibility entries only, pre-extracted
+/// by the caller. The search index never includes `followers`- or
+/// `private`-visibility data.
+#[derive(Debug, Clone, Default)]
+pub struct ProfileSearchData {
+    /// Skill names (e.g. `["Rust", "ActivityPub"]`).
+    pub skills: Vec<String>,
+    /// Job titles from experience entries (e.g. `["Senior Engineer"]`).
+    pub experience_titles: Vec<String>,
+    /// Company names from experience entries.
+    pub experience_companies: Vec<String>,
+    /// Institution names from education entries.
+    pub education_institutions: Vec<String>,
+    /// Fields of study from education entries.
+    pub education_fields: Vec<String>,
+    /// Publication titles.
+    pub publication_titles: Vec<String>,
+}
+
 /// Index a profile in Meilisearch (fire-and-forget).
 ///
-/// `skill_names` should contain the public skill names for the actor.
-/// Passing an empty slice is valid, i.e. the document is still indexed, but
-/// skill-based searches will not match it.
+/// `data` contains the public-visibility profile section summaries.
+/// The search document includes: name, skills, education, experience,
+/// publications, location, and ORCID.
 ///
 /// Spawns a background task; the caller is not blocked.
 pub fn index_profile(
     search: &Option<Arc<dyn SearchBackend>>,
     actor: &Actor,
-    skill_names: &[String],
+    data: &ProfileSearchData,
 ) {
     let Some(backend) = search.clone() else {
         return;
@@ -36,7 +57,19 @@ pub fn index_profile(
         "id": actor.id.to_string(),
         "display_name": actor.display_name,
         "summary": actor.summary_html,
-        "skills": skill_names,
+        "skills": data.skills,
+        "experience_titles": data.experience_titles,
+        "experience_companies": data.experience_companies,
+        "education_institutions": data.education_institutions,
+        "education_fields": data.education_fields,
+        "publication_titles": data.publication_titles,
+        // TODO: the `actors` table has no dedicated `location` column.
+        // `headline` is used as a best-effort placeholder; it may contain
+        // geographic tokens (e.g. "Senior Rust Engineer at Acme Corp, Berlin")
+        // but is semantically a professional tagline, not a location. Replace
+        // with a dedicated column when the schema is extended.
+        "location": actor.headline,
+        "orcid": actor.orcid,
         "actor_type": format!("{:?}", actor.actor_type),
         "username": actor.username,
         "visibility": "public",
@@ -47,6 +80,54 @@ pub fn index_profile(
             warn!(id, error = %e, "failed to index profile");
         }
     });
+}
+
+/// Fetch the actor's current public profile sections from the database
+/// and re-index the profile in Meilisearch (fire-and-forget).
+///
+/// This is the canonical single-point implementation. All call sites
+/// that need to refresh the search index after a profile-section
+/// mutation should use this function rather than inlining the
+/// fetch-and-build logic.
+///
+/// Only `public`-visibility entries are included. Errors from the database
+/// queries are silently swallowed (the index update is best-effort);
+/// Meilisearch errors are logged by [`index_profile`].
+pub async fn reindex_profile_from_db(
+    pool: &sqlx::PgPool,
+    search: &Option<Arc<dyn SearchBackend>>,
+    actor: &Actor,
+) {
+    use noombat_core::privacy::SectionVisibility;
+
+    let vis = &SectionVisibility::Public;
+
+    let skills = noombat_identity::profile::list_skills(pool, actor.id, false)
+        .await
+        .unwrap_or_default();
+    let experiences = noombat_identity::profile::list_experiences(pool, actor.id, vis)
+        .await
+        .unwrap_or_default();
+    let educations = noombat_identity::profile::list_educations(pool, actor.id, vis)
+        .await
+        .unwrap_or_default();
+    let publications = noombat_identity::profile::list_publications(pool, actor.id, vis)
+        .await
+        .unwrap_or_default();
+
+    let data = ProfileSearchData {
+        skills: skills.into_iter().map(|s| s.name).collect(),
+        experience_titles: experiences.iter().map(|e| e.title.clone()).collect(),
+        experience_companies: experiences.iter().map(|e| e.company.clone()).collect(),
+        education_institutions: educations.iter().map(|e| e.institution.clone()).collect(),
+        education_fields: educations
+            .iter()
+            .filter_map(|e| e.field_of_study.clone())
+            .collect(),
+        publication_titles: publications.iter().map(|p| p.title.clone()).collect(),
+    };
+
+    index_profile(search, actor, &data);
 }
 
 /// Index a post in Meilisearch (fire-and-forget).

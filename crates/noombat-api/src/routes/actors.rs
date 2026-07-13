@@ -520,12 +520,8 @@ async fn patch_actor(
 
     let updated = noombat_identity::repo::update_actor(&state.pool, actor.id, &params).await?;
 
-    // Synchronise search index with current skills (fire-and-forget).
-    let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
-        .await
-        .unwrap_or_default();
-    let skill_names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
-    crate::search_sync::index_profile(&state.search, &updated, &skill_names);
+    // Synchronise search index with current profile sections (fire-and-forget).
+    crate::search_sync::reindex_profile_from_db(&state.pool, &state.search, &updated).await;
 
     Ok((
         StatusCode::OK,

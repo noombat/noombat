@@ -35,7 +35,21 @@ impl MeilisearchBackend {
         use std::time::Duration;
 
         let indices = [
-            ("profiles", vec!["display_name", "summary", "skills"]),
+            (
+                "profiles",
+                vec![
+                    "display_name",
+                    "summary",
+                    "skills",
+                    "experience_titles",
+                    "experience_companies",
+                    "education_institutions",
+                    "education_fields",
+                    "publication_titles",
+                    "location",
+                    "orcid",
+                ],
+            ),
             (
                 "jobs",
                 vec!["title", "company", "description", "requirements"],

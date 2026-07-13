@@ -91,6 +91,7 @@ async fn create_experience(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let exp = noombat_identity::profile::create_experience(&state.pool, actor.id, &params).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(exp)))
 }
@@ -103,6 +104,7 @@ async fn delete_experience(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_experience(&state.pool, actor.id, id).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -117,6 +119,7 @@ async fn update_experience(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let exp =
         noombat_identity::profile::update_experience(&state.pool, actor.id, id, &params).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(exp)))
 }
@@ -146,6 +149,7 @@ async fn create_education(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let edu = noombat_identity::profile::create_education(&state.pool, actor.id, &params).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(edu)))
 }
@@ -158,6 +162,7 @@ async fn delete_education(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_education(&state.pool, actor.id, id).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -172,6 +177,7 @@ async fn update_education(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     let edu =
         noombat_identity::profile::update_education(&state.pool, actor.id, id, &params).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(edu)))
 }
@@ -209,8 +215,8 @@ async fn add_skill(
     )
     .await?;
 
-    // Re-index profile with updated skills (fire-and-forget).
-    reindex_profile_skills(&state, &actor).await;
+    // Re-index profile in Meilisearch (fire-and-forget).
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
 
     Ok((StatusCode::CREATED, Json(skill)))
@@ -225,8 +231,8 @@ async fn delete_skill(
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_skill(&state.pool, actor.id, id).await?;
 
-    // Re-index profile with updated skills (fire-and-forget).
-    reindex_profile_skills(&state, &actor).await;
+    // Re-index profile in Meilisearch (fire-and-forget).
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
 
     Ok(StatusCode::NO_CONTENT)
@@ -312,6 +318,7 @@ async fn create_publication(
 
     let pub_ =
         noombat_identity::profile::create_publication(&state.pool, actor.id, &params).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(pub_)))
 }
@@ -324,6 +331,7 @@ async fn delete_publication(
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     noombat_identity::profile::delete_publication(&state.pool, actor.id, id).await?;
+    reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -447,14 +455,10 @@ async fn resolve_doi(
 
 // ..... Search-index re-sync .....
 
-/// Fetch the actor's current public skills and re-index the profile
-/// in Meilisearch. Errors are logged, not propagated.
-async fn reindex_profile_skills(state: &AppState, actor: &noombat_core::actor::Actor) {
-    let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
-        .await
-        .unwrap_or_default();
-    let names: Vec<String> = skills.into_iter().map(|s| s.name).collect();
-    crate::search_sync::index_profile(&state.search, actor, &names);
+/// Re-index the actor's profile in Meilisearch after a section
+/// mutation. Delegates to [`crate::search_sync::reindex_profile_from_db`].
+async fn reindex_profile(state: &AppState, actor: &noombat_core::actor::Actor) {
+    crate::search_sync::reindex_profile_from_db(&state.pool, &state.search, actor).await;
 }
 
 // ..... Profile Update activity federation .....
