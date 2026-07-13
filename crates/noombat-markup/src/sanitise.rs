@@ -100,8 +100,14 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     builder.add_tag_attributes("time", ["datetime"]);
     // Task-list checkboxes: permit only the attributes that
     // pulldown-cmark emits (`type="checkbox"`, `disabled`,
-    // `checked`). No other input types or attributes are allowed.
-    builder.add_tag_attributes("input", ["type", "disabled", "checked"]);
+    // `checked`). The `type` attribute is restricted to the value
+    // `"checkbox"` via `add_tag_attribute_values` (which is an
+    // alternative to `add_tag_attributes` for that attribute, i.e.
+    // listing `type` in both would cause `add_tag_attributes` to
+    // take precedence, allowing any value). `disabled` and
+    // `checked` are boolean attributes with no value to restrict.
+    builder.add_tag_attributes("input", ["disabled", "checked"]);
+    builder.add_tag_attribute_values("input", "type", ["checkbox"]);
 
     builder
 });
@@ -190,7 +196,8 @@ static SANITISER_STRICT: LazyLock<Builder<'static>> = LazyLock::new(|| {
     builder.add_tag_attributes("annotation", ["encoding"]);
     builder.add_tag_attributes("annotation-xml", ["encoding"]);
     builder.add_tag_attributes("time", ["datetime"]);
-    builder.add_tag_attributes("input", ["type", "disabled", "checked"]);
+    builder.add_tag_attributes("input", ["disabled", "checked"]);
+    builder.add_tag_attribute_values("input", "type", ["checkbox"]);
 
     builder
 });
@@ -260,18 +267,27 @@ mod tests {
             result.contains(r#"<input"#),
             "task-list checkbox must survive sanitisation: {result}"
         );
+        assert!(
+            result.contains(r#"type="checkbox""#),
+            "type=\"checkbox\" must survive sanitisation: {result}"
+        );
         assert!(result.contains("disabled"));
         assert!(result.contains("checked"));
     }
 
     #[test]
-    fn strips_non_checkbox_input() {
-        // An <input type="text"> survives (the tag is allowlisted),
-        // but dangerous attributes must be stripped.
+    fn strips_non_checkbox_input_type() {
+        // The `type` attribute is restricted to `"checkbox"` via
+        // `add_tag_attribute_values`. An `<input type="text">` has
+        // its `type` attribute stripped because `"text"` is not in
+        // the allowed value set.
         let input = r#"<input type="text" name="evil" value="xss">"#;
         let result = clean(input);
-        // ammonia allows the tag but strips unknown attributes.
-        // `name` and `value` are not in the allowlist.
+        assert!(
+            !result.contains(r#"type="text""#),
+            "type=\"text\" must be stripped: {result}"
+        );
+        // `name` and `value` are not in the attribute allowlist.
         assert!(!result.contains("name="));
         assert!(!result.contains("value="));
     }
