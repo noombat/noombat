@@ -14,5 +14,6 @@ pub mod inbox;
 pub mod move_actor;
 pub mod nodeinfo;
 pub mod relay;
+pub mod signed_fetch;
 pub mod update;
 pub mod webfinger;

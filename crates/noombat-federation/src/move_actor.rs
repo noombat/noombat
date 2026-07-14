@@ -154,10 +154,10 @@ pub async fn initiate_move(
 /// to this function, so step 1 implicitly confirms that the actor who
 /// signed the request is the one claiming to move.
 ///
-/// The target actor's profile is fetched without HTTP Signature
-/// authentication. If the target instance requires signed fetches,
-/// this verification step will fail; a signed-fetch variant should be
-/// added during interoperability testing. (TO-DO!)
+/// The target actor's profile is fetched with an HTTP Signature
+/// using the first available local actor's key (instance-level
+/// signed fetch), ensuring compatibility with instances that require
+/// authenticated fetches (e.g. GotoSocial).
 ///
 /// On successful verification, all local followers of the source
 /// actor are migrated: the old follow is removed and a new `Follow`
@@ -193,12 +193,12 @@ pub async fn handle_inbound_move(
     );
 
     // Step 2: fetch the target actor and check alsoKnownAs.
-    let target_response = http_client
-        .get(target_uri)
-        .header("Accept", "application/activity+json")
-        .send()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("failed to fetch target actor: {e}")))?;
+    // Use a signed fetch so that instances requiring authenticated
+    // requests (e.e. GotoSocial) do not reject the lookup.
+    let signing_actor_id = find_local_signing_actor(pool).await?;
+
+    let target_response =
+        crate::signed_fetch::signed_get(pool, http_client, target_uri, signing_actor_id).await?;
 
     if !target_response.status().is_success() {
         return Err(NoombatError::Federation(format!(
@@ -303,4 +303,41 @@ pub async fn handle_inbound_move(
     );
 
     Ok(())
+}
+
+/// Find any local actor with a private key to use for signed fetches.
+///
+/// Prefers an admin actor; falls back to any local actor with a
+/// private key. Returns an error if no suitable actor exists (which
+/// would mean the instance has no local actors at all, an unlikely
+/// but possible state during initial setup).
+async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
+    // Try admins first (they are most likely to exist on any instance).
+    let admin: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM actors \
+         WHERE is_local = TRUE AND private_key_pem IS NOT NULL \
+           AND instance_role = 'admin' \
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    if let Some(id) = admin {
+        return Ok(id);
+    }
+
+    // Fall back to any local actor with a key.
+    let any: Option<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM actors \
+         WHERE is_local = TRUE AND private_key_pem IS NOT NULL \
+         LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    any.ok_or_else(|| {
+        NoombatError::Internal("no local actor with a private key available for signed fetch".into())
+    })
 }
