@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Caddy reverse proxy for the interoperability test environment.
+#
+# Both domains use Caddy's internal CA for TLS, so no public
+# certificates are required. The test runner must trust Caddy's
+# root CA (extracted via `caddy trust` or from the data volume).
+
+{
+	# Use Caddy's internal CA for all sites (no ACME / LetsEncrypt).
+	local_certs
+}
+
+noombat.local {
+	reverse_proxy noombat-backend:8443
+}
+
+gotosocial.local {
+	reverse_proxy gotosocial-backend:8080
+}

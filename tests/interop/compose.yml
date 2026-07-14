@@ -1,0 +1,110 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Interoperability test environment.
+#
+# Spins up Noombat, GotoSocial, and a Caddy reverse proxy on a shared
+# Docker network. Caddy provides TLS termination with an internal CA
+# so that both services can use `https://` AP IDs without requiring
+# publicly trusted certificates.
+#
+# Usage:
+#   1. docker compose -f tests/interop/compose.yml up -d --build
+#   2. tests/interop/run.sh
+#   3. docker compose -f tests/interop/compose.yml down -v
+
+services:
+  # ..... DATABASES .....
+
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: noombat
+      POSTGRES_PASSWORD: noombat
+      POSTGRES_DB: noombat
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noombat"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks: [interop]
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    networks: [interop]
+
+  # ..... NOOMBAT .....
+
+  noombat:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      NOOMBAT_DOMAIN: noombat.local
+      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
+      NOOMBAT_HOST: "0.0.0.0"
+      NOOMBAT_PORT: "8443"
+      NOOMBAT_REDIS_URL: redis://redis:6379
+      NOOMBAT_ADMIN_TOKEN: interop-test-token
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+    networks:
+      interop:
+        aliases: [noombat-backend]
+
+  # ..... GOTOSOCIAL .....
+
+  gotosocial:
+    image: docker.io/superseriousbusiness/gotosocial:latest
+    environment:
+      GTS_HOST: gotosocial.local
+      GTS_ACCOUNT_DOMAIN: gotosocial.local
+      GTS_PROTOCOL: https
+      GTS_TLS_MODE: ""
+      GTS_TRUSTED_PROXIES: "0.0.0.0/0"
+      GTS_DB_TYPE: sqlite
+      GTS_DB_ADDRESS: /gotosocial/storage/sqlite.db
+      GTS_STORAGE_LOCAL_BASE_PATH: /gotosocial/storage
+      GTS_ACCOUNTS_REGISTRATION_OPEN: "false"
+      GTS_ACCOUNTS_ALLOW_CUSTOM_CSS: "false"
+      # Disable LetsEncrypt; Caddy handles TLS.
+      GTS_LETSENCRYPT_ENABLED: "false"
+    volumes:
+      - gts-data:/gotosocial/storage
+    networks:
+      interop:
+        aliases: [gotosocial-backend]
+
+  # ..... CADDY REVERSE PROXY (TLS termination) .....
+  #
+  # Provides HTTPS on ports 443 for both domains using Caddy's
+  # internal CA (no public trust required). The test runner trusts
+  # Caddy's root CA via the CURL_CA_BUNDLE / SSL_CERT_FILE
+  # environment variables.
+
+  caddy:
+    image: docker.io/library/caddy:2-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    ports:
+      - "8443:443"
+    depends_on:
+      - noombat
+      - gotosocial
+    networks:
+      interop:
+        aliases:
+          - noombat.local
+          - gotosocial.local
+
+volumes:
+  gts-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  interop:
+    driver: bridge

@@ -337,3 +337,27 @@ jobs:
           name: playwright-report
           path: tests/e2e/playwright-report/
           retention-days: 14
+  interop:
+    name: Federation interop (GotoSocial)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Start interop environment
+        run: docker compose -f tests/interop/compose.yml up -d --build
+        timeout-minutes: 15
+
+      - name: Run interop tests
+        run: tests/interop/run.sh
+
+      - name: Dump Noombat logs on failure
+        if: failure()
+        run: docker compose -f tests/interop/compose.yml logs noombat
+
+      - name: Dump GotoSocial logs on failure
+        if: failure()
+        run: docker compose -f tests/interop/compose.yml logs gotosocial
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f tests/interop/compose.yml down -v
