@@ -35,80 +35,94 @@ use std::sync::LazyLock;
 
 use ammonia::Builder;
 
-/// The pre-configured ammonia builder, constructed once.
-static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
-    let mut builder = Builder::default();
+/// Tags allowed beyond ammonia's defaults: KaTeX HTML output, MathML
+/// elements, additional semantic HTML, and task-list checkboxes.
+const EXTRA_TAGS: &[&str] = &[
+    "span",
+    "math",
+    "semantics",
+    "mrow",
+    "mi",
+    "mo",
+    "mn",
+    "ms",
+    "mtext",
+    "mspace",
+    "msup",
+    "msub",
+    "msubsup",
+    "mfrac",
+    "msqrt",
+    "mroot",
+    "mtable",
+    "mtr",
+    "mtd",
+    "mover",
+    "munder",
+    "munderover",
+    "mpadded",
+    "mphantom",
+    "menclose",
+    "annotation",
+    "annotation-xml",
+    // Standard Markdown elements not in ammonia defaults.
+    "details",
+    "summary",
+    "kbd",
+    "mark",
+    "var",
+    "samp",
+    "time",
+    "figure",
+    "figcaption",
+    // Task-list checkboxes emitted by pulldown-cmark when
+    // ENABLE_TASKLISTS is active.
+    "input",
+];
 
-    // ..... Additional tags beyond ammonia's defaults .....
-    // KaTeX HTML output and MathML elements.
-    builder.add_tags([
-        "span",
-        "math",
-        "semantics",
-        "mrow",
-        "mi",
-        "mo",
-        "mn",
-        "ms",
-        "mtext",
-        "mspace",
-        "msup",
-        "msub",
-        "msubsup",
-        "mfrac",
-        "msqrt",
-        "mroot",
-        "mtable",
-        "mtr",
-        "mtd",
-        "mover",
-        "munder",
-        "munderover",
-        "mpadded",
-        "mphantom",
-        "menclose",
-        "annotation",
-        "annotation-xml",
-        // Standard Markdown elements not in ammonia defaults.
-        "details",
-        "summary",
-        "kbd",
-        "mark",
-        "var",
-        "samp",
-        "time",
-        "figure",
-        "figcaption",
-        // Task-list checkboxes emitted by pulldown-cmark when
-        // ENABLE_TASKLISTS is active. Only `type`, `disabled`, and
-        // `checked` are permitted (see tag-attribute section below).
-        "input",
-    ]);
+/// Apply the tag and attribute allowlist shared by both sanitisation
+/// profiles. The only difference between the two profiles is whether
+/// `style` is permitted on `<span>` (controlled by
+/// `allow_span_style`).
+fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
+    builder.add_tags(EXTRA_TAGS.iter().copied());
 
-    // ..... Additional tag attributes .....
-    //
-    // `style` is allowed on `<span>` only: see the trust-model note
-    // in the module doc-comment. It is intentionally NOT allowed on
-    // `<div>` because KaTeX does not use styled divs, and arbitrary
-    // div styling enables UI-spoofing attacks (position: fixed, z-index).
-    builder.add_tag_attributes("span", ["class", "style", "aria-hidden"]);
+    // `<span>` attributes: `class` and `aria-hidden` are always
+    // allowed; `style` is allowed only in the non-strict profile
+    // (where KaTeX is the sole source of styled spans).
+    if allow_span_style {
+        builder.add_tag_attributes("span", ["class", "style", "aria-hidden"]);
+    } else {
+        builder.add_tag_attributes("span", ["class", "aria-hidden"]);
+    }
+
     builder.add_tag_attributes("div", ["class"]);
     builder.add_tag_attributes("a", ["class", "data-doi"]);
     builder.add_tag_attributes("math", ["xmlns", "display"]);
     builder.add_tag_attributes("annotation", ["encoding"]);
     builder.add_tag_attributes("annotation-xml", ["encoding"]);
     builder.add_tag_attributes("time", ["datetime"]);
+
     // Task-list checkboxes: permit only the attributes that
     // pulldown-cmark emits (`type="checkbox"`, `disabled`,
     // `checked`). The `type` attribute is restricted to the value
-    // `"checkbox"` via `add_tag_attribute_values` (which is an
-    // alternative to `add_tag_attributes` for that attribute, i.e.
-    // listing `type` in both would cause `add_tag_attributes` to
-    // take precedence, allowing any value). `disabled` and
-    // `checked` are boolean attributes with no value to restrict.
+    // `"checkbox"` via `add_tag_attribute_values`.
     builder.add_tag_attributes("input", ["disabled", "checked"]);
     builder.add_tag_attribute_values("input", "type", ["checkbox"]);
+}
 
+/// Default profile: `style` allowed on `<span>` (KaTeX-only trust model).
+static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
+    let mut builder = Builder::default();
+    configure_builder(&mut builder, true);
+    builder
+});
+
+/// Strict profile: `style` stripped from `<span>` (user-authored HTML may
+/// be present).
+static SANITISER_STRICT: LazyLock<Builder<'static>> = LazyLock::new(|| {
+    let mut builder = Builder::default();
+    configure_builder(&mut builder, false);
     builder
 });
 
@@ -116,91 +130,20 @@ static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
 ///
 /// This profile allows `style` on `<span>` because the only source of
 /// styled spans in normal operation is the trusted KaTeX renderer. If
-/// raw user-authored HTML is present (i.e. the `allow_html` rendering
-/// option is enabled), use [`clean_strict`] instead.
+/// raw user-authored HTML is present (i.e. the `strict_sanitisation`
+/// rendering option is enabled), use [`clean_strict`] instead.
 pub fn clean(html: &str) -> String {
     SANITISER.clean(html).to_string()
 }
 
-/// Strict sanitisation profile for content rendered with `allow_html`.
+/// Strict sanitisation profile for content rendered with
+/// `strict_sanitisation`.
 ///
 /// Identical to [`clean`] except that `style` is **not** permitted on
-/// `<span>`. When `ENABLE_HTML` is active, user-authored `<span
-/// style="...">` elements reach the sanitiser unsanitised. Allowing
-/// `style` on those elements would enable CSS-based attacks (tracking
-/// pixels via `background-image: url(...)`, UI spoofing via
-/// `position: fixed`, etc.).
-///
-/// KaTeX output that relies on inline styles is unaffected in
-/// practice: the KaTeX renderer produces its own `<span>` elements
-/// with class names and inline styles, but when `allow_html` is
-/// enabled, user-authored spans with the same tag name also reach the
-/// sanitiser. Stripping `style` from all `<span>` elements is the
-/// conservative choice; KaTeX output degrades gracefully (minor
-/// alignment differences) because the MathML branch of the
-/// `htmlAndMathml` output provides a semantic fallback.
+/// `<span>`, preventing CSS-based attacks from user-authored HTML.
 pub fn clean_strict(html: &str) -> String {
     SANITISER_STRICT.clean(html).to_string()
 }
-
-/// Strict variant of [`SANITISER`]: same tag/attribute allowlist but
-/// with `style` removed from `<span>`.
-static SANITISER_STRICT: LazyLock<Builder<'static>> = LazyLock::new(|| {
-    let mut builder = Builder::default();
-
-    builder.add_tags([
-        "span",
-        "math",
-        "semantics",
-        "mrow",
-        "mi",
-        "mo",
-        "mn",
-        "ms",
-        "mtext",
-        "mspace",
-        "msup",
-        "msub",
-        "msubsup",
-        "mfrac",
-        "msqrt",
-        "mroot",
-        "mtable",
-        "mtr",
-        "mtd",
-        "mover",
-        "munder",
-        "munderover",
-        "mpadded",
-        "mphantom",
-        "menclose",
-        "annotation",
-        "annotation-xml",
-        "details",
-        "summary",
-        "kbd",
-        "mark",
-        "var",
-        "samp",
-        "time",
-        "figure",
-        "figcaption",
-        "input",
-    ]);
-
-    // `style` intentionally omitted from `<span>` (see doc-comment).
-    builder.add_tag_attributes("span", ["class", "aria-hidden"]);
-    builder.add_tag_attributes("div", ["class"]);
-    builder.add_tag_attributes("a", ["class", "data-doi"]);
-    builder.add_tag_attributes("math", ["xmlns", "display"]);
-    builder.add_tag_attributes("annotation", ["encoding"]);
-    builder.add_tag_attributes("annotation-xml", ["encoding"]);
-    builder.add_tag_attributes("time", ["datetime"]);
-    builder.add_tag_attributes("input", ["disabled", "checked"]);
-    builder.add_tag_attribute_values("input", "type", ["checkbox"]);
-
-    builder
-});
 
 #[cfg(test)]
 mod tests {
@@ -260,7 +203,6 @@ mod tests {
 
     #[test]
     fn allows_task_list_checkbox() {
-        // pulldown-cmark emits this for `- [x] Done`.
         let input = r#"<li><input type="checkbox" disabled checked /> Done</li>"#;
         let result = clean(input);
         assert!(
@@ -277,32 +219,40 @@ mod tests {
 
     #[test]
     fn strips_non_checkbox_input_type() {
-        // The `type` attribute is restricted to `"checkbox"` via
-        // `add_tag_attribute_values`. An `<input type="text">` has
-        // its `type` attribute stripped because `"text"` is not in
-        // the allowed value set.
         let input = r#"<input type="text" name="evil" value="xss">"#;
         let result = clean(input);
         assert!(
             !result.contains(r#"type="text""#),
             "type=\"text\" must be stripped: {result}"
         );
-        // `name` and `value` are not in the attribute allowlist.
         assert!(!result.contains("name="));
         assert!(!result.contains("value="));
     }
 
     #[test]
     fn strips_style_from_user_authored_span() {
-        // Even though style is allowed on <span>, user-authored raw HTML
-        // is entity-encoded by pulldown-cmark (ENABLE_HTML is off).
-        // This test documents that if raw HTML DID reach the sanitiser,
-        // the style would still pass, i.e. reinforcing the trust-model note.
         let input = r#"<span style="background-image:url(https://evil.example/t)">track</span>"#;
         let result = clean(input);
-        // style IS allowed on span in the current configuration.
         assert!(result.contains("style="));
-        // This is acceptable because raw HTML never reaches the sanitiser
-        // in normal operation; see the trust-model note above.
+    }
+
+    #[test]
+    fn strict_strips_style_from_span() {
+        let input = r#"<span style="background-image:url(https://evil.example/t)">track</span>"#;
+        let result = clean_strict(input);
+        assert!(
+            !result.contains("style="),
+            "strict profile must strip style from span: {result}"
+        );
+    }
+
+    #[test]
+    fn strict_preserves_katex_class() {
+        let input = r#"<span class="katex">math</span>"#;
+        let result = clean_strict(input);
+        assert!(
+            result.contains("katex"),
+            "strict profile must preserve class on span: {result}"
+        );
     }
 }

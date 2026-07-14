@@ -54,7 +54,7 @@ pub struct MarkupOptions {
     /// CommonMark specification. This flag does **not** toggle parser
     /// behaviour; it controls only which sanitisation profile is
     /// applied to the output.
-    pub allow_html: bool,
+    pub strict_sanitisation: bool,
 }
 
 /// Render a (Markdown + KaTeX) source string to sanitised HTML.
@@ -84,10 +84,10 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
     // Note: pulldown-cmark always passes raw HTML through to the event
     // stream (Event::Html and Event::InlineHtml) per the CommonMark
     // specification. There is no flag to toggle this behaviour. The
-    // `allow_html` option controls only which sanitisation profile is
-    // applied to the output: `clean` (permits `style` on `<span>`,
-    // safe when KaTeX is the sole source of styled spans) or
-    // `clean_strict` (strips `style` from `<span>`, safe when
+    // `strict_sanitisation` option controls only which sanitisation
+    // profile is applied to the output: `clean` (permits `style` on
+    // `<span>`, safe when KaTeX is the sole source of styled spans)
+    // or `clean_strict` (strips `style` from `<span>`, safe when
     // user-authored HTML may also contain styled spans).
 
     let parser = Parser::new_ext(input, options);
@@ -104,10 +104,10 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
     let mut raw_html = String::with_capacity(input.len() * 2);
     pulldown_cmark::html::push_html(&mut raw_html, events.into_iter());
 
-    // Sanitise. When allow_html is enabled, user-authored HTML
-    // reaches the sanitiser directly. Use the strict profile, which
-    // strips `style` from `<span>` to prevent CSS-based attacks.
-    let html = if opts.allow_html {
+    // Sanitise. When strict_sanitisation is enabled, user-authored
+    // HTML reaches the sanitiser directly. Use the strict profile,
+    // which strips `style` from `<span>` to prevent CSS-based attacks.
+    let html = if opts.strict_sanitisation {
         sanitise::clean_strict(&raw_html)
     } else {
         sanitise::clean(&raw_html)
@@ -307,39 +307,39 @@ mod tests {
         assert_eq!(output.hashtags[0], "rust");
     }
 
-    // ..... allow_html mode .....
+    // ..... strict_sanitisation mode .....
 
     #[test]
-    fn allow_html_passes_safe_tags() {
-        let opts = MarkupOptions { allow_html: true };
+    fn strict_sanitisation_passes_safe_tags() {
+        let opts = MarkupOptions { strict_sanitisation: true };
         let output = render_with_options("<details><summary>More</summary>Hidden</details>", &opts);
         assert!(
             output.html.contains("<details>"),
-            "safe HTML tags must survive in allow_html mode: {}",
+            "safe HTML tags must survive in strict_sanitisation mode: {}",
             output.html
         );
     }
 
     #[test]
-    fn allow_html_strips_script() {
-        let opts = MarkupOptions { allow_html: true };
+    fn strict_sanitisation_strips_script() {
+        let opts = MarkupOptions { strict_sanitisation: true };
         let output = render_with_options("<script>alert('xss')</script>", &opts);
         assert!(
             !output.html.contains("<script>"),
-            "script tags must be stripped even in allow_html mode"
+            "script tags must be stripped even in strict_sanitisation mode"
         );
     }
 
     #[test]
-    fn allow_html_strips_style_from_span() {
-        let opts = MarkupOptions { allow_html: true };
+    fn strict_sanitisation_strips_style_from_span() {
+        let opts = MarkupOptions { strict_sanitisation: true };
         let output = render_with_options(
             r#"<span style="background-image:url(https://evil.example/t)">track</span>"#,
             &opts,
         );
         assert!(
             !output.html.contains("style="),
-            "style on <span> must be stripped in allow_html mode: {}",
+            "style on <span> must be stripped in strict_sanitisation mode: {}",
             output.html
         );
     }
