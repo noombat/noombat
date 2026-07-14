@@ -361,12 +361,13 @@ async fn post_outbox(
 
     // Render Markdown through the noombat-markup pipeline.
     // Offloaded to a blocking thread because KaTeX embeds QuickJS.
-    // Articles use the `allow_html` mode so that authors may embed
-    // limited raw HTML (tables with explicit attributes, <details>
-    // blocks, etc.); Notes use the default mode, where raw HTML is
-    // entity-escaped by pulldown-cmark.
+    // Articles use the strict sanitisation mode so that user-authored
+    // `<span style="...">` elements are stripped (CSS-based attack
+    // prevention); Notes use the default mode, which permits `style`
+    // on `<span>` because only the trusted KaTeX renderer produces
+    // styled spans.
     let markup_opts = noombat_markup::MarkupOptions {
-        allow_html: is_article,
+        strict_sanitisation: is_article,
     };
     let markup_output =
         noombat_markup::render_async_with_options(body.content.clone(), markup_opts).await?;
@@ -560,7 +561,21 @@ async fn delete_actor_handler(
     verify_bearer_token(&headers, &state.admin_token)?;
 
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    noombat_identity::repo::delete_actor(&state.pool, actor.id).await?;
+
+    // Fetch the follower inbox list BEFORE tombstoning, because
+    // tombstone_actor deletes the follow relationships.
+    let inboxes = noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id)
+        .await
+        .unwrap_or_default();
+
+    // Tombstone the actor (clears personal data, retains ap_id for
+    // federation consistency) and retrieve the pre-tombstone snapshot.
+    let pre_tombstone =
+        noombat_identity::repo::tombstone_actor(&state.pool, actor.id).await?;
+
+    // Broadcast a Delete activity to all accepted followers so that
+    // remote instances remove their cached copy.
+    noombat_federation::delete::broadcast_delete(&state.pool, &pre_tombstone, &inboxes).await;
 
     Ok(StatusCode::NO_CONTENT)
 }

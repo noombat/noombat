@@ -6,6 +6,7 @@
 //! and HTTP Signature verification.
 
 pub mod crosspost;
+pub mod delete;
 pub mod delivery;
 pub mod digest;
 pub mod downgrade;

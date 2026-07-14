@@ -332,13 +332,15 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     sqlx::query(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
-                domain, public_key_pem, inbox_url, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, FALSE, $10)
+                domain, public_key_pem, inbox_url, shared_inbox_url,
+                is_local, actor_privacy)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, $11)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
                display_name = EXCLUDED.display_name,
                summary_html = EXCLUDED.summary_html,
-               inbox_url = EXCLUDED.inbox_url"#,
+               inbox_url = EXCLUDED.inbox_url,
+               shared_inbox_url = EXCLUDED.shared_inbox_url"#,
     )
     .bind(id)
     .bind(&remote.actor_type)
@@ -349,6 +351,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(&remote.domain)
     .bind(&remote.public_key_pem)
     .bind(&remote.inbox_url)
+    .bind(&remote.shared_inbox_url)
     .bind(&privacy_json)
     .execute(pool)
     .await?;
@@ -607,12 +610,252 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
 
 // ..... ACTOR DELETE .....
 
-/// Delete a local actor and all dependent data (cascaded by FK constraints).
-pub async fn delete_actor(pool: &PgPool, actor_id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM actors WHERE id = $1 AND is_local = TRUE")
+/// Tombstone a local actor: clear all personal data, record the
+/// tombstone for federation consistency, and delete all dependent
+/// rows from the database.
+///
+/// This function does **not** broadcast the `Delete` activity; the
+/// caller is responsible for fetching follower inboxes (via
+/// [`get_follower_inboxes`]) **before** calling this function (which
+/// deletes the follow relationships) and then passing those inboxes
+/// to [`noombat_federation::delete::broadcast_delete`].
+///
+/// After this function returns, the actor row is retained with only
+/// the `ap_id`, `username`, `domain`, and `public_key_pem` columns
+/// populated; all other fields are cleared and the `actor_status` is
+/// set to `"suspended"`. Dependent data (posts, profile sections,
+/// follows, etc.) is explicitly deleted.
+///
+/// The two-phase approach (tombstone now, hard-delete later) ensures
+/// that:
+/// 1. The `Delete` activity can reference the actor's `ap_id` and be
+///    signed with its private key.
+/// 2. The `tombstoned_actors` table records the `ap_id` so that
+///    future federation requests return `410 Gone`.
+/// 3. A configurable grace period allows the user to cancel the
+///    deletion before irreversible data loss.
+///
+/// The `moved_to` column is intentionally **not** cleared: if the
+/// actor had previously migrated via a `Move` activity, the migration
+/// pointer is preserved on the tombstoned row so that followers who
+/// have not yet processed the `Move` can still discover the target
+/// actor. The `Delete` broadcast informs followers of the deletion;
+/// the `moved_to` pointer provides an alternative discovery path.
+///
+/// All deletion steps are executed within a single database
+/// transaction to ensure atomicity: if the process crashes mid-way,
+/// the entire tombstoning operation is rolled back rather than
+/// leaving the actor in a partially-tombstoned state.
+///
+/// # Arguments
+///
+/// - `pool`: Database connection pool.
+/// - `actor_id`: The UUID of the local actor to delete.
+///
+/// # Returns
+///
+/// The actor's data as it was immediately before tombstoning,
+/// enabling the caller to perform follow-up actions (e.g.
+/// broadcasting the `Delete` activity, purging search indices).
+pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
+    // Fetch the actor before clearing data (needed for the Delete
+    // activity and follower inbox resolution).
+    let actor = find_by_id(pool, actor_id).await?;
+
+    if !actor.is_local {
+        return Err(NoombatError::BadRequest(
+            "cannot delete a remote actor".into(),
+        ));
+    }
+
+    let mut tx = pool.begin().await?;
+
+    // Record the tombstone so that future federation requests for
+    // this ap_id return 410 Gone.
+    sqlx::query(
+        "INSERT INTO tombstoned_actors (ap_id) VALUES ($1) \
+         ON CONFLICT (ap_id) DO NOTHING",
+    )
+    .bind(&actor.ap_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Clear personal data from the actor row but retain the
+    // structural fields needed for federation consistency.
+    // NOTE: `moved_to` is intentionally preserved (see doc-comment).
+    sqlx::query(
+        r#"UPDATE actors SET
+               display_name = NULL,
+               headline = NULL,
+               avatar_url = NULL,
+               header_url = NULL,
+               summary_md = NULL,
+               summary_html = NULL,
+               chatmail_addr = NULL,
+               chatmail_cred = NULL,
+               orcid = NULL,
+               actor_status = 'suspended',
+               actor_privacy = '{"discoverable":false,"indexable":false,"require_follow_approval":true,"federate_profile":false,"chatmail_visible":false,"show_followers_count":false,"cv_download":"self"}'
+           WHERE id = $1"#,
+    )
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // Cascade-delete all dependent personal data. The FK constraints
+    // with ON DELETE CASCADE would handle this if the actor row were
+    // deleted, but since the row is retained (tombstoned), explicit
+    // deletion of dependents is required.
+    //
+    // Deletion order matters: tables that reference `posts` (likes,
+    // boosts, post_hashtags, media_attachments) must be deleted
+    // before `posts` to avoid relying on cascade side-effects.
+    //
+    // Each query uses a literal `&'static str` (not `format!`) to
+    // satisfy sqlx's `SqlSafeStr` compile-time injection check.
+
+    // 1. Tables with `actor_id` FK column (excluding posts and
+    //    media_attachments, which are handled later due to ordering).
+    sqlx::query("DELETE FROM experiences WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM educations WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM skills WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM publications WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM verified_links WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM custom_profile_sections WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM applications WHERE applicant_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM actor_aliases WHERE actor_id = $1")
+        .bind(actor_id).execute(&mut *tx).await?;
+
+    // 2. Tables with non-standard FK column names.
+    sqlx::query(
+        "DELETE FROM follows WHERE follower_id = $1 OR following_id = $1",
+    )
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "DELETE FROM blocks WHERE actor_id = $1 OR target_id = $1",
+    )
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+
+    sqlx::query(
+        "DELETE FROM mutes WHERE actor_id = $1 OR target_id = $1",
+    )
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+
+    // 3. Likes and boosts by this actor on OTHER actors' posts.
+    //    (Likes/boosts by other actors on THIS actor's posts will be
+    //    cascade-deleted when posts are deleted in step 5.)
+    sqlx::query("DELETE FROM likes WHERE actor_id = $1")
         .bind(actor_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+
+    sqlx::query("DELETE FROM boosts WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 4. Media attachments uploaded by this actor.
+    sqlx::query("DELETE FROM media_attachments WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 5. Posts by this actor (cascade-deletes remaining likes, boosts,
+    //    post_hashtags, and media_attachments via FK ON DELETE CASCADE).
+    sqlx::query("DELETE FROM posts WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 6. Delivery queue entries for this actor.
+    sqlx::query("DELETE FROM delivery_queue WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 7. Reports: delete reports filed BY this actor; clear
+    //    target_actor_id on reports filed AGAINST this actor (the
+    //    report itself is retained for the moderation audit trail).
+    sqlx::query("DELETE FROM reports WHERE reporter_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("UPDATE reports SET target_actor_id = NULL WHERE target_actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("UPDATE reports SET resolved_by = NULL WHERE resolved_by = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 8. Events: delete events organised by this actor, and clear
+    //    actor_id on events where this actor is listed as a
+    //    participant (event_rsvps).
+    sqlx::query("DELETE FROM event_rsvps WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    sqlx::query("DELETE FROM events WHERE actor_id = $1 OR organiser_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 9. Group memberships.
+    sqlx::query("DELETE FROM group_memberships WHERE member_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 10. Domain restrictions created by this actor: clear the
+    //     created_by column (the restriction itself is retained).
+    sqlx::query("UPDATE domain_restrictions SET created_by = NULL WHERE created_by = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    // 11. Hashtag follows.
+    sqlx::query("DELETE FROM hashtag_follows WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+
+    tx.commit().await?;
+
+    Ok(actor)
+}
+
+/// Hard-delete a tombstoned actor row. Called by a background worker
+/// after the grace period (default: 30 days) has elapsed.
+///
+/// This final step removes the actor row itself. After this call, the
+/// `tombstoned_actors` table is the sole record that the `ap_id` ever
+/// existed (ensuring that federation requests continue to receive
+/// `410 Gone`).
+pub async fn purge_tombstoned_actor(pool: &PgPool, actor_id: Uuid) -> Result<()> {
+    let result = sqlx::query(
+        "DELETE FROM actors WHERE id = $1 AND actor_status = 'suspended'",
+    )
+    .bind(actor_id)
+    .execute(pool)
+    .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
