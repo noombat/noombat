@@ -2363,6 +2363,7 @@ dependencies = [
  "noombat-ap",
  "noombat-core",
  "noombat-identity",
+ "rand 0.8.6",
  "reqwest 0.13.4",
  "rsa",
  "serde",
