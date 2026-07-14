@@ -36,6 +36,7 @@ pub async fn process_activity(
         types::REJECT => handle_reject(pool, http_client, &activity).await,
         types::ANNOUNCE => handle_announce(pool, http_client, &activity).await,
         types::LIKE => handle_like(pool, http_client, &activity).await,
+        types::UPDATE => handle_update(pool, http_client, &activity).await,
         types::BLOCK => handle_block(pool, http_client, &activity).await,
         types::MOVE => crate::move_actor::handle_inbound_move(pool, http_client, &activity).await,
         types::FLAG => crate::flag::handle_inbound_flag(pool, http_client, &activity).await,
@@ -110,8 +111,26 @@ pub async fn resolve_remote_actor(
         .map_err(|e| NoombatError::Federation(format!("invalid actor JSON: {e}")))?;
 
     let domain = extract_domain(actor_uri).unwrap_or_default();
+    let remote = ap_actor_to_remote(&ap_actor, domain);
 
-    let remote = repo::RemoteActor {
+    repo::upsert_remote_actor(pool, &remote).await
+}
+
+/// Convert a fetched [`ApActor`] into a [`repo::RemoteActor`] for
+/// persistence.
+///
+/// This function is the single conversion point used by both
+/// [`resolve_remote_actor`] and [`handle_update_actor`], ensuring
+/// that the field mapping remains consistent.
+fn ap_actor_to_remote(ap_actor: &ApActor, domain: String) -> repo::RemoteActor {
+    let shared_inbox_url = ap_actor
+        .endpoints
+        .as_ref()
+        .and_then(|ep| ep.get("sharedInbox"))
+        .and_then(|v| v.as_str())
+        .map(String::from);
+
+    repo::RemoteActor {
         ap_id: ap_actor.id.clone(),
         username: ap_actor.preferred_username.clone(),
         domain,
@@ -125,9 +144,8 @@ pub async fn resolve_remote_actor(
             _ => "individual".to_owned(),
         },
         inbox_url: ap_actor.inbox.clone(),
-    };
-
-    repo::upsert_remote_actor(pool, &remote).await
+        shared_inbox_url,
+    }
 }
 
 /// Extract the domain from a URI (e.g. `https://noombat.social/users/alice` to `noombat.social`).
@@ -515,6 +533,243 @@ async fn handle_delete(pool: &PgPool, activity: &Activity) -> Result<()> {
         .await?;
 
     info!(object = %object_id, "post deleted");
+    Ok(())
+}
+
+// ..... UPDATE .....
+
+async fn handle_update(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    let object = &activity.object;
+
+    // Determine what kind of object is being updated.
+    let object_type = object
+        .get("type")
+        .and_then(|v| {
+            // `type` may be a string or an array (dual-typed objects).
+            v.as_str()
+                .map(String::from)
+                .or_else(|| v.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()).map(String::from))
+        })
+        .unwrap_or_default();
+
+    let object_id = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    info!(
+        actor = %activity.actor,
+        object_type = %object_type,
+        object_id = %object_id,
+        "received Update"
+    );
+
+    match object_type.as_str() {
+        // Actor profile update: re-fetch and upsert the remote actor.
+        "Person" | "Organization" | "Group" | "Application" | "Service" => {
+            handle_update_actor(pool, http_client, activity).await
+        }
+        // Post edit: update the cached remote post.
+        "Note" | "Article" => handle_update_post(pool, http_client, activity).await,
+        _ => {
+            warn!(
+                object_type = %object_type,
+                "Update for unsupported object type; ignoring"
+            );
+            Ok(())
+        }
+    }
+}
+
+/// Handle an `Update` activity targeting a remote actor (profile refresh).
+///
+/// Verifies that the activity's `actor` matches the object's `id`
+/// (an actor may only update itself), then re-fetches the actor
+/// profile and upserts it (the `upsert_remote_actor` function's
+/// `ON CONFLICT` clause updates the existing row in place, preserving
+/// all FK-dependent data such as follows and posts).
+async fn handle_update_actor(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    let object_id = activity
+        .object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+
+    // Security: an actor may only update its own profile.
+    if activity.actor != object_id {
+        warn!(
+            actor = %activity.actor,
+            object = %object_id,
+            "Update actor mismatch; ignoring"
+        );
+        return Ok(());
+    }
+
+    // Re-fetch the remote actor profile and upsert it. The inbound
+    // Update may carry the full actor object in its body, but
+    // re-fetching from the authoritative source is safer (the Update
+    // body could be stale or tampered with by a relay).
+    //
+    // To force a fresh HTTP fetch, we must bypass the local cache.
+    // Rather than deleting the row (which would cascade-delete all
+    // dependent data, e.g. follows, posts, likes), we fetch directly and
+    // let upsert_remote_actor's ON CONFLICT clause update in place.
+    let response = http_client
+        .get(&activity.actor)
+        .header("Accept", "application/activity+json")
+        .send()
+        .await
+        .map_err(|e| NoombatError::Federation(format!("failed to re-fetch {}: {e}", activity.actor)))?;
+
+    if !response.status().is_success() {
+        warn!(
+            actor = %activity.actor,
+            status = response.status().as_u16(),
+            "failed to re-fetch actor during Update; ignoring"
+        );
+        return Ok(());
+    }
+
+    let ap_actor: ApActor = response
+        .json()
+        .await
+        .map_err(|e| NoombatError::Federation(format!("invalid actor JSON on re-fetch: {e}")))?;
+
+    let domain = extract_domain(&activity.actor).unwrap_or_default();
+    let remote = ap_actor_to_remote(&ap_actor, domain);
+
+    repo::upsert_remote_actor(pool, &remote).await?;
+    info!(actor = %activity.actor, "remote actor profile refreshed via Update");
+
+    Ok(())
+}
+
+/// Handle an `Update` activity targeting a remote post (edit).
+///
+/// Verifies that the activity's `actor` matches the post's
+/// `attributedTo`, then updates the cached content.
+async fn handle_update_post(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    let object = &activity.object;
+
+    let ap_id = object
+        .get("id")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| NoombatError::BadRequest("Update object missing id".into()))?;
+
+    let attributed_to = object
+        .get("attributedTo")
+        .and_then(|v| {
+            v.as_str().or_else(|| {
+                v.as_array()
+                    .and_then(|arr| arr.iter().find_map(|item| item.as_str()))
+            })
+        })
+        .unwrap_or("");
+
+    // Security: the activity actor must match the post author.
+    if activity.actor != attributed_to {
+        warn!(
+            actor = %activity.actor,
+            attributed_to = %attributed_to,
+            "Update post: actor does not match attributedTo; ignoring"
+        );
+        return Ok(());
+    }
+
+    // Resolve the remote author (may already be cached).
+    let _remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+
+    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
+
+    let content_md = object
+        .get("source")
+        .and_then(|src| {
+            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+            if media == "text/markdown" {
+                src.get("content").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .unwrap_or(content_html);
+
+    let title = object
+        .get("name")
+        .and_then(|v| v.as_str());
+
+    let featured_image_url = extract_image_url(object);
+
+    // Derive updated visibility from the object's to/cc addressing.
+    let to = extract_string_array(object, "to");
+    let cc = extract_string_array(object, "cc");
+    let visibility = derive_visibility(&to, &cc);
+
+    let rows_affected = sqlx::query(
+        r#"UPDATE posts
+           SET content_md = $2,
+               content_html = $3,
+               title = $4,
+               featured_image_url = $5,
+               visibility = $6,
+               ap_object = $7
+           WHERE ap_id = $1"#,
+    )
+    .bind(ap_id)
+    .bind(content_md)
+    .bind(content_html)
+    .bind(title)
+    .bind(&featured_image_url)
+    .bind(&visibility)
+    .bind(object)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if rows_affected > 0 {
+        // Refresh hashtag links: the edit may have added or removed
+        // hashtags. Delete existing links and re-insert from the
+        // updated `tag` array.
+        let post_id =
+            sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM posts WHERE ap_id = $1")
+                .bind(ap_id)
+                .fetch_optional(pool)
+                .await?;
+
+        if let Some(post_id) = post_id {
+            sqlx::query("DELETE FROM post_hashtags WHERE post_id = $1")
+                .bind(post_id)
+                .execute(pool)
+                .await?;
+
+            let hashtag_names = extract_hashtags_from_tags(object);
+            if !hashtag_names.is_empty()
+                && let Err(e) =
+                    noombat_identity::hashtags::link_post_hashtags(pool, post_id, &hashtag_names)
+                        .await
+            {
+                warn!(ap_id, "failed to re-link hashtags after post Update: {e}");
+            }
+        }
+
+        info!(ap_id, "remote post updated via Update activity");
+    } else {
+        // The post is not known locally; this is common when the
+        // instance does not follow the author.
+        info!(ap_id, "Update for unknown post; ignoring");
+    }
+
     Ok(())
 }
 

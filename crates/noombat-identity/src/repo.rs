@@ -243,14 +243,20 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     Ok(row)
 }
 
-/// Retrieve the inbox URIs of all accepted followers of a local actor.
+/// Retrieve the deduplicated inbox URIs of all accepted followers of a
+/// local actor.
 ///
-/// Uses each follower's stored `inbox_url` (populated during actor
-/// resolution) with a fallback to `{ap_id}/inbox` for actors resolved
-/// before the column was introduced.
+/// Prefers `shared_inbox_url` when available: if multiple followers
+/// reside on the same remote instance (sharing the same
+/// `shared_inbox_url`), only one copy is sent to the shared inbox.
+/// Falls back to the per-actor `inbox_url`, then to `{ap_id}/inbox`.
+///
+/// The `DISTINCT` clause ensures that duplicate inbox URIs (whether
+/// shared or individual) produce only one delivery.
 pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> {
     let inboxes = sqlx::query_scalar::<_, String>(
-        r#"SELECT COALESCE(a.inbox_url, a.ap_id || '/inbox')
+        r#"SELECT DISTINCT
+               COALESCE(a.shared_inbox_url, a.inbox_url, a.ap_id || '/inbox')
            FROM follows f
            JOIN actors a ON a.id = f.follower_id
            WHERE f.following_id = $1 AND f.accepted = TRUE"#,
@@ -310,6 +316,8 @@ pub struct RemoteActor {
     pub public_key_pem: String,
     pub actor_type: String,
     pub inbox_url: String,
+    /// The `endpoints.sharedInbox` URI, if declared by the remote actor.
+    pub shared_inbox_url: Option<String>,
 }
 
 /// Insert or update a remote actor in the `actors` table.

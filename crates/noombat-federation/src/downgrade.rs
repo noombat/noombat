@@ -204,6 +204,9 @@ pub fn build_federated_actor(
         "outbox": format!("{}/outbox", actor.ap_id),
         "followers": format!("{}/followers", actor.ap_id),
         "following": format!("{}/following", actor.ap_id),
+        "endpoints": {
+            "sharedInbox": format!("https://{domain}/inbox"),
+        },
         "publicKey": {
             "id": format!("{}#main-key", actor.ap_id),
             "owner": actor.ap_id,

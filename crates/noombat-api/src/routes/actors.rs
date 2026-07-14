@@ -128,7 +128,9 @@ async fn get_actor(
             },
             url: Some(format!("https://{}/@{}", state.domain, actor.username)),
             attachment,
-            endpoints: None,
+            endpoints: Some(serde_json::json!({
+                "sharedInbox": format!("https://{}/inbox", state.domain)
+            })),
             moved_to: actor.moved_to.clone(),
             also_known_as: if aliases.is_empty() {
                 None
