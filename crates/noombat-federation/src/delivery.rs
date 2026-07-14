@@ -36,8 +36,9 @@ struct DeliveryRow {
 struct SigningCredentials {
     /// Key ID URI, e.g. `https://noombat.social/users/alice#main-key`.
     key_id: String,
-    /// RSA private key in PKCS#8 PEM format.
-    private_key_pem: String,
+    /// Pre-parsed RSA private key (avoids redundant PEM parsing on
+    /// every invocation of the signing closure).
+    private_key: rsa::RsaPrivateKey,
 }
 
 /// Enqueue an activity for delivery to a remote inbox.
@@ -141,6 +142,10 @@ pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
 }
 
 /// Fetch the signing credentials for the sending actor.
+///
+/// The PEM is parsed into an [`rsa::RsaPrivateKey`] here (once per
+/// delivery cycle) rather than inside the signing closure (which
+/// would re-parse on every invocation).
 async fn fetch_signing_credentials(
     pool: &PgPool,
     actor_id: Uuid,
@@ -159,9 +164,16 @@ async fn fetch_signing_credentials(
         )
     })?;
 
+    let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
+        noombat_core::error::NoombatError::Internal(format!(
+            "failed to parse private key for actor {}: {e}",
+            row.0
+        ))
+    })?;
+
     Ok(SigningCredentials {
         key_id: format!("{}#main-key", row.0),
-        private_key_pem,
+        private_key,
     })
 }
 
@@ -177,6 +189,36 @@ fn signing_config() -> Config {
         .mastodon_compat()
         .require_digest()
         .set_expiration(Duration::from_secs(30))
+}
+
+/// Sign a string with an RSA-SHA256 key (from PEM) and return the
+/// Base64-encoded signature.
+///
+/// This is the convenience entry point used by the signed-fetch
+/// module ([`crate::signed_fetch::signed_get`]), where the PEM is
+/// available but a parsed key is not cached.
+pub fn rsa_sha256_sign(
+    signing_string: &str,
+    private_key_pem: &str,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem)
+        .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
+    rsa_sha256_sign_with_key(signing_string, &private_key)
+}
+
+/// Sign a string with a pre-parsed RSA private key and return the
+/// Base64-encoded signature.
+///
+/// This is the performance-sensitive entry point used by the delivery
+/// pipeline, where the key is parsed once per delivery cycle in
+/// [`fetch_signing_credentials`] and reused across the signing closure.
+pub fn rsa_sha256_sign_with_key(
+    signing_string: &str,
+    private_key: &rsa::RsaPrivateKey,
+) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let signing_key = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key.clone());
+    let signature = signing_key.sign(signing_string.as_bytes());
+    Ok(BASE64.encode(signature.to_bytes()))
 }
 
 /// Attempt delivery of a single activity to a remote inbox.
@@ -203,7 +245,10 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
     // `signature_with_digest` computes the SHA-256 body digest,
     // attaches the `Digest`, `Date`, and `Signature` headers, and
     // returns a ready-to-send `reqwest::Request`.
-    let private_key_pem = creds.private_key_pem.clone();
+    //
+    // The private key was pre-parsed in `fetch_signing_credentials`,
+    // so the closure avoids redundant PEM decoding.
+    let private_key = creds.private_key;
     let signed_request = http_client
         .post(&row.target_inbox)
         .header("Content-Type", "application/activity+json")
@@ -212,13 +257,7 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
             creds.key_id.clone(),
             sha2::Sha256::new(),
             body,
-            move |signing_string| -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
-                let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem)
-                    .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
-                let signing_key = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key);
-                let signature = signing_key.sign(signing_string.as_bytes());
-                Ok(BASE64.encode(signature.to_bytes()))
-            },
+            move |signing_string| rsa_sha256_sign_with_key(signing_string, &private_key),
         )
         .await;
 
@@ -285,4 +324,87 @@ async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
     .bind(queue_id)
     .execute(pool)
     .await;
+}
+
+/// Run the delivery worker loop.
+///
+/// Uses [`sqlx::postgres::PgListener`] on the `delivery_queue_insert`
+/// channel (fired by trigger in migration) to wake immediately when
+/// new activities are enqueued, eliminating the 10-20s polling latency.
+/// `PgListener` manages its own dedicated connection outside the pool
+/// (avoiding pool-slot exhaustion) and auto-reconnects on connection loss.
+///
+/// A polling fallback runs every `poll_interval` as a safety net in
+/// case a `NOTIFY` is missed (e.g. during reconnection).
+///
+/// # Arguments
+///
+/// * `pool`: the database connection pool (used for queue queries).
+/// * `http_client`: the HTTP client for outbound deliveries.
+/// * `poll_interval`: fallback polling interval (default: 30s).
+pub async fn run_worker(
+    pool: PgPool,
+    http_client: reqwest::Client,
+    poll_interval: Duration,
+) {
+    // PgListener manages its own connection, independent of the pool.
+    let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
+        Ok(l) => l,
+        Err(e) => {
+            error!("failed to create PgListener: {e}; falling back to polling");
+            polling_fallback(&pool, &http_client, poll_interval).await;
+            return;
+        }
+    };
+
+    if let Err(e) = listener.listen("delivery_queue_insert").await {
+        error!("LISTEN failed: {e}; falling back to polling");
+        polling_fallback(&pool, &http_client, poll_interval).await;
+        return;
+    }
+
+    info!("delivery worker: LISTEN delivery_queue_insert active");
+
+    // Process any rows that were enqueued before the worker started.
+    process_queue(&pool, &http_client).await;
+
+    loop {
+        // Wait for either a notification or the poll interval to
+        // elapse. PgListener::recv() blocks until a notification
+        // arrives (auto-reconnecting on connection loss); wrapping
+        // it in a timeout provides the polling fallback.
+        match tokio::time::timeout(poll_interval, listener.recv()).await {
+            // Notification received: process immediately.
+            Ok(Ok(_notification)) => {
+                // Drain any buffered notifications to coalesce
+                // multiple rapid inserts into a single poll cycle.
+                while listener.try_recv().await.ok().flatten().is_some() {}
+                process_queue(&pool, &http_client).await;
+            }
+            // Connection error (PgListener will auto-reconnect on
+            // the next recv() call).
+            Ok(Err(e)) => {
+                warn!("PgListener error: {e}; processing queue and continuing");
+                process_queue(&pool, &http_client).await;
+            }
+            // Timeout: poll interval elapsed without notification.
+            Err(_elapsed) => {
+                process_queue(&pool, &http_client).await;
+            }
+        }
+    }
+}
+
+/// Pure-polling fallback when PgListener is unavailable.
+async fn polling_fallback(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    interval: Duration,
+) {
+    use rand::Rng as _;
+    loop {
+        process_queue(pool, http_client).await;
+        let jitter = rand::thread_rng().gen_range(0..=5);
+        tokio::time::sleep(interval + Duration::from_secs(jitter)).await;
+    }
 }

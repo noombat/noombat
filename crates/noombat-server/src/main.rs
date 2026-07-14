@@ -148,19 +148,20 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to build HTTP client");
 
     // Spawn the delivery-queue background worker.
+    //
+    // Uses PostgreSQL LISTEN/NOTIFY for near-instant dispatch when new
+    // activities are enqueued, with a 30s polling fallback as a
+    // safety net.
     {
         let pool = pool.clone();
         let client = http_client.clone();
         tokio::spawn(async move {
-            // Randomised jitter prevents lock contention when multiple
-            // replicas poll the queue concurrently. The interval is
-            // uniformly distributed between 10 and 20 seconds.
-            use rand::Rng as _;
-            loop {
-                noombat_federation::delivery::process_queue(&pool, &client).await;
-                let jitter = rand::thread_rng().gen_range(10..=20);
-                tokio::time::sleep(Duration::from_secs(jitter)).await;
-            }
+            noombat_federation::delivery::run_worker(
+                pool,
+                client,
+                Duration::from_secs(30),
+            )
+            .await;
         });
     }
 
