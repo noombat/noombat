@@ -156,12 +156,7 @@ async fn main() -> anyhow::Result<()> {
         let pool = pool.clone();
         let client = http_client.clone();
         tokio::spawn(async move {
-            noombat_federation::delivery::run_worker(
-                pool,
-                client,
-                Duration::from_secs(30),
-            )
-            .await;
+            noombat_federation::delivery::run_worker(pool, client, Duration::from_secs(30)).await;
         });
     }
 

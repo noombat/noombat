@@ -338,6 +338,8 @@ async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
     .map_err(NoombatError::from)?;
 
     any.ok_or_else(|| {
-        NoombatError::Internal("no local actor with a private key available for signed fetch".into())
+        NoombatError::Internal(
+            "no local actor with a private key available for signed fetch".into(),
+        )
     })
 }

@@ -73,19 +73,18 @@ pub async fn signed_get(
     let signed_request = http_client
         .get(url)
         .header("Accept", "application/activity+json")
-        .signature(
-            &config,
-            key_id,
-            move |signing_string| {
-                crate::delivery::rsa_sha256_sign(signing_string, &private_key_pem)
-            },
-        )
+        .signature(&config, key_id, move |signing_string| {
+            crate::delivery::rsa_sha256_sign(signing_string, &private_key_pem)
+        })
         .await;
 
     let signed_request = match signed_request {
         Ok(r) => r,
         Err(e) => {
-            warn!(url, "signed_get: signing failed ({e}); falling back to unsigned fetch");
+            warn!(
+                url,
+                "signed_get: signing failed ({e}); falling back to unsigned fetch"
+            );
             return unsigned_get(http_client, url).await;
         }
     };

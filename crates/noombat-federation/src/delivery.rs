@@ -342,11 +342,7 @@ async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
 /// * `pool`: the database connection pool (used for queue queries).
 /// * `http_client`: the HTTP client for outbound deliveries.
 /// * `poll_interval`: fallback polling interval (default: 30s).
-pub async fn run_worker(
-    pool: PgPool,
-    http_client: reqwest::Client,
-    poll_interval: Duration,
-) {
+pub async fn run_worker(pool: PgPool, http_client: reqwest::Client, poll_interval: Duration) {
     // PgListener manages its own connection, independent of the pool.
     let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {
         Ok(l) => l,
@@ -396,11 +392,7 @@ pub async fn run_worker(
 }
 
 /// Pure-polling fallback when PgListener is unavailable.
-async fn polling_fallback(
-    pool: &PgPool,
-    http_client: &reqwest::Client,
-    interval: Duration,
-) {
+async fn polling_fallback(pool: &PgPool, http_client: &reqwest::Client, interval: Duration) {
     use rand::Rng as _;
     loop {
         process_queue(pool, http_client).await;

@@ -717,43 +717,53 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
     // 1. Tables with `actor_id` FK column (excluding posts and
     //    media_attachments, which are handled later due to ordering).
     sqlx::query("DELETE FROM experiences WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM educations WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM skills WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM publications WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM verified_links WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM custom_profile_sections WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM applications WHERE applicant_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM actor_aliases WHERE actor_id = $1")
-        .bind(actor_id).execute(&mut *tx).await?;
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
 
     // 2. Tables with non-standard FK column names.
-    sqlx::query(
-        "DELETE FROM follows WHERE follower_id = $1 OR following_id = $1",
-    )
-    .bind(actor_id)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("DELETE FROM follows WHERE follower_id = $1 OR following_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
 
-    sqlx::query(
-        "DELETE FROM blocks WHERE actor_id = $1 OR target_id = $1",
-    )
-    .bind(actor_id)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("DELETE FROM blocks WHERE actor_id = $1 OR target_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
 
-    sqlx::query(
-        "DELETE FROM mutes WHERE actor_id = $1 OR target_id = $1",
-    )
-    .bind(actor_id)
-    .execute(&mut *tx)
-    .await?;
+    sqlx::query("DELETE FROM mutes WHERE actor_id = $1 OR target_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
 
     // 3. Likes and boosts by this actor on OTHER actors' posts.
     //    (Likes/boosts by other actors on THIS actor's posts will be
@@ -850,12 +860,10 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
 /// existed (ensuring that federation requests continue to receive
 /// `410 Gone`).
 pub async fn purge_tombstoned_actor(pool: &PgPool, actor_id: Uuid) -> Result<()> {
-    let result = sqlx::query(
-        "DELETE FROM actors WHERE id = $1 AND actor_status = 'suspended'",
-    )
-    .bind(actor_id)
-    .execute(pool)
-    .await?;
+    let result = sqlx::query("DELETE FROM actors WHERE id = $1 AND actor_status = 'suspended'")
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {

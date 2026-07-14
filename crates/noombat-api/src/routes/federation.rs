@@ -329,9 +329,7 @@ async fn verify_and_process_inbound(
     // recipient is hosted on this instance. Without this check,
     // a remote server could deliver activities addressed to
     // actors on a third instance.
-    if path == "/inbox"
-        && !activity_addresses_local_actor(&activity, &state.domain)
-    {
+    if path == "/inbox" && !activity_addresses_local_actor(&activity, &state.domain) {
         return Err(NoombatError::BadRequest(
             "shared inbox: activity does not address any local actor".into(),
         )
@@ -360,9 +358,7 @@ fn activity_addresses_local_actor(activity: &Activity, domain: &str) -> bool {
         .chain(activity.cc.iter().flatten());
 
     for addr in addresses {
-        if addr == public
-            || addr.eq_ignore_ascii_case("Public")
-            || addr.starts_with(&domain_prefix)
+        if addr == public || addr.eq_ignore_ascii_case("Public") || addr.starts_with(&domain_prefix)
         {
             return true;
         }

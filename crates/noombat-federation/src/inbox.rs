@@ -550,16 +550,16 @@ async fn handle_update(
         .get("type")
         .and_then(|v| {
             // `type` may be a string or an array (dual-typed objects).
-            v.as_str()
-                .map(String::from)
-                .or_else(|| v.as_array().and_then(|a| a.first()).and_then(|v| v.as_str()).map(String::from))
+            v.as_str().map(String::from).or_else(|| {
+                v.as_array()
+                    .and_then(|a| a.first())
+                    .and_then(|v| v.as_str())
+                    .map(String::from)
+            })
         })
         .unwrap_or_default();
 
-    let object_id = object
-        .get("id")
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
+    let object_id = object.get("id").and_then(|v| v.as_str()).unwrap_or("");
 
     info!(
         actor = %activity.actor,
@@ -627,7 +627,9 @@ async fn handle_update_actor(
         .header("Accept", "application/activity+json")
         .send()
         .await
-        .map_err(|e| NoombatError::Federation(format!("failed to re-fetch {}: {e}", activity.actor)))?;
+        .map_err(|e| {
+            NoombatError::Federation(format!("failed to re-fetch {}: {e}", activity.actor))
+        })?;
 
     if !response.status().is_success() {
         warn!(
@@ -705,9 +707,7 @@ async fn handle_update_post(
         })
         .unwrap_or(content_html);
 
-    let title = object
-        .get("name")
-        .and_then(|v| v.as_str());
+    let title = object.get("name").and_then(|v| v.as_str());
 
     let featured_image_url = extract_image_url(object);
 
@@ -741,11 +741,10 @@ async fn handle_update_post(
         // Refresh hashtag links: the edit may have added or removed
         // hashtags. Delete existing links and re-insert from the
         // updated `tag` array.
-        let post_id =
-            sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM posts WHERE ap_id = $1")
-                .bind(ap_id)
-                .fetch_optional(pool)
-                .await?;
+        let post_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM posts WHERE ap_id = $1")
+            .bind(ap_id)
+            .fetch_optional(pool)
+            .await?;
 
         if let Some(post_id) = post_id {
             sqlx::query("DELETE FROM post_hashtags WHERE post_id = $1")

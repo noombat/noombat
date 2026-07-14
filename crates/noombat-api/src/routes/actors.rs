@@ -570,8 +570,7 @@ async fn delete_actor_handler(
 
     // Tombstone the actor (clears personal data, retains ap_id for
     // federation consistency) and retrieve the pre-tombstone snapshot.
-    let pre_tombstone =
-        noombat_identity::repo::tombstone_actor(&state.pool, actor.id).await?;
+    let pre_tombstone = noombat_identity::repo::tombstone_actor(&state.pool, actor.id).await?;
 
     // Broadcast a Delete activity to all accepted followers so that
     // remote instances remove their cached copy.

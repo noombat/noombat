@@ -311,7 +311,9 @@ mod tests {
 
     #[test]
     fn strict_sanitisation_passes_safe_tags() {
-        let opts = MarkupOptions { strict_sanitisation: true };
+        let opts = MarkupOptions {
+            strict_sanitisation: true,
+        };
         let output = render_with_options("<details><summary>More</summary>Hidden</details>", &opts);
         assert!(
             output.html.contains("<details>"),
@@ -322,7 +324,9 @@ mod tests {
 
     #[test]
     fn strict_sanitisation_strips_script() {
-        let opts = MarkupOptions { strict_sanitisation: true };
+        let opts = MarkupOptions {
+            strict_sanitisation: true,
+        };
         let output = render_with_options("<script>alert('xss')</script>", &opts);
         assert!(
             !output.html.contains("<script>"),
@@ -332,7 +336,9 @@ mod tests {
 
     #[test]
     fn strict_sanitisation_strips_style_from_span() {
-        let opts = MarkupOptions { strict_sanitisation: true };
+        let opts = MarkupOptions {
+            strict_sanitisation: true,
+        };
         let output = render_with_options(
             r#"<span style="background-image:url(https://evil.example/t)">track</span>"#,
             &opts,
