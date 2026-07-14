@@ -6,35 +6,37 @@
 -- ..... ACTORS .....
 
 CREATE TABLE actors (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_type      TEXT NOT NULL CHECK (actor_type IN ('individual', 'company', 'group')),
-    ap_id           TEXT NOT NULL UNIQUE,
-    username        TEXT NOT NULL,
-    display_name    TEXT,
-    avatar_url      TEXT,
-    header_url      TEXT,
-    summary_md      TEXT,
-    summary_html    TEXT,
-    public_key_pem  TEXT NOT NULL,
-    private_key_pem TEXT,
-    domain          TEXT NOT NULL,
-    is_local        BOOLEAN NOT NULL DEFAULT TRUE,
-    inbox_url       TEXT, -- remote actors only: their declared AP inbox URI
-    instance_role   TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
-    actor_status    TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
-    chatmail_addr   TEXT,
-    chatmail_cred   BYTEA,
-    orcid           TEXT,
-    moved_to        TEXT, -- target actor URI if migrated via Move activity
-    headline        TEXT,
-    actor_privacy   JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_type       TEXT NOT NULL CHECK (actor_type IN ('individual', 'company', 'group')),
+    ap_id            TEXT NOT NULL UNIQUE,
+    username         TEXT NOT NULL,
+    display_name     TEXT,
+    avatar_url       TEXT,
+    header_url       TEXT,
+    summary_md       TEXT,
+    summary_html     TEXT,
+    public_key_pem   TEXT NOT NULL,
+    private_key_pem  TEXT,
+    domain           TEXT NOT NULL,
+    is_local         BOOLEAN NOT NULL DEFAULT TRUE,
+    inbox_url        TEXT, -- remote actors only: their declared AP inbox URI
+    shared_inbox_url TEXT, -- remote actors only: their endpoints.sharedInbox URI (delivery deduplication)
+    instance_role    TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
+    actor_status     TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
+    chatmail_addr    TEXT,
+    chatmail_cred    BYTEA,
+    orcid            TEXT,
+    moved_to         TEXT, -- target actor URI if migrated via Move activity
+    headline         TEXT,
+    actor_privacy    JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
+    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
 CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain) WHERE is_local = TRUE;
 CREATE INDEX idx_actors_domain ON actors (domain);
+CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
 
 -- Actor aliases: URIs that this actor has declared as prior identities.
 -- Required by the Move protocol: the target actor must list the source
@@ -205,17 +207,17 @@ CREATE TABLE likes (
 -- ..... JOB APPLICATIONS .....
 
 CREATE TABLE applications (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    applicant_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    job_listing_id   UUID NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
-    ap_id            TEXT NOT NULL UNIQUE,
-    cover_letter_md  TEXT,
+    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    applicant_id      UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    job_listing_id    UUID NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+    ap_id             TEXT NOT NULL UNIQUE,
+    cover_letter_md   TEXT,
     cover_letter_html TEXT,
-    include_cv       BOOLEAN NOT NULL DEFAULT TRUE,
-    cv_snapshot      BYTEA,
-    status           TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'reviewed', 'shortlisted', 'rejected', 'withdrawn')),
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    include_cv        BOOLEAN NOT NULL DEFAULT TRUE,
+    cv_snapshot       BYTEA,
+    status            TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'reviewed', 'shortlisted', 'rejected', 'withdrawn')),
+    created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (applicant_id, job_listing_id)
 );
 
@@ -364,8 +366,7 @@ CREATE TABLE reports (
 CREATE TABLE relay_subscriptions (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     inbox_url   TEXT NOT NULL UNIQUE,
-    status      TEXT NOT NULL DEFAULT 'pending'
-                CHECK (status IN ('pending', 'accepted', 'rejected')),
+    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -398,6 +399,18 @@ CREATE TABLE delivery_queue (
 
 CREATE INDEX idx_delivery_queue_next_retry ON delivery_queue (next_retry) WHERE attempts < 10;
 
+-- NOTIFY trigger: wakes the delivery worker immediately when new
+-- activities are enqueued, eliminating polling latency.
+CREATE OR REPLACE FUNCTION notify_delivery_queue_insert()
+RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM pg_notify('delivery_queue_insert', '');
+    RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_delivery_queue_notify AFTER INSERT ON delivery_queue FOR EACH STATEMENT EXECUTE FUNCTION notify_delivery_queue_insert();
+
 -- ..... FOREIGN-KEY INDICES .....
 
 CREATE INDEX idx_experiences_actor ON experiences (actor_id);
@@ -427,10 +440,8 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_actors_updated_at
-    BEFORE UPDATE ON actors
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_actors_updated_at BEFORE UPDATE ON actors FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER trg_applications_updated_at
-    BEFORE UPDATE ON applications
-    FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_applications_updated_at BEFORE UPDATE ON applications FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_relay_subscriptions_updated_at BEFORE UPDATE ON relay_subscriptions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
