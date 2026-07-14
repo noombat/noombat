@@ -12,6 +12,8 @@
 //! Profile data downgrade additionally respects the `federate_profile`
 //! privacy setting and per-section visibility.
 
+use std::borrow::Cow;
+
 use noombat_ap::context::default_context;
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
@@ -163,10 +165,22 @@ pub fn downgrade_publication(publication: &Value, actor_ap_id: &str) -> Value {
 // ..... Profile downgrade (respecting privacy) .....
 
 /// A profile section with its visibility, used for filtered federation.
+///
+/// `section_type` uses [`Cow<'static, str>`] so that built-in section
+/// types can pass a `&'static str` (zero-cost) while custom section
+/// types (whose names are runtime `String` values read from the
+/// database) can pass an owned `String` without leaking memory.
 pub struct FederatedSection {
-    pub section_type: &'static str,
+    pub section_type: Cow<'static, str>,
     pub visibility: SectionVisibility,
     pub data: Value,
+}
+
+/// A domain-verified link to include in the federated actor's
+/// `attachment` array as a Mastodon-convention `PropertyValue`.
+pub struct VerifiedLinkRef<'a> {
+    /// The verified URL (e.g. `https://alice.example.com`).
+    pub url: &'a str,
 }
 
 /// Build the federated AP actor object for a local actor, respecting
@@ -183,6 +197,7 @@ pub fn build_federated_actor(
     domain: &str,
     sections: &[FederatedSection],
     aliases: &[String],
+    verified_links: &[VerifiedLinkRef<'_>],
     ttl_secs: Option<u64>,
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
@@ -259,6 +274,19 @@ pub fn build_federated_actor(
             "type": "PropertyValue",
             "name": "Chat",
             "value": addr,
+        }));
+    }
+
+    // Domain-verified links, following the Mastodon convention.
+    for link in verified_links {
+        attachments.push(json!({
+            "type": "PropertyValue",
+            "name": link.url,
+            "value": format!(
+                "<a href=\"{}\" rel=\"me\">{}</a>",
+                escape_html(link.url),
+                escape_html(link.url),
+            ),
         }));
     }
 
@@ -359,12 +387,12 @@ mod tests {
         actor.actor_privacy.federate_profile = false;
 
         let sections = vec![FederatedSection {
-            section_type: "experience",
+            section_type: "experience".into(),
             visibility: SectionVisibility::Public,
             data: json!({"title": "Engineer"}),
         }];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
         assert!(obj.get("noombat:experience").is_none());
         assert!(obj.get("noombat:ttl").is_some());
     }
@@ -374,23 +402,23 @@ mod tests {
         let actor = test_actor();
         let sections = vec![
             FederatedSection {
-                section_type: "experience",
+                section_type: "experience".into(),
                 visibility: SectionVisibility::Public,
                 data: json!({"title": "Public role"}),
             },
             FederatedSection {
-                section_type: "education",
+                section_type: "education".into(),
                 visibility: SectionVisibility::Private,
                 data: json!({"institution": "Secret Uni"}),
             },
             FederatedSection {
-                section_type: "experience",
+                section_type: "experience".into(),
                 visibility: SectionVisibility::Followers,
                 data: json!({"title": "Followers-only role"}),
             },
         ];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
 
         // Only the public experience section should be present.
         let exp = obj["noombat:experience"].as_array().unwrap();
@@ -404,7 +432,7 @@ mod tests {
     #[test]
     fn federated_actor_includes_ttl() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], Some(3600));
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], Some(3600));
         assert_eq!(obj["noombat:ttl"], 3600);
     }
 
@@ -412,7 +440,7 @@ mod tests {
     fn federated_actor_includes_moved_to() {
         let mut actor = test_actor();
         actor.moved_to = Some("https://new.example/users/alice".into());
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
         assert_eq!(obj["movedTo"], "https://new.example/users/alice");
     }
 
@@ -420,7 +448,7 @@ mod tests {
     fn federated_actor_includes_also_known_as() {
         let actor = test_actor();
         let aliases = vec!["https://old.example/users/alice".to_owned()];
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &aliases, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &aliases, &[], None);
         let aka = obj["alsoKnownAs"].as_array().unwrap();
         assert_eq!(aka.len(), 1);
         assert_eq!(aka[0], "https://old.example/users/alice");
