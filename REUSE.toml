@@ -46,6 +46,7 @@ path = [
     "tests/e2e/pnpm-lock.yaml",
     # Documentation.
     "README.md",
+    "tests/interop/README.md",
     "docs/**",
     # CI workflow.
     ".forgejo/workflows/**",
