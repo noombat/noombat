@@ -10,7 +10,8 @@
 #
 # Usage:
 #   1. docker compose -f tests/interop/compose.yml up -d --build
-#   2. tests/interop/run.sh
+#   2. CURL_OPTS="--insecure" tests/interop/run.sh \
+#     https://noombat.local:8443 https://gotosocial.local:8443
 #   3. docker compose -f tests/interop/compose.yml down -v
 
 services:

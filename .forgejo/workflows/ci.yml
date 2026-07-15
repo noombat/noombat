@@ -340,24 +340,128 @@ jobs:
   interop:
     name: Federation interop (GotoSocial)
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: docker.io/library/postgres:16-alpine
+        env:
+          POSTGRES_USER: noombat
+          POSTGRES_PASSWORD: noombat
+          POSTGRES_DB: noombat
+        options: >-
+          --health-cmd "pg_isready -U noombat"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: docker.io/library/redis:7-alpine
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      gotosocial:
+        image: docker.io/superseriousbusiness/gotosocial:latest
+        env:
+          GTS_HOST: gotosocial
+          GTS_ACCOUNT_DOMAIN: gotosocial
+          GTS_PROTOCOL: http
+          GTS_PORT: "8080"
+          GTS_TLS_MODE: ""
+          GTS_DB_TYPE: sqlite
+          GTS_DB_ADDRESS: /gotosocial/storage/sqlite.db
+          GTS_STORAGE_LOCAL_BASE_PATH: /gotosocial/storage
+          GTS_ACCOUNTS_REGISTRATION_OPEN: "false"
+          GTS_LETSENCRYPT_ENABLED: "false"
+        options: >-
+          --health-cmd "wget -qO- http://localhost:8080/readyz || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 12
+          --health-start-period 15s
+    env:
+      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@postgres/noombat
+      DATABASE_URL: postgres://noombat:noombat@postgres/noombat
+      NOOMBAT_DOMAIN: localhost
+      NOOMBAT_PORT: "8443"
+      NOOMBAT_ADMIN_TOKEN: interop-test-token
     steps:
       - uses: https://code.forgejo.org/actions/checkout@v4
 
-      - name: Start interop environment
-        run: docker compose -f tests/interop/compose.yml up -d --build
-        timeout-minutes: 15
+      - name: Install system build dependencies
+        run: |
+          apt-get update -qq
+          apt-get install -y --no-install-recommends \
+            build-essential pkg-config postgresql-client curl
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Cargo artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-interop-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-interop-
+
+      - name: Install sqlx-cli and run migrations
+        run: |
+          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
+            --features postgres,rustls
+          sqlx migrate run --source migrations
+
+      - name: Build Noombat server
+        run: cargo build --release --bin noombat
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: |
+          corepack enable
+          pnpm install
+          pnpm build
+
+      - name: Seed test actor
+        run: |
+          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c "
+            INSERT INTO actors
+              (actor_type, ap_id, username, domain, public_key_pem, is_local)
+            VALUES
+              ('individual', 'http://localhost:8443/users/alice',
+               'alice', 'localhost',
+               '-----BEGIN PUBLIC KEY-----
+          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngu+UeqfsU3AJHhVHk2k
+          MEjaIOzbOWRPu1TsqUpGq0IX/mhQUC6/mkF9+H27ziERaM+77JB7MQ9q1ITLnukj
+          TlmQhgUrsstMV1ZiU+9WqJ+NmlpdoQ4zVFXEf7IJHmZ+mYxei/qhVrnBDvV4e1KR
+          iOTxUYyqWrI7BFGrA3eR22zb9K5/CwOuTw0uYGGhkxfMalBXd4k1AyYGsHo/riQY
+          xOCucw31jlUavoajo3CPXWXgCi+F6mumsIm7snaFNiCG8d8jqXZ8aSC8JcGImf95
+          Gg3J3oGE9ZiAue0WmYC+oMDzLBJtqN0V/c1OsU7PsP8+8fllvlfBluhuTfR/O19J
+          RQIDAQAB
+          -----END PUBLIC KEY-----',
+               TRUE)
+            ON CONFLICT (ap_id) DO NOTHING;"
+
+      - name: Start Noombat server
+        run: |
+          nohup ./target/release/noombat > /tmp/noombat.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8443/healthz; then
+              echo "Server is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Server failed to start within 60 seconds"
+          cat /tmp/noombat.log
+          exit 1
 
       - name: Run interop tests
-        run: tests/interop/run.sh
+        run: tests/interop/run.sh http://localhost:8443 http://gotosocial:8080
 
-      - name: Dump Noombat logs on failure
+      - name: Dump server log on failure
         if: failure()
-        run: docker compose -f tests/interop/compose.yml logs noombat
-
-      - name: Dump GotoSocial logs on failure
-        if: failure()
-        run: docker compose -f tests/interop/compose.yml logs gotosocial
-
-      - name: Tear down
-        if: always()
-        run: docker compose -f tests/interop/compose.yml down -v
+        run: cat /tmp/noombat.log
