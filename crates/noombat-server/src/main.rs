@@ -7,6 +7,7 @@
 //! Loads configuration, runs migrations, spawns the delivery-queue worker,
 //! and starts the Axum HTTP listener.
 
+#[cfg(feature = "cedar")]
 mod cedar;
 mod meilisearch;
 
@@ -48,6 +49,7 @@ struct Config {
     /// If unset, the outbox POST endpoint is disabled.
     admin_token: Option<String>,
     /// Path to the Cedar policies directory (default `policies`).
+    #[cfg(feature = "cedar")]
     #[serde(default = "default_policies_dir")]
     policies_dir: String,
     /// Meilisearch base URL (e.g. `http://localhost:7700`).
@@ -92,6 +94,7 @@ fn default_max_connections() -> u32 {
 fn default_true() -> bool {
     true
 }
+#[cfg(feature = "cedar")]
 fn default_policies_dir() -> String {
     "policies".to_owned()
 }
@@ -211,35 +214,50 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Build the Axum application.
-    let policies_dir = std::path::Path::new(&config.policies_dir);
-    let policy_path = policies_dir.join("noombat.cedar");
-    let schema_path = policies_dir.join("noombat.cedarschema");
+    //
+    // Authorisation backend: when the `cedar` feature is enabled and
+    // policy files exist, use the Cedar backend. Otherwise, use the
+    // default domain-method backend (a permit-all stub at the trait
+    // level; fine-grained checks are performed by domain methods on
+    // the model types in `noombat-core::authz`).
+    let auth_backend: Arc<dyn noombat_core::auth::AuthorisationBackend> = {
+        #[cfg(feature = "cedar")]
+        {
+            let policies_dir = std::path::Path::new(&config.policies_dir);
+            let policy_path = policies_dir.join("noombat.cedar");
+            let schema_path = policies_dir.join("noombat.cedarschema");
 
-    let auth_backend = if policy_path.exists() {
-        let schema_opt = if schema_path.exists() {
-            Some(schema_path.as_path())
-        } else {
-            None
-        };
-        match cedar::load_cedar_backend(&policy_path, schema_opt) {
-            Ok(backend) => {
+            if policy_path.exists() {
+                let schema_opt = if schema_path.exists() {
+                    Some(schema_path.as_path())
+                } else {
+                    None
+                };
+                match cedar::load_cedar_backend(&policy_path, schema_opt) {
+                    Ok(backend) => {
+                        info!(
+                            "Cedar authorisation backend loaded from {}",
+                            policies_dir.display()
+                        );
+                        Arc::new(backend)
+                    }
+                    Err(e) => {
+                        panic!("failed to load Cedar policies: {e}");
+                    }
+                }
+            } else {
                 info!(
-                    "Cedar authorisation backend loaded from {}",
-                    policies_dir.display()
+                    "no Cedar policies found at {}; using domain-method authorisation",
+                    policy_path.display()
                 );
-                Arc::new(backend) as Arc<dyn noombat_core::auth::AuthorisationBackend>
-            }
-            Err(e) => {
-                panic!("failed to load Cedar policies: {e}");
+                Arc::new(DefaultAuthBackend)
             }
         }
-    } else {
-        info!(
-            "no Cedar policies found at {}; using empty policy set",
-            policy_path.display()
-        );
-        Arc::new(cedar::CedarBackend::new("", None).expect("failed to create empty Cedar backend"))
-            as Arc<dyn noombat_core::auth::AuthorisationBackend>
+        #[cfg(not(feature = "cedar"))]
+        {
+            info!("domain-method authorisation active (Cedar feature not enabled)");
+            Arc::new(DefaultAuthBackend)
+        }
     };
 
     // Meilisearch search backend (optional).
@@ -321,6 +339,26 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server shut down");
     Ok(())
+}
+
+/// Default authorisation backend: permits all requests at the trait
+/// level. Fine-grained access control is enforced by domain methods
+/// on the model types in `noombat_core::authz` (visibility checks,
+/// role guards, block guards) directly in the route handlers.
+///
+/// This backend is used when the `cedar` feature is not enabled.
+struct DefaultAuthBackend;
+
+impl noombat_core::auth::AuthorisationBackend for DefaultAuthBackend {
+    fn is_authorised(
+        &self,
+        _principal: &str,
+        _action: &str,
+        _resource: &str,
+        _context: &noombat_core::auth::AuthContext,
+    ) -> noombat_core::auth::Decision {
+        noombat_core::auth::Decision::Permit
+    }
 }
 
 /// Wait for SIGINT or SIGTERM for graceful shutdown.

@@ -87,7 +87,7 @@ figment = { version = "0.10", features = ["env", "toml"] }
 # Internationalisation.
 rust-i18n = "4"
 
-# Authorisation.
+# Authorisation (optional: compiled only with the `cedar` feature).
 cedar-policy = "4.11"
 
 # Markup pipeline.
