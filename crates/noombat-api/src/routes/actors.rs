@@ -563,6 +563,10 @@ async fn patch_actor(
 
     let updated = noombat_identity::repo::update_actor(&state.pool, actor.id, &params).await?;
 
+    // Broadcast an Update activity to all accepted followers so that
+    // remote instances refresh their cached copy of the profile.
+    noombat_federation::update::enqueue_actor_update(&state.pool, &updated, &state.domain).await;
+
     // Synchronise search index with current skills (fire-and-forget).
     let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
         .await
@@ -610,6 +614,12 @@ async fn delete_actor_handler(
     // Broadcast a Delete activity to all accepted followers so that
     // remote instances remove their cached copy.
     noombat_federation::delete::broadcast_delete(&state.pool, &pre_tombstone, &inboxes).await;
+
+    // Purge the actor's data from Meilisearch search indices.
+    crate::search_sync::remove_from_index(&state.search, "profiles", &actor.id.to_string());
+    // Posts were deleted by tombstone_actor; their Meilisearch
+    // documents will become stale. A full reindex or per-post
+    // removal is deferred to the search sync worker.
 
     Ok(StatusCode::NO_CONTENT)
 }
