@@ -6,6 +6,7 @@
 
 pub mod actor;
 pub mod auth;
+pub mod authz;
 pub mod error;
 pub mod extension;
 pub mod privacy;
