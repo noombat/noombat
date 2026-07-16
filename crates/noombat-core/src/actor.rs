@@ -18,6 +18,26 @@ pub enum ActorType {
     Group,
 }
 
+/// Instance-level role assigned to a local actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum InstanceRole {
+    User,
+    Moderator,
+    Admin,
+}
+
+/// Moderation state of an actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum ActorStatus {
+    Active,
+    Silenced,
+    Suspended,
+}
+
 /// A Noombat actor: the central identity entity.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Actor {
@@ -43,10 +63,10 @@ pub struct Actor {
     pub is_local: bool,
     /// Remote actors only: their declared ActivityPub inbox URI.
     pub inbox_url: Option<String>,
-    /// Instance-level role: `"user"`, `"moderator"`, or `"admin"`.
-    pub instance_role: String,
-    /// Moderation state: `"active"`, `"silenced"`, or `"suspended"`.
-    pub actor_status: String,
+    /// Instance-level role (compile-time exhaustive via [`InstanceRole`]).
+    pub instance_role: InstanceRole,
+    /// Moderation state (compile-time exhaustive via [`ActorStatus`]).
+    pub actor_status: ActorStatus,
     pub chatmail_addr: Option<String>,
     pub orcid: Option<String>,
     /// Target actor URI if this actor has migrated via a `Move` activity.

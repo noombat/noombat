@@ -34,9 +34,9 @@ pub struct Principal {
     pub entity_uid: String,
     /// The local username, if the principal maps to a local actor.
     pub username: Option<String>,
-    /// Instance-level role (`"user"`, `"moderator"`, `"admin"`), populated
-    /// from the `actors` table when the principal is a local actor.
-    pub instance_role: Option<String>,
+    /// Instance-level role, populated from the `actors` table when the
+    /// principal is a local actor.
+    pub instance_role: Option<noombat_core::actor::InstanceRole>,
     /// Whether the principal is an accepted follower of the target
     /// actor on this request. Populated by the middleware for routes
     /// that fetch privacy context; `None` otherwise.
@@ -124,7 +124,7 @@ pub async fn authorisation(
     let mut principal = match principal {
         Some(mut p) => {
             if let Some(ref username) = p.username
-                && let Ok(role) = sqlx::query_scalar::<_, String>(
+                && let Ok(role) = sqlx::query_scalar::<_, noombat_core::actor::InstanceRole>(
                     "SELECT instance_role FROM actors WHERE username = $1 AND is_local = TRUE",
                 )
                 .bind(username.as_str())
@@ -170,9 +170,14 @@ pub async fn authorisation(
     context.insert("is_authenticated".into(), principal.is_some().to_string());
 
     if let Some(ref p) = principal
-        && let Some(ref role) = p.instance_role
+        && let Some(role) = p.instance_role
     {
-        context.insert("instance_role".into(), role.clone());
+        let role_str = match role {
+            noombat_core::actor::InstanceRole::User => "user",
+            noombat_core::actor::InstanceRole::Moderator => "moderator",
+            noombat_core::actor::InstanceRole::Admin => "admin",
+        };
+        context.insert("instance_role".into(), role_str.to_owned());
     }
 
     // Fetch privacy-related context for actions that reference it.

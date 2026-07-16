@@ -456,7 +456,7 @@ mod tests {
 
     /// Construct a minimal [`Actor`] for unit tests.
     fn test_actor() -> Actor {
-        use noombat_core::actor::ActorType;
+        use noombat_core::actor::{ActorStatus, ActorType, InstanceRole};
         use noombat_core::privacy::ActorPrivacy;
 
         Actor {
@@ -475,8 +475,8 @@ mod tests {
             domain: "noombat.social".into(),
             is_local: true,
             inbox_url: None,
-            instance_role: "user".into(),
-            actor_status: "active".into(),
+            instance_role: InstanceRole::User,
+            actor_status: ActorStatus::Active,
             chatmail_addr: None,
             orcid: None,
             moved_to: None,

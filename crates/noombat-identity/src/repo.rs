@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Actor repository: CRUD operations against the `actors` table.
 
-use noombat_core::actor::{Actor, ActorType, NewActor};
+use noombat_core::actor::{Actor, ActorStatus, ActorType, InstanceRole, NewActor};
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::privacy::ActorPrivacy;
 use sqlx::{FromRow, PgPool};
@@ -25,7 +25,7 @@ struct InsertedActorRow {
 #[derive(FromRow)]
 struct ActorRow {
     id: Uuid,
-    actor_type: String,
+    actor_type: ActorType,
     ap_id: String,
     username: String,
     display_name: Option<String>,
@@ -39,8 +39,8 @@ struct ActorRow {
     domain: String,
     is_local: bool,
     inbox_url: Option<String>,
-    instance_role: String,
-    actor_status: String,
+    instance_role: InstanceRole,
+    actor_status: ActorStatus,
     chatmail_addr: Option<String>,
     orcid: Option<String>,
     moved_to: Option<String>,
@@ -52,21 +52,11 @@ struct ActorRow {
 impl ActorRow {
     /// Convert the database row into the domain [`Actor`] type.
     fn into_actor(self) -> Result<Actor> {
-        let actor_type = match self.actor_type.as_str() {
-            "individual" => ActorType::Individual,
-            "company" => ActorType::Company,
-            "group" => ActorType::Group,
-            other => {
-                return Err(NoombatError::Internal(format!(
-                    "unknown actor type: {other}"
-                )));
-            }
-        };
         let actor_privacy: ActorPrivacy = serde_json::from_value(self.actor_privacy)?;
 
         Ok(Actor {
             id: self.id,
-            actor_type,
+            actor_type: self.actor_type,
             ap_id: self.ap_id,
             username: self.username,
             display_name: self.display_name,
@@ -140,8 +130,8 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         domain: row.domain,
         is_local: row.is_local,
         inbox_url: None,
-        instance_role: "user".to_owned(),
-        actor_status: "active".to_owned(),
+        instance_role: InstanceRole::User,
+        actor_status: ActorStatus::Active,
         chatmail_addr: None,
         orcid: None,
         moved_to: None,
