@@ -54,30 +54,73 @@ async fn feed_partial(
 ) -> impl IntoResponse {
     let offset = (query.page.saturating_sub(1) as i64) * PAGE_SIZE;
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
+    let mut muted_ids: Vec<uuid::Uuid> = Vec::new();
 
     // If a user is specified, fetch posts matching their followed hashtags.
     if let Some(ref username) = query.user
         && let Ok(actor) =
             noombat_identity::repo::find_local_by_username(&state.pool, username).await
-        && let Ok(tags) =
-            noombat_identity::hashtags::list_followed_hashtags(&state.pool, actor.id).await
     {
-        let tag_ids: Vec<uuid::Uuid> = tags.iter().map(|t| t.id).collect();
-        if !tag_ids.is_empty()
-            && let Ok(ids) = noombat_identity::hashtags::posts_by_hashtags(
-                &state.pool,
-                &tag_ids,
-                PAGE_SIZE,
-                offset,
-            )
-            .await
+        // Posts from followed hashtags.
+        if let Ok(tags) =
+            noombat_identity::hashtags::list_followed_hashtags(&state.pool, actor.id).await
         {
-            post_ids.extend(ids);
+            let tag_ids: Vec<uuid::Uuid> = tags.iter().map(|t| t.id).collect();
+            if !tag_ids.is_empty()
+                && let Ok(ids) = noombat_identity::hashtags::posts_by_hashtags(
+                    &state.pool,
+                    &tag_ids,
+                    PAGE_SIZE,
+                    offset,
+                )
+                .await
+            {
+                post_ids.extend(ids);
+            }
+        }
+
+        // Posts from followed actors (accepted follows only).
+        if let Ok(followed_post_ids) = sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"SELECT p.id FROM posts p
+               JOIN follows f ON f.following_id = p.actor_id
+               WHERE f.follower_id = $1
+                 AND f.accepted = TRUE
+                 AND p.visibility IN ('public', 'unlisted')
+               ORDER BY p.created_at DESC
+               LIMIT $2 OFFSET $3"#,
+        )
+        .bind(actor.id)
+        .bind(PAGE_SIZE)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await
+        {
+            post_ids.extend(followed_post_ids);
+        }
+
+        // Deduplicate post IDs while preserving insertion order
+        // (posts from followed actors are already ordered by
+        // created_at DESC; sorting by UUID would destroy this).
+        let mut seen = std::collections::HashSet::new();
+        post_ids.retain(|id| seen.insert(*id));
+
+        // Mute filtering: exclude posts by actors that this user has muted.
+        let muted_actor_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
+            "SELECT target_id FROM mutes WHERE actor_id = $1 \
+             AND (expires_at IS NULL OR expires_at > now())",
+        )
+        .bind(actor.id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
+
+        if !muted_actor_ids.is_empty() {
+            // Remove post IDs whose author is muted. The author lookup
+            // happens during the post-fetch loop below; for efficiency,
+            // store the set and filter there.
+            muted_ids = muted_actor_ids;
         }
     }
-
-    // TODO: Also fetch posts from followed actors and merge/deduplicate.
-    // Deferred until proper authentication is available.
 
     // Fetch the actual post data for the collected IDs.
     let mut posts: Vec<FeedPost> = Vec::new();
@@ -87,12 +130,16 @@ async fn feed_partial(
                       p.ap_id, a.username, a.display_name
                FROM posts p
                INNER JOIN actors a ON a.id = p.actor_id
-               WHERE p.id = $1 AND p.visibility = 'public'"#,
+               WHERE p.id = $1 AND p.visibility IN ('public', 'unlisted')"#,
         )
         .bind(id)
         .fetch_optional(&state.pool)
         .await
         {
+            // Mute filter: skip posts by muted actors.
+            if muted_ids.contains(&row.actor_id) {
+                continue;
+            }
             posts.push(FeedPost {
                 author: row.username.clone(),
                 author_display: row.display_name.unwrap_or(row.username),

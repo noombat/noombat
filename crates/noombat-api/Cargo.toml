@@ -32,3 +32,4 @@ http-signature-normalization = { workspace = true }
 rsa = { workspace = true }
 sha2 = { workspace = true }
 base64 = { workspace = true }
+urlencoding = { workspace = true }

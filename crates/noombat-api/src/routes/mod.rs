@@ -9,6 +9,7 @@ pub mod feed;
 pub mod follows;
 pub mod hashtags;
 pub mod health;
+pub mod interactions;
 pub mod jobs;
 pub mod posts;
 pub mod profile_sections;

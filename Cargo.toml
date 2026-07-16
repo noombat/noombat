@@ -105,6 +105,9 @@ redis = { version = "1.3", features = ["tokio-comp", "connection-manager"] }
 # URL parsing (domain verification, DOI).
 url = "2"
 
+# URL percent-encoding/decoding (block endpoint path parameters).
+urlencoding = "2"
+
 # Temporary files (CV generation).
 tempfile = "3"
 
