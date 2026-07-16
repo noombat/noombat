@@ -324,14 +324,12 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
             // commits. The blocking is bounded by the delivery timeout
             // and is harmless, i.e. the other worker will itself receive
             // 410 and enter this same handler.
-            let purged = sqlx::query(
-                "DELETE FROM delivery_queue WHERE target_inbox = $1",
-            )
-            .bind(&row.target_inbox)
-            .execute(pool)
-            .await
-            .map(|r| r.rows_affected())
-            .unwrap_or(0);
+            let purged = sqlx::query("DELETE FROM delivery_queue WHERE target_inbox = $1")
+                .bind(&row.target_inbox)
+                .execute(pool)
+                .await
+                .map(|r| r.rows_affected())
+                .unwrap_or(0);
 
             if tombstoned.is_empty() {
                 info!(

@@ -643,11 +643,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
 /// the caller should re-index the actor's profile (via
 /// `search_sync::reindex_profile_from_db`) if the actor is
 /// discoverable.
-pub async fn set_actor_status(
-    pool: &PgPool,
-    actor_id: Uuid,
-    status: ActorStatus,
-) -> Result<Actor> {
+pub async fn set_actor_status(pool: &PgPool, actor_id: Uuid, status: ActorStatus) -> Result<Actor> {
     let status_str = match status {
         ActorStatus::Active => "active",
         ActorStatus::Silenced => "silenced",

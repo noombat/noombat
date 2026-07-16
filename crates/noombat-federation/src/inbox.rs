@@ -134,18 +134,15 @@ fn ap_actor_to_remote(ap_actor: &ApActor, domain: String) -> repo::RemoteActor {
     // The first `Multikey`-typed entry whose `publicKeyMultibase` starts
     // with `z` (Base58btc multibase prefix for Ed25519) is used. Remote
     // actors that do not publish an Ed25519 key yield `None`.
-    let ed25519_public_key = ap_actor
-        .assertion_method
-        .as_ref()
-        .and_then(|methods| {
-            methods.iter().find_map(|m| {
-                if m.key_type == "Multikey" && m.public_key_multibase.starts_with('z') {
-                    Some(m.public_key_multibase.clone())
-                } else {
-                    None
-                }
-            })
-        });
+    let ed25519_public_key = ap_actor.assertion_method.as_ref().and_then(|methods| {
+        methods.iter().find_map(|m| {
+            if m.key_type == "Multikey" && m.public_key_multibase.starts_with('z') {
+                Some(m.public_key_multibase.clone())
+            } else {
+                None
+            }
+        })
+    });
 
     repo::RemoteActor {
         ap_id: ap_actor.id.clone(),
