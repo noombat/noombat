@@ -2385,6 +2385,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "noombat-autocrypt"
+version = "0.1.0"
+dependencies = [
+ "noombat-core",
+]
+
+[[package]]
 name = "noombat-chat"
 version = "0.1.0"
 dependencies = [
