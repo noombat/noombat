@@ -71,24 +71,24 @@ async fn get_actor(
     if let Some(ref principal) = principal
         && let Some(ref viewer_username) = principal.username
     {
-            let is_blocked: bool = sqlx::query_scalar(
-                "SELECT EXISTS(
+        let is_blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(
                      SELECT 1 FROM blocks b
                      JOIN actors blocker ON blocker.id = b.actor_id
                      JOIN actors target  ON target.id  = b.target_id
                      WHERE blocker.username = $1 AND blocker.is_local = TRUE
                        AND target.username  = $2 AND target.is_local  = TRUE
                  )",
-            )
-            .bind(&actor.username)
-            .bind(viewer_username.as_str())
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(false);
+        )
+        .bind(&actor.username)
+        .bind(viewer_username.as_str())
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(false);
 
-            if is_blocked {
-                return Err(NoombatError::Forbidden.into());
-            }
+        if is_blocked {
+            return Err(NoombatError::Forbidden.into());
+        }
     }
 
     if wants_activity_json(&headers) {
