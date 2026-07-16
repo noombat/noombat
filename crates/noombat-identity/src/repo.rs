@@ -36,6 +36,8 @@ struct ActorRow {
     summary_html: Option<String>,
     public_key_pem: String,
     private_key_pem: Option<String>,
+    ed25519_public_key: Option<String>,
+    ed25519_private_key: Option<String>,
     domain: String,
     is_local: bool,
     inbox_url: Option<String>,
@@ -67,6 +69,8 @@ impl ActorRow {
             summary_html: self.summary_html,
             public_key_pem: self.public_key_pem,
             private_key_pem: self.private_key_pem,
+            ed25519_public_key: self.ed25519_public_key,
+            ed25519_private_key: self.ed25519_private_key,
             domain: self.domain,
             is_local: self.is_local,
             inbox_url: self.inbox_url,
@@ -97,8 +101,10 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
     let row = sqlx::query_as::<_, InsertedActorRow>(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, domain,
-                public_key_pem, private_key_pem, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)
+                public_key_pem, private_key_pem,
+                ed25519_public_key, ed25519_private_key,
+                is_local, actor_privacy)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11)
            RETURNING id, ap_id, username, display_name, domain,
                      is_local, created_at, updated_at"#,
     )
@@ -110,6 +116,8 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
     .bind(&params.domain)
     .bind(&params.public_key_pem)
     .bind(&params.private_key_pem)
+    .bind(&params.ed25519_public_key)
+    .bind(&params.ed25519_private_key)
     .bind(&privacy_json)
     .fetch_one(pool)
     .await?;
@@ -127,6 +135,8 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
         summary_html: None,
         public_key_pem: params.public_key_pem.clone(),
         private_key_pem: Some(params.private_key_pem.clone()),
+        ed25519_public_key: Some(params.ed25519_public_key.clone()),
+        ed25519_private_key: Some(params.ed25519_private_key.clone()),
         domain: row.domain,
         is_local: row.is_local,
         inbox_url: None,
@@ -147,7 +157,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, domain, is_local,
+               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
@@ -168,7 +178,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, domain, is_local,
+               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
@@ -580,7 +590,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, domain, is_local,
+               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
@@ -683,6 +693,8 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
                summary_html = NULL,
                chatmail_addr = NULL,
                chatmail_cred = NULL,
+               auth_key_hash = NULL,
+               ed25519_private_key = NULL,
                orcid = NULL,
                actor_status = 'suspended',
                actor_privacy = '{"discoverable":false,"indexable":false,"require_follow_approval":true,"federate_profile":false,"chatmail_visible":false,"show_followers_count":false,"cv_download":"self"}'

@@ -59,6 +59,13 @@ pub struct Actor {
     /// `None` for remote actors. Never serialised to API responses.
     #[serde(skip_serializing)]
     pub private_key_pem: Option<String>,
+    /// Multibase-encoded Ed25519 public key (FEP-521a `assertionMethod`).
+    /// NOT NULL for local actors (generated at creation); nullable for
+    /// remote actors (populated only if the remote actor publishes one).
+    pub ed25519_public_key: Option<String>,
+    /// Ed25519 private key. NOT NULL for local actors; NULL for remote actors.
+    #[serde(skip_serializing)]
+    pub ed25519_private_key: Option<String>,
     pub domain: String,
     pub is_local: bool,
     /// Remote actors only: their declared ActivityPub inbox URI.
@@ -85,4 +92,8 @@ pub struct NewActor {
     pub domain: String,
     pub public_key_pem: String,
     pub private_key_pem: String,
+    /// Multibase-encoded Ed25519 public key.
+    pub ed25519_public_key: String,
+    /// Ed25519 private key (PEM or raw encoding).
+    pub ed25519_private_key: String,
 }

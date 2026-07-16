@@ -37,6 +37,10 @@ pub struct ApActor {
     pub attachment: Option<Vec<Value>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub endpoints: Option<Value>,
+    /// Ed25519 public key for FEP-8b32 Object Integrity Proofs
+    /// (FEP-521a `assertionMethod`).
+    #[serde(rename = "assertionMethod", skip_serializing_if = "Option::is_none")]
+    pub assertion_method: Option<Vec<ApMultikey>>,
     /// Target actor URI when this actor has migrated (Move activity).
     #[serde(rename = "movedTo", skip_serializing_if = "Option::is_none")]
     pub moved_to: Option<String>,
@@ -44,6 +48,18 @@ pub struct ApActor {
     /// identities, enabling inbound Move verification.
     #[serde(rename = "alsoKnownAs", skip_serializing_if = "Option::is_none")]
     pub also_known_as: Option<Vec<String>>,
+}
+
+/// An Ed25519 multikey entry for `assertionMethod` (FEP-521a).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApMultikey {
+    pub id: String,
+    #[serde(rename = "type")]
+    pub key_type: String,
+    pub controller: String,
+    /// Multibase-encoded Ed25519 public key (`z` + Base58btc).
+    #[serde(rename = "publicKeyMultibase")]
+    pub public_key_multibase: String,
 }
 
 /// The `publicKey` sub-object embedded in an actor.

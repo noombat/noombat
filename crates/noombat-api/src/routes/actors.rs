@@ -15,7 +15,7 @@ use serde_json::json;
 use uuid::Uuid;
 
 use noombat_ap::context::{AS_CONTEXT, default_context};
-use noombat_ap::object::{ApActor, ApPublicKey};
+use noombat_ap::object::{ApActor, ApMultikey, ApPublicKey};
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
@@ -131,6 +131,14 @@ async fn get_actor(
             endpoints: Some(serde_json::json!({
                 "sharedInbox": format!("https://{}/inbox", state.domain)
             })),
+            assertion_method: actor.ed25519_public_key.as_ref().map(|pk| {
+                vec![ApMultikey {
+                    id: format!("{}#ed25519-key", actor.ap_id),
+                    key_type: "Multikey".to_owned(),
+                    controller: actor.ap_id.clone(),
+                    public_key_multibase: pk.clone(),
+                }]
+            }),
             moved_to: actor.moved_to.clone(),
             also_known_as: if aliases.is_empty() {
                 None

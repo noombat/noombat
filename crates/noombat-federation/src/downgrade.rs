@@ -472,6 +472,8 @@ mod tests {
             summary_html: Some("<p>Hello</p>".into()),
             public_key_pem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".into(),
             private_key_pem: None,
+            ed25519_public_key: Some("z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".into()),
+            ed25519_private_key: None,
             domain: "noombat.social".into(),
             is_local: true,
             inbox_url: None,
