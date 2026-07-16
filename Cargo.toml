@@ -10,6 +10,7 @@ members = [
     "crates/noombat-groups",
     "crates/noombat-events",
     "crates/noombat-chat",
+    "crates/noombat-autocrypt",
     "crates/noombat-api",
     "crates/noombat-server",
 ]
@@ -31,6 +32,7 @@ noombat-jobs = { path = "crates/noombat-jobs", version = "0.1.0" }
 noombat-groups = { path = "crates/noombat-groups", version = "0.1.0" }
 noombat-events = { path = "crates/noombat-events", version = "0.1.0" }
 noombat-chat = { path = "crates/noombat-chat", version = "0.1.0" }
+noombat-autocrypt = { path = "crates/noombat-autocrypt", version = "0.1.0" }
 noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 
 # HTTP framework.
