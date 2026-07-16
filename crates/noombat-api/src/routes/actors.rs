@@ -68,8 +68,9 @@ async fn get_actor(
 
     // Block guard: if the viewer is blocked by the profile owner,
     // return 403 before serving any content.
-    if let Some(ref principal) = principal {
-        if let Some(ref viewer_username) = principal.username {
+    if let Some(ref principal) = principal
+        && let Some(ref viewer_username) = principal.username
+    {
             let is_blocked: bool = sqlx::query_scalar(
                 "SELECT EXISTS(
                      SELECT 1 FROM blocks b
@@ -88,7 +89,6 @@ async fn get_actor(
             if is_blocked {
                 return Err(NoombatError::Forbidden.into());
             }
-        }
     }
 
     if wants_activity_json(&headers) {
