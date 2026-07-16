@@ -286,7 +286,67 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
                 .bind(row.id)
                 .execute(pool)
                 .await;
-            info!(target_inbox = %row.target_inbox, "remote actor gone (410); dropping");
+
+            // Tombstone the remote actor whose inbox returned 410,
+            // preventing subsequent deliveries from enqueuing and
+            // repeating the same 410 cycle. The delivery worker
+            // receives the 410 from a `target_inbox` URL, not from
+            // the actor's AP ID; reverse-map via the `inbox_url` or
+            // `shared_inbox_url` columns on the `actors` table.
+            let tombstoned: Vec<String> = sqlx::query_scalar(
+                "SELECT ap_id FROM actors \
+                 WHERE is_local = FALSE \
+                   AND (inbox_url = $1 OR shared_inbox_url = $1)",
+            )
+            .bind(&row.target_inbox)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
+            for ap_id in &tombstoned {
+                let _ = sqlx::query(
+                    "INSERT INTO tombstoned_actors (ap_id) VALUES ($1) \
+                     ON CONFLICT (ap_id) DO NOTHING",
+                )
+                .bind(ap_id)
+                .execute(pool)
+                .await;
+            }
+
+            // Purge any remaining queue rows targeting the same inbox
+            // so that future poll cycles do not repeat the 410 and delete
+            // cycle for each one individually.
+            //
+            // Concurrency note: if another delivery worker has claimed
+            // rows targeting this inbox via the `FOR UPDATE SKIP LOCKED`
+            // CTE in `process_queue`, those rows are locked and this
+            // DELETE will block until the other worker's transaction
+            // commits. The blocking is bounded by the delivery timeout
+            // and is harmless, i.e. the other worker will itself receive
+            // 410 and enter this same handler.
+            let purged = sqlx::query(
+                "DELETE FROM delivery_queue WHERE target_inbox = $1",
+            )
+            .bind(&row.target_inbox)
+            .execute(pool)
+            .await
+            .map(|r| r.rows_affected())
+            .unwrap_or(0);
+
+            if tombstoned.is_empty() {
+                info!(
+                    target_inbox = %row.target_inbox,
+                    purged_queue_rows = purged,
+                    "remote inbox gone (410); no matching actor to tombstone"
+                );
+            } else {
+                info!(
+                    target_inbox = %row.target_inbox,
+                    tombstoned_actors = ?tombstoned,
+                    purged_queue_rows = purged,
+                    "remote inbox gone (410); actor(s) tombstoned"
+                );
+            }
         }
         Ok(resp) => {
             warn!(
