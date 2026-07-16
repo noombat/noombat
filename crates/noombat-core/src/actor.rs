@@ -39,6 +39,25 @@ pub enum ActorStatus {
 }
 
 /// A Noombat actor: the central identity entity.
+///
+/// # Deliberately Excluded Schema Columns
+///
+/// The following columns from the `actors` table are intentionally
+/// absent from this struct. Each is handled by a specialised
+/// subsystem that loads the column directly via SQL, avoiding
+/// leakage of sensitive or scope-limited data into the general
+/// domain model.
+///
+/// - **`shared_inbox_url`**: used only for delivery-inbox resolution.
+///   Carried by `RemoteActor` (in `noombat-identity::repo`) during
+///   upsert and queried directly via SQL in
+///   `get_follower_inboxes` (in `noombat-identity::repo`).
+/// - **`auth_key_hash`**: the Argon2id hash of the authentication key
+///   (split key derivation). Must never cross the authentication
+///   boundary into the general domain model.
+/// - **`chatmail_cred`**: the encrypted credential blob (Chatmail
+///   password + OpenPGP private key + Autocrypt peer state). Handled
+///   exclusively by the chat subsystem.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Actor {
     pub id: Uuid,
