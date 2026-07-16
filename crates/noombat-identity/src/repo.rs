@@ -205,6 +205,9 @@ pub struct NewPost {
     pub featured_image_url: Option<String>,
     pub content_md: String,
     pub content_html: String,
+    /// The AP URI of the post this is a reply to (`inReplyTo`).
+    /// `None` for top-level posts.
+    pub in_reply_to: Option<String>,
     pub visibility: String,
     pub ap_object: serde_json::Value,
 }
@@ -223,8 +226,8 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     let row = sqlx::query_as::<_, PostSummary>(
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, title, featured_image_url,
-                content_md, content_html, visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+                content_md, content_html, in_reply_to, visibility, ap_object)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
            RETURNING id, ap_id, ap_object"#,
     )
     .bind(id)
@@ -235,6 +238,7 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     .bind(&post.featured_image_url)
     .bind(&post.content_md)
     .bind(&post.content_html)
+    .bind(&post.in_reply_to)
     .bind(&post.visibility)
     .bind(&post.ap_object)
     .fetch_one(pool)

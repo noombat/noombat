@@ -294,6 +294,9 @@ struct OutboxPostBody {
     title: Option<String>,
     /// Featured image URL (optional, primarily for Articles).
     featured_image_url: Option<String>,
+    /// The AP URI of the post this is a reply to. `None` for
+    /// top-level posts.
+    in_reply_to: Option<String>,
 }
 
 fn default_visibility() -> String {
@@ -427,6 +430,38 @@ async fn post_outbox(
         _ => {}
     }
 
+    // When replying to a post, include the parent post's author in
+    // `cc` so that the reply is delivered to them even if they do
+    // not follow the replying actor (Mastodon convention).
+    let mut reply_target_inbox: Option<String> = None;
+    if let Some(ref reply_to_uri) = body.in_reply_to {
+        // Look up the parent post locally (by ap_id) and resolve
+        // the author's AP identifier. If the parent post is not
+        // known locally, skip the addressing enhancement, i.e. the
+        // reply still federates normally via follower delivery.
+        let parent_author: Option<(String, Option<String>)> = sqlx::query_as(
+            r#"SELECT a.ap_id, a.inbox_url
+               FROM posts p
+               JOIN actors a ON a.id = p.actor_id
+               WHERE p.ap_id = $1"#,
+        )
+        .bind(reply_to_uri)
+        .fetch_optional(&state.pool)
+        .await
+        .unwrap_or(None);
+
+        if let Some((author_ap_id, inbox_url)) = parent_author {
+            // Avoid adding the replying actor to their own cc.
+            if author_ap_id != actor.ap_id && !cc.contains(&author_ap_id) {
+                cc.push(author_ap_id);
+            }
+            // Record the inbox for direct delivery after the
+            // follower-inbox loop (the parent author may not be a
+            // follower).
+            reply_target_inbox = inbox_url;
+        }
+    }
+
     // Build Mastodon-convention hashtag tags for federation.
     let tag_objects: Vec<serde_json::Value> = hashtags
         .iter()
@@ -469,6 +504,9 @@ async fn post_outbox(
             "url": image_url
         });
     }
+    if let Some(ref reply_to) = body.in_reply_to {
+        ap_object["inReplyTo"] = json!(reply_to);
+    }
 
     let create_activity = json!({
         "@context": default_context(),
@@ -490,6 +528,7 @@ async fn post_outbox(
         featured_image_url: body.featured_image_url.clone(),
         content_md: body.content.clone(),
         content_html: content_html.clone(),
+        in_reply_to: body.in_reply_to.clone(),
         visibility: body.visibility.clone(),
         ap_object: create_activity.clone(),
     };
@@ -515,9 +554,23 @@ async fn post_outbox(
 
     // Enqueue delivery to all accepted followers.
     let inboxes = noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id).await?;
-    for inbox in inboxes {
-        noombat_federation::delivery::enqueue(&state.pool, actor.id, &create_activity, &inbox)
+    for inbox in &inboxes {
+        noombat_federation::delivery::enqueue(&state.pool, actor.id, &create_activity, inbox)
             .await?;
+    }
+
+    // If replying to a post, deliver directly to the parent author's
+    // inbox when it is not already covered by the follower set.
+    if let Some(ref target_inbox) = reply_target_inbox {
+        if !inboxes.contains(target_inbox) {
+            let _ = noombat_federation::delivery::enqueue(
+                &state.pool,
+                actor.id,
+                &create_activity,
+                target_inbox,
+            )
+            .await;
+        }
     }
 
     Ok((
