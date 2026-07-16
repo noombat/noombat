@@ -49,6 +49,15 @@ services:
     image: docker.io/getmeili/meilisearch:v1.12
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
+      # MEILI_ENV controls Meilisearch's runtime mode.
+      # - "development": detailed error messages, no analytics,
+      #   reduced security defaults. Suitable for local development.
+      # - "production": requires MEILI_MASTER_KEY to be set
+      #   explicitly, enforces HTTPS for the dashboard, and enables
+      #   optimised resource usage. Override this to "production"
+      #   for any internet-facing deployment:
+      #
+      #     MEILI_ENV: production
       MEILI_ENV: development
     ports:
       - "7700:7700"

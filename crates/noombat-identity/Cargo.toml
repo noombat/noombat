@@ -4,7 +4,7 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Actor repository, key generation, and post persistence."
+description = "Actor repository, key generation, post persistence, domain verification, DOI resolution, hashtag management, and CV generation."
 
 [dependencies]
 noombat-core = { workspace = true }
