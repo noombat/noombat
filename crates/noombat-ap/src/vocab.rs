@@ -19,3 +19,5 @@ pub const APPLICATION: &str = "noombat:Application";
 pub const EVENT_EXTENSIONS: &str = "noombat:EventExtensions";
 /// Custom property: canonical URI for cross-post de-duplication.
 pub const CANONICAL_URI: &str = "noombat:canonicalUri";
+/// Custom property: profile data TTL hint (seconds) for remote caching.
+pub const TTL: &str = "noombat:ttl";

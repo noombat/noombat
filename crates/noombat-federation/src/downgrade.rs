@@ -227,8 +227,10 @@ pub fn build_federated_actor(
             "owner": actor.ap_id,
             "publicKeyPem": actor.public_key_pem,
         },
-        "noombat:ttl": ttl_secs.unwrap_or(DEFAULT_TTL_SECS),
     });
+
+    // Profile data TTL hint.
+    obj[vocab::TTL] = json!(ttl_secs.unwrap_or(DEFAULT_TTL_SECS));
 
     // Include movedTo if the actor has migrated.
     if let Some(ref target) = actor.moved_to {
@@ -394,7 +396,7 @@ mod tests {
 
         let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
         assert!(obj.get("noombat:experience").is_none());
-        assert!(obj.get("noombat:ttl").is_some());
+        assert!(obj.get(vocab::TTL).is_some());
     }
 
     #[test]
@@ -433,7 +435,7 @@ mod tests {
     fn federated_actor_includes_ttl() {
         let actor = test_actor();
         let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], Some(3600));
-        assert_eq!(obj["noombat:ttl"], 3600);
+        assert_eq!(obj[vocab::TTL], 3600);
     }
 
     #[test]
