@@ -61,9 +61,35 @@ async fn get_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
     i18n: I18n,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    // Block guard: if the viewer is blocked by the profile owner,
+    // return 403 before serving any content.
+    if let Some(ref principal) = principal {
+        if let Some(ref viewer_username) = principal.username {
+            let is_blocked: bool = sqlx::query_scalar(
+                "SELECT EXISTS(
+                     SELECT 1 FROM blocks b
+                     JOIN actors blocker ON blocker.id = b.actor_id
+                     JOIN actors target  ON target.id  = b.target_id
+                     WHERE blocker.username = $1 AND blocker.is_local = TRUE
+                       AND target.username  = $2 AND target.is_local  = TRUE
+                 )",
+            )
+            .bind(&actor.username)
+            .bind(viewer_username.as_str())
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(false);
+
+            if is_blocked {
+                return Err(NoombatError::Forbidden.into());
+            }
+        }
+    }
 
     if wants_activity_json(&headers) {
         // Build the AP actor attachment (ORCID, verified links) only
@@ -210,9 +236,10 @@ async fn get_actor_human(
     state: State<AppState>,
     path: Path<String>,
     headers: HeaderMap,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
     i18n: I18n,
 ) -> Result<impl IntoResponse, ApiError> {
-    get_actor(state, path, headers, i18n).await
+    get_actor(state, path, headers, principal, i18n).await
 }
 
 // ..... GET /users/{username}/outbox .......
