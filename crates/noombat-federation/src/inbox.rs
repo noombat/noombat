@@ -482,6 +482,14 @@ async fn handle_create(
     // that hashtag-following feeds include federated content.
 
     if let Some(post_id) = post_id {
+        // Record the canonical URI (if present) so that future
+        // cross-post de-duplication can match this post.
+        if let Some(canonical) = crate::crosspost::extract_canonical_uri(object) {
+            if let Err(e) = crate::crosspost::set_canonical_uri(pool, post_id, &canonical).await {
+                warn!(ap_id, "failed to set canonical_uri: {e}");
+            }
+        }
+
         let hashtag_names = extract_hashtags_from_tags(object);
         if !hashtag_names.is_empty()
             && let Err(e) =
@@ -1020,6 +1028,18 @@ async fn fetch_and_persist_remote_post(
     let cc = extract_string_array(&object, "cc");
     let visibility = derive_visibility(&to, &cc);
 
+    // Cross-post de-duplication: if a local post already matches
+    // the canonical URI or URL of this object, return its UUID
+    // rather than creating a duplicate.
+    if let Ok(Some(existing_id)) = crate::crosspost::try_dedup(pool, &object).await {
+        info!(
+            ap_id,
+            existing_id = %existing_id,
+            "fetched remote post de-duplicated; returning existing"
+        );
+        return Ok(existing_id);
+    }
+
     // Extract the `inReplyTo` property for reply threading.
     let in_reply_to = extract_in_reply_to(&object);
 
@@ -1044,6 +1064,14 @@ async fn fetch_and_persist_remote_post(
     // a lookup.
     let post_id = match repo::create_remote_post(pool, &remote_post).await? {
         Some(id) => {
+            // Record the canonical URI (if present) so that future
+            // cross-post de-duplication can match this post.
+            if let Some(canonical) = crate::crosspost::extract_canonical_uri(&object) {
+                if let Err(e) = crate::crosspost::set_canonical_uri(pool, id, &canonical).await {
+                    warn!(ap_id, "failed to set canonical_uri: {e}");
+                }
+            }
+
             // Link hashtags from the tag array (best-effort).
             let hashtag_names = extract_hashtags_from_tags(&object);
             if !hashtag_names.is_empty()
