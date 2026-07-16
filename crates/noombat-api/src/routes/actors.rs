@@ -443,7 +443,7 @@ async fn post_outbox(
     let ap_type = if is_article { "Article" } else { "Note" };
 
     let mut ap_object = json!({
-        "@context": AS_CONTEXT,
+        "@context": default_context(),
         "id": post_id,
         "type": ap_type,
         "attributedTo": actor.ap_id,
@@ -471,7 +471,7 @@ async fn post_outbox(
     }
 
     let create_activity = json!({
-        "@context": AS_CONTEXT,
+        "@context": default_context(),
         "id": format!("{}/activity", post_id),
         "type": "Create",
         "actor": actor.ap_id,
