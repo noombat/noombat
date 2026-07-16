@@ -53,6 +53,12 @@ pub fn index_profile(
     if !actor.actor_privacy.discoverable {
         return;
     }
+    // Silenced actors are excluded from search indices. They remain
+    // accessible to explicit followers via direct URL, but should not
+    // appear in public search results.
+    if actor.is_silenced() {
+        return;
+    }
     let doc = json!({
         "id": actor.id.to_string(),
         "display_name": actor.display_name,

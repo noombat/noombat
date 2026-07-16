@@ -82,9 +82,35 @@ impl Actor {
         matches!(self.instance_role, InstanceRole::Admin)
     }
 
-    /// Whether this actor's account is active (not silenced or suspended).
+    /// Whether this actor's account is active (not suspended).
+    ///
+    /// A silenced actor is still active: they may log in, post, and
+    /// interact. They are merely excluded from public timelines and
+    /// search indices (see [`Actor::is_silenced`]). A suspended actor
+    /// is fully deactivated.
     pub fn is_active(&self) -> bool {
-        matches!(self.actor_status, ActorStatus::Active)
+        match self.actor_status {
+            ActorStatus::Active | ActorStatus::Silenced => true,
+            ActorStatus::Suspended => false,
+        }
+    }
+
+    /// Whether this actor has been silenced by a moderator.
+    ///
+    /// A silenced actor is excluded from public timelines, trending
+    /// lists, and search indices, but remains accessible to users who
+    /// explicitly follow them. The actor may still log in, post, and
+    /// interact normally.
+    pub fn is_silenced(&self) -> bool {
+        matches!(self.actor_status, ActorStatus::Silenced)
+    }
+
+    /// Whether this actor has been suspended by a moderator.
+    ///
+    /// A suspended actor is fully deactivated: login is disabled, and
+    /// federation requests receive `410 Gone`.
+    pub fn is_suspended(&self) -> bool {
+        matches!(self.actor_status, ActorStatus::Suspended)
     }
 
     /// Whether this actor's profile is discoverable in local search.
@@ -321,6 +347,29 @@ mod tests {
     fn mute_restriction() {
         assert!(ViewerRestriction::None.appears_in_feed());
         assert!(!ViewerRestriction::Muted.appears_in_feed());
+    }
+
+    #[test]
+    fn is_active_includes_silenced_excludes_suspended() {
+        let mut a = make_actor(uuid::Uuid::new_v4());
+
+        a.actor_status = ActorStatus::Active;
+        assert!(a.is_active());
+        assert!(!a.is_silenced());
+        assert!(!a.is_suspended());
+
+        // A silenced actor is still active (they can log in, post,
+        // and interact), but excluded from public timelines.
+        a.actor_status = ActorStatus::Silenced;
+        assert!(a.is_active());
+        assert!(a.is_silenced());
+        assert!(!a.is_suspended());
+
+        // A suspended actor is fully deactivated.
+        a.actor_status = ActorStatus::Suspended;
+        assert!(!a.is_active());
+        assert!(!a.is_silenced());
+        assert!(a.is_suspended());
     }
 
     #[test]

@@ -55,12 +55,17 @@ async fn feed_partial(
     let offset = (query.page.saturating_sub(1) as i64) * PAGE_SIZE;
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
     let mut muted_ids: Vec<uuid::Uuid> = Vec::new();
+    // Resolved viewer actor ID, if a valid `user` parameter was
+    // supplied. Reused for follow, mute, and silenced-actor queries.
+    let mut viewer_actor_id: Option<uuid::Uuid> = None;
 
     // If a user is specified, fetch posts matching their followed hashtags.
     if let Some(ref username) = query.user
         && let Ok(actor) =
             noombat_identity::repo::find_local_by_username(&state.pool, username).await
     {
+        viewer_actor_id = Some(actor.id);
+
         // Posts from followed hashtags.
         if let Ok(tags) =
             noombat_identity::hashtags::list_followed_hashtags(&state.pool, actor.id).await
@@ -122,12 +127,31 @@ async fn feed_partial(
         }
     }
 
+    // Collect the IDs of actors the viewer explicitly follows.
+    // Posts by silenced actors are excluded from public timelines
+    // unless the viewer follows them.
+    let followed_actor_ids: std::collections::HashSet<uuid::Uuid> =
+        if let Some(actor_id) = viewer_actor_id {
+            sqlx::query_scalar::<_, uuid::Uuid>(
+                "SELECT following_id FROM follows \
+                 WHERE follower_id = $1 AND accepted = TRUE",
+            )
+            .bind(actor_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .collect()
+        } else {
+            std::collections::HashSet::new()
+        };
+
     // Fetch the actual post data for the collected IDs.
     let mut posts: Vec<FeedPost> = Vec::new();
     for id in &post_ids {
         if let Ok(Some(row)) = sqlx::query_as::<_, PostRow>(
             r#"SELECT p.id, p.actor_id, p.content_html, p.created_at,
-                      p.ap_id, a.username, a.display_name
+                      p.ap_id, a.username, a.display_name, a.actor_status
                FROM posts p
                INNER JOIN actors a ON a.id = p.actor_id
                WHERE p.id = $1 AND p.visibility IN ('public', 'unlisted')"#,
@@ -140,6 +164,16 @@ async fn feed_partial(
             if muted_ids.contains(&row.actor_id) {
                 continue;
             }
+
+            // Silenced-actor filter: exclude posts by silenced
+            // actors from public timelines unless the viewer
+            // explicitly follows them.
+            if row.actor_status == noombat_core::actor::ActorStatus::Silenced
+                && !followed_actor_ids.contains(&row.actor_id)
+            {
+                continue;
+            }
+
             posts.push(FeedPost {
                 author: row.username.clone(),
                 author_display: row.display_name.unwrap_or(row.username),
@@ -173,6 +207,9 @@ struct PostRow {
     ap_id: String,
     username: String,
     display_name: Option<String>,
+    /// The author's moderation status; used to filter silenced actors
+    /// from public timelines.
+    actor_status: noombat_core::actor::ActorStatus,
 }
 
 #[derive(Template, WebTemplate)]

@@ -616,6 +616,56 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
     row.into_actor()
 }
 
+// ..... ACTOR STATUS .....
+
+/// Update a local actor's moderation status.
+///
+/// Sets the `actor_status` column to the given value and returns the
+/// updated [`Actor`].
+///
+/// # Search-Index Obligation
+///
+/// When the new status is `Silenced` or `Suspended`, the caller
+/// **must** remove the actor's profile from the search index (via
+/// `search_sync::remove_from_index("profiles", &actor.id.to_string())`)
+/// to prevent the actor from appearing in public search results.
+/// This function does not interact with the search layer because
+/// the repository crate has no dependency on the search backend.
+///
+/// When the new status is `Active` (un-silencing or un-suspending),
+/// the caller should re-index the actor's profile (via
+/// `search_sync::reindex_profile_from_db`) if the actor is
+/// discoverable.
+pub async fn set_actor_status(
+    pool: &PgPool,
+    actor_id: Uuid,
+    status: ActorStatus,
+) -> Result<Actor> {
+    let status_str = match status {
+        ActorStatus::Active => "active",
+        ActorStatus::Silenced => "silenced",
+        ActorStatus::Suspended => "suspended",
+    };
+
+    let result = sqlx::query(
+        "UPDATE actors SET actor_status = $1, updated_at = now() \
+         WHERE id = $2 AND is_local = TRUE",
+    )
+    .bind(status_str)
+    .bind(actor_id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(NoombatError::NotFound {
+            entity: "actor",
+            id: actor_id,
+        });
+    }
+
+    find_by_id(pool, actor_id).await
+}
+
 // ..... ACTOR DELETE .....
 
 /// Tombstone a local actor: clear all personal data, record the
