@@ -450,6 +450,11 @@ async fn handle_create(
         return Ok(());
     }
 
+    // Extract the `inReplyTo` property for reply threading. The
+    // property may be a string URI (Mastodon) or an object with an
+    // `id` field (some other implementations).
+    let in_reply_to = extract_in_reply_to(object);
+
     // Persist the remote post.
     let remote_post = repo::RemotePost {
         actor_id: remote_actor.id,
@@ -459,6 +464,7 @@ async fn handle_create(
         featured_image_url,
         content_md: content_md.to_owned(),
         content_html: content_html.to_owned(),
+        in_reply_to,
         visibility,
         ap_object: activity.object.clone(),
     };
@@ -717,6 +723,9 @@ async fn handle_update_post(
     let cc = extract_string_array(object, "cc");
     let visibility = derive_visibility(&to, &cc);
 
+    // Extract `inReplyTo` for consistency with the create path.
+    let in_reply_to = extract_in_reply_to(object);
+
     let rows_affected = sqlx::query(
         r#"UPDATE posts
            SET content_md = $2,
@@ -724,7 +733,8 @@ async fn handle_update_post(
                title = $4,
                featured_image_url = $5,
                visibility = $6,
-               ap_object = $7
+               in_reply_to = $7,
+               ap_object = $8
            WHERE ap_id = $1"#,
     )
     .bind(ap_id)
@@ -733,6 +743,7 @@ async fn handle_update_post(
     .bind(title)
     .bind(&featured_image_url)
     .bind(&visibility)
+    .bind(&in_reply_to)
     .bind(object)
     .execute(pool)
     .await?
@@ -1009,6 +1020,9 @@ async fn fetch_and_persist_remote_post(
     let cc = extract_string_array(&object, "cc");
     let visibility = derive_visibility(&to, &cc);
 
+    // Extract the `inReplyTo` property for reply threading.
+    let in_reply_to = extract_in_reply_to(&object);
+
     // Resolve the author (creates a remote actor record if needed).
     let author = resolve_remote_actor(pool, http_client, author_uri).await?;
 
@@ -1020,6 +1034,7 @@ async fn fetch_and_persist_remote_post(
         featured_image_url,
         content_md: content_md.to_owned(),
         content_html: content_html.to_owned(),
+        in_reply_to,
         visibility,
         ap_object: object.clone(),
     };
@@ -1206,6 +1221,47 @@ fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<Stri
     } else {
         field.as_str().map(|s| vec![s.to_owned()])
     }
+}
+
+// ..... REPLY THREAD EXTRACTION .....
+
+/// Extract the `inReplyTo` URI from an inbound ActivityPub object.
+///
+/// The `inReplyTo` property may be:
+///
+/// - A string URI (Mastodon, GotoSocial).
+/// - An object with an `id` field (some other implementations).
+/// - An array of URIs or objects (uncommon; the first usable entry
+///   is returned).
+/// - `null` or absent for top-level posts.
+///
+/// Returns `None` if the property is absent or not extractable.
+fn extract_in_reply_to(object: &serde_json::Value) -> Option<String> {
+    let field = object.get("inReplyTo")?;
+
+    // String URI (most common).
+    if let Some(uri) = field.as_str() {
+        return Some(uri.to_owned());
+    }
+
+    // Object with an `id` field.
+    if let Some(id) = field.get("id").and_then(|v| v.as_str()) {
+        return Some(id.to_owned());
+    }
+
+    // Array: extract the first usable string or object-with-id.
+    if let Some(arr) = field.as_array() {
+        for item in arr {
+            if let Some(uri) = item.as_str() {
+                return Some(uri.to_owned());
+            }
+            if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
+                return Some(id.to_owned());
+            }
+        }
+    }
+
+    None
 }
 
 // ..... ARTICLE FIELD EXTRACTION .....
@@ -1530,5 +1586,58 @@ mod tests {
             ]
         });
         assert!(extract_hashtags_from_tags(&obj).is_empty());
+    }
+
+    // ..... extract_in_reply_to .....
+
+    #[test]
+    fn in_reply_to_string_uri() {
+        let obj = serde_json::json!({
+            "type": "Note",
+            "inReplyTo": "https://remote.example/users/bob/statuses/42"
+        });
+        assert_eq!(
+            extract_in_reply_to(&obj),
+            Some("https://remote.example/users/bob/statuses/42".to_owned())
+        );
+    }
+
+    #[test]
+    fn in_reply_to_object_with_id() {
+        let obj = serde_json::json!({
+            "type": "Note",
+            "inReplyTo": { "id": "https://remote.example/posts/99", "type": "Note" }
+        });
+        assert_eq!(
+            extract_in_reply_to(&obj),
+            Some("https://remote.example/posts/99".to_owned())
+        );
+    }
+
+    #[test]
+    fn in_reply_to_array_of_uris() {
+        let obj = serde_json::json!({
+            "type": "Note",
+            "inReplyTo": ["https://remote.example/posts/1", "https://remote.example/posts/2"]
+        });
+        assert_eq!(
+            extract_in_reply_to(&obj),
+            Some("https://remote.example/posts/1".to_owned())
+        );
+    }
+
+    #[test]
+    fn in_reply_to_null() {
+        let obj = serde_json::json!({
+            "type": "Note",
+            "inReplyTo": null
+        });
+        assert_eq!(extract_in_reply_to(&obj), None);
+    }
+
+    #[test]
+    fn in_reply_to_absent() {
+        let obj = serde_json::json!({ "type": "Note", "content": "hello" });
+        assert_eq!(extract_in_reply_to(&obj), None);
     }
 }
