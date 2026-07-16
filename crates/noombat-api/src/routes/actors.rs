@@ -561,16 +561,16 @@ async fn post_outbox(
 
     // If replying to a post, deliver directly to the parent author's
     // inbox when it is not already covered by the follower set.
-    if let Some(ref target_inbox) = reply_target_inbox {
-        if !inboxes.contains(target_inbox) {
-            let _ = noombat_federation::delivery::enqueue(
-                &state.pool,
-                actor.id,
-                &create_activity,
-                target_inbox,
-            )
-            .await;
-        }
+    if let Some(ref target_inbox) = reply_target_inbox
+        && !inboxes.contains(target_inbox)
+    {
+        let _ = noombat_federation::delivery::enqueue(
+            &state.pool,
+            actor.id,
+            &create_activity,
+            target_inbox,
+        )
+        .await;
     }
 
     Ok((

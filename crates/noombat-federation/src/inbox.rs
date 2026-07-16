@@ -524,10 +524,10 @@ async fn handle_create(
     if let Some(post_id) = post_id {
         // Record the canonical URI (if present) so that future
         // cross-post de-duplication can match this post.
-        if let Some(canonical) = crate::crosspost::extract_canonical_uri(object) {
-            if let Err(e) = crate::crosspost::set_canonical_uri(pool, post_id, &canonical).await {
-                warn!(ap_id, "failed to set canonical_uri: {e}");
-            }
+        if let Some(canonical) = crate::crosspost::extract_canonical_uri(object)
+            && let Err(e) = crate::crosspost::set_canonical_uri(pool, post_id, &canonical).await
+        {
+            warn!(ap_id, "failed to set canonical_uri: {e}");
         }
 
         let hashtag_names = extract_hashtags_from_tags(object);
@@ -1106,10 +1106,10 @@ async fn fetch_and_persist_remote_post(
         Some(id) => {
             // Record the canonical URI (if present) so that future
             // cross-post de-duplication can match this post.
-            if let Some(canonical) = crate::crosspost::extract_canonical_uri(&object) {
-                if let Err(e) = crate::crosspost::set_canonical_uri(pool, id, &canonical).await {
-                    warn!(ap_id, "failed to set canonical_uri: {e}");
-                }
+            if let Some(canonical) = crate::crosspost::extract_canonical_uri(&object)
+                && let Err(e) = crate::crosspost::set_canonical_uri(pool, id, &canonical).await
+            {
+                warn!(ap_id, "failed to set canonical_uri: {e}");
             }
 
             // Link hashtags from the tag array (best-effort).
