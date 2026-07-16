@@ -622,14 +622,15 @@ async fn handle_update_actor(
     // Rather than deleting the row (which would cascade-delete all
     // dependent data, e.g. follows, posts, likes), we fetch directly and
     // let upsert_remote_actor's ON CONFLICT clause update in place.
-    let response = http_client
-        .get(&activity.actor)
-        .header("Accept", "application/activity+json")
-        .send()
-        .await
-        .map_err(|e| {
-            NoombatError::Federation(format!("failed to re-fetch {}: {e}", activity.actor))
-        })?;
+    //
+    // Use a signed fetch so that instances requiring authenticated
+    // requests (e.g. GotoSocial with
+    // `accounts-allow-incoming-from-known-instances-only`) do not
+    // reject the lookup.
+    let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool).await?;
+    let response =
+        crate::signed_fetch::signed_get(pool, http_client, &activity.actor, signing_actor_id)
+            .await?;
 
     if !response.status().is_success() {
         warn!(
