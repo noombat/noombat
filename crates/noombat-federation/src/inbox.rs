@@ -301,13 +301,38 @@ async fn handle_undo(
                     NoombatError::BadRequest("Undo Follow: missing inner object".into())
                 })?;
 
+            // Extract the inner Follow activity's AP id (if present)
+            // for inclusion in the deletion predicate, consistent with
+            // the Undo { Like } and Undo { Announce } branches.
+            let inner_ap_id = activity.object.get("id").and_then(|v| v.as_str());
+
             let target_username = extract_local_username(target_uri)
                 .ok_or_else(|| NoombatError::BadRequest("cannot parse target actor URI".into()))?;
 
             let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
             let local_actor = repo::find_local_by_username(pool, target_username).await?;
 
-            repo::delete_follow(pool, remote_actor.id, local_actor.id).await?;
+            // Delete by relationship IDs (the unique constraint) and,
+            // when available, verify the Follow activity's AP id.
+            // The ap_id check is a secondary guard: if the inner
+            // Follow's id does not match the stored row, the deletion
+            // is a no-op (the Undo targets a different Follow).
+            if let Some(follow_ap_id) = inner_ap_id {
+                sqlx::query(
+                    "DELETE FROM follows \
+                     WHERE follower_id = $1 AND following_id = $2 AND ap_id = $3",
+                )
+                .bind(remote_actor.id)
+                .bind(local_actor.id)
+                .bind(follow_ap_id)
+                .execute(pool)
+                .await?;
+            } else {
+                // Fallback: some implementations omit the inner
+                // Follow's id. Delete by relationship IDs only.
+                repo::delete_follow(pool, remote_actor.id, local_actor.id).await?;
+            }
+
             info!(
                 follower = %remote_actor.ap_id,
                 target = %local_actor.ap_id,
