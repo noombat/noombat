@@ -25,7 +25,10 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/users/{username}/blocks", post(create_block))
-        .route("/users/{username}/blocks/{target_ap_id}", delete(delete_block))
+        .route(
+            "/users/{username}/blocks/{target_ap_id}",
+            delete(delete_block),
+        )
         .route("/users/{username}/mutes", post(create_mute))
         .route("/users/{username}/mutes/{id}", delete(delete_mute))
 }

@@ -32,7 +32,12 @@ pub trait VisibilityControlled {
     fn visibility(&self) -> SectionVisibility;
 
     /// Whether this section is visible to the given viewer.
-    fn visible_to(&self, viewer: Option<&Actor>, owner_id: uuid::Uuid, follow_status: FollowStatus) -> bool {
+    fn visible_to(
+        &self,
+        viewer: Option<&Actor>,
+        owner_id: uuid::Uuid,
+        follow_status: FollowStatus,
+    ) -> bool {
         match self.visibility() {
             SectionVisibility::Public => true,
             SectionVisibility::Followers => follow_status == FollowStatus::Accepted,
@@ -66,7 +71,10 @@ pub fn post_visible_to(
 impl Actor {
     /// Whether this actor may perform moderation actions (moderator or admin).
     pub fn may_moderate(&self) -> bool {
-        matches!(self.instance_role, InstanceRole::Moderator | InstanceRole::Admin)
+        matches!(
+            self.instance_role,
+            InstanceRole::Moderator | InstanceRole::Admin
+        )
     }
 
     /// Whether this actor may perform administration actions (admin only).
@@ -105,11 +113,7 @@ impl Actor {
     }
 
     /// Whether the CV may be downloaded by the given viewer.
-    pub fn cv_downloadable_by(
-        &self,
-        viewer: Option<&Actor>,
-        follow_status: FollowStatus,
-    ) -> bool {
+    pub fn cv_downloadable_by(&self, viewer: Option<&Actor>, follow_status: FollowStatus) -> bool {
         match self.actor_privacy.cv_download {
             CvDownload::Public => true,
             CvDownload::Followers => follow_status == FollowStatus::Accepted,
@@ -118,11 +122,7 @@ impl Actor {
     }
 
     /// Whether the Chatmail address is visible to the given viewer.
-    pub fn chatmail_visible_to(
-        &self,
-        viewer: Option<&Actor>,
-        follow_status: FollowStatus,
-    ) -> bool {
+    pub fn chatmail_visible_to(&self, viewer: Option<&Actor>, follow_status: FollowStatus) -> bool {
         self.actor_privacy.chatmail_visible
             || matches!(viewer, Some(v) if v.id == self.id)
             || follow_status == FollowStatus::Accepted
@@ -168,11 +168,7 @@ impl ViewerRestriction {
 #[async_trait::async_trait]
 pub trait InteractionService: Send + Sync {
     /// Has `owner` blocked `viewer`? (access-control direction).
-    async fn owner_restriction(
-        &self,
-        owner: &uuid::Uuid,
-        viewer: &uuid::Uuid,
-    ) -> OwnerRestriction;
+    async fn owner_restriction(&self, owner: &uuid::Uuid, viewer: &uuid::Uuid) -> OwnerRestriction;
 
     /// Has `viewer` muted `author`? (feed-filtering direction).
     async fn viewer_restriction(
