@@ -70,6 +70,27 @@ pub trait VocabularyExtension: Send + Sync + 'static {
     fn parse_inbound(&self, object: &Value) -> Option<Value>;
 }
 
+/// Pluggable federation signature backend (development default:
+/// `eddsa-jcs-2022` Object Integrity Proofs).
+///
+/// During development, no implementation is active; HTTP Signatures
+/// remain the sole authentication mechanism. The trait is defined
+/// early to establish the interface contract.
+#[async_trait::async_trait]
+pub trait FederationSignature: Send + Sync + 'static {
+    /// Attach an integrity proof to an outbound ActivityPub activity.
+    ///
+    /// The implementation signs the canonicalised activity and
+    /// mutates `activity` in place to add the proof.
+    async fn sign(&self, activity: &mut Value, signing_key_id: &str) -> Result<()>;
+
+    /// Verify an integrity proof on an inbound activity.
+    ///
+    /// Returns `true` if the proof is valid, `false` if it is
+    /// invalid or absent.
+    async fn verify(&self, activity: &Value) -> Result<bool>;
+}
+
 /// Custom profile section provider.
 pub trait ProfileSectionProvider: Send + Sync + 'static {
     /// A unique identifier for this section type (e.g. `"certifications"`).
