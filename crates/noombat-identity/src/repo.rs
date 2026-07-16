@@ -322,6 +322,11 @@ pub struct RemoteActor {
     pub inbox_url: String,
     /// The `endpoints.sharedInbox` URI, if declared by the remote actor.
     pub shared_inbox_url: Option<String>,
+    /// Multibase-encoded Ed25519 public key extracted from the remote
+    /// actor's `assertionMethod` (FEP-521a). `None` if the remote
+    /// actor does not publish an Ed25519 key. Stored for future
+    /// FEP-8b32 Object Integrity Proof verification (Phase 5).
+    pub ed25519_public_key: Option<String>,
 }
 
 /// Insert or update a remote actor in the `actors` table.
@@ -337,14 +342,15 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
                 domain, public_key_pem, inbox_url, shared_inbox_url,
-                is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, FALSE, $11)
+                ed25519_public_key, is_local, actor_privacy)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE, $12)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
                display_name = EXCLUDED.display_name,
                summary_html = EXCLUDED.summary_html,
                inbox_url = EXCLUDED.inbox_url,
-               shared_inbox_url = EXCLUDED.shared_inbox_url"#,
+               shared_inbox_url = EXCLUDED.shared_inbox_url,
+               ed25519_public_key = EXCLUDED.ed25519_public_key"#,
     )
     .bind(id)
     .bind(&remote.actor_type)
@@ -356,6 +362,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(&remote.public_key_pem)
     .bind(&remote.inbox_url)
     .bind(&remote.shared_inbox_url)
+    .bind(&remote.ed25519_public_key)
     .bind(&privacy_json)
     .execute(pool)
     .await?;
