@@ -70,6 +70,19 @@ CREATE TABLE sessions (
 CREATE INDEX idx_sessions_actor ON sessions (actor_id);
 CREATE INDEX idx_sessions_active_actor ON sessions (actor_id) WHERE revoked_at IS NULL;
 
+-- ..... TOTP 2FA .....
+
+-- Each actor may enrol at most one TOTP secret. The secret is stored
+-- as a base32-encoded string.
+-- TO-DO: Application-level encryption of `secret` column.
+CREATE TABLE totp_secrets (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id    UUID NOT NULL UNIQUE REFERENCES actors(id) ON DELETE CASCADE,
+    secret      TEXT NOT NULL, -- base32-encoded TOTP secret
+    verified    BOOLEAN NOT NULL DEFAULT FALSE, -- TRUE after first successful verification
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ..... PROFILE SECTIONS .....
 
 CREATE TABLE experiences (

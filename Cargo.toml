@@ -122,6 +122,12 @@ argon2 = "0.5"
 # JWT (short-lived access tokens).
 jsonwebtoken = "9"
 
+# TOTP 2FA (RFC 6238).
+totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+
+# QR code generation (TOTP enrolment).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
 # Base58 encoding (Ed25519 multibase public keys, FEP-521a).
 bs58 = "0.5"
 

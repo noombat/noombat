@@ -14,4 +14,5 @@ pub mod profile;
 pub mod registration;
 pub mod repo;
 pub mod session;
+pub mod totp;
 pub mod verification;
