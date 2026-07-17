@@ -2,16 +2,23 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! Autocrypt Level 1 state machine and rPGP integration.
+#![no_std]
+//! Autocrypt Level 1 state machine.
 //!
-//! This crate implements the Autocrypt Level 1 specification as a pure
-//! Rust state machine compiled to WASM alongside rPGP. It comprises:
+//! This crate implements the Autocrypt Level 1 specification as a
+//! pure, `no_std`-compatible Rust state machine. It is designed to
+//! compile to `wasm32-unknown-unknown` alongside rPGP.
 //!
-//! - **Peer state table.** Indexed by canonicalised email address.
-//! - **State update algorithm.** Deterministic update rule applied on
-//!   receipt of each incoming message.
-//! - **Encryption recommendation algorithm.** Given a set of recipient
-//!   addresses, produces one of: `disable`, `discourage`, `available`,
-//!   or `encrypt`.
-//! - **Serialisation.** The entire state serialises to a byte vector
-//!   for inclusion in the encrypted credential blob.
+//! The crate has no I/O, filesystem, SQLite, or async runtime
+//! dependencies. All cryptographic operations are delegated to rPGP
+//! (integrated at the WASM boundary in the SolidJS chat island).
+//!
+//! ## Modules
+//!
+//! - [`peer`]: peer state table and update algorithm.
+//! - [`recommend`]: encryption recommendation algorithm.
+
+extern crate alloc;
+
+pub mod peer;
+pub mod recommend;
