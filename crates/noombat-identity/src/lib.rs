@@ -3,7 +3,8 @@
 
 #![forbid(unsafe_code)]
 //! Actor repository, key generation, post persistence, profile section
-//! CRUD, DOI resolution, and domain verification.
+//! CRUD, DOI resolution, domain verification, authentication, session
+//! management, TOTP 2FA, and OAuth (Mastodon, ORCID).
 
 pub mod cv;
 pub mod doi_client;
@@ -11,7 +12,9 @@ pub mod hashtags;
 pub mod keys;
 pub mod login;
 pub mod oauth_mastodon;
+pub mod oauth_orcid;
 pub mod oauth_util;
+pub mod orcid_import;
 pub mod profile;
 pub mod registration;
 pub mod repo;

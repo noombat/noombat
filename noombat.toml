@@ -27,3 +27,7 @@ policies_dir = "policies"
 
 # Refresh-token lifetime in seconds (default: 2592000 = 30 days).
 # refresh_ttl_secs = 2592000
+
+# ORCID OAuth credentials (obtain from https://orcid.org/developer-tools).
+# orcid_client_id = "APP-XXXXXXXXXXXX"
+# orcid_client_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
