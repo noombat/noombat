@@ -116,6 +116,12 @@ tempfile = "3"
 # Constant-time comparison (token verification).
 subtle = "2"
 
+# Password hashing (Argon2id for auth_key_hash).
+argon2 = "0.5"
+
+# JWT (short-lived access tokens).
+jsonwebtoken = "9"
+
 # Base58 encoding (Ed25519 multibase public keys, FEP-521a).
 bs58 = "0.5"
 

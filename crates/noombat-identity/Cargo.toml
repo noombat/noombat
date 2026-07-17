@@ -24,3 +24,5 @@ tokio = { workspace = true }
 tempfile = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
+argon2 = { workspace = true }
+jsonwebtoken = { workspace = true }

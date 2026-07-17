@@ -51,6 +51,25 @@ CREATE TABLE actor_aliases (
     UNIQUE (actor_id, alias)
 );
 
+-- ..... SESSIONS .....
+
+-- Server-side session metadata. The access token itself is a short-lived
+-- JWT verified statelessly; this table records the refresh token and
+-- provides an audit trail of active sessions.
+CREATE TABLE sessions (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id        UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    refresh_token   TEXT NOT NULL UNIQUE,
+    user_agent      TEXT,
+    ip_addr         TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at      TIMESTAMPTZ NOT NULL,
+    revoked_at      TIMESTAMPTZ -- non-NULL = revoked
+);
+
+CREATE INDEX idx_sessions_actor ON sessions (actor_id);
+CREATE INDEX idx_sessions_active_actor ON sessions (actor_id) WHERE revoked_at IS NULL;
+
 -- ..... PROFILE SECTIONS .....
 
 CREATE TABLE experiences (

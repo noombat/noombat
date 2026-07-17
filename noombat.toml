@@ -17,3 +17,13 @@ policies_dir = "policies"
 
 # Redis connection URL (optional; enables rate limiting and session storage).
 # redis_url = "redis://127.0.0.1:6379"
+
+# JWT signing secret for session tokens (HS256, >= 32 bytes).
+# Required for production; if unset, only the admin_token bearer is available.
+# jwt_secret = "change-this-to-a-random-secret-at-least-32-bytes-long"
+
+# Access-token lifetime in seconds (default: 900 = 15 min).
+# access_ttl_secs = 900
+
+# Refresh-token lifetime in seconds (default: 2592000 = 30 days).
+# refresh_ttl_secs = 2592000

@@ -11,4 +11,5 @@ pub mod hashtags;
 pub mod keys;
 pub mod profile;
 pub mod repo;
+pub mod session;
 pub mod verification;
