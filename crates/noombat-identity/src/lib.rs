@@ -10,6 +10,7 @@ pub mod doi_client;
 pub mod hashtags;
 pub mod keys;
 pub mod profile;
+pub mod registration;
 pub mod repo;
 pub mod session;
 pub mod verification;

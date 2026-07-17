@@ -88,6 +88,19 @@ impl ActorRow {
 
 /// Create a new local actor, returning the populated [`Actor`].
 pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
+    create_actor_on(pool, params).await
+}
+
+/// Create a new local actor within an existing transaction.
+pub async fn create_actor_tx(tx: &mut sqlx::PgConnection, params: &NewActor) -> Result<Actor> {
+    create_actor_on(&mut *tx, params).await
+}
+
+/// Shared implementation accepting any sqlx executor.
+async fn create_actor_on<'e, E>(executor: E, params: &NewActor) -> Result<Actor>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
     let id = Uuid::new_v4();
     let ap_id = format!("https://{}/users/{}", params.domain, params.username);
     let actor_type_str = match params.actor_type {
@@ -119,7 +132,7 @@ pub async fn create_actor(pool: &PgPool, params: &NewActor) -> Result<Actor> {
     .bind(&params.ed25519_public_key)
     .bind(&params.ed25519_private_key)
     .bind(&privacy_json)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await?;
 
     Ok(Actor {
