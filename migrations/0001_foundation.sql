@@ -439,6 +439,23 @@ CREATE TABLE reports (
     CHECK (target_actor_id IS NOT NULL OR target_post_id IS NOT NULL)
 );
 
+-- ..... CHAT REPORTS .....
+
+CREATE TABLE chat_reports (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    reporter_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    target_addr     TEXT NOT NULL,
+    message_content TEXT,
+    message_date    TIMESTAMPTZ,
+    reason          TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'illegal', 'impersonation', 'other')),
+    comment         TEXT,
+    status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
+    resolved_by     UUID REFERENCES actors(id),
+    resolution_note TEXT,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    resolved_at     TIMESTAMPTZ
+);
+
 -- ..... CHATMAIL BLOCKS .....
 
 -- Chatmail address block list (application-level, enforced by the
