@@ -83,6 +83,19 @@ CREATE TABLE totp_secrets (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ..... OAUTH CLIENT CACHE .....
+
+-- Caches OAuth 2.0 dynamic client registrations per remote Mastodon
+-- instance, avoiding repeated POST /api/v1/apps calls.
+CREATE TABLE oauth_clients (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    instance_domain TEXT NOT NULL UNIQUE,
+    client_id       TEXT NOT NULL,
+    client_secret   TEXT NOT NULL,
+    redirect_uri    TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ..... OAUTH STATE .....
 
 -- Stores the transient OAuth 2.0 authorisation state parameter,
@@ -98,6 +111,23 @@ CREATE TABLE oauth_states (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ NOT NULL
 );
+
+-- ..... OAUTH IDENTITIES .....
+
+-- Links a local actor to an external OAuth identity (Mastodon account
+-- or ORCID iD).
+CREATE TABLE oauth_identities (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id        UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    provider        TEXT NOT NULL CHECK (provider IN ('mastodon', 'orcid')),
+    -- For Mastodon: "alice@mastodon.social".
+    -- For ORCID: "0000-0002-1825-0097".
+    external_id     TEXT NOT NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (provider, external_id)
+);
+
+CREATE INDEX idx_oauth_identities_actor ON oauth_identities (actor_id);
 
 -- ..... PROFILE SECTIONS .....
 
