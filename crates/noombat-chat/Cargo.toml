@@ -4,7 +4,25 @@ version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "IMAP/SMTP transport proxy for Chatmail; deltachat-rpc-server fallback."
+description = "IMAP/SMTP ciphertext relay for Chatmail (WebSocket to Chatmail bridge)."
 
 [dependencies]
 noombat-core = { workspace = true }
+async-imap = { workspace = true }
+tokio-rustls = { workspace = true }
+rustls = { workspace = true }
+rustls-pki-types = { workspace = true }
+webpki-roots = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+lettre = { workspace = true }
+mailparse = { workspace = true }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+tokio-tungstenite = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }

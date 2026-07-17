@@ -128,6 +128,27 @@ totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
 # QR code generation (TOTP enrolment).
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 
+# IMAP client (Chatmail relay).
+async-imap = "0.10"
+
+# TLS connector for async-imap.
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pki-types = "1"
+webpki-roots = "1"
+
+# SMTP client (Chatmail relay, outbound encrypted messages).
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+
+# MIME parsing (Autocrypt header extraction from IMAP messages).
+mailparse = "0.15"
+
+# WebSocket (chat relay: browser <--> server).
+tokio-tungstenite = "0.26"
+
+# Compatibility adapter (tokio::io <--> futures_io for async-imap).
+tokio-util = { version = "0.7", features = ["compat"] }
+
 # Base58 encoding (Ed25519 multibase public keys, FEP-521a).
 bs58 = "0.5"
 

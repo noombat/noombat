@@ -2,4 +2,22 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! IMAP/SMTP transport proxy for Chatmail; deltachat-rpc-server fallback.
+//! IMAP/SMTP ciphertext relay for Chatmail.
+//!
+//! This crate implements a thin server-side proxy that relays traffic
+//! between the browser (via WebSocket) and a Chatmail server (via
+//! IMAP/SMTP). It handles MIME envelope metadata and Autocrypt
+//! header extraction/injection, but never decrypts message bodies.
+//!
+//! ## Modules
+//!
+//! - [`provision`]: Chatmail account provisioning via IMAP first-login.
+//! - [`relay`]: WebSocket <--> IMAP/SMTP relay.
+//! - [`mime_bridge`]: Autocrypt header extraction/injection for MIME
+//!   messages.
+//! - [`report`]: Chat moderation report submission.
+
+pub mod mime_bridge;
+pub mod provision;
+pub mod relay;
+pub mod report;

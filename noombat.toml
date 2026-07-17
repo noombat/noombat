@@ -31,3 +31,7 @@ policies_dir = "policies"
 # ORCID OAuth credentials (obtain from https://orcid.org/developer-tools).
 # orcid_client_id = "APP-XXXXXXXXXXXX"
 # orcid_client_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+
+# Co-deployed Chatmail server domain.
+# Every instance co-deploys its own Chatmail server and SMTP relay.
+chatmail_domain = "chat.localhost"

@@ -439,6 +439,18 @@ CREATE TABLE reports (
     CHECK (target_actor_id IS NOT NULL OR target_post_id IS NOT NULL)
 );
 
+-- ..... CHATMAIL BLOCKS .....
+
+-- Chatmail address block list (application-level, enforced by the
+-- noombat-chat proxy before relaying messages to the browser).
+CREATE TABLE chatmail_blocks (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id    UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    blocked_addr TEXT NOT NULL,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (actor_id, blocked_addr)
+);
+
 -- ..... RELAY SUBSCRIPTIONS .....
 
 -- Tracks ActivityPub relays to which this instance is subscribed.
