@@ -9,6 +9,7 @@ pub mod cv;
 pub mod doi_client;
 pub mod hashtags;
 pub mod keys;
+pub mod login;
 pub mod profile;
 pub mod registration;
 pub mod repo;
