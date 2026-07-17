@@ -28,3 +28,4 @@ argon2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 totp-rs = { workspace = true }
 qrcode = { workspace = true }
+url = { workspace = true }

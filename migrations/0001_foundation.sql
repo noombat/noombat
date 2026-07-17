@@ -83,6 +83,22 @@ CREATE TABLE totp_secrets (
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ..... OAUTH STATE .....
+
+-- Stores the transient OAuth 2.0 authorisation state parameter,
+-- binding it to the flow that initiated it (Mastodon or ORCID).
+-- NOTE: expired rows should be purged periodically (e.g. via a
+-- background sweeper or pg_cron job).
+CREATE TABLE oauth_states (
+    state       TEXT PRIMARY KEY,
+    provider    TEXT NOT NULL CHECK (provider IN ('mastodon', 'orcid')),
+    -- For Mastodon: the remote instance domain.
+    -- For ORCID: NULL (single provider).
+    instance_domain TEXT,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ NOT NULL
+);
+
 -- ..... PROFILE SECTIONS .....
 
 CREATE TABLE experiences (
