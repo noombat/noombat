@@ -11,7 +11,7 @@
 
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{Method, Request, StatusCode, header::AUTHORIZATION};
+use axum::http::{Method, Request, StatusCode, header::AUTHORIZATION, header::COOKIE};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json;
@@ -34,6 +34,9 @@ pub struct Principal {
     pub entity_uid: String,
     /// The local username, if the principal maps to a local actor.
     pub username: Option<String>,
+    /// The actor UUID, populated from the JWT `sub` claim or from a
+    /// database lookup.
+    pub actor_uuid: Option<uuid::Uuid>,
     /// Instance-level role, populated from the `actors` table when the
     /// principal is a local actor.
     pub instance_role: Option<noombat_core::actor::InstanceRole>,
@@ -41,6 +44,13 @@ pub struct Principal {
     /// actor on this request. Populated by the middleware for routes
     /// that fetch privacy context; `None` otherwise.
     pub is_follower_of_target: Option<bool>,
+}
+
+impl Principal {
+    /// Return the actor UUID if available.
+    pub fn actor_id(&self) -> Option<uuid::Uuid> {
+        self.actor_uuid
+    }
 }
 
 // ..... Privacy context .....
@@ -265,15 +275,53 @@ pub async fn authorisation(
 // ..... Helpers .....
 
 /// Attempt to identify the request principal.
+///
+/// Resolution order:
+/// 1. `Authorization: Bearer <jwt>` header (API clients, HTMX with
+///    injected headers).
+/// 2. `noombat_session=<jwt>` cookie (server-rendered page loads,
+///    HTMX partial requests; cookies are sent automatically by the
+///    browser).
+/// 3. Development-only admin bearer token (backward compatibility).
 fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Principal> {
-    let expected = state.admin_token.as_deref()?;
-
-    let header = request
+    // 1. Try Authorisation header.
+    let token_from_header = request
         .headers()
         .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())?;
+        .and_then(|v| v.to_str().ok())
+        .and_then(|h| h.strip_prefix("Bearer "));
 
-    let token = header.strip_prefix("Bearer ")?;
+    // 2. Try session cookie.
+    let token_from_cookie = request
+        .headers()
+        .get(COOKIE)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|cookies| {
+            cookies.split(';').find_map(|c| {
+                let c = c.trim();
+                c.strip_prefix("noombat_session=")
+            })
+        });
+
+    let token = token_from_header.or(token_from_cookie);
+    let token = token?;
+
+    // Try JWT session token.
+    if let Some(ref session_config) = state.session_config
+        && let Ok(claims) = noombat_identity::session::verify_access_token(token, session_config)
+    {
+        let actor_uuid = uuid::Uuid::parse_str(&claims.sub).ok();
+        return Some(Principal {
+            entity_uid: format!(r#"Noombat::Actor::"{}""#, claims.username),
+            username: Some(claims.username),
+            actor_uuid,
+            instance_role: None,
+            is_follower_of_target: None,
+        });
+    }
+
+    // Fallback: development-only admin bearer token.
+    let expected = state.admin_token.as_deref()?;
     // Constant-time comparison to prevent timing side-channel attacks.
     if token.len() != expected.len() || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
     {
@@ -300,6 +348,7 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
     Some(Principal {
         entity_uid,
         username,
+        actor_uuid: None,
         instance_role: None,
         is_follower_of_target: None,
     })
