@@ -28,6 +28,8 @@ pub fn build_router(state: AppState) -> Router {
     Router::new()
         .merge(routes::federation::router())
         .merge(routes::actors::router())
+        .merge(routes::auth::router())
+        .merge(routes::chat::router())
         .merge(routes::cv::router())
         .merge(routes::feed::router())
         .merge(routes::follows::router())
@@ -38,6 +40,8 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::profile_sections::router())
         .merge(routes::search::router())
         .merge(routes::health::router())
+        .merge(routes::pages::router())
+        .merge(routes::ws_chat::router())
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
