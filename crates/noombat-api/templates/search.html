@@ -1,0 +1,47 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ i18n.t("search_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("search_heading") }}</h1>
+
+        <form method="get" action="/search/html"
+              class="flex gap-2 mb-6 max-w-lg">
+            <input name="q" type="search" required
+                   value="{{ query }}"
+                   placeholder="{{ i18n.t("search_placeholder") }}"
+                   class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
+            <select name="index"
+                    class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                <option value="profiles" {% if index == "profiles" %}selected{% endif %}>{{ i18n.t("search_profiles") }}</option>
+                <option value="jobs" {% if index == "jobs" %}selected{% endif %}>{{ i18n.t("search_jobs") }}</option>
+                <option value="posts" {% if index == "posts" %}selected{% endif %}>{{ i18n.t("search_posts") }}</option>
+            </select>
+            <button type="submit"
+                    class="bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("search_submit") }}
+            </button>
+        </form>
+
+        {% if !results.is_empty() %}
+        <ul class="space-y-4">
+            {% for result in results %}
+            <li class="border-b border-border pb-4">
+                <a href="{{ result.url }}" class="text-accent no-underline hover:underline font-semibold">
+                    {{ result.title }}
+                </a>
+                {% if !result.subtitle.is_empty() %}
+                <p class="text-muted text-sm">{{ result.subtitle }}</p>
+                {% endif %}
+            </li>
+            {% endfor %}
+        </ul>
+        {% else %}
+        {% if !query.is_empty() %}
+        <p class="text-muted">{{ i18n.t("search_no_results") }}</p>
+        {% endif %}
+        {% endif %}
+{% endblock %}

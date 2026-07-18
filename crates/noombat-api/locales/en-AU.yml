@@ -166,6 +166,59 @@ job_salary_max: "Salary max"
 job_currency: "Currency"
 job_publish: "Publish"
 
+# Search.
+search_title: "Search"
+search_heading: "Search"
+search_placeholder: "Search..."
+search_profiles: "Profiles"
+search_jobs: "Jobs"
+search_posts: "Posts"
+search_submit: "Search"
+search_no_results: "No results found."
+
+# Follow requests.
+follow_requests_title: "Follow requests"
+follow_requests_heading: "Follow requests"
+follow_requests_empty: "No pending follow requests."
+follow_accept: "Accept"
+follow_reject: "Reject"
+
+# Blocked and muted.
+blocked_muted_title: "Blocked and muted"
+blocked_muted_heading: "Blocked and muted accounts"
+blocked_heading: "Blocked"
+blocked_empty: "No blocked accounts."
+blocked_unblock: "Unblock"
+muted_heading: "Muted"
+muted_empty: "No muted accounts."
+muted_unmute: "Unmute"
+
+# Privacy settings.
+privacy_title: "Privacy and safety"
+privacy_heading: "Privacy and safety"
+privacy_profile: "Profile privacy"
+privacy_discoverable: "Appear in search results and the instance directory"
+privacy_indexable: "Allow external search engines to index your profile"
+privacy_federate: "Share full profile data with remote instances"
+privacy_follow_approval: "Require approval for new followers"
+privacy_show_followers: "Show follower and following counts"
+privacy_chatmail_visible: "Show chat address on profile"
+privacy_cv: "CV download"
+privacy_cv_self: "Only me"
+privacy_default_vis: "Default post visibility"
+
+# Account migration.
+migrate_title: "Account migration"
+migrate_heading: "Account migration"
+migrate_aliases: "Account aliases"
+migrate_aliases_help: "Add aliases for accounts you have migrated from. This allows other instances to verify an incoming Move activity."
+migrate_add_alias: "Add alias"
+migrate_move: "Move account"
+migrate_move_help: "Redirect your account to a new address on another instance. Your followers will be notified and redirected. This cannot be undone."
+migrate_target: "Target account URI"
+migrate_submit: "Move account"
+migrate_confirm: "Are you sure? This will redirect your account and cannot be undone."
+
 # Settings navigation.
 settings_title: "Settings"
 settings_heading: "Settings"

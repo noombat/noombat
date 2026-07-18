@@ -1,0 +1,65 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("migrate_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("migrate_heading") }}</h1>
+
+        <!-- Account aliases (prerequisite for incoming moves) -->
+        <section class="mb-8">
+            <h2 class="text-lg font-semibold mb-3">{{ i18n.t("migrate_aliases") }}</h2>
+            <p class="text-sm text-muted mb-4">{{ i18n.t("migrate_aliases_help") }}</p>
+
+            <form hx-post="/users/{{ username }}/aliases"
+                  hx-target="#alias-list"
+                  hx-swap="beforeend"
+                  class="flex gap-2 mb-4 max-w-lg">
+                <input name="alias" type="url" required
+                       placeholder="https://mastodon.social/users/alice"
+                       class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                <button type="submit"
+                        class="bg-accent text-white rounded px-4 py-2 hover:opacity-90 text-sm">
+                    {{ i18n.t("migrate_add_alias") }}
+                </button>
+            </form>
+
+            <ul id="alias-list" class="space-y-2 max-w-lg">
+                {% for alias in aliases %}
+                <li class="flex items-center gap-2 border-b border-border pb-2 text-sm"
+                    id="alias-{{ alias.id }}">
+                    <span class="flex-1 truncate font-mono">{{ alias.alias }}</span>
+                    <button type="button"
+                            hx-delete="/users/{{ username }}/aliases/{{ alias.id }}"
+                            hx-target="#alias-{{ alias.id }}"
+                            hx-swap="outerHTML"
+                            class="text-muted hover:text-red-600 text-xs">✕</button>
+                </li>
+                {% endfor %}
+            </ul>
+        </section>
+
+        <!-- Outbound move -->
+        <section>
+            <h2 class="text-lg font-semibold mb-3">{{ i18n.t("migrate_move") }}</h2>
+            <p class="text-sm text-muted mb-4">{{ i18n.t("migrate_move_help") }}</p>
+
+            <form hx-post="/users/{{ username }}/move"
+                  hx-swap="none"
+                  hx-confirm="{{ i18n.t("migrate_confirm") }}"
+                  class="space-y-4 max-w-lg">
+                <div>
+                    <label for="move-target" class="block text-sm mb-1">{{ i18n.t("migrate_target") }}</label>
+                    <input id="move-target" name="target" type="url" required
+                           placeholder="https://other.instance/users/alice"
+                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                </div>
+                <button type="submit"
+                        class="bg-red-600 text-white rounded px-6 py-2 hover:opacity-90 text-sm">
+                    {{ i18n.t("migrate_submit") }}
+                </button>
+            </form>
+        </section>
+{% endblock %}

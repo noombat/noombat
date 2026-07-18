@@ -166,6 +166,59 @@ job_salary_max: "Salário máximo"
 job_currency: "Moeda"
 job_publish: "Publicar"
 
+# Busca.
+search_title: "Buscar"
+search_heading: "Buscar"
+search_placeholder: "Buscar..."
+search_profiles: "Perfis"
+search_jobs: "Vagas"
+search_posts: "Publicações"
+search_submit: "Buscar"
+search_no_results: "Nenhum resultado encontrado."
+
+# Solicitações de seguimento.
+follow_requests_title: "Solicitações de seguimento"
+follow_requests_heading: "Solicitações de seguimento"
+follow_requests_empty: "Nenhuma solicitação pendente."
+follow_accept: "Aceitar"
+follow_reject: "Rejeitar"
+
+# Bloqueados e silenciados.
+blocked_muted_title: "Bloqueados e silenciados"
+blocked_muted_heading: "Contas bloqueadas e silenciadas"
+blocked_heading: "Bloqueados"
+blocked_empty: "Nenhuma conta bloqueada."
+blocked_unblock: "Desbloquear"
+muted_heading: "Silenciados"
+muted_empty: "Nenhuma conta silenciada."
+muted_unmute: "Deixar de silenciar"
+
+# Configurações de privacidade.
+privacy_title: "Privacidade e segurança"
+privacy_heading: "Privacidade e segurança"
+privacy_profile: "Privacidade do perfil"
+privacy_discoverable: "Aparecer nos resultados de busca e no diretório da instância"
+privacy_indexable: "Permitir que mecanismos de busca externos indexem seu perfil"
+privacy_federate: "Compartilhar dados completos do perfil com instâncias remotas"
+privacy_follow_approval: "Exigir aprovação para novos seguidores"
+privacy_show_followers: "Mostrar contagem de seguidores e seguidos"
+privacy_chatmail_visible: "Mostrar endereço de chat no perfil"
+privacy_cv: "Download do currículo"
+privacy_cv_self: "Somente eu"
+privacy_default_vis: "Visibilidade padrão das publicações"
+
+# Migração de conta.
+migrate_title: "Migração de conta"
+migrate_heading: "Migração de conta"
+migrate_aliases: "Aliases de conta"
+migrate_aliases_help: "Adicione aliases para contas de onde você migrou. Isso permite que outras instâncias verifiquem uma atividade Move recebida."
+migrate_add_alias: "Adicionar alias"
+migrate_move: "Migrar conta"
+migrate_move_help: "Redirecione sua conta para um novo endereço em outra instância. Seus seguidores serão notificados e redirecionados. Esta ação não pode ser desfeita."
+migrate_target: "URI da conta destino"
+migrate_submit: "Migrar conta"
+migrate_confirm: "Tem certeza? Isso redirecionará sua conta e não pode ser desfeito."
+
 # Navegação de configurações.
 settings_title: "Configurações"
 settings_heading: "Configurações"

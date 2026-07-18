@@ -1,0 +1,96 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("privacy_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("privacy_heading") }}</h1>
+
+        <form hx-patch="/users/{{ username }}"
+              hx-swap="none"
+              class="space-y-6 max-w-lg">
+
+            <!-- Profile privacy toggles -->
+            <fieldset class="space-y-3">
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("privacy_profile") }}</legend>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="discoverable" value="true"
+                           {% if discoverable %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_discoverable") }}</span>
+                </label>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="indexable" value="true"
+                           {% if indexable %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_indexable") }}</span>
+                </label>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="federate_profile" value="true"
+                           {% if federate_profile %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_federate") }}</span>
+                </label>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="require_follow_approval" value="true"
+                           {% if require_follow_approval %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_follow_approval") }}</span>
+                </label>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="show_followers_count" value="true"
+                           {% if show_followers_count %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_show_followers") }}</span>
+                </label>
+
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="chatmail_visible" value="true"
+                           {% if chatmail_visible %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("privacy_chatmail_visible") }}</span>
+                </label>
+            </fieldset>
+
+            <!-- CV download restriction -->
+            <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("privacy_cv") }}</legend>
+                <select name="cv_download"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                    <option value="public" {% if cv_download == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                    <option value="followers" {% if cv_download == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                    <option value="self" {% if cv_download == "self" %}selected{% endif %}>{{ i18n.t("privacy_cv_self") }}</option>
+                </select>
+            </fieldset>
+
+            <!-- Default post visibility -->
+            <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("privacy_default_vis") }}</legend>
+                <select name="default_visibility"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                    <option value="public" {% if default_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                    <option value="unlisted" {% if default_visibility == "unlisted" %}selected{% endif %}>{{ i18n.t("vis_unlisted") }}</option>
+                    <option value="followers" {% if default_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                </select>
+            </fieldset>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+
+        <!-- Links to related settings pages -->
+        <nav class="mt-8 space-y-2 text-sm">
+            <a href="/settings/blocked" class="block text-accent no-underline hover:underline">{{ i18n.t("blocked_muted_heading") }}</a>
+            <a href="/settings/chat" class="block text-accent no-underline hover:underline">{{ i18n.t("chat_cred_title") }}</a>
+            <a href="/auth/totp" class="block text-accent no-underline hover:underline">{{ i18n.t("auth_totp_title") }}</a>
+        </nav>
+{% endblock %}

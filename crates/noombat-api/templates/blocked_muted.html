@@ -1,0 +1,58 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("blocked_muted_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("blocked_muted_heading") }}</h1>
+
+        <!-- Blocked users -->
+        <section class="mb-8">
+            <h2 class="text-lg font-semibold mb-3">{{ i18n.t("blocked_heading") }}</h2>
+            {% if blocked.is_empty() %}
+            <p class="text-muted text-sm">{{ i18n.t("blocked_empty") }}</p>
+            {% else %}
+            <ul class="space-y-2 max-w-lg">
+                {% for entry in blocked %}
+                <li class="flex items-center gap-2 border-b border-border pb-2"
+                    id="block-{{ entry.id }}">
+                    <span class="text-sm flex-1 truncate">{{ entry.target_name }}</span>
+                    <button type="button"
+                            hx-delete="/users/{{ username }}/blocks/{{ entry.target_ap_id_encoded }}"
+                            hx-target="#block-{{ entry.id }}"
+                            hx-swap="outerHTML"
+                            class="text-sm text-muted hover:text-red-600">
+                        {{ i18n.t("blocked_unblock") }}
+                    </button>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </section>
+
+        <!-- Muted users -->
+        <section>
+            <h2 class="text-lg font-semibold mb-3">{{ i18n.t("muted_heading") }}</h2>
+            {% if muted.is_empty() %}
+            <p class="text-muted text-sm">{{ i18n.t("muted_empty") }}</p>
+            {% else %}
+            <ul class="space-y-2 max-w-lg">
+                {% for entry in muted %}
+                <li class="flex items-center gap-2 border-b border-border pb-2"
+                    id="mute-{{ entry.id }}">
+                    <span class="text-sm flex-1 truncate">{{ entry.target_name }}</span>
+                    <button type="button"
+                            hx-delete="/users/{{ username }}/mutes/{{ entry.id }}"
+                            hx-target="#mute-{{ entry.id }}"
+                            hx-swap="outerHTML"
+                            class="text-sm text-muted hover:text-red-600">
+                        {{ i18n.t("muted_unmute") }}
+                    </button>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+        </section>
+{% endblock %}
