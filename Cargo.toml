@@ -11,6 +11,7 @@ members = [
     "crates/noombat-events",
     "crates/noombat-chat",
     "crates/noombat-autocrypt",
+    "crates/noombat-wasm",
     "crates/noombat-api",
     "crates/noombat-server",
 ]
@@ -113,7 +114,10 @@ urlencoding = "2"
 # Temporary files (CV generation).
 tempfile = "3"
 
-# Constant-time comparison (token verification).
+# OpenPGP (rPGP, compiled to WASM for browser-side encryption).
+pgp = { version = "0.20", default-features = false, features = ["wasm"] }
+
+# Constant-time comparison (admin token verification).
 subtle = "2"
 
 # Password hashing (Argon2id for auth_key_hash).
@@ -160,3 +164,7 @@ opt-level = 2
 
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
+
+# Optimise the WASM bridge crate for size in release builds.
+[profile.release.package.noombat-wasm]
+opt-level = "s"
