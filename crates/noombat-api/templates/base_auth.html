@@ -1,0 +1,30 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+<!--
+  Authenticated variant of base.html.
+
+  Templates for pages that require or expect authentication extend
+  this template instead of base.html to get the authenticated
+  navigation bar (Messages, Settings, Sign out).
+
+  Required template fields (in addition to base.html fields):
+    nav_username: String (the authenticated user's username)
+-->
+
+{% extends "base.html" %}
+
+{% block nav_links %}
+        <a href="/chat"
+           class="text-sm text-muted no-underline hover:text-fg">
+            {{ i18n.t("chat_title") }}
+        </a>
+        <a href="/@{{ nav_username }}"
+           class="text-sm text-muted no-underline hover:text-fg">
+            @{{ nav_username }}
+        </a>
+        <a href="/settings"
+           class="text-sm text-muted no-underline hover:text-fg">
+            {{ i18n.t("nav_settings") }}
+        </a>
+{% endblock %}

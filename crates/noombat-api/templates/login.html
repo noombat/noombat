@@ -1,0 +1,114 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ i18n.t("auth_login_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("auth_login_heading") }}</h1>
+
+        <noscript>
+            <div role="alert"
+                 class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-3 mb-6 text-sm">
+                JavaScript is required for secure password handling.
+            </div>
+        </noscript>
+
+        {% if let Some(err) = error %}
+        <div role="alert"
+             class="bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm">
+            {{ err }}
+        </div>
+        {% endif %}
+
+        <!-- Local login form. The client-side script derives the
+             authentication key from the password via split key
+             derivation before submission. -->
+        <form id="login-form"
+              method="post" action="/api/v1/auth/login"
+              aria-label="{{ i18n.t("aria_auth_form") }}"
+              class="space-y-4 mb-8">
+
+            <div>
+                <label for="login-username" class="block text-sm mb-1">
+                    {{ i18n.t("auth_login_username") }}
+                </label>
+                <input id="login-username" name="username" type="text"
+                       required autocomplete="username"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="login-password" class="block text-sm mb-1">
+                    {{ i18n.t("auth_login_password") }}
+                </label>
+                <input id="login-password" name="password" type="password"
+                       required autocomplete="current-password"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <!-- TOTP field: hidden by default, revealed by the
+                 client-side script when the server responds with
+                 "TOTP code required". -->
+            <div id="totp-group" class="hidden">
+                <label for="login-totp" class="block text-sm mb-1">
+                    {{ i18n.t("auth_login_totp") }}
+                </label>
+                <input id="login-totp" name="totp_code" type="text"
+                       inputmode="numeric" autocomplete="one-time-code"
+                       pattern="[0-9]{6}" maxlength="6"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg font-mono tracking-widest">
+            </div>
+
+            <!-- Hidden field populated by the client-side key
+                 derivation script. The raw password is never sent. -->
+            <input type="hidden" name="auth_key" id="login-auth-key">
+
+            <button type="submit"
+                    class="w-full bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("auth_login_submit") }}
+            </button>
+        </form>
+
+        <p class="text-center text-muted text-sm mb-6">
+            {{ i18n.t("auth_login_or") }}
+        </p>
+
+        <!-- Mastodon OAuth. -->
+        <form method="get" action="/api/v1/auth/mastodon"
+              class="space-y-3 mb-4">
+            <label for="mastodon-handle" class="block text-sm mb-1">
+                {{ i18n.t("auth_login_mastodon_handle") }}
+            </label>
+            <div class="flex gap-2">
+                <input id="mastodon-handle" name="handle" type="text"
+                       placeholder="{{ i18n.t("auth_login_mastodon_placeholder") }}"
+                       required
+                       class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
+                <button type="submit"
+                        class="bg-surface border border-border rounded px-4 py-2 hover:bg-border">
+                    {{ i18n.t("auth_login_mastodon_submit") }}
+                </button>
+            </div>
+        </form>
+
+        {% if orcid_enabled %}
+        <!-- ORCID OAuth. -->
+        <a href="/api/v1/auth/orcid"
+           class="block text-center bg-surface border border-border rounded px-4 py-2 hover:bg-border mb-8 no-underline text-fg">
+            {{ i18n.t("auth_login_orcid") }}
+        </a>
+        {% endif %}
+
+        <p class="text-center text-sm text-muted">
+            {{ i18n.t("auth_login_no_account") }}
+            <a href="/auth/register" class="text-accent hover:underline">
+                {{ i18n.t("auth_login_register_link") }}
+            </a>
+        </p>
+{% endblock %}
+
+{% block style %}
+<script defer src="/assets/auth.js"></script>
+{% endblock %}

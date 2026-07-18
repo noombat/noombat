@@ -15,11 +15,18 @@
 <body class="bg-bg text-fg font-sans leading-relaxed">
     <a class="skip-link" href="#main-content">{{ i18n.t("skip_to_content") }}</a>
     <nav aria-label="{{ i18n.t("aria_nav_main") }}"
-         class="border-b border-border px-4 py-3">
+         class="border-b border-border px-4 py-3 flex items-center gap-4">
         <a href="/"
-           class="text-accent no-underline mr-4 hover:underline">
+           class="text-accent no-underline hover:underline">
             {{ i18n.t("nav_brand") }}
         </a>
+        <span class="flex-1"></span>
+        {% block nav_links %}
+        <a href="/auth/login"
+           class="text-sm text-muted no-underline hover:text-fg">
+            {{ i18n.t("auth_login_title") }}
+        </a>
+        {% endblock %}
     </nav>
     <main id="main-content" role="main"
           class="max-w-2xl mx-auto px-4 py-8">

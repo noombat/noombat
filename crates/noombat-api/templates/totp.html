@@ -1,0 +1,69 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("auth_totp_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("auth_totp_heading") }}</h1>
+
+        {% if totp_enabled %}
+        <p class="mb-4">{{ i18n.t("auth_totp_enabled") }}</p>
+        <form hx-delete="/api/v1/auth/totp"
+              hx-confirm="{{ i18n.t("auth_totp_disable") }}?"
+              class="inline">
+            <noscript>
+                <p class="text-sm text-muted mb-2">
+                    JavaScript is required to disable two-factor authentication.
+                </p>
+            </noscript>
+            <button type="submit"
+                    class="bg-red-600 text-white rounded px-4 py-2 hover:opacity-90 text-sm">
+                {{ i18n.t("auth_totp_disable") }}
+            </button>
+        </form>
+        {% else %}
+
+        {% if let Some(qr_data_uri) = qr_data_uri %}
+        <p class="mb-4 text-sm">{{ i18n.t("auth_totp_scan") }}</p>
+        <div class="flex justify-center mb-4">
+            <img src="{{ qr_data_uri }}" alt="{{ i18n.t("aria_totp_qr") }}"
+                 width="200" height="200"
+                 class="border border-border rounded">
+        </div>
+
+        <details class="mb-6">
+            <summary class="text-sm text-muted cursor-pointer hover:text-fg">
+                {{ i18n.t("auth_totp_manual") }}
+            </summary>
+            <code class="block mt-2 bg-surface border border-border rounded px-3 py-2 text-sm font-mono break-all select-all">
+                {{ secret_base32 }}
+            </code>
+        </details>
+
+        <div id="totp-enrolment">
+        <form method="post" action="/api/v1/auth/totp/verify"
+              hx-post="/api/v1/auth/totp/verify"
+              hx-target="#totp-enrolment"
+              hx-swap="innerHTML"
+              class="space-y-4">
+            <div>
+                <label for="totp-code" class="block text-sm mb-1">
+                    {{ i18n.t("auth_totp_verify_label") }}
+                </label>
+                <input id="totp-code" name="code" type="text"
+                       required inputmode="numeric" autocomplete="one-time-code"
+                       pattern="[0-9]{6}" maxlength="6"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg font-mono tracking-widest">
+            </div>
+            <button type="submit"
+                    class="w-full bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("auth_totp_verify_submit") }}
+            </button>
+        </form>
+        </div>
+        {% endif %}
+
+        {% endif %}
+{% endblock %}
