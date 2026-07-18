@@ -6,34 +6,35 @@
 -- ..... ACTORS .....
 
 CREATE TABLE actors (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_type          TEXT NOT NULL CHECK (actor_type IN ('individual', 'company', 'group')),
-    ap_id               TEXT NOT NULL UNIQUE,
-    username            TEXT NOT NULL,
-    display_name        TEXT,
-    avatar_url          TEXT,
-    header_url          TEXT,
-    summary_md          TEXT,
-    summary_html        TEXT,
-    public_key_pem      TEXT NOT NULL,
-    private_key_pem     TEXT,
-    ed25519_public_key  TEXT, -- multibase-encoded Ed25519 public key; NOT NULL for local actors (generated at creation); nullable for remote actors
-    ed25519_private_key TEXT, -- Ed25519 private key; NOT NULL for local actors; NULL for remote actors
-    auth_key_hash       TEXT, -- Argon2id hash of the authentication key (split key derivation); NULL for OAuth-only users
-    domain              TEXT NOT NULL,
-    is_local            BOOLEAN NOT NULL DEFAULT TRUE,
-    inbox_url           TEXT, -- remote actors only: their declared AP inbox URI
-    shared_inbox_url    TEXT, -- remote actors only: their endpoints.sharedInbox URI (delivery deduplication)
-    instance_role       TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
-    actor_status        TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
-    chatmail_addr       TEXT,
-    chatmail_cred       BYTEA,
-    orcid               TEXT,
-    moved_to            TEXT, -- target actor URI if migrated via Move activity
-    headline            TEXT,
-    actor_privacy       JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_type                   TEXT NOT NULL CHECK (actor_type IN ('individual', 'company', 'group')),
+    ap_id                        TEXT NOT NULL UNIQUE,
+    username                     TEXT NOT NULL,
+    display_name                 TEXT,
+    avatar_url                   TEXT,
+    header_url                   TEXT,
+    summary_md                   TEXT,
+    summary_html                 TEXT,
+    public_key_pem               TEXT NOT NULL,
+    private_key_pem              TEXT,
+    ed25519_public_key           TEXT, -- multibase-encoded Ed25519 public key; NOT NULL for local actors (generated at creation); nullable for remote actors
+    ed25519_private_key          TEXT, -- Ed25519 private key; NOT NULL for local actors; NULL for remote actors
+    auth_key_hash                TEXT, -- Argon2id hash of the authentication key (split key derivation); NULL for OAuth-only users
+    domain                       TEXT NOT NULL,
+    is_local                     BOOLEAN NOT NULL DEFAULT TRUE,
+    inbox_url                    TEXT, -- remote actors only: their declared AP inbox URI
+    shared_inbox_url             TEXT, -- remote actors only: their endpoints.sharedInbox URI (delivery deduplication)
+    instance_role                TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
+    actor_status                 TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
+    chatmail_addr                TEXT,
+    chatmail_cred                BYTEA,
+    chat_requires_reprovisioning BOOLEAN NOT NULL DEFAULT FALSE,
+    orcid                        TEXT,
+    moved_to                     TEXT, -- target actor URI if migrated via Move activity
+    headline                     TEXT,
+    actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
+    created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
