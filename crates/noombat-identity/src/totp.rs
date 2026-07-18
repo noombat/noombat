@@ -127,8 +127,8 @@ fn build_totp(secret_base32: &str, account_name: &str, issuer: &str) -> Result<T
 
     TOTP::new(
         Algorithm::SHA1,
-        6, // digits
-        1, // skew (+/- 1 time step)
+        6,  // digits
+        1,  // skew (+/- 1 time step)
         30, // step (seconds)
         secret_bytes,
         Some(issuer.to_owned()),

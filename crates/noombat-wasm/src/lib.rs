@@ -4,7 +4,7 @@
 //! WASM bridge for the Noombat chat island.
 //!
 //! Compiles to `wasm32-unknown-unknown` via `wasm-pack`.
-//! 
+//!
 //! Exposes:
 //! - **Autocrypt state management** via `ChatCrypto`.
 //! - **OpenPGP key generation, message encryption, and decryption**
@@ -119,7 +119,7 @@ impl ChatCrypto {
 /// - `plaintext`: the raw message body.
 ///
 /// Returns the encrypted OpenPGP message as binary bytes.
-/// 
+///
 /// # Limitations
 ///
 /// Messages are currently encrypted but not signed. The `pgp` 0.20
