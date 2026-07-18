@@ -11,10 +11,19 @@ export default defineConfig({
   build: {
     outDir: "dist",
     rollupOptions: {
+      // Suppress the eval warning from HTMX's own source code.
+      // HTMX uses eval() internally for dynamic attribute evaluation
+      // (e.g. hx-on:click).
+      onwarn(warning, warn) {
+        if (warning.code === "EVAL" && warning.id?.includes("htmx")) return;
+        warn(warning);
+      },
       input: {
         main: "src/main.css",
         htmx: "src/htmx.ts",
+        auth: "src/auth.ts",
         editor: "src/editor/index.tsx",
+        chat: "src/chat/index.tsx",
       },
       output: {
         // CSS assets keep stable names; JS islands get hashed names.
@@ -22,7 +31,12 @@ export default defineConfig({
         // references it with a fixed <script src="/assets/htmx.js">.
         assetFileNames: "assets/[name][extname]",
         entryFileNames: (chunkInfo) => {
-          if (chunkInfo.name === "htmx" || chunkInfo.name === "editor") {
+          if (
+            chunkInfo.name === "htmx" ||
+            chunkInfo.name === "auth" ||
+            chunkInfo.name === "editor" ||
+            chunkInfo.name === "chat"
+          ) {
             return "assets/[name].js";
           }
           return "assets/[name]-[hash].js";
