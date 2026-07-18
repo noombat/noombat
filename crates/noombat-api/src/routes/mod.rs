@@ -4,6 +4,7 @@
 
 pub mod actors;
 pub mod auth;
+pub mod chat;
 pub mod cv;
 pub mod federation;
 pub mod feed;
@@ -15,3 +16,4 @@ pub mod jobs;
 pub mod posts;
 pub mod profile_sections;
 pub mod search;
+pub mod ws_chat;
