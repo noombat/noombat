@@ -36,6 +36,45 @@ pub fn router() -> Router<AppState> {
         )
         .route("/users/{username}/followers", get(get_followers))
         .route("/users/{username}/following", get(get_following))
+        // Aliases (account migration prerequisite).
+        .route(
+            "/users/{username}/aliases",
+            axum::routing::post(create_alias),
+        )
+        .route(
+            "/users/{username}/aliases/{alias_id}",
+            axum::routing::delete(delete_alias),
+        )
+        // Account Move.
+        .route("/users/{username}/move", axum::routing::post(initiate_move))
+        // Verified links (add).
+        .route(
+            "/users/{username}/links",
+            axum::routing::post(create_verified_link),
+        )
+        // Profile section CRUD (experiences, educations, publications).
+        .route(
+            "/users/{username}/experiences",
+            axum::routing::post(create_experience),
+        )
+        .route(
+            "/users/{username}/educations",
+            axum::routing::post(create_education),
+        )
+        .route(
+            "/users/{username}/publications",
+            axum::routing::post(create_publication),
+        )
+        .route("/users/{username}/jobs", axum::routing::post(create_job))
+        // Pending follow requests (accept/reject).
+        .route(
+            "/users/{username}/pending_follows/{follow_id}/accept",
+            axum::routing::post(accept_follow),
+        )
+        .route(
+            "/users/{username}/pending_follows/{follow_id}/reject",
+            axum::routing::post(reject_follow),
+        )
         // Human-facing profile URL. Serves the same HTML profile page
         // as GET /users/{username}. Content-negotiates AP JSON like
         // Mastodon's /@{username} endpoint; the canonical AP `id`
@@ -44,6 +83,35 @@ pub fn router() -> Router<AppState> {
 }
 
 // ..... HELPERS .....
+
+/// Minimal HTML escaping for dynamic content in inline HTML fragments.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Verify that the authenticated principal owns the actor identified
+/// by the path `username`. Returns the actor's UUID on success, or
+/// `Forbidden` if the principal does not match.
+fn require_owner(
+    principal: &Option<axum::Extension<crate::middleware::Principal>>,
+    path_username: &str,
+) -> Result<Uuid, ApiError> {
+    let p = principal
+        .as_ref()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = p.actor_id().ok_or(ApiError(NoombatError::Forbidden))?;
+    let principal_username = p
+        .username
+        .as_deref()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+    if principal_username != path_username {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+    Ok(actor_id)
+}
 
 fn wants_activity_json(headers: &HeaderMap) -> bool {
     headers
@@ -756,4 +824,303 @@ struct ProfilePage {
     publications: Vec<noombat_identity::profile::Publication>,
     verified_links: Vec<noombat_identity::verification::VerifiedLink>,
     custom_sections: Vec<noombat_identity::profile::CustomSection>,
+}
+
+// ..... Alias CRUD .....
+
+#[derive(Deserialize)]
+struct CreateAliasRequest {
+    alias: String,
+}
+
+async fn create_alias(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreateAliasRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO actor_aliases (actor_id, alias) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(actor_id)
+    .bind(&req.alias)
+    .fetch_one(&state.pool)
+    .await?;
+
+    // Return an HTML fragment for HTMX to append.
+    let html = format!(
+        r##"<li class="flex items-center gap-2 border-b border-border pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-muted hover:text-red-600 text-xs">✕</button></li>"##,
+        id = id,
+        alias = html_escape(&req.alias),
+        username = username,
+    );
+    Ok((StatusCode::CREATED, axum::response::Html(html)))
+}
+
+async fn delete_alias(
+    State(state): State<AppState>,
+    Path((username, alias_id)): Path<(String, Uuid)>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    sqlx::query("DELETE FROM actor_aliases WHERE id = $1 AND actor_id = $2")
+        .bind(alias_id)
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(StatusCode::OK)
+}
+
+// ..... Account Move .....
+
+#[derive(Deserialize)]
+struct MoveRequest {
+    target: String,
+}
+
+async fn initiate_move(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<MoveRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    // Store the move target on the actor record.
+    sqlx::query("UPDATE actors SET moved_to = $1 WHERE id = $2")
+        .bind(&req.target)
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await?;
+
+    // The federation service will emit a Move activity to all
+    // followers when it detects a non-NULL moved_to value.
+    // That logic is in noombat-federation and is not duplicated here.
+
+    Ok(StatusCode::NO_CONTENT)
+}
+
+// ..... Verified links (create) .....
+
+#[derive(Deserialize)]
+struct CreateLinkRequest {
+    url: String,
+}
+
+async fn create_verified_link(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreateLinkRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO verified_links (actor_id, url) VALUES ($1, $2) RETURNING id",
+    )
+    .bind(actor_id)
+    .bind(&req.url)
+    .fetch_one(&state.pool)
+    .await?;
+
+    let html = format!(
+        r##"<li class="flex items-center gap-2 border-b border-border pb-2" id="link-{id}"><a href="{url}" class="text-accent text-sm no-underline hover:underline truncate flex-1" rel="noopener noreferrer" target="_blank">{url}</a><span class="text-muted text-xs">pending</span><button type="button" hx-delete="/users/{username}/links/{id}" hx-target="#link-{id}" hx-swap="outerHTML" class="text-muted hover:text-red-600 text-xs">✕</button></li>"##,
+        id = id,
+        url = html_escape(&req.url),
+        username = username,
+    );
+    Ok((StatusCode::CREATED, axum::response::Html(html)))
+}
+
+// ..... Profile section stubs .....
+
+#[derive(Deserialize)]
+struct CreateExperienceRequest {
+    title: String,
+    company: String,
+    start_date: String,
+    end_date: Option<String>,
+    description_md: Option<String>,
+    visibility: Option<String>,
+}
+
+async fn create_experience(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreateExperienceRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    // Normalise empty optional strings from HTML form inputs to None.
+    let end_date = req.end_date.as_deref().filter(|s| !s.is_empty());
+    let description_md = req.description_md.as_deref().filter(|s| !s.is_empty());
+
+    sqlx::query(
+        "INSERT INTO experiences (actor_id, title, company, start_date, end_date, description_md, visibility, ap_object) \
+         VALUES ($1, $2, $3, $4::date, $5::date, $6, $7, '{}'::jsonb)"
+    )
+    .bind(actor_id)
+    .bind(&req.title)
+    .bind(&req.company)
+    .bind(&req.start_date)
+    .bind(end_date)
+    .bind(description_md)
+    .bind(req.visibility.as_deref().unwrap_or("public"))
+    .execute(&state.pool)
+    .await?;
+
+    Ok(StatusCode::CREATED)
+}
+
+#[derive(Deserialize)]
+struct CreateEducationRequest {
+    institution: String,
+    degree: Option<String>,
+    field_of_study: Option<String>,
+    start_date: String,
+    end_date: Option<String>,
+    visibility: Option<String>,
+}
+
+async fn create_education(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreateEducationRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    let degree = req.degree.as_deref().filter(|s| !s.is_empty());
+    let field_of_study = req.field_of_study.as_deref().filter(|s| !s.is_empty());
+    let end_date = req.end_date.as_deref().filter(|s| !s.is_empty());
+
+    sqlx::query(
+        "INSERT INTO educations (actor_id, institution, degree, field_of_study, start_date, end_date, visibility, ap_object) \
+         VALUES ($1, $2, $3, $4, $5::date, $6::date, $7, '{}'::jsonb)"
+    )
+    .bind(actor_id)
+    .bind(&req.institution)
+    .bind(degree)
+    .bind(field_of_study)
+    .bind(&req.start_date)
+    .bind(end_date)
+    .bind(req.visibility.as_deref().unwrap_or("public"))
+    .execute(&state.pool)
+    .await?;
+
+    Ok(StatusCode::CREATED)
+}
+
+#[derive(Deserialize)]
+struct CreatePublicationRequest {
+    doi: String,
+    visibility: Option<String>,
+}
+
+async fn create_publication(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreatePublicationRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    // The DOI metadata resolution (CrossRef or DataCite) is handled by
+    // the noombat-identity crate. For the HTML form handler, we
+    // insert a placeholder row and defer metadata import to a
+    // background task (matching the existing JSON API pattern).
+    sqlx::query(
+        "INSERT INTO publications (actor_id, doi, title, authors, doi_metadata, fetched_at, visibility, ap_object) \
+         VALUES ($1, $2, $2, '[]'::jsonb, '{}'::jsonb, now(), $3, '{}'::jsonb)"
+    )
+    .bind(actor_id)
+    .bind(&req.doi)
+    .bind(req.visibility.as_deref().unwrap_or("public"))
+    .execute(&state.pool)
+    .await?;
+
+    Ok(StatusCode::CREATED)
+}
+
+#[derive(Deserialize)]
+struct CreateJobRequest {
+    title: String,
+    description_md: String,
+    location: Option<String>,
+    remote: Option<bool>,
+    salary_min: Option<i32>,
+    salary_max: Option<i32>,
+    currency: Option<String>,
+}
+
+async fn create_job(
+    State(state): State<AppState>,
+    Path(username): Path<String>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    Json(req): Json<CreateJobRequest>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    let ap_id = format!("https://{}/jobs/{}", state.domain, Uuid::new_v4());
+
+    // Render Markdown to HTML via the markup pipeline.
+    let description_html = noombat_markup::render(&req.description_md).html;
+
+    sqlx::query(
+        "INSERT INTO job_listings (actor_id, ap_id, title, description_md, description_html, location, remote, salary_min, salary_max, currency) \
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)"
+    )
+    .bind(actor_id)
+    .bind(&ap_id)
+    .bind(&req.title)
+    .bind(&req.description_md)
+    .bind(&description_html)
+    .bind(&req.location)
+    .bind(req.remote.unwrap_or(false))
+    .bind(req.salary_min)
+    .bind(req.salary_max)
+    .bind(&req.currency)
+    .execute(&state.pool)
+    .await?;
+
+    Ok(StatusCode::CREATED)
+}
+
+// ..... Follow request management .....
+
+async fn accept_follow(
+    State(state): State<AppState>,
+    Path((username, follow_id)): Path<(String, Uuid)>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    sqlx::query("UPDATE follows SET accepted = TRUE WHERE id = $1 AND following_id = $2")
+        .bind(follow_id)
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(StatusCode::OK)
+}
+
+async fn reject_follow(
+    State(state): State<AppState>,
+    Path((username, follow_id)): Path<(String, Uuid)>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+) -> Result<StatusCode, ApiError> {
+    let actor_id = require_owner(&principal, &username)?;
+
+    sqlx::query("DELETE FROM follows WHERE id = $1 AND following_id = $2")
+        .bind(follow_id)
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(StatusCode::OK)
 }
