@@ -40,6 +40,8 @@ CREATE INDEX idx_actors_username_domain ON actors (username, domain);
 CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain) WHERE is_local = TRUE;
 CREATE INDEX idx_actors_domain ON actors (domain);
 CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
+CREATE INDEX idx_actors_orcid ON actors (orcid) WHERE orcid IS NOT NULL;
+CREATE INDEX idx_actors_chatmail ON actors (chatmail_addr) WHERE chatmail_addr IS NOT NULL;
 
 -- Actor aliases: URIs that this actor has declared as prior identities.
 -- Required by the Move protocol: the target actor must list the source
@@ -539,6 +541,8 @@ CREATE INDEX idx_reports_reporter ON reports (reporter_id);
 CREATE INDEX idx_reports_target_actor ON reports (target_actor_id) WHERE target_actor_id IS NOT NULL;
 CREATE INDEX idx_reports_target_post ON reports (target_post_id) WHERE target_post_id IS NOT NULL;
 CREATE INDEX idx_reports_status ON reports (status) WHERE status = 'open';
+CREATE INDEX idx_chat_reports_status ON chat_reports (status) WHERE status = 'open';
+CREATE INDEX idx_chat_reports_reporter ON chat_reports (reporter_id);
 
 -- ..... UPDATED_AT TRIGGER .....
 
