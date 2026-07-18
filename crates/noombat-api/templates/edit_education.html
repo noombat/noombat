@@ -1,0 +1,66 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("edit_education_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_education_title") }}</h1>
+
+        <form hx-post="/users/{{ username }}/educations"
+              hx-swap="none"
+              class="space-y-4 max-w-lg">
+
+            <div>
+                <label for="edu-inst" class="block text-sm mb-1">{{ i18n.t("edu_institution") }}</label>
+                <input id="edu-inst" name="institution" type="text" required
+                       value="{{ institution }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="edu-degree" class="block text-sm mb-1">{{ i18n.t("edu_degree") }}</label>
+                <input id="edu-degree" name="degree" type="text"
+                       value="{{ degree }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="edu-field" class="block text-sm mb-1">{{ i18n.t("edu_field") }}</label>
+                <input id="edu-field" name="field_of_study" type="text"
+                       value="{{ field_of_study }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div class="flex gap-4">
+                <div class="flex-1">
+                    <label for="edu-start" class="block text-sm mb-1">{{ i18n.t("exp_start_date") }}</label>
+                    <input id="edu-start" name="start_date" type="date" required
+                           value="{{ start_date }}"
+                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                </div>
+                <div class="flex-1">
+                    <label for="edu-end" class="block text-sm mb-1">{{ i18n.t("exp_end_date") }}</label>
+                    <input id="edu-end" name="end_date" type="date"
+                           value="{{ end_date }}"
+                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                </div>
+            </div>
+
+            <div>
+                <label for="edu-vis" class="block text-sm mb-1">{{ i18n.t("edit_visibility") }}</label>
+                <select id="edu-vis" name="visibility"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg">
+                    <option value="public" {% if visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                    <option value="followers" {% if visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                    <option value="private" {% if visibility == "private" %}selected{% endif %}>{{ i18n.t("vis_private") }}</option>
+                </select>
+            </div>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+{% endblock %}

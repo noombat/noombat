@@ -1,0 +1,50 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("settings_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("settings_heading") }}</h1>
+
+        <nav class="space-y-3 max-w-lg" aria-label="{{ i18n.t("settings_heading") }}">
+            <a href="/settings/profile" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("edit_profile_title") }}</span>
+                <span class="block text-sm text-muted">{{ i18n.t("edit_display_name") }}, {{ i18n.t("edit_headline") }}, {{ i18n.t("edit_summary") }}</span>
+            </a>
+            <a href="/settings/experience" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("profile_experience") }}</span>
+            </a>
+            <a href="/settings/education" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("profile_education") }}</span>
+            </a>
+            <a href="/settings/skills" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("edit_skills_title") }}</span>
+            </a>
+            <a href="/settings/publications" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("profile_publications") }}</span>
+            </a>
+            <a href="/settings/links" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("edit_links_title") }}</span>
+            </a>
+            <a href="/settings/privacy" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("privacy_title") }}</span>
+            </a>
+            <a href="/settings/blocked" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("blocked_muted_heading") }}</span>
+            </a>
+            <a href="/settings/follow-requests" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("follow_requests_title") }}</span>
+            </a>
+            <a href="/settings/chat" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("chat_cred_title") }}</span>
+            </a>
+            <a href="/auth/totp" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("auth_totp_title") }}</span>
+            </a>
+            <a href="/settings/migrate" class="block border border-border rounded px-4 py-3 no-underline hover:bg-surface text-fg">
+                <span class="font-semibold">{{ i18n.t("migrate_title") }}</span>
+            </a>
+        </nav>
+{% endblock %}

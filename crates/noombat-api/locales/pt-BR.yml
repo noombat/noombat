@@ -107,3 +107,65 @@ chat_cred_copy: "Copiar"
 chat_cred_closed_notice: "Mensagens só podem ser enviadas a outros usuários Noombat. Comunicação com endereços fora da rede Noombat não é suportada."
 chat_cred_qr_heading: "QR code para Delta Chat"
 chat_cred_qr_description: "Escaneie este QR code com o Delta Chat para configurar a conta automaticamente."
+
+# Edição de perfil.
+edit_profile_title: "Editar perfil"
+edit_profile_heading: "Editar seu perfil"
+edit_display_name: "Nome de exibição"
+edit_headline: "Título profissional"
+edit_summary: "Sobre"
+edit_avatar_url: "URL do avatar"
+edit_save: "Salvar"
+edit_visibility: "Visibilidade"
+vis_public: "Público"
+vis_followers: "Somente seguidores"
+vis_private: "Privado"
+vis_unlisted: "Não listado"
+
+# Experiência.
+edit_experience_title: "Adicionar experiência"
+exp_title: "Cargo"
+exp_company: "Empresa"
+exp_start_date: "Data de início"
+exp_end_date: "Data de término"
+exp_description: "Descrição"
+
+# Educação.
+edit_education_title: "Adicionar educação"
+edu_institution: "Instituição"
+edu_degree: "Grau"
+edu_field: "Área de estudo"
+
+# Habilidades.
+edit_skills_title: "Habilidades"
+skill_placeholder: "Adicionar habilidade"
+skill_add: "Adicionar"
+skill_remove: "Remover"
+
+# Publicações.
+edit_pub_title: "Adicionar publicação"
+pub_doi: "DOI"
+pub_doi_help: "Insira um DOI e os metadados serão importados automaticamente."
+pub_add: "Adicionar publicação"
+
+# Links verificados.
+edit_links_title: "Links verificados"
+link_verify_help: "Adicione o seguinte HTML ao seu site externo para verificar a propriedade:"
+link_add: "Adicionar link"
+link_remove: "Remover"
+link_pending: "pendente"
+
+# Vagas de emprego.
+edit_job_title: "Publicar vaga"
+job_title_label: "Título da vaga"
+job_description: "Descrição"
+job_location: "Localização"
+job_remote: "Remoto"
+job_salary_min: "Salário mínimo"
+job_salary_max: "Salário máximo"
+job_currency: "Moeda"
+job_publish: "Publicar"
+
+# Navegação de configurações.
+settings_title: "Configurações"
+settings_heading: "Configurações"

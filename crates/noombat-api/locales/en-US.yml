@@ -107,3 +107,65 @@ chat_cred_copy: "Copy"
 chat_cred_closed_notice: "Messages can only be sent to other Noombat users. Communication with addresses outside the Noombat network is not supported."
 chat_cred_qr_heading: "Delta Chat QR code"
 chat_cred_qr_description: "Scan this QR code with Delta Chat to configure the account automatically."
+
+# Profile editing.
+edit_profile_title: "Edit profile"
+edit_profile_heading: "Edit your profile"
+edit_display_name: "Display name"
+edit_headline: "Headline"
+edit_summary: "About"
+edit_avatar_url: "Avatar URL"
+edit_save: "Save"
+edit_visibility: "Visibility"
+vis_public: "Public"
+vis_followers: "Followers only"
+vis_private: "Private"
+vis_unlisted: "Unlisted"
+
+# Experience.
+edit_experience_title: "Add experience"
+exp_title: "Title"
+exp_company: "Company"
+exp_start_date: "Start date"
+exp_end_date: "End date"
+exp_description: "Description"
+
+# Education.
+edit_education_title: "Add education"
+edu_institution: "Institution"
+edu_degree: "Degree"
+edu_field: "Field of study"
+
+# Skills.
+edit_skills_title: "Skills"
+skill_placeholder: "Add a skill"
+skill_add: "Add"
+skill_remove: "Remove"
+
+# Publications.
+edit_pub_title: "Add publication"
+pub_doi: "DOI"
+pub_doi_help: "Enter a DOI and the metadata will be imported automatically."
+pub_add: "Add publication"
+
+# Verified links.
+edit_links_title: "Verified links"
+link_verify_help: "Add the following HTML to your external site to verify ownership:"
+link_add: "Add link"
+link_remove: "Remove"
+link_pending: "pending"
+
+# Job listings.
+edit_job_title: "Post a job"
+job_title_label: "Job title"
+job_description: "Description"
+job_location: "Location"
+job_remote: "Remote"
+job_salary_min: "Salary min"
+job_salary_max: "Salary max"
+job_currency: "Currency"
+job_publish: "Publish"
+
+# Settings navigation.
+settings_title: "Settings"
+settings_heading: "Settings"

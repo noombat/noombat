@@ -1,0 +1,39 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("edit_pub_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_pub_title") }}</h1>
+
+        <p class="text-sm text-muted mb-4">{{ i18n.t("pub_doi_help") }}</p>
+
+        <form hx-post="/users/{{ username }}/publications"
+              hx-swap="none"
+              class="space-y-4 max-w-lg">
+
+            <div>
+                <label for="pub-doi" class="block text-sm mb-1">{{ i18n.t("pub_doi") }}</label>
+                <input id="pub-doi" name="doi" type="text" required
+                       placeholder="10.1000/xyz123"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg font-mono">
+            </div>
+
+            <div>
+                <label for="pub-vis" class="block text-sm mb-1">{{ i18n.t("edit_visibility") }}</label>
+                <select id="pub-vis" name="visibility"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg">
+                    <option value="public" selected>{{ i18n.t("vis_public") }}</option>
+                    <option value="followers">{{ i18n.t("vis_followers") }}</option>
+                    <option value="private">{{ i18n.t("vis_private") }}</option>
+                </select>
+            </div>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("pub_add") }}
+            </button>
+        </form>
+{% endblock %}

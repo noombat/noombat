@@ -1,0 +1,57 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("edit_profile_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_profile_heading") }}</h1>
+
+        <form hx-patch="/users/{{ username }}"
+              hx-swap="none"
+              class="space-y-4 max-w-lg">
+
+            <div>
+                <label for="display-name" class="block text-sm mb-1">{{ i18n.t("edit_display_name") }}</label>
+                <input id="display-name" name="display_name" type="text"
+                       value="{{ display_name }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="headline" class="block text-sm mb-1">{{ i18n.t("edit_headline") }}</label>
+                <input id="headline" name="headline" type="text"
+                       value="{{ headline }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="summary" class="block text-sm mb-1">{{ i18n.t("edit_summary") }}</label>
+                <div id="editor-mount"
+                     data-name="summary_md"
+                     data-value="{{ summary_md }}"
+                     data-rows="8"
+                     data-locale="{{ i18n.lang_attr() }}">
+                    <noscript>
+                        <textarea name="summary_md" rows="8"
+                                  class="w-full border border-border rounded p-3 font-mono text-sm bg-surface text-fg">{{ summary_md }}</textarea>
+                    </noscript>
+                </div>
+            </div>
+
+            <div>
+                <label for="avatar-url" class="block text-sm mb-1">{{ i18n.t("edit_avatar_url") }}</label>
+                <input id="avatar-url" name="avatar_url" type="url"
+                       value="{{ avatar_url }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+
+        <script type="module" src="/assets/editor.js"></script>
+{% endblock %}

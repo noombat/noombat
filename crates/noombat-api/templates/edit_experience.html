@@ -1,0 +1,66 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("edit_experience_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_experience_title") }}</h1>
+
+        <form id="experience-form"
+              hx-post="/users/{{ username }}/experiences"
+              hx-swap="none"
+              class="space-y-4 max-w-lg">
+
+            <div>
+                <label for="exp-title" class="block text-sm mb-1">{{ i18n.t("exp_title") }}</label>
+                <input id="exp-title" name="title" type="text" required
+                       value="{{ title }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="exp-company" class="block text-sm mb-1">{{ i18n.t("exp_company") }}</label>
+                <input id="exp-company" name="company" type="text" required
+                       value="{{ company }}"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div class="flex gap-4">
+                <div class="flex-1">
+                    <label for="exp-start" class="block text-sm mb-1">{{ i18n.t("exp_start_date") }}</label>
+                    <input id="exp-start" name="start_date" type="date" required
+                           value="{{ start_date }}"
+                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                </div>
+                <div class="flex-1">
+                    <label for="exp-end" class="block text-sm mb-1">{{ i18n.t("exp_end_date") }}</label>
+                    <input id="exp-end" name="end_date" type="date"
+                           value="{{ end_date }}"
+                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                </div>
+            </div>
+
+            <div>
+                <label for="exp-desc" class="block text-sm mb-1">{{ i18n.t("exp_description") }}</label>
+                <textarea id="exp-desc" name="description_md" rows="4"
+                          class="w-full border border-border rounded p-3 font-mono text-sm bg-surface text-fg">{{ description_md }}</textarea>
+            </div>
+
+            <div>
+                <label for="exp-vis" class="block text-sm mb-1">{{ i18n.t("edit_visibility") }}</label>
+                <select id="exp-vis" name="visibility"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg">
+                    <option value="public" {% if visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                    <option value="followers" {% if visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                    <option value="private" {% if visibility == "private" %}selected{% endif %}>{{ i18n.t("vis_private") }}</option>
+                </select>
+            </div>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+{% endblock %}

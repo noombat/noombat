@@ -1,0 +1,37 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("edit_skills_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_skills_title") }}</h1>
+
+        <form hx-post="/users/{{ username }}/skills"
+              hx-target="#skills-list"
+              hx-swap="beforeend"
+              class="flex gap-2 mb-6 max-w-lg">
+            <input name="name" type="text" required placeholder="{{ i18n.t("skill_placeholder") }}"
+                   class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
+            <button type="submit"
+                    class="bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("skill_add") }}
+            </button>
+        </form>
+
+        <div id="skills-list" class="flex flex-wrap gap-2">
+            {% for skill in skills %}
+            <span class="bg-surface border border-border px-3 py-1 rounded text-sm flex items-center gap-2"
+                  id="skill-{{ skill.id }}">
+                {{ skill.name }}
+                <button type="button"
+                        hx-delete="/users/{{ username }}/skills/{{ skill.id }}"
+                        hx-target="#skill-{{ skill.id }}"
+                        hx-swap="outerHTML"
+                        class="text-muted hover:text-red-600 text-xs"
+                        aria-label="{{ i18n.t("skill_remove") }}: {{ skill.name }}">✕</button>
+            </span>
+            {% endfor %}
+        </div>
+{% endblock %}
