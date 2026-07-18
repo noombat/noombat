@@ -7,6 +7,7 @@
 rust_i18n::i18n!("locales", fallback = "en-US");
 
 pub mod auth;
+pub mod cookie;
 pub mod error;
 pub mod i18n;
 pub mod middleware;

@@ -9,6 +9,7 @@ description = "Axum routes, server-side HTML Askama templates, and international
 [dependencies]
 noombat-core = { workspace = true }
 noombat-ap = { workspace = true }
+noombat-chat = { workspace = true }
 noombat-federation = { workspace = true }
 noombat-identity = { workspace = true }
 noombat-jobs = { workspace = true }

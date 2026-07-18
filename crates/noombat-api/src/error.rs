@@ -17,6 +17,12 @@ impl From<NoombatError> for ApiError {
     }
 }
 
+impl From<sqlx::Error> for ApiError {
+    fn from(e: sqlx::Error) -> Self {
+        Self(NoombatError::from(e))
+    }
+}
+
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, body) = match &self.0 {
