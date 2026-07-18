@@ -68,6 +68,10 @@ struct Config {
     chatmail_available: bool,
     /// Chatmail domain (e.g. `chat.noombat.social`).
     chatmail_domain: Option<String>,
+    /// Chatmail admin sidecar REST API URL (internal-only).
+    chatmail_admin_url: Option<String>,
+    /// Shared secret for authenticating requests to the admin sidecar.
+    chatmail_admin_secret: Option<String>,
     /// Whether group support is enabled (default `false`).
     #[serde(default)]
     groups_enabled: bool,
@@ -80,6 +84,19 @@ struct Config {
     /// Redis connection URL (e.g. `redis://redis:6379`).
     /// If unset, rate limiting and session storage are disabled.
     redis_url: Option<String>,
+    /// JWT signing secret for session tokens (HS256). Must be at
+    /// least 32 bytes. If unset, session-based auth is disabled.
+    jwt_secret: Option<String>,
+    /// Access-token lifetime in seconds (default: 900 = 15 min).
+    #[serde(default = "default_access_ttl")]
+    access_ttl_secs: i64,
+    /// Refresh-token lifetime in seconds (default: 2592000 = 30 days).
+    #[serde(default = "default_refresh_ttl")]
+    refresh_ttl_secs: i64,
+    /// ORCID OAuth client ID.
+    orcid_client_id: Option<String>,
+    /// ORCID OAuth client secret.
+    orcid_client_secret: Option<String>,
 }
 
 fn default_host() -> String {
@@ -103,6 +120,12 @@ fn default_reverify_interval() -> u64 {
 }
 fn default_reverify_max_age() -> i32 {
     7
+}
+fn default_access_ttl() -> i64 {
+    900
+}
+fn default_refresh_ttl() -> i64 {
+    2_592_000
 }
 
 #[tokio::main]
@@ -306,6 +329,37 @@ async fn main() -> anyhow::Result<()> {
         None
     };
 
+    // Session configuration (optional).
+    let session_config = config.jwt_secret.as_ref().map(|secret| {
+        info!("JWT session authentication enabled");
+        noombat_identity::session::SessionConfig {
+            jwt_secret: secret.clone(),
+            access_ttl_secs: config.access_ttl_secs,
+            refresh_ttl_secs: config.refresh_ttl_secs,
+        }
+    });
+    if session_config.is_none() {
+        info!(
+            "no NOOMBAT_JWT_SECRET configured; session-based auth disabled (dev-only bearer token active)"
+        );
+    }
+
+    // ORCID configuration (optional).
+    let orcid_config = match (&config.orcid_client_id, &config.orcid_client_secret) {
+        (Some(id), Some(secret)) => {
+            info!("ORCID OAuth enabled");
+            Some(noombat_identity::oauth_orcid::OrcidConfig {
+                client_id: id.clone(),
+                client_secret: secret.clone(),
+                ..Default::default()
+            })
+        }
+        _ => {
+            info!("ORCID OAuth not configured (Sign in with ORCID disabled)");
+            None
+        }
+    };
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -322,6 +376,11 @@ async fn main() -> anyhow::Result<()> {
             articles_enabled: config.articles_enabled,
         },
         redis,
+        session_config,
+        orcid_config,
+        chatmail_domain: config.chatmail_domain.clone(),
+        chatmail_admin_url: config.chatmail_admin_url.clone(),
+        chatmail_admin_secret: config.chatmail_admin_secret.clone(),
     };
     let app = noombat_api::build_router(state);
 

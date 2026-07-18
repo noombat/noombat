@@ -6,6 +6,8 @@ use std::sync::Arc;
 
 use noombat_core::auth::AuthorisationBackend;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
+use noombat_identity::oauth_orcid::OrcidConfig;
+use noombat_identity::session::SessionConfig;
 use redis::aio::ConnectionManager;
 use sqlx::PgPool;
 
@@ -29,4 +31,17 @@ pub struct AppState {
     /// session storage. `None` when `NOOMBAT_REDIS_URL` is not
     /// configured.
     pub redis: Option<ConnectionManager>,
+    /// Session (JWT) configuration. `None` when the JWT secret is
+    /// not configured (disables session-based auth).
+    pub session_config: Option<SessionConfig>,
+    /// ORCID OAuth configuration. `None` when ORCID client
+    /// credentials are not configured.
+    pub orcid_config: Option<OrcidConfig>,
+    /// Chatmail domain (e.g. `chat.noombat.social`). `None` when
+    /// chat is not configured.
+    pub chatmail_domain: Option<String>,
+    /// Chatmail admin sidecar REST API URL (internal-only).
+    pub chatmail_admin_url: Option<String>,
+    /// Shared secret for authenticating requests to the admin sidecar.
+    pub chatmail_admin_secret: Option<String>,
 }

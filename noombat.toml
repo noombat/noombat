@@ -32,6 +32,9 @@ policies_dir = "policies"
 # orcid_client_id = "APP-XXXXXXXXXXXX"
 # orcid_client_secret = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 
-# Co-deployed Chatmail server domain.
-# Every instance co-deploys its own Chatmail server and SMTP relay.
+# Co-deployed Chatmail relay domain.
+# Every instance co-deploys its own Chatmail relay and admin sidecar.
 chatmail_domain = "chat.localhost"
+
+# Chatmail admin sidecar REST API URL (internal-only).
+# chatmail_admin_url = "http://chatmail-admin:8444"
