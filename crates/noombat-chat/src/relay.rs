@@ -4,7 +4,7 @@
 //!
 //! This module implements the server-side proxy that relays encrypted
 //! message traffic between the browser (via WebSocket) and the
-//! Chatmail server (via IMAP/SMTP). The proxy sees only ciphertext
+//! Chatmail relay (via IMAP/SMTP). The proxy sees only ciphertext
 //! and Autocrypt header bytes, i.e. it never decrypts message bodies.
 
 use noombat_core::error::Result;

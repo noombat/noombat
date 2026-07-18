@@ -5,7 +5,7 @@
 //! IMAP/SMTP ciphertext relay for Chatmail.
 //!
 //! This crate implements a thin server-side proxy that relays traffic
-//! between the browser (via WebSocket) and a Chatmail server (via
+//! between the browser (via WebSocket) and a Chatmail relay (via
 //! IMAP/SMTP). It handles MIME envelope metadata and Autocrypt
 //! header extraction/injection, but never decrypts message bodies.
 //!
