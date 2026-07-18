@@ -1,0 +1,124 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("auth_upgrade_title") }}{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("auth_upgrade_heading") }}</h1>
+
+        <p class="mb-6 text-sm text-muted">
+            {{ i18n.t("chat_upgrade_prompt") }}
+        </p>
+
+        <noscript>
+            <div role="alert"
+                 class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-3 mb-6 text-sm">
+                JavaScript is required for secure password handling.
+            </div>
+        </noscript>
+
+        <form id="upgrade-form"
+              aria-label="{{ i18n.t("aria_auth_form") }}"
+              class="space-y-4 mb-8">
+
+            <div>
+                <label for="upgrade-password" class="block text-sm mb-1">
+                    {{ i18n.t("auth_register_password") }}
+                </label>
+                <input id="upgrade-password" type="password"
+                       required autocomplete="new-password" minlength="8"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
+                <label for="upgrade-password-confirm" class="block text-sm mb-1">
+                    {{ i18n.t("auth_register_password_confirm") }}
+                </label>
+                <input id="upgrade-password-confirm" type="password"
+                       required autocomplete="new-password" minlength="8"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <button type="submit"
+                    class="w-full bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("chat_upgrade_button") }}
+            </button>
+        </form>
+{% endblock %}
+
+{% block style %}
+<script defer src="/assets/auth.js"></script>
+<script>
+// Intercept the upgrade form. The upgrade flow uses the existing
+// set-password endpoint with the auth key derived from the new
+// password.
+document.addEventListener("DOMContentLoaded", () => {
+  const form = document.getElementById("upgrade-form");
+  if (!form) return;
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const pw = document.getElementById("upgrade-password").value;
+    const confirm = document.getElementById("upgrade-password-confirm").value;
+
+    if (pw !== confirm) {
+      let alert = form.querySelector("[role=alert]");
+      if (!alert) {
+        alert = document.createElement("div");
+        alert.setAttribute("role", "alert");
+        alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
+        form.prepend(alert);
+      }
+      alert.textContent = '{{ i18n.t("auth_password_mismatch") }}';
+      return;
+    }
+
+    // The username is needed for the salt. Read it from the nav bar.
+    const username = "{{ nav_username }}";
+    const domain = window.location.hostname;
+
+    // auth.ts is an ES module (bundled by Vite), so its exported
+    // functions are not available on the global scope. Duplicate the
+    // split key derivation logic here using the same Web Crypto API
+    // calls (PBKDF2 to HKDF-Expand) that auth.ts uses internally.
+    const enc = new TextEncoder();
+    const salt = enc.encode(username.toLowerCase() + "@" + domain);
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw", enc.encode(pw), "PBKDF2", false, ["deriveBits"]);
+    const masterBits = await crypto.subtle.deriveBits(
+      { name: "PBKDF2", salt, iterations: 600000, hash: "SHA-256" },
+      keyMaterial, 256);
+    const masterKey = await crypto.subtle.importKey(
+      "raw", masterBits, "HKDF", false, ["deriveBits"]);
+    const authBits = await crypto.subtle.deriveBits(
+      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0),
+        info: enc.encode("noombat-auth") },
+      masterKey, 256);
+    const authKey = Array.from(new Uint8Array(authBits))
+      .map(b => b.toString(16).padStart(2, "0")).join("");
+
+    const resp = await fetch("/api/v1/auth/password", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ auth_key: authKey }),
+    });
+
+    if (resp.ok || resp.status === 204) {
+      window.location.href = "/chat";
+    } else {
+      let alert = form.querySelector("[role=alert]");
+      if (!alert) {
+        alert = document.createElement("div");
+        alert.setAttribute("role", "alert");
+        alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
+        form.prepend(alert);
+      }
+      alert.textContent = "Failed to set password. Please try again.";
+    }
+  });
+});
+</script>
+{% endblock %}

@@ -1,0 +1,23 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("chat_title") }}{% endblock %}
+
+{% block content %}
+        <!-- The SolidJS chat island mounts here. data-* attributes
+             carry the initial state needed by the island. -->
+        <div id="chat-mount"
+             data-ws-url="{{ ws_url }}"
+             data-chatmail-addr="{{ chatmail_addr }}"
+             data-locale="{{ i18n.lang_attr() }}"
+             aria-label="{{ i18n.t("aria_chat") }}">
+            <!-- Fallback content for no-JS or while the island loads. -->
+            <p class="text-muted">{{ i18n.t("chat_empty") }}</p>
+        </div>
+{% endblock %}
+
+{% block style %}
+<script defer src="/assets/chat.js"></script>
+{% endblock %}
