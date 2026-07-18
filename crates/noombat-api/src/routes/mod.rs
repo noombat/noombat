@@ -3,6 +3,7 @@
 //! Route modules.
 
 pub mod actors;
+pub mod auth;
 pub mod cv;
 pub mod federation;
 pub mod feed;
