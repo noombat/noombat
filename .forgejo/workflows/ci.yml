@@ -1,6 +1,6 @@
 # Forgejo Actions CI pipeline for Codeberg.
 #
-# Jobs `fmt` and `reuse` run on Codeberg's hosted runners
+# Jobs `fmt`, `reuse`, and `safe-rust` run on Codeberg's hosted runners
 # (`codeberg-small`). They require no infrastructure and perform no
 # Rust compilation.
 #
@@ -16,6 +16,16 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
+    inputs:
+      release:
+        description: "Build a release binary"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
 
 env:
   CARGO_TERM_COLOR: always
@@ -45,6 +55,41 @@ jobs:
       - name: Install reuse
         run: pip install --break-system-packages reuse==6.2.0
       - run: reuse lint
+
+  safe-rust:
+    name: Safe Rust only
+    runs-on: codeberg-small
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+      - name: Verify all first-party crates forbid unsafe code
+        run: |
+          FAIL=0
+          for crate_dir in crates/*/; do
+            crate_name=$(basename "$crate_dir")
+            # Check lib.rs or main.rs (whichever exists).
+            entry=""
+            if [ -f "$crate_dir/src/lib.rs" ]; then
+              entry="$crate_dir/src/lib.rs"
+            elif [ -f "$crate_dir/src/main.rs" ]; then
+              entry="$crate_dir/src/main.rs"
+            else
+              echo "  ?  $crate_name: no lib.rs or main.rs found"
+              continue
+            fi
+
+            if grep -q 'forbid(unsafe_code)' "$entry"; then
+              echo "  ✓  $crate_name"
+            else
+              echo "  ✗  $crate_name: missing #![forbid(unsafe_code)] in $entry"
+              FAIL=$((FAIL + 1))
+            fi
+          done
+
+          if [ "$FAIL" -gt 0 ]; then
+            echo ""
+            echo "::error::$FAIL crate(s) missing #![forbid(unsafe_code)]"
+            exit 1
+          fi
 
   # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
 
@@ -337,6 +382,7 @@ jobs:
           name: playwright-report
           path: tests/e2e/playwright-report/
           retention-days: 14
+
   interop:
     name: Federation interop (GotoSocial)
     runs-on: ubuntu-latest
@@ -465,3 +511,59 @@ jobs:
       - name: Dump server log on failure
         if: failure()
         run: cat /tmp/noombat.log
+
+  # ..... ON-DEMAND RELEASE BUILD .....
+
+  release-build:
+    name: Release build
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: https://code.forgejo.org/actions/checkout@v4
+
+      - name: Install Rust
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+            | sh -s -- -y --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Cache Cargo artefacts
+        uses: https://code.forgejo.org/actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-release-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-release-
+
+      - name: Build release binary
+        run: cargo build --release --bin noombat
+
+      - name: Build frontend assets
+        working-directory: frontend
+        run: |
+          corepack enable
+          pnpm install
+          pnpm build
+
+      - name: Build WASM chat module
+        working-directory: frontend
+        run: |
+          cargo install wasm-pack
+          rustup target add wasm32-unknown-unknown
+          pnpm build:wasm
+
+      - name: Upload release binary
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: noombat-release
+          path: target/release/noombat
+          retention-days: 30
+
+      - name: Upload frontend assets
+        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        with:
+          name: noombat-frontend
+          path: frontend/dist/
+          retention-days: 30
