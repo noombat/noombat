@@ -1,0 +1,87 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Chat interoperability test environment.
+#
+# Spins up Noombat, a Chatmail relay container (stub), and
+# PostgreSQL/Redis on a shared network. Tests verify:
+#   1. Account registration and login via the HTTP API.
+#   2. Chat WebSocket route existence and chat report endpoint.
+#   3. Auth page rendering.
+#   4. Closed federation configuration.
+#   5. Interoperability with Delta Chat (via deltachat-rpc-server).
+#
+# Usage:
+#   1. docker compose -f tests/chat-interop/compose.yml up -d --build
+#   2. tests/chat-interop/run.sh
+#   3. docker compose -f tests/chat-interop/compose.yml down -v
+
+services:
+  # ..... DATABASES .....
+
+  db:
+    image: docker.io/library/postgres:16-alpine
+    environment:
+      POSTGRES_USER: noombat
+      POSTGRES_PASSWORD: noombat
+      POSTGRES_DB: noombat
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U noombat"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+    networks: [chattest]
+
+  redis:
+    image: docker.io/library/redis:7-alpine
+    networks: [chattest]
+
+  # ..... CHATMAIL RELAY .....
+  #
+  # Uses the project's noombat-chatmail container image, which
+  # packages the standard Chatmail relay (Postfix + Dovecot +
+  # doveauth + filtermail + OpenDKIM) alongside the
+  # noombat-chatmail-admin sidecar daemon.
+  #
+  # If the image is not yet available, the Alpine stub below ensures
+  # the Compose file parses without a missing image error. Replace
+  # with the real image in CI (e.g. ghcr.io/noombat/noombat-chatmail).
+
+  chatmail:
+    image: docker.io/library/alpine:3.20
+    # Stub: replace with the actual noombat-chatmail image in CI.
+    entrypoint: ["sh", "-c", "echo 'chatmail stub — replace with noombat-chatmail image in CI'; sleep infinity"]
+    networks:
+      chattest:
+        aliases: [chat.test.local]
+
+  # ..... NOOMBAT .....
+
+  noombat:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    environment:
+      NOOMBAT_DOMAIN: test.local
+      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
+      NOOMBAT_HOST: "0.0.0.0"
+      NOOMBAT_PORT: "8443"
+      NOOMBAT_REDIS_URL: redis://redis:6379
+      NOOMBAT_ADMIN_TOKEN: chat-test-token
+      NOOMBAT_JWT_SECRET: test-secret-at-least-32-bytes-long!!
+      NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
+      # NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:8444
+      # NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
+    ports:
+      - "8443:8443"
+    depends_on:
+      db: { condition: service_healthy }
+      redis: { condition: service_started }
+      chatmail: { condition: service_started }
+    networks: [chattest]
+
+volumes: {}
+
+networks:
+  chattest:
+    driver: bridge

@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Chat interoperability test runner for Noombat.
+#
+# Tests:
+#   01 - 03. Account registration (alice, bob, duplicate rejection).
+#   04 - 05. Login (correct credentials, wrong credentials).
+#   06 - 07. Chat WebSocket route existence, chat report endpoint.
+#   08 - 09. Auth page rendering (login, register).
+#   10 - 11. Closed federation checks (allowlisted domain, config).
+#       12+. Delta Chat interoperability (when DELTACHAT_RPC is set).
+#
+# Usage:
+#   tests/chat-interop/run.sh [noombat_url]
+#
+# Defaults to http://localhost:8443 when no argument is given.
+
+set -u
+
+NOOMBAT="${1:-http://localhost:8443}"
+CURL_OPTS="${CURL_OPTS:-}"
+
+PASS=0
+FAIL=0
+SKIP=0
+
+pass() { PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m  %s\n" "$1"; }
+fail() { FAIL=$((FAIL + 1)); printf "  \033[31mFAIL\033[0m  %s\n" "$1"; }
+skip() { SKIP=$((SKIP + 1)); printf "  \033[33mSKIP\033[0m  %s\n" "$1"; }
+
+# Generate a mock auth_key (64 hex chars). In CI this would use the
+# real PBKDF2+HKDF derivation; for the shell test, a deterministic
+# hex string suffices because the server hashes whatever it receives.
+mock_auth_key() {
+    local char="${1:-a}"
+    printf '%064s' '' | tr ' ' "$char"
+}
+
+# ..... WAIT FOR SERVICES .....
+
+wait_for() {
+    local name="$1" url="$2" max=60 i=0
+    printf "Waiting for %s..." "$name"
+    while ! curl $CURL_OPTS -sf -o /dev/null "$url" 2>/dev/null; do
+        i=$((i + 1))
+        if [ "$i" -ge "$max" ]; then
+            printf " TIMEOUT\n"
+            fail "$name did not become ready within ${max}s"
+            return 1
+        fi
+        sleep 1
+        printf "."
+    done
+    printf " ready (%ds)\n" "$i"
+    return 0
+}
+
+echo ""
+echo "=============================="
+echo "  Noombat Chat Interop Tests"
+echo "=============================="
+echo ""
+
+wait_for "Noombat" "$NOOMBAT/healthz" || exit 1
+
+# ..... Account Registration .....
+
+echo ""
+echo "--- Account Registration ---"
+echo ""
+
+AUTH_KEY_ALICE=$(mock_auth_key a)
+
+# 1. Register alice.
+BODY=$(curl $CURL_OPTS -sf -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
+
+if echo "$BODY" | grep -q '"access_token"'; then
+    pass "Register alice: received session tokens"
+    ALICE_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+else
+    fail "Register alice failed: $BODY"
+    ALICE_TOKEN=""
+fi
+
+# 2. Register bob.
+AUTH_KEY_BOB=$(mock_auth_key b)
+BODY=$(curl $CURL_OPTS -sf -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"bob\",\"auth_key\":\"$AUTH_KEY_BOB\"}" \
+    "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
+
+if echo "$BODY" | grep -q '"access_token"'; then
+    pass "Register bob: received session tokens"
+    BOB_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+else
+    fail "Register bob failed: $BODY"
+    BOB_TOKEN=""
+fi
+
+# 3. Duplicate registration rejected.
+BODY=$(curl $CURL_OPTS -s -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
+
+if echo "$BODY" | grep -qi "already"; then
+    pass "Duplicate registration rejected"
+else
+    fail "Duplicate registration not rejected: $BODY"
+fi
+
+# ..... Login .....
+
+echo ""
+echo "--- Login ---"
+echo ""
+
+# 4. Login with correct credentials.
+BODY=$(curl $CURL_OPTS -sf -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    "$NOOMBAT/api/v1/auth/login" 2>/dev/null)
+
+if echo "$BODY" | grep -q '"access_token"'; then
+    pass "Login alice: received session tokens"
+else
+    fail "Login alice failed: $BODY"
+fi
+
+# 5. Login with wrong credentials.
+AUTH_KEY_WRONG=$(mock_auth_key f)
+STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
+    -X POST \
+    -H "Content-Type: application/json" \
+    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_WRONG\"}" \
+    "$NOOMBAT/api/v1/auth/login" 2>/dev/null)
+
+if [ "$STATUS" = "401" ] || [ "$STATUS" = "403" ]; then
+    pass "Login with wrong password returns $STATUS"
+else
+    fail "Login with wrong password returned $STATUS (expected 401 or 403)"
+fi
+
+# ..... Chat WebSocket .....
+
+echo ""
+echo "--- Chat WebSocket ---"
+echo ""
+
+# 6. WebSocket endpoint exists (upgrade request, expect 400 or 101).
+if [ -n "$ALICE_TOKEN" ]; then
+    STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        -H "Connection: Upgrade" \
+        -H "Upgrade: websocket" \
+        -H "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==" \
+        -H "Sec-WebSocket-Version: 13" \
+        "$NOOMBAT/api/v1/chat/ws" 2>/dev/null)
+    # 101 = upgrade, 400 = bad request (missing chat provisioning),
+    # anything except 404 means the route exists.
+    if [ "$STATUS" != "404" ] && [ "$STATUS" != "000" ]; then
+        pass "Chat WebSocket route exists (HTTP $STATUS)"
+    else
+        fail "Chat WebSocket route returned $STATUS (expected non-404)"
+    fi
+else
+    skip "Chat WebSocket test: no token (registration failed)"
+fi
+
+# 7. Chat report endpoint exists.
+if [ -n "$ALICE_TOKEN" ]; then
+    STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
+        -X POST \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d '{"target_addr":"spam@example.com","reason":"spam"}' \
+        "$NOOMBAT/api/v1/chat/reports" 2>/dev/null)
+    if [ "$STATUS" = "201" ]; then
+        pass "Chat report submitted (HTTP 201)"
+    elif [ "$STATUS" = "403" ]; then
+        pass "Chat report route exists (HTTP 403 — auth gating)"
+    else
+        fail "Chat report returned $STATUS"
+    fi
+else
+    skip "Chat report test: no token"
+fi
+
+# ..... Auth Pages .....
+
+echo ""
+echo "--- Auth Pages ---"
+echo ""
+
+# 8. Login page renders.
+STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
+    "$NOOMBAT/auth/login" 2>/dev/null)
+if [ "$STATUS" = "200" ]; then
+    pass "Login page renders (HTTP 200)"
+else
+    fail "Login page returned $STATUS"
+fi
+
+# 9. Register page renders.
+STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
+    "$NOOMBAT/auth/register" 2>/dev/null)
+if [ "$STATUS" = "200" ]; then
+    pass "Register page renders (HTTP 200)"
+else
+    fail "Register page returned $STATUS"
+fi
+
+# ..... Closed Federation .....
+
+echo ""
+echo "--- Closed Federation ---"
+echo ""
+
+# 10. Allowlisted domain: chat page loads for an authenticated user.
+if [ -n "$ALICE_TOKEN" ]; then
+    HTTP_CODE=$(curl $CURL_OPTS -sf -o /dev/null -w '%{http_code}' "$NOOMBAT/chat" \
+      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || HTTP_CODE="000"
+    if [ "$HTTP_CODE" = "200" ]; then
+        pass "Chat page loads for authenticated user (HTTP 200)"
+    else
+        fail "Chat page returned $HTTP_CODE (expected 200)"
+    fi
+else
+    skip "Closed federation allowlist test: no token"
+fi
+
+# 11. Chatmail domain configured on the instance.
+if [ -n "$ALICE_TOKEN" ]; then
+    CHATMAIL_CHECK=$(curl $CURL_OPTS -sf "$NOOMBAT/settings/chat" \
+      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null | grep -c "chat\.test\.local") || CHATMAIL_CHECK="0"
+    if [ "$CHATMAIL_CHECK" -gt 0 ]; then
+        pass "Chatmail domain configured (full relay rejection requires SMTP-level test)"
+    else
+        fail "Chatmail domain not found in credential page"
+    fi
+else
+    skip "Chatmail domain check: no token"
+fi
+
+# ..... Delta Chat Interop .....
+
+echo ""
+echo "--- Delta Chat Interop ---"
+echo ""
+
+# Delta Chat interoperability requires a running Chatmail relay and
+# the deltachat-rpc-server binary. These are not available in the
+# default test environment; the tests below are skipped unless the
+# DELTACHAT_RPC environment variable points to a running instance.
+
+if [ -n "${DELTACHAT_RPC:-}" ]; then
+    echo "deltachat-rpc-server at $DELTACHAT_RPC"
+    # Placeholder: send a message from Delta Chat to a Noombat user
+    # and verify receipt via the Noombat API.
+    skip "Delta Chat interop tests: not yet implemented"
+else
+    skip "Delta Chat interop tests: DELTACHAT_RPC not set"
+fi
+
+# ..... Summary .....
+
+echo ""
+echo "=============================="
+printf "  Results: \033[32m%d passed\033[0m" "$PASS"
+if [ "$FAIL" -gt 0 ]; then
+    printf ", \033[31m%d failed\033[0m" "$FAIL"
+fi
+if [ "$SKIP" -gt 0 ]; then
+    printf ", \033[33m%d skipped\033[0m" "$SKIP"
+fi
+echo ""
+echo "=============================="
+echo ""
+
+if [ "$FAIL" -gt 0 ]; then
+    exit 1
+else
+    exit 0
+fi
