@@ -12,7 +12,6 @@ use noombat_core::error::{NoombatError, Result};
 use rustls::ClientConfig;
 use rustls_pki_types::ServerName;
 use tokio_rustls::TlsConnector;
-use tokio_util::compat::TokioAsyncReadCompatExt;
 use tracing::info;
 
 /// The result of a successful Chatmail account provisioning.
@@ -80,13 +79,11 @@ pub async fn provision_chatmail_account(
             ))
         })?;
 
-    // Wrap the tokio TLS stream with the futures-io compatibility
-    // adapter. async-imap expects futures_io::AsyncRead/AsyncWrite;
-    // tokio-rustls implements tokio::io::AsyncRead/AsyncWrite.
-    let compat_stream = tls_stream.compat();
-
-    // Create the async-imap client over the adapted TLS stream.
-    let client = async_imap::Client::new(compat_stream);
+    // Create the async-imap client over the TLS stream. The
+    // `runtime-tokio` feature of async-imap accepts
+    // `tokio::io::AsyncRead + AsyncWrite` directly, matching the
+    // types provided by `tokio-rustls`.
+    let client = async_imap::Client::new(tls_stream);
 
     // Login triggers account auto-creation on Chatmail.
     let mut session = client.login(&address, &password).await.map_err(|(e, _)| {
