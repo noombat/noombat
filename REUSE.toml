@@ -37,22 +37,20 @@ path = [
     "templates/**",
     # Locale files.
     "crates/noombat-api/locales/**",
-    # Frontend and test metadata.
+    # Frontend metadata and generated bindings.
     "frontend/package.json",
     "frontend/tsconfig.json",
     "frontend/pnpm-lock.yaml",
+    "frontend/**/*.d.ts",
+    # Test metadata.
     "tests/e2e/package.json",
     "tests/e2e/tsconfig.json",
     "tests/e2e/pnpm-lock.yaml",
-    # Documentation.
-    "README.md",
-    "tests/interop/README.md",
+    # Documentation (all Markdown files).
+    "**/*.md",
     "docs/**",
-    # CI workflow.
-    ".forgejo/workflows/**",
-    # Forgejo issue and PR templates.
-    ".forgejo/ISSUE_TEMPLATE/**",
-    ".forgejo/PULL_REQUEST_TEMPLATE.md",
+    # CI workflow and templates.
+    ".forgejo/**",
 ]
-SPDX-FileCopyrightText = "2026 Gabriel Henrique Lopes Gomes Alves Nunes"
 SPDX-License-Identifier = "AGPL-3.0-or-later"
+SPDX-FileCopyrightText = "2026 Gabriel Henrique Lopes Gomes Alves Nunes"
