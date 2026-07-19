@@ -10,7 +10,7 @@ description = "WASM bridge: exposes noombat-autocrypt and blob encryption to the
 crate-type = ["cdylib"]
 
 [dependencies]
-noombat-autocrypt = { path = "../noombat-autocrypt" }
+noombat-autocrypt = { workspace = true }
 pgp = { workspace = true }
 wasm-bindgen = "0.2"
 serde = { workspace = true }
