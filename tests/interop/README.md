@@ -8,7 +8,7 @@ This directory contains the infrastructure for testing Noombat's ActivityPub fed
  
 ```
 ┌────────────────────────────────────────────────┐
-│           Forgejo Actions runner container     │
+│           GitHub Actions runner container     │
 │                                                │
 │  ┌──────────────────────────────────────────┐  │
 │  │  Job container                           │  │
@@ -61,7 +61,7 @@ tests/interop/run.sh https://noombat.local:8443 https://gotosocial.local:8443
  
 ## CI
  
-The Forgejo Actions workflow (`.forgejo/workflows/ci.yml`) runs the interop job using the same pattern as the end-to-end tests:
+The GitHub Actions workflow (`.github/workflows/ci.yml`) runs the interop job using the same pattern as the end-to-end tests:
 Noombat is built from source and started as a background process;
 GotoSocial, PostgreSQL, and Redis run as `services:` containers managed by the runner.
  

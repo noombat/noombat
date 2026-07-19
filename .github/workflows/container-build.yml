@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
     paths:
-      - ".forgejo/workflows/container-build.yml"
+      - ".github/workflows/container-build.yml"
       - "Dockerfile"
       - "compose.yml"
       - "Cargo.toml"
@@ -21,7 +21,7 @@ on:
   pull_request:
     branches: [main]
     paths:
-      - ".forgejo/workflows/container-build.yml"
+      - ".github/workflows/container-build.yml"
       - "Dockerfile"
       - "compose.yml"
       - "Cargo.toml"
@@ -33,15 +33,15 @@ on:
 jobs:
   container-build:
     name: Container image build
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     container:
-      image: node:22-alpine
+      image: docker.io/library/node:22-alpine
       options: "-v /var/run/docker.sock:/var/run/docker.sock"
     env:
       DOCKER_BUILDKIT: "1"
     steps:
       - name: Install dependencies
         run: apk add --no-cache docker-cli docker-cli-buildx git
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Build container image
         run: docker build --tag noombat:ci-test .

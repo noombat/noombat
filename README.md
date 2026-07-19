@@ -11,7 +11,7 @@ We do not claim Noongar identity.
 
 The project implements the ActivityPub protocol and is built primarily in Rust.
 
-- **Source code:** <https://codeberg.org/noombat/noombat>
+- **Source code:** <https://github.com/noombat/noombat>
 - **Project website:** <https://noombat.org> (To be developed and deployed)
 - **Flagship instance:** <https://noombat.social> (To be developed and deployed)
 
@@ -40,7 +40,7 @@ and exchange end-to-end encrypted direct messages via an integrated Chatmail ser
 
 ```sh
 # Clone and enter the repository.
-git clone https://codeberg.org/noombat/noombat.git
+git clone https://github.com/noombat/noombat.git
 cd noombat
 
 # Copy the example environment file and adjust values.

@@ -1,12 +1,11 @@
-# Forgejo Actions CI pipeline for Codeberg.
+# GitHub Actions CI pipeline for Codeberg.
 #
-# Jobs `fmt`, `reuse`, and `safe-rust` run on Codeberg's hosted runners
-# (`codeberg-small`). They require no infrastructure and perform no
+# Jobs `fmt`, `reuse`, and `safe-rust` run on GitHub's hosted runners
+# (`ubuntu-latest`). They require no infrastructure and perform no
 # Rust compilation.
 #
 # All other jobs run on a self-hosted runner registered with the label
-# `ubuntu-latest`. They require Rust compilation, which exceeds the
-# `codeberg-small` deadline on a cold cache. Jobs `integration` and
+# `self-hosted`. They require Rust compilation. Jobs `integration` and
 # `e2e` additionally use PostgreSQL and Redis service containers.
 
 name: CI
@@ -36,9 +35,9 @@ env:
 jobs:
   fmt:
     name: Formatting
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -49,18 +48,18 @@ jobs:
 
   reuse:
     name: REUSE compliance
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install reuse
         run: pip install --break-system-packages reuse==6.2.0
       - run: reuse lint
 
   safe-rust:
     name: Safe Rust only
-    runs-on: codeberg-small
+    runs-on: ubuntu-latest
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Verify all first-party crates forbid unsafe code
         run: |
           FAIL=0
@@ -95,16 +94,16 @@ jobs:
 
   deny:
     name: Cargo Deny
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -121,9 +120,9 @@ jobs:
 
   clippy:
     name: Clippy
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -131,7 +130,7 @@ jobs:
               --profile minimal --component clippy
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -145,16 +144,16 @@ jobs:
     name: Unit tests
     # Runs without a database. Tests that require PostgreSQL are
     # exercised in the `integration` job instead.
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain stable --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -166,16 +165,16 @@ jobs:
 
   msrv:
     name: MSRV (1.94.0)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
             | sh -s -- -y --default-toolchain 1.94.0 --profile minimal
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -187,7 +186,7 @@ jobs:
 
   integration:
     name: Integration tests
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         image: docker.io/library/postgres:16-alpine
@@ -214,7 +213,7 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -223,7 +222,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -243,7 +242,7 @@ jobs:
 
   e2e:
     name: End-to-end tests (Firefox, Chromium, WebKit)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     container:
       image: mcr.microsoft.com/playwright:v1.60.0-noble
       options: "--shm-size=2g --ipc=host"
@@ -273,7 +272,7 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install system build dependencies
         run: |
@@ -288,7 +287,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -377,7 +376,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: playwright-report
           path: tests/e2e/playwright-report/
@@ -385,7 +384,7 @@ jobs:
 
   interop:
     name: Federation interop (GotoSocial)
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     services:
       postgres:
         image: docker.io/library/postgres:16-alpine
@@ -431,7 +430,7 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: interop-test-token
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install system build dependencies
         run: |
@@ -446,7 +445,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -517,9 +516,9 @@ jobs:
   release-build:
     name: Release build
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
-      - uses: https://code.forgejo.org/actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Install Rust
         run: |
@@ -528,7 +527,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
-        uses: https://code.forgejo.org/actions/cache@v4
+        uses: actions/cache@v4
         with:
           path: |
             ~/.cargo/registry
@@ -555,14 +554,14 @@ jobs:
           pnpm build:wasm
 
       - name: Upload release binary
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: noombat-release
           path: target/release/noombat
           retention-days: 30
 
       - name: Upload frontend assets
-        uses: https://code.forgejo.org/actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: noombat-frontend
           path: frontend/dist/

@@ -84,7 +84,7 @@ pub fn build(params: &NodeInfoParams) -> Value {
         "software": {
             "name": "noombat",
             "version": env!("CARGO_PKG_VERSION"),
-            "repository": "https://codeberg.org/noombat/noombat"
+            "repository": "https://github.com/noombat/noombat"
         },
         "protocols": ["activitypub"],
         "usage": {
