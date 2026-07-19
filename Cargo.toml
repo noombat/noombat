@@ -124,7 +124,7 @@ subtle = "2"
 argon2 = "0.5"
 
 # JWT (short-lived access tokens).
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 
 # TOTP 2FA (RFC 6238).
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
