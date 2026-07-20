@@ -1,0 +1,50 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# CI image for Noombat: Rust (stable), Node.js 22, pnpm, and build
+# dependencies. Published to ghcr.io/noombat/noombat-ci:latest.
+#
+# Rebuild when Rust toolchain, Node.js version, or system dependencies change.
+
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# System build dependencies.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      build-essential \
+      pkg-config \
+      libssl-dev \
+      cmake \
+      perl \
+      postgresql-client \
+      curl \
+      ca-certificates \
+      git \
+    && rm -rf /var/lib/apt/lists/*
+
+# Node.js 22 + corepack (provides pnpm at the version declared in package.json).
+RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/* \
+    && corepack enable
+
+# Rust (stable toolchain with rustfmt, clippy, and wasm32 target).
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
+      | sh -s -- -y --default-toolchain stable \
+        --profile minimal --component rustfmt,clippy \
+    && rustup target add wasm32-unknown-unknown
+
+# Pre-installed Cargo tools (compiled once during image build).
+RUN cargo install sqlx-cli@0.9.0 --locked --no-default-features \
+      --features postgres,rustls \
+    && cargo install wasm-pack \
+    && curl -L --proto '=https' --tlsv1.2 -sSf \
+      https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
+      | bash \
+    && cargo binstall --no-confirm cargo-deny@0.19.8 \
+    && rm -rf "$CARGO_HOME/registry" "$CARGO_HOME/git"

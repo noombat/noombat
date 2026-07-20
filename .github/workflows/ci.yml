@@ -1,12 +1,14 @@
-# GitHub Actions CI pipeline for Codeberg.
+# GitHub Actions CI pipeline.
 #
 # Jobs `fmt`, `reuse`, and `safe-rust` run on GitHub's hosted runners
 # (`ubuntu-latest`). They require no infrastructure and perform no
 # Rust compilation.
 #
 # All other jobs run on a self-hosted runner registered with the label
-# `self-hosted`. They require Rust compilation. Jobs `integration` and
-# `e2e` additionally use PostgreSQL and Redis service containers.
+# `self-hosted`, inside the `ghcr.io/noombat/noombat-ci` container image,
+# which pre-installs Rust, Node.js, pnpm, sqlx-cli, cargo-deny, wasm-pack,
+# and system build dependencies. Jobs `integration`, `e2e`, and `interop` 
+# additionally use PostgreSQL and Redis service containers.
 
 name: CI
 
@@ -95,46 +97,33 @@ jobs:
   deny:
     name: Cargo Deny
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
           key: cargo-deny-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-deny-
-      - name: Install cargo-deny
-        run: |
-          curl -L --proto '=https' --tlsv1.2 -sSf \
-            https://raw.githubusercontent.com/cargo-bins/cargo-binstall/main/install-from-binstall-release.sh \
-            | bash
-          cargo binstall --no-confirm cargo-deny@0.19.8
       - run: cargo deny check
 
   clippy:
     name: Clippy
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable \
-              --profile minimal --component clippy
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             target
           key: cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-clippy-
@@ -145,19 +134,16 @@ jobs:
     # Runs without a database. Tests that require PostgreSQL are
     # exercised in the `integration` job instead.
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             target
           key: cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-test-
@@ -166,30 +152,34 @@ jobs:
   msrv:
     name: MSRV (1.94.0)
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     steps:
       - uses: actions/checkout@v4
-      - name: Install Rust
+      - name: Install MSRV toolchain
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain 1.94.0 --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          rustup install 1.94.0
+          rustup default 1.94.0
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
+            /usr/local/rustup/toolchains
             target
-          key: cargo-msrv-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-msrv-
+          key: cargo-msrv-1.94.0-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-msrv-1.94.0-
       - run: cargo check --workspace
 
   integration:
     name: Integration tests
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     services:
       postgres:
-        image: docker.io/library/postgres:16-alpine
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
@@ -200,7 +190,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: docker.io/library/redis:7-alpine
+        image: redis:7-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -214,31 +204,18 @@ jobs:
       NOOMBAT_ADMIN_TOKEN: ci-test-token
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             target
           key: cargo-integration-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-integration-
-
-      - name: Install sqlx-cli and run migrations
-        run: |
-          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
-            --features postgres,rustls
-          sqlx migrate run --source migrations
-
-      - name: Run all tests
-        run: cargo test --workspace
+      - name: Run migrations
+        run: sqlx migrate run --source migrations
+      - run: cargo test --workspace
 
   e2e:
     name: End-to-end tests (Firefox, Chromium, WebKit)
@@ -248,7 +225,7 @@ jobs:
       options: "--shm-size=2g --ipc=host"
     services:
       postgres:
-        image: docker.io/library/postgres:16-alpine
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
@@ -259,13 +236,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: docker.io/library/redis:7-alpine
+        image: redis:7-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
+      HOME: /root
       NOOMBAT_DATABASE_URL: postgres://noombat:noombat@postgres/noombat
       DATABASE_URL: postgres://noombat:noombat@postgres/noombat
       NOOMBAT_DOMAIN: localhost
@@ -385,9 +363,11 @@ jobs:
   interop:
     name: Federation interop (GotoSocial)
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     services:
       postgres:
-        image: docker.io/library/postgres:16-alpine
+        image: postgres:16-alpine
         env:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
@@ -398,14 +378,14 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: docker.io/library/redis:7-alpine
+        image: redis:7-alpine
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
       gotosocial:
-        image: docker.io/superseriousbusiness/gotosocial:latest
+        image: superseriousbusiness/gotosocial:latest
         env:
           GTS_HOST: gotosocial
           GTS_ACCOUNT_DOMAIN: gotosocial
@@ -432,33 +412,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install system build dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            build-essential pkg-config postgresql-client curl
-
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             target
           key: cargo-interop-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-interop-
 
-      - name: Install sqlx-cli and run migrations
-        run: |
-          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
-            --features postgres,rustls
-          sqlx migrate run --source migrations
+      - name: Run migrations
+        run: sqlx migrate run --source migrations
 
       - name: Build Noombat server
         run: cargo build --release --bin noombat
@@ -517,21 +482,17 @@ jobs:
     name: Release build
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
     runs-on: self-hosted
+    container:
+      image: ghcr.io/noombat/noombat-ci:latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
         uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/registry
-            ~/.cargo/git
+            /usr/local/cargo/registry
+            /usr/local/cargo/git
             target
           key: cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-release-
@@ -548,10 +509,7 @@ jobs:
 
       - name: Build WASM chat module
         working-directory: frontend
-        run: |
-          cargo install wasm-pack
-          rustup target add wasm32-unknown-unknown
-          pnpm build:wasm
+        run: pnpm build:wasm
 
       - name: Upload release binary
         uses: actions/upload-artifact@v4
