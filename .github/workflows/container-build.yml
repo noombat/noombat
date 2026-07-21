@@ -18,7 +18,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "crates/**/Cargo.toml"
+      - "crates/**"
+      - "frontend/**"
       - "templates/**"
   pull_request:
     branches: [main]
@@ -31,7 +32,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
-      - "crates/**/Cargo.toml"
+      - "crates/**"
+      - "frontend/**"
       - "templates/**"
 
 permissions:
