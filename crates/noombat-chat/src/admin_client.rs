@@ -231,10 +231,9 @@ impl ChatmailAdminClient {
             return Ok(false);
         }
 
-        let body = resp
-            .json::<AccountExistsResponse>()
-            .await
-            .map_err(|e| NoombatError::Internal(format!("admin sidecar response parse error: {e}")))?;
+        let body = resp.json::<AccountExistsResponse>().await.map_err(|e| {
+            NoombatError::Internal(format!("admin sidecar response parse error: {e}"))
+        })?;
         Ok(body.exists)
     }
 }

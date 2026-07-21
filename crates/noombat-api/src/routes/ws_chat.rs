@@ -42,13 +42,12 @@ async fn ws_upgrade(
     }
 
     // Fetch the actor's Chatmail address and moderation status.
-    let (chatmail_addr, actor_status): (Option<String>, String) = sqlx::query_as(
-        "SELECT chatmail_addr, actor_status FROM actors WHERE id = $1",
-    )
-    .bind(actor_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(|e| ApiError(NoombatError::Internal(format!("actor lookup failed: {e}"))))?;
+    let (chatmail_addr, actor_status): (Option<String>, String) =
+        sqlx::query_as("SELECT chatmail_addr, actor_status FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(|e| ApiError(NoombatError::Internal(format!("actor lookup failed: {e}"))))?;
 
     // Reject suspended actors.
     if actor_status == "suspended" {

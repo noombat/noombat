@@ -18,7 +18,10 @@ use crate::{AppState, trigger_postfix_reload_debounced};
 pub fn handle_request(request: Request, state: &Arc<AppState>) {
     // Authenticate via shared secret.
     if !authenticate(&request, &state.config.admin_secret) {
-        let _ = request.respond(json_response(StatusCode(401), &json!({"error": "unauthorised"})));
+        let _ = request.respond(json_response(
+            StatusCode(401),
+            &json!({"error": "unauthorised"}),
+        ));
         return;
     }
 
@@ -128,7 +131,10 @@ fn route(
     }
 
     // Fallback: 404.
-    request.respond(json_response(StatusCode(404), &json!({"error": "not found"})))?;
+    request.respond(json_response(
+        StatusCode(404),
+        &json!({"error": "not found"}),
+    ))?;
     Ok(())
 }
 
@@ -394,7 +400,13 @@ fn json_response(
     let bytes = serde_json::to_vec(body).unwrap_or_default();
     let len = bytes.len();
     let header = Header::from_bytes("Content-Type", "application/json").unwrap();
-    Response::new(status, vec![header], std::io::Cursor::new(bytes), Some(len), None)
+    Response::new(
+        status,
+        vec![header],
+        std::io::Cursor::new(bytes),
+        Some(len),
+        None,
+    )
 }
 
 #[cfg(test)]
@@ -403,8 +415,9 @@ mod tests {
 
     #[test]
     fn parse_sender_pair_valid() {
-        let (s, r) = parse_sender_block_pair("alice@chat.example.com/block-to/bob@chat.example.com")
-            .unwrap();
+        let (s, r) =
+            parse_sender_block_pair("alice@chat.example.com/block-to/bob@chat.example.com")
+                .unwrap();
         assert_eq!(s, "alice@chat.example.com");
         assert_eq!(r, "bob@chat.example.com");
     }

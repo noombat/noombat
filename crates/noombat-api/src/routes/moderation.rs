@@ -29,10 +29,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/admin/actors/{id}/suspend", post(suspend_actor))
-        .route(
-            "/api/v1/admin/actors/{id}/unsuspend",
-            post(unsuspend_actor),
-        )
+        .route("/api/v1/admin/actors/{id}/unsuspend", post(unsuspend_actor))
         .route(
             "/api/v1/admin/chat-reports/{id}/resolve",
             post(resolve_chat_report),
@@ -45,7 +42,9 @@ pub fn router() -> Router<AppState> {
 
 /// Verify that the authenticated principal holds the moderator or
 /// admin role. Returns the principal on success.
-fn require_moderator(principal: &Option<axum::Extension<Principal>>) -> Result<&Principal, ApiError> {
+fn require_moderator(
+    principal: &Option<axum::Extension<Principal>>,
+) -> Result<&Principal, ApiError> {
     let principal = principal
         .as_ref()
         .ok_or(ApiError(NoombatError::Forbidden))?;
@@ -216,8 +215,7 @@ async fn unsuspend_actor(
     // actor_status.
     if actor.actor_privacy.discoverable
         && let Some(ref search) = state.search
-        && let Ok(fresh_actor) =
-            noombat_identity::repo::find_by_id(&state.pool, actor_id).await
+        && let Ok(fresh_actor) = noombat_identity::repo::find_by_id(&state.pool, actor_id).await
     {
         let _ = search
             .upsert(
@@ -282,17 +280,16 @@ async fn resolve_chat_report(
     let moderator_id = moderator.actor_id();
 
     // Fetch the report.
-    let (reporter_id, target_addr, status): (Uuid, String, String) = sqlx::query_as(
-        "SELECT reporter_id, target_addr, status FROM chat_reports WHERE id = $1",
-    )
-    .bind(report_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(NoombatError::from)?
-    .ok_or(NoombatError::NotFound {
-        entity: "chat_report",
-        id: report_id,
-    })?;
+    let (reporter_id, target_addr, status): (Uuid, String, String) =
+        sqlx::query_as("SELECT reporter_id, target_addr, status FROM chat_reports WHERE id = $1")
+            .bind(report_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(NoombatError::from)?
+            .ok_or(NoombatError::NotFound {
+                entity: "chat_report",
+                id: report_id,
+            })?;
 
     if status != "open" {
         return Err(ApiError(NoombatError::BadRequest(
@@ -326,9 +323,12 @@ async fn resolve_chat_report(
         }
 
         ReportAction::BlockSenderPair => {
-            let recipient = body.recipient_addr.as_deref().ok_or(ApiError(
-                NoombatError::BadRequest("recipient_addr required for block_sender_pair".into()),
-            ))?;
+            let recipient =
+                body.recipient_addr
+                    .as_deref()
+                    .ok_or(ApiError(NoombatError::BadRequest(
+                        "recipient_addr required for block_sender_pair".into(),
+                    )))?;
             if let Some(client) = state.chatmail_admin_client.as_ref() {
                 client.block_sender_pair(&target_addr, recipient).await?;
                 info!(
@@ -345,9 +345,11 @@ async fn resolve_chat_report(
         }
 
         ReportAction::Suspend => {
-            let target_actor_id = body.target_actor_id.ok_or(ApiError(
-                NoombatError::BadRequest("target_actor_id required for suspend action".into()),
-            ))?;
+            let target_actor_id =
+                body.target_actor_id
+                    .ok_or(ApiError(NoombatError::BadRequest(
+                        "target_actor_id required for suspend action".into(),
+                    )))?;
             execute_suspension(&state, target_actor_id).await?;
             info!(
                 report_id = %report_id,
@@ -407,18 +409,17 @@ async fn list_chat_reports(
 ) -> Result<impl IntoResponse, ApiError> {
     require_moderator(&principal)?;
 
-    let reports: Vec<ChatReportEntry> =
-        sqlx::query_as(
-            r#"SELECT id, reporter_id, target_addr, message_content,
+    let reports: Vec<ChatReportEntry> = sqlx::query_as(
+        r#"SELECT id, reporter_id, target_addr, message_content,
                       reason, comment, status, created_at
                FROM chat_reports
                WHERE status = 'open'
                ORDER BY created_at ASC
                LIMIT 100"#,
-        )
-        .fetch_all(&state.pool)
-        .await
-        .map_err(NoombatError::from)?;
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
 
     Ok(Json(reports))
 }
@@ -443,18 +444,17 @@ async fn list_reports(
 ) -> Result<impl IntoResponse, ApiError> {
     require_moderator(&principal)?;
 
-    let reports: Vec<ReportEntry> =
-        sqlx::query_as(
-            r#"SELECT id, reporter_id, target_actor_id, target_post_id,
+    let reports: Vec<ReportEntry> = sqlx::query_as(
+        r#"SELECT id, reporter_id, target_actor_id, target_post_id,
                       reason, comment, status, created_at
                FROM reports
                WHERE status = 'open'
                ORDER BY created_at ASC
                LIMIT 100"#,
-        )
-        .fetch_all(&state.pool)
-        .await
-        .map_err(NoombatError::from)?;
+    )
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
 
     Ok(Json(reports))
 }

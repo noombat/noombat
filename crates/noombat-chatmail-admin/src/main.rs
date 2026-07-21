@@ -83,13 +83,14 @@ pub fn trigger_postfix_reload_debounced(state: &AppState) {
     let mut last = state.last_reload.lock().unwrap_or_else(|e| e.into_inner());
 
     if last.elapsed() < debounce {
-        tracing::debug!("postfix reload debounced (last reload {:.1?} ago)", last.elapsed());
+        tracing::debug!(
+            "postfix reload debounced (last reload {:.1?} ago)",
+            last.elapsed()
+        );
         return;
     }
 
-    let status = std::process::Command::new("postfix")
-        .arg("reload")
-        .status();
+    let status = std::process::Command::new("postfix").arg("reload").status();
     match status {
         Ok(s) if s.success() => {
             info!("postfix reload succeeded");

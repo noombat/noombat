@@ -55,9 +55,8 @@ impl Config {
             admin_secret: env::var("CHATMAIL_ADMIN_SECRET")
                 .expect("CHATMAIL_ADMIN_SECRET must be set"),
             vmail_home: env::var("VMAIL_HOME").unwrap_or_else(|_| "/home/vmail".into()),
-            access_maps_path: env::var("CHATMAIL_ACCESS_MAPS_PATH").unwrap_or_else(|_| {
-                "/home/vmail/.noombat-admin/access-maps.json".into()
-            }),
+            access_maps_path: env::var("CHATMAIL_ACCESS_MAPS_PATH")
+                .unwrap_or_else(|_| "/home/vmail/.noombat-admin/access-maps.json".into()),
             recipient_access_path: env::var("CHATMAIL_RECIPIENT_ACCESS_PATH")
                 .unwrap_or_else(|_| "/etc/postfix/noombat_recipient_access".into()),
             sender_access_path: env::var("CHATMAIL_SENDER_ACCESS_PATH")
@@ -66,9 +65,8 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2),
-            allowlist_url: env::var("CHATMAIL_ALLOWLIST_URL").unwrap_or_else(|_| {
-                "https://noombat.org/chatmail-allowlist.json".into()
-            }),
+            allowlist_url: env::var("CHATMAIL_ALLOWLIST_URL")
+                .unwrap_or_else(|_| "https://noombat.org/chatmail-allowlist.json".into()),
             allowlist_poll_interval_secs: env::var("CHATMAIL_ALLOWLIST_POLL_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())

@@ -71,18 +71,14 @@ pub fn start_polling(state: Arc<AppState>) {
                             count = domains.len(),
                             "allowlist changed; regenerating transport_maps"
                         );
-                        if let Err(e) =
-                            write_transport_maps(&transport_maps_path, &domains)
-                        {
+                        if let Err(e) = write_transport_maps(&transport_maps_path, &domains) {
                             warn!(error = %e, "failed to write transport_maps");
                         } else {
                             // Trigger postmap and postfix reload.
                             let _ = std::process::Command::new("postmap")
                                 .arg(&transport_maps_path)
                                 .status();
-                            let _ = std::process::Command::new("postfix")
-                                .arg("reload")
-                                .status();
+                            let _ = std::process::Command::new("postfix").arg("reload").status();
                             info!("transport_maps regenerated and postfix reloaded");
                         }
                         last_domains = domains;
@@ -106,11 +102,7 @@ fn fetch_allowlist(
     agent: &ureq::Agent,
     url: &str,
 ) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
-    let body: String = agent
-        .get(url)
-        .call()?
-        .body_mut()
-        .read_to_string()?;
+    let body: String = agent.get(url).call()?.body_mut().read_to_string()?;
     let doc: AllowlistDocument = serde_json::from_str(&body)?;
     Ok(doc.domains.into_iter().collect())
 }
@@ -122,10 +114,7 @@ fn fetch_allowlist(
 /// not in the map receive no transport entry, causing Postfix to
 /// reject delivery attempts (the default transport is not configured
 /// for external delivery).
-fn write_transport_maps(
-    path: &str,
-    domains: &BTreeSet<String>,
-) -> std::io::Result<()> {
+fn write_transport_maps(path: &str, domains: &BTreeSet<String>) -> std::io::Result<()> {
     let mut f = fs::File::create(path)?;
     writeln!(
         f,

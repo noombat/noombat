@@ -39,9 +39,13 @@ impl AccessMaps {
                         info!(path = %path, "loaded access maps from disk");
                         return maps;
                     }
-                    Err(e) => warn!(path = %path, error = %e, "malformed access maps file; reinitialising"),
+                    Err(e) => {
+                        warn!(path = %path, error = %e, "malformed access maps file; reinitialising")
+                    }
                 },
-                Err(e) => warn!(path = %path, error = %e, "failed to read access maps file; reinitialising"),
+                Err(e) => {
+                    warn!(path = %path, error = %e, "failed to read access maps file; reinitialising")
+                }
             }
         }
         Self::default()
@@ -53,8 +57,7 @@ impl AccessMaps {
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
         }
-        let json = serde_json::to_string_pretty(self)
-            .map_err(std::io::Error::other)?;
+        let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         fs::write(p, json)?;
         info!(path = %path, "access maps persisted to disk");
         Ok(())
