@@ -6,16 +6,13 @@
 # scripts, container definitions, or CI infrastructure that does not
 # affect the Rust build are skipped.
 #
-# Jobs `fmt` and `safe-rust` run on GitHub's hosted runners
-# (`ubuntu-latest`). All other jobs run on a self-hosted runner
-# inside the `ghcr.io/noombat/noombat-ci` container image. The
-# `integration` job additionally uses PostgreSQL and Redis
-# service containers.
+# All jobs run on GitHub-hosted runners (`ubuntu-latest`). The
+# `integration` job additionally uses PostgreSQL and Redis service
+# containers.
 #
 # Related workflows:
 #   ci-reuse.yml            REUSE licence compliance (unconditional).
 #   ci-e2e.yml              Playwright end-to-end and federation interop tests.
-#   ci-image.yml            CI container image build.
 #   container-build.yml     Server and chatmail container image builds.
 
 name: CI
@@ -61,20 +58,13 @@ env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
 
-# ..... HOSTED RUNNER JOBS (no Rust compilation required) .....
-
 jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable \
-              --profile minimal --component rustfmt
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - run: rustup component add rustfmt
       - run: cargo fmt --all -- --check
 
   safe-rust:
@@ -87,7 +77,6 @@ jobs:
           FAIL=0
           for crate_dir in crates/*/; do
             crate_name=$(basename "$crate_dir")
-            # Check lib.rs or main.rs (whichever exists).
             entry=""
             if [ -f "$crate_dir/src/lib.rs" ]; then
               entry="$crate_dir/src/lib.rs"
@@ -112,38 +101,37 @@ jobs:
             exit 1
           fi
 
-  # ..... SELF-HOSTED RUNNER JOBS (Rust compilation required) .....
-
   deny:
     name: Cargo Deny
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
           key: cargo-deny-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-deny-
+      - name: Install cargo-deny
+        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --locked
       - run: cargo deny check
 
   clippy:
     name: Clippy
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target
           key: cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-clippy-
@@ -151,19 +139,16 @@ jobs:
 
   test:
     name: Unit tests
-    # Runs without a database. Tests that require PostgreSQL are
-    # exercised in the `integration` job instead.
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target
           key: cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-test-
@@ -171,9 +156,7 @@ jobs:
 
   msrv:
     name: MSRV (1.94.0)
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install MSRV toolchain
@@ -184,9 +167,10 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
-            /usr/local/rustup/toolchains
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            ~/.rustup/toolchains
             target
           key: cargo-msrv-1.94.0-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-msrv-1.94.0-
@@ -194,9 +178,7 @@ jobs:
 
   integration:
     name: Integration tests
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16-alpine
@@ -204,6 +186,8 @@ jobs:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
           POSTGRES_DB: noombat
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U noombat"
           --health-interval 5s
@@ -211,14 +195,16 @@ jobs:
           --health-retries 10
       redis:
         image: redis:7-alpine
+        ports:
+          - 6379:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@postgres/noombat
-      DATABASE_URL: postgres://noombat:noombat@postgres/noombat
+      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@localhost/noombat
+      DATABASE_URL: postgres://noombat:noombat@localhost/noombat
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
@@ -228,11 +214,17 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target
           key: cargo-integration-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-integration-
+      - name: Install sqlx-cli
+        run: |
+          command -v sqlx >/dev/null || cargo install sqlx-cli@0.9.0 \
+            --locked --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source migrations
       - run: cargo test --workspace
@@ -242,9 +234,7 @@ jobs:
   release-build:
     name: Release build
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
@@ -252,8 +242,9 @@ jobs:
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
             target
           key: cargo-release-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-release-
