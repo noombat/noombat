@@ -44,9 +44,10 @@ impl Config {
     ///
     /// # Panics
     ///
-    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set.
+    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set, or if any
+    /// configured filesystem path fails validation.
     pub fn from_env() -> Self {
-        Self {
+        let config = Self {
             listen_host: env::var("CHATMAIL_ADMIN_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             listen_port: env::var("CHATMAIL_ADMIN_PORT")
                 .ok()
@@ -73,6 +74,34 @@ impl Config {
                 .unwrap_or(900),
             transport_maps_path: env::var("CHATMAIL_TRANSPORT_MAPS_PATH")
                 .unwrap_or_else(|_| "/etc/postfix/noombat_transport_maps".into()),
+        };
+        config.validate();
+        config
+    }
+
+    /// Verify that all configured filesystem paths are absolute and free
+    /// of traversal sequences. Panics on failure, i.e. configuration errors
+    /// are caught at startup, not at request time.
+    fn validate(&self) {
+        for (name, path) in [
+            ("VMAIL_HOME", &self.vmail_home),
+            ("CHATMAIL_ACCESS_MAPS_PATH", &self.access_maps_path),
+            (
+                "CHATMAIL_RECIPIENT_ACCESS_PATH",
+                &self.recipient_access_path,
+            ),
+            ("CHATMAIL_SENDER_ACCESS_PATH", &self.sender_access_path),
+            ("CHATMAIL_TRANSPORT_MAPS_PATH", &self.transport_maps_path),
+        ] {
+            assert!(
+                std::path::Path::new(path).is_absolute(),
+                "{name} must be an absolute path, got: {path}"
+            );
+            assert!(
+                !path.contains(".."),
+                "{name} must not contain '..' traversal sequences, got: {path}"
+            );
+            assert!(!path.contains('\0'), "{name} must not contain null bytes");
         }
     }
 }

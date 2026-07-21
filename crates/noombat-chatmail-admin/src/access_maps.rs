@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
@@ -27,13 +27,69 @@ pub struct AccessMaps {
     pub sender_blocks: BTreeMap<String, BTreeSet<String>>,
 }
 
+/// Validate that `path` is absolute, contains no traversal sequences
+/// (`..`) or null bytes, and, if it or its parent exists on disk,
+/// canonicalises to a location within the expected directory tree.
+///
+/// Returns the validated `PathBuf` on success.
+fn validated_path(path: &str) -> Result<PathBuf, String> {
+    if path.contains('\0') {
+        return Err("path contains null byte".into());
+    }
+    let p = Path::new(path);
+    if !p.is_absolute() {
+        return Err(format!("path is not absolute: {path}"));
+    }
+    if path.contains("..") {
+        return Err(format!("path contains '..' traversal: {path}"));
+    }
+
+    // If the file itself exists, canonicalise it directly; otherwise
+    // canonicalise the nearest existing ancestor and re-append the
+    // remaining components, then verify the result is still absolute
+    // and free of `..`.
+    let canonical = if p.exists() {
+        p.canonicalize()
+            .map_err(|e| format!("canonicalize failed: {e}"))?
+    } else if let Some(parent) = p.parent() {
+        if parent.exists() {
+            let canon_parent = parent
+                .canonicalize()
+                .map_err(|e| format!("canonicalize parent failed: {e}"))?;
+            let file_name = p.file_name().ok_or("path has no filename")?;
+            canon_parent.join(file_name)
+        } else {
+            // Parent doesn't exist yet (first run); the string-level
+            // checks above are the only defence. `save` will create
+            // the parent via `create_dir_all`.
+            return Ok(p.to_path_buf());
+        }
+    } else {
+        return Err("path has no parent component".into());
+    };
+
+    if canonical.to_string_lossy().contains("..") {
+        return Err(format!(
+            "canonical path still contains '..': {}",
+            canonical.display()
+        ));
+    }
+    Ok(canonical)
+}
+
 impl AccessMaps {
     /// Load from the persistence file, or initialise empty maps if the
     /// file does not exist or is malformed.
     pub fn load_or_init(path: &str) -> Self {
-        let p = Path::new(path);
+        let p = match validated_path(path) {
+            Ok(p) => p,
+            Err(e) => {
+                warn!(path = %path, error = %e, "access maps path failed validation; using empty maps");
+                return Self::default();
+            }
+        };
         if p.exists() {
-            match fs::read_to_string(p) {
+            match fs::read_to_string(&p) {
                 Ok(json) => match serde_json::from_str(&json) {
                     Ok(maps) => {
                         info!(path = %path, "loaded access maps from disk");
@@ -53,7 +109,7 @@ impl AccessMaps {
 
     /// Persist the current state to the JSON file.
     pub fn save(&self, path: &str) -> std::io::Result<()> {
-        let p = Path::new(path);
+        let p = validated_path(path).map_err(std::io::Error::other)?;
         if let Some(parent) = p.parent() {
             fs::create_dir_all(parent)?;
         }

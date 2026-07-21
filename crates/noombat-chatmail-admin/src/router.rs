@@ -4,7 +4,7 @@
 //!
 //! All endpoints are served under `/admin/v1/`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::json;
@@ -13,6 +13,75 @@ use tracing::{info, warn};
 
 use crate::password::generate_password;
 use crate::{AppState, trigger_postfix_reload_debounced};
+
+/// Validate that a Chatmail address extracted from a URL path is safe
+/// to use as a filesystem path component.
+///
+/// A valid Chatmail address has the form `local@domain` and must not
+/// contain path separators, traversal sequences, or null bytes.
+fn validate_address(address: &str) -> Result<(), &'static str> {
+    if address.is_empty() {
+        return Err("address is empty");
+    }
+    if address.contains('/') || address.contains('\\') {
+        return Err("address contains path separator");
+    }
+    if address.contains("..") {
+        return Err("address contains traversal sequence");
+    }
+    if address.contains('\0') {
+        return Err("address contains null byte");
+    }
+    // Reject whitespace and control characters. A newline or carriage
+    // return in an address written to a Postfix map file (one entry per
+    // line) would inject additional map entries.
+    if address
+        .bytes()
+        .any(|b| b.is_ascii_whitespace() || b.is_ascii_control())
+    {
+        return Err("address contains whitespace or control character");
+    }
+    if address.starts_with('.') || address.starts_with('-') {
+        return Err("address starts with disallowed character");
+    }
+    // A Chatmail address must contain exactly one '@'.
+    if address.matches('@').count() != 1 {
+        return Err("address must contain exactly one '@'");
+    }
+    Ok(())
+}
+
+/// Construct a path within `base_dir` for the given address, verifying
+/// that the result does not escape the base directory.
+///
+/// Returns `None` if the address fails validation or the resolved path
+/// falls outside `base_dir`.
+fn safe_child_path(base_dir: &str, address: &str) -> Option<PathBuf> {
+    validate_address(address).ok()?;
+
+    let base = Path::new(base_dir);
+    let candidate = base.join(address);
+
+    // Verify that the constructed path, after lexical resolution,
+    // still begins with the base directory.  This catches edge cases
+    // that string-level checks might miss (e.g. symlink tricks if
+    // the directory exists).
+    if let Ok(canonical_base) = base.canonicalize()
+        && candidate.exists()
+        && let Ok(canonical_candidate) = candidate.canonicalize()
+        && !canonical_candidate.starts_with(&canonical_base)
+    {
+        warn!(
+            address = %address,
+            "resolved path escapes base directory"
+        );
+        return None;
+    }
+    Some(candidate)
+    // If the candidate doesn't exist yet, the string-level checks
+    // in validate_address are the defence. The address has already
+    // been verified to contain no `/`, `\`, `..`, or null bytes.
+}
 
 /// Dispatch an incoming HTTP request.
 pub fn handle_request(request: Request, state: &Arc<AppState>) {
@@ -159,7 +228,16 @@ fn handle_rotate_password(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let password_file = password_file_path(&state.config.vmail_home, address);
+    let password_file = match password_file_path(&state.config.vmail_home, address) {
+        Some(p) => p,
+        None => {
+            request.respond(json_response(
+                StatusCode(400),
+                &json!({"error": "invalid address"}),
+            ))?;
+            return Ok(());
+        }
+    };
     if !password_file.exists() {
         request.respond(json_response(
             StatusCode(404),
@@ -187,7 +265,15 @@ fn handle_kick(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let _ = state; // config not needed beyond address validation.
+    if let Err(e) = validate_address(address) {
+        warn!(address = %address, error = %e, "kick rejected: invalid address");
+        request.respond(json_response(
+            StatusCode(400),
+            &json!({"error": "invalid address"}),
+        ))?;
+        return Ok(());
+    }
+    let _ = state; // config not needed for this handler.
     let status = std::process::Command::new("doveadm")
         .args(["kick", address])
         .status();
@@ -229,7 +315,16 @@ fn handle_delete_account(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let account_dir = maildir_path(&state.config.vmail_home, address);
+    let account_dir = match maildir_path(&state.config.vmail_home, address) {
+        Some(p) => p,
+        None => {
+            request.respond(json_response(
+                StatusCode(400),
+                &json!({"error": "invalid address"}),
+            ))?;
+            return Ok(());
+        }
+    };
 
     if account_dir.exists() {
         // remove_dir_all deletes the entire account directory,
@@ -312,6 +407,14 @@ fn handle_block_sender_pair(
     sender: &str,
     recipient: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
+        warn!(sender = %sender, recipient = %recipient, error = %e, "block-sender-pair rejected: invalid address");
+        request.respond(json_response(
+            StatusCode(400),
+            &json!({"error": "invalid address"}),
+        ))?;
+        return Ok(());
+    }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.sender_blocks
@@ -340,6 +443,14 @@ fn handle_unblock_sender_pair(
     sender: &str,
     recipient: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
+        warn!(sender = %sender, recipient = %recipient, error = %e, "unblock-sender-pair rejected: invalid address");
+        request.respond(json_response(
+            StatusCode(400),
+            &json!({"error": "invalid address"}),
+        ))?;
+        return Ok(());
+    }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(set) = maps.sender_blocks.get_mut(sender) {
@@ -369,7 +480,16 @@ fn handle_account_exists(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let exists = password_file_path(&state.config.vmail_home, address).exists();
+    let exists = match password_file_path(&state.config.vmail_home, address) {
+        Some(p) => p.exists(),
+        None => {
+            request.respond(json_response(
+                StatusCode(400),
+                &json!({"error": "invalid address"}),
+            ))?;
+            return Ok(());
+        }
+    };
     request.respond(json_response(
         StatusCode(200),
         &json!({"address": address, "exists": exists}),
@@ -382,13 +502,18 @@ fn handle_account_exists(
 /// Derive the password file path for a Chatmail address.
 ///
 /// Chatmail stores passwords at `{vmail_home}/{address}/password`.
-fn password_file_path(vmail_home: &str, address: &str) -> PathBuf {
-    PathBuf::from(vmail_home).join(address).join("password")
+/// Returns `None` if the address fails validation or the resolved path
+/// escapes `vmail_home`.
+fn password_file_path(vmail_home: &str, address: &str) -> Option<PathBuf> {
+    safe_child_path(vmail_home, address).map(|p| p.join("password"))
 }
 
 /// Derive the maildir path for a Chatmail address.
-fn maildir_path(vmail_home: &str, address: &str) -> PathBuf {
-    PathBuf::from(vmail_home).join(address)
+///
+/// Returns `None` if the address fails validation or the resolved path
+/// escapes `vmail_home`.
+fn maildir_path(vmail_home: &str, address: &str) -> Option<PathBuf> {
+    safe_child_path(vmail_home, address)
 }
 
 /// Build a `tiny_http::Response` with a JSON body and `Content-Type`
@@ -430,5 +555,71 @@ mod tests {
     #[test]
     fn parse_sender_pair_no_block_to() {
         assert!(parse_sender_block_pair("alice@chat.example.com/something/bob").is_none());
+    }
+
+    #[test]
+    fn validate_address_accepts_valid() {
+        assert!(validate_address("alice@chat.example.com").is_ok());
+        assert!(validate_address("user123@chat.noombat.social").is_ok());
+    }
+
+    #[test]
+    fn validate_address_rejects_traversal() {
+        assert!(validate_address("../../etc/shadow").is_err());
+        assert!(validate_address("alice@chat..example.com").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_path_separator() {
+        assert!(validate_address("alice/../../etc/passwd").is_err());
+        assert!(validate_address("alice\\bob").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_null_byte() {
+        assert!(validate_address("alice\0@example.com").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_empty() {
+        assert!(validate_address("").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_missing_at() {
+        assert!(validate_address("alice").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_multiple_at() {
+        assert!(validate_address("alice@chat@example.com").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_leading_dot() {
+        assert!(validate_address(".hidden@example.com").is_err());
+    }
+
+    #[test]
+    fn validate_address_rejects_whitespace() {
+        assert!(validate_address("alice @example.com").is_err());
+        assert!(validate_address("alice@example.com\n").is_err());
+        assert!(validate_address("alice@example.com\r").is_err());
+        assert!(validate_address("alice@example.com\t").is_err());
+    }
+
+    #[test]
+    fn safe_child_path_rejects_traversal() {
+        assert!(safe_child_path("/home/vmail", "../../etc/shadow").is_none());
+    }
+
+    #[test]
+    fn safe_child_path_accepts_valid() {
+        let p = safe_child_path("/home/vmail", "alice@chat.example.com");
+        assert!(p.is_some());
+        assert_eq!(
+            p.unwrap(),
+            PathBuf::from("/home/vmail/alice@chat.example.com")
+        );
     }
 }
