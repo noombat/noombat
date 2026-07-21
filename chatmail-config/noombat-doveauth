@@ -1,0 +1,59 @@
+#!/bin/sh
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+#
+# noombat-doveauth: Dovecot checkpassword-compatible authentication
+# helper implementing the Chatmail create-on-login mechanism.
+#
+# Protocol: Dovecot writes "user\0password\0" to fd 3. This script
+# reads the credentials, checks (or creates) the per-user password
+# file, and execs $1 on success or exits 1 on failure.
+#
+# See: https://doc.dovecot.org/configuration_manual/authentication/checkpassword/
+
+set -e
+
+VMAIL_HOME="${VMAIL_HOME:-/home/vmail}"
+
+# Read credentials from fd 3 (null-separated: user\0password\0...).
+# POSIX sh command substitution strips null bytes, so we pipe through
+# tr to convert nulls to newlines and read the fields line-by-line.
+# Values are single-quoted in the eval output to prevent injection.
+eval "$(head -c 512 <&3 | tr '\0' '\n' | {
+    IFS= read -r user
+    IFS= read -r pass
+    # Escape any embedded single quotes (a'\''b to a'b in shell).
+    user_q=$(printf '%s' "$user" | sed "s/'/'\\\\''/g")
+    pass_q=$(printf '%s' "$pass" | sed "s/'/'\\\\''/g")
+    printf "user='%s'\\npass='%s'\\n" "$user_q" "$pass_q"
+})"
+
+if [ -z "$user" ] || [ -z "$pass" ]; then
+    exit 1
+fi
+
+password_file="${VMAIL_HOME}/${user}/password"
+user_home="${VMAIL_HOME}/${user}"
+
+if [ -f "$password_file" ]; then
+    # Existing account: verify the password.
+    stored=$(cat "$password_file")
+    if [ "$pass" != "$stored" ]; then
+        exit 1
+    fi
+else
+    # New account: create-on-login. Write the submitted password as
+    # the stored credential and initialise the maildir.
+    mkdir -p "${user_home}/Maildir/cur" "${user_home}/Maildir/new" "${user_home}/Maildir/tmp"
+    printf '%s' "$pass" > "$password_file"
+    chown -R 5000:5000 "$user_home"
+fi
+
+# Export the userdb response for Dovecot.
+export USER="$user"
+export HOME="$user_home"
+export userdb_uid=5000
+export userdb_gid=5000
+
+# Success: exec the program Dovecot told us to run.
+exec "$@"

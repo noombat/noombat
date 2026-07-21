@@ -1,0 +1,116 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# noombat-chatmail container image.
+#
+# Packages the standard Chatmail relay (Postfix + Dovecot + doveauth +
+# filtermail + OpenDKIM) alongside the noombat-chatmail-admin sidecar
+# daemon, managed by s6-overlay.
+
+# ..... SIDECAR BUILD .....
+FROM rust:1-bookworm AS sidecar-builder
+
+WORKDIR /build
+COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
+COPY crates/ crates/
+
+# Build only the sidecar binary in release mode.
+RUN cargo build --release --bin noombat-chatmail-admin
+
+# ..... RUNTIME .....
+#
+# Base image: Debian bookworm-slim with the mail stack installed via
+# packages. In production, the upstream Chatmail relay is deployed via
+# Ansible (cmdeploy); for containerisation, we install the required
+# packages directly and overlay the Chatmail-specific configuration.
+FROM debian:bookworm-slim
+
+# Install s6-overlay for process supervision.
+ARG S6_OVERLAY_VERSION=3.2.0.2
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
+ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
+RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
+    tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
+    rm /tmp/s6-overlay-*.tar.xz
+
+# Install Postfix, Dovecot, and OpenDKIM.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        postfix \
+        dovecot-imapd \
+        dovecot-lmtpd \
+        opendkim \
+        opendkim-tools \
+        ca-certificates \
+        openssl \
+        procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create vmail user and directories.
+RUN groupadd -g 5000 vmail && \
+    useradd -u 5000 -g vmail -d /home/vmail -m vmail && \
+    mkdir -p /home/vmail/.noombat-admin && \
+    chown -R vmail:vmail /home/vmail
+
+# Create Postfix access map files and the transport_maps file.
+RUN touch /etc/postfix/noombat_recipient_access \
+          /etc/postfix/noombat_sender_access \
+          /etc/postfix/noombat_transport_maps && \
+    postmap /etc/postfix/noombat_recipient_access && \
+    postmap /etc/postfix/noombat_sender_access && \
+    postmap /etc/postfix/noombat_transport_maps
+
+# Copy Chatmail-specific Postfix and Dovecot configuration.
+COPY chatmail-config/main.cf /etc/postfix/main.cf
+COPY chatmail-config/dovecot.conf /etc/dovecot/dovecot.conf
+COPY chatmail-config/entrypoint.sh /entrypoint.sh
+COPY chatmail-config/noombat-doveauth /usr/local/bin/noombat-doveauth
+RUN chmod +x /entrypoint.sh /usr/local/bin/noombat-doveauth
+
+# Copy the sidecar binary from the builder stage.
+COPY --from=sidecar-builder /build/target/release/noombat-chatmail-admin /usr/local/bin/noombat-chatmail-admin
+
+# ..... S6-OVERLAY SERVICE DEFINITIONS .....
+
+# Dovecot service (started first: provides SASL and LMTP sockets).
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/dovecot /etc/s6-overlay/s6-rc.d/user/contents.d
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/dovecot/type
+RUN printf '#!/command/execlineb -P\n/usr/sbin/dovecot -F\n' > /etc/s6-overlay/s6-rc.d/dovecot/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/dovecot/run
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/dovecot
+
+# OpenDKIM service (started before Postfix: provides the milter socket).
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/opendkim
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/opendkim/type
+RUN printf '#!/command/execlineb -P\n/usr/sbin/opendkim -f\n' > /etc/s6-overlay/s6-rc.d/opendkim/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/opendkim/run
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/opendkim
+
+# Postfix service (depends on Dovecot and OpenDKIM).
+# The master process is run directly in the foreground (-d flag)
+# rather than via `postfix start`, which backgrounds the daemon.
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/postfix
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/postfix/type
+RUN printf '#!/command/execlineb -P\n/usr/lib/postfix/sbin/master -d\n' > /etc/s6-overlay/s6-rc.d/postfix/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/postfix/run
+RUN printf 'dovecot\nopendkim\n' > /etc/s6-overlay/s6-rc.d/postfix/dependencies
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/postfix
+
+# noombat-chatmail-admin sidecar service (no dependencies).
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/chatmail-admin
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/chatmail-admin/type
+RUN printf '#!/command/execlineb -P\n/usr/local/bin/noombat-chatmail-admin\n' > /etc/s6-overlay/s6-rc.d/chatmail-admin/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/chatmail-admin/run
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/chatmail-admin
+
+# Expose ports.
+EXPOSE 25 465 993 9100
+
+# Volumes.
+VOLUME ["/home/vmail"]
+
+# Health check: IMAP NOOP.
+HEALTHCHECK --interval=30s --timeout=5s \
+    CMD doveadm service status imap || exit 1
+
+ENTRYPOINT ["/entrypoint.sh"]
