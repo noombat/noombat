@@ -2,7 +2,7 @@
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 # ..... FRONTEND BUILD .....
-FROM node:22-bookworm-slim AS frontend
+FROM node:26-bookworm-slim AS frontend
 
 WORKDIR /build
 
@@ -40,7 +40,7 @@ RUN cargo build --release --bin noombat
 # ..... TYPST BINARY .....
 # Copy the pre-built Typst CLI from the official container image.
 # Pinned to the release series used by the project; bump when upgrading.
-FROM ghcr.io/typst/typst:0.15.0 AS typst
+FROM ghcr.io/typst/typst:0.15.1 AS typst
 
 # ..... RUNTIME .....
 FROM debian:bookworm-slim
