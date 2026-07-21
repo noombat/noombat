@@ -1,0 +1,23 @@
+# GitHub Actions CI pipeline for REUSE licence-compliance check.
+#
+# Runs unconditionally on every push and pull request because any file
+# addition or header modification can introduce a REUSE violation.
+
+name: REUSE
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  reuse:
+    name: REUSE compliance
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install reuse
+        run: pip install --break-system-packages reuse==6.2.0
+      - run: reuse lint

@@ -1,4 +1,4 @@
-# Verify that Dockerfiles build successfully.
+# GitHub Actions CI pipeline for Dockerfiles build success verification.
 #
 # Gated to paths that affect either container image.
 # Does not push, i.e. images are discarded after the job.

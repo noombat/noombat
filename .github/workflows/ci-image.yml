@@ -1,3 +1,5 @@
+# GitHub Actions CI pipeline for CI container image generation.
+#
 # Builds and publishes the CI container image to ghcr.io/noombat/noombat-ci.
 # Triggered on changes to the Dockerfile or toolchain, or manually.
 

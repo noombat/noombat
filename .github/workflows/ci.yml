@@ -1,22 +1,48 @@
-# GitHub Actions CI pipeline.
+# GitHub Actions CI pipeline for Rust-focused jobs.
 #
-# Jobs `fmt`, `reuse`, and `safe-rust` run on GitHub's hosted runners
-# (`ubuntu-latest`). They require no infrastructure and perform no
-# Rust compilation.
+# Gated on paths that affect Rust compilation, linting, formatting,
+# dependency auditing, or database-backed integration tests. Commits
+# that touch only documentation, licence files, Cedar policies, shell
+# scripts, container definitions, or CI infrastructure that does not
+# affect the Rust build are skipped.
 #
-# All other jobs run on a self-hosted runner registered with the label
-# `self-hosted`, inside the `ghcr.io/noombat/noombat-ci` container image,
-# which pre-installs Rust, Node.js, pnpm, sqlx-cli, cargo-deny, wasm-pack,
-# and system build dependencies. Jobs `integration`, `e2e`, and `interop` 
-# additionally use PostgreSQL and Redis service containers.
+# Jobs `fmt` and `safe-rust` run on GitHub's hosted runners
+# (`ubuntu-latest`). All other jobs run on a self-hosted runner
+# inside the `ghcr.io/noombat/noombat-ci` container image. The
+# `integration` job additionally uses PostgreSQL and Redis
+# service containers.
+#
+# Related workflows:
+#   ci-reuse.yml            REUSE licence compliance (unconditional).
+#   ci-e2e.yml              Playwright end-to-end and federation interop tests.
+#   ci-image.yml            CI container image build.
+#   container-build.yml     Server and chatmail container image builds.
 
 name: CI
 
 on:
   push:
     branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - "crates/**"
+      - "migrations/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "rustfmt.toml"
   pull_request:
     branches: [main]
+    paths:
+      - ".github/workflows/ci.yml"
+      - "crates/**"
+      - "migrations/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "deny.toml"
+      - "rustfmt.toml"
   workflow_dispatch:
     inputs:
       release:
@@ -47,15 +73,6 @@ jobs:
               --profile minimal --component rustfmt
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
       - run: cargo fmt --all -- --check
-
-  reuse:
-    name: REUSE compliance
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install reuse
-        run: pip install --break-system-packages reuse==6.2.0
-      - run: reuse lint
 
   safe-rust:
     name: Safe Rust only
@@ -216,265 +233,6 @@ jobs:
       - name: Run migrations
         run: sqlx migrate run --source migrations
       - run: cargo test --workspace
-
-  e2e:
-    name: End-to-end tests (Firefox, Chromium, WebKit)
-    runs-on: self-hosted
-    container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
-      options: "--shm-size=2g --ipc=host"
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: noombat
-          POSTGRES_PASSWORD: noombat
-          POSTGRES_DB: noombat
-        options: >-
-          --health-cmd "pg_isready -U noombat"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    env:
-      HOME: /root
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@postgres/noombat
-      DATABASE_URL: postgres://noombat:noombat@postgres/noombat
-      NOOMBAT_DOMAIN: localhost
-      NOOMBAT_PORT: "8443"
-      NOOMBAT_ADMIN_TOKEN: ci-test-token
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install system build dependencies
-        run: |
-          apt-get update -qq
-          apt-get install -y --no-install-recommends \
-            build-essential pkg-config postgresql-client
-
-      - name: Install Rust
-        run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
-          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-
-      - name: Cache Cargo artefacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: cargo-e2e-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-e2e-
-
-      - name: Install sqlx-cli and run migrations
-        run: |
-          cargo install sqlx-cli@0.9.0 --locked --no-default-features \
-            --features postgres,rustls
-          sqlx migrate run --source migrations
-
-      - name: Build Noombat server
-        run: cargo build --release --bin noombat
-
-      - name: Build frontend assets
-        working-directory: frontend
-        run: |
-          corepack enable
-          pnpm install
-          pnpm build
-
-      - name: Seed test actor
-        run: |
-          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c "
-            INSERT INTO actors
-              (actor_type, ap_id, username, domain, public_key_pem, is_local)
-            VALUES
-              ('individual', 'http://localhost:8443/users/testuser',
-               'testuser', 'localhost',
-               '-----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
-          -----END PUBLIC KEY-----',
-               TRUE)
-            ON CONFLICT (ap_id) DO NOTHING;"
-
-      - name: Start Noombat server
-        run: |
-          nohup ./target/release/noombat > /tmp/noombat.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8443/healthz; then
-              echo "Server is ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Server failed to start within 60 seconds"
-          cat /tmp/noombat.log
-          exit 1
-
-      - name: Install Playwright test dependencies
-        working-directory: tests/e2e
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-
-      - name: Run Playwright tests (Firefox)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=firefox
-
-      - name: Run Playwright tests (Chromium)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=chromium
-
-      - name: Run Playwright tests (WebKit)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=webkit
-
-      - name: Run Playwright tests (Firefox mobile viewport)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=firefox-mobile
-
-      - name: Run Playwright tests (Chromium mobile viewport)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=chromium-mobile
-
-      - name: Run Playwright tests (WebKit mobile viewport)
-        working-directory: tests/e2e
-        run: pnpm exec playwright test --project=webkit-mobile
-
-      - name: Dump server log on failure
-        if: failure()
-        run: cat /tmp/noombat.log
-
-      - name: Upload Playwright report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: tests/e2e/playwright-report/
-          retention-days: 14
-
-  interop:
-    name: Federation interop (GotoSocial)
-    runs-on: self-hosted
-    container:
-      image: ghcr.io/noombat/noombat-ci:latest
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: noombat
-          POSTGRES_PASSWORD: noombat
-          POSTGRES_DB: noombat
-        options: >-
-          --health-cmd "pg_isready -U noombat"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:7-alpine
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      gotosocial:
-        image: superseriousbusiness/gotosocial:latest
-        env:
-          GTS_HOST: gotosocial
-          GTS_ACCOUNT_DOMAIN: gotosocial
-          GTS_PROTOCOL: http
-          GTS_PORT: "8080"
-          GTS_TLS_MODE: ""
-          GTS_DB_TYPE: sqlite
-          GTS_DB_ADDRESS: /gotosocial/storage/sqlite.db
-          GTS_STORAGE_LOCAL_BASE_PATH: /gotosocial/storage
-          GTS_ACCOUNTS_REGISTRATION_OPEN: "false"
-          GTS_LETSENCRYPT_ENABLED: "false"
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8080/readyz || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 12
-          --health-start-period 15s
-    env:
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@postgres/noombat
-      DATABASE_URL: postgres://noombat:noombat@postgres/noombat
-      NOOMBAT_DOMAIN: localhost
-      NOOMBAT_PORT: "8443"
-      NOOMBAT_ADMIN_TOKEN: interop-test-token
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Cache Cargo artefacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/local/cargo/registry
-            /usr/local/cargo/git
-            target
-          key: cargo-interop-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-interop-
-
-      - name: Run migrations
-        run: sqlx migrate run --source migrations
-
-      - name: Build Noombat server
-        run: cargo build --release --bin noombat
-
-      - name: Build frontend assets
-        working-directory: frontend
-        run: |
-          corepack enable
-          pnpm install
-          pnpm build
-
-      - name: Seed test actor
-        run: |
-          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c "
-            INSERT INTO actors
-              (actor_type, ap_id, username, domain, public_key_pem, is_local)
-            VALUES
-              ('individual', 'http://localhost:8443/users/alice',
-               'alice', 'localhost',
-               '-----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngu+UeqfsU3AJHhVHk2k
-          MEjaIOzbOWRPu1TsqUpGq0IX/mhQUC6/mkF9+H27ziERaM+77JB7MQ9q1ITLnukj
-          TlmQhgUrsstMV1ZiU+9WqJ+NmlpdoQ4zVFXEf7IJHmZ+mYxei/qhVrnBDvV4e1KR
-          iOTxUYyqWrI7BFGrA3eR22zb9K5/CwOuTw0uYGGhkxfMalBXd4k1AyYGsHo/riQY
-          xOCucw31jlUavoajo3CPXWXgCi+F6mumsIm7snaFNiCG8d8jqXZ8aSC8JcGImf95
-          Gg3J3oGE9ZiAue0WmYC+oMDzLBJtqN0V/c1OsU7PsP8+8fllvlfBluhuTfR/O19J
-          RQIDAQAB
-          -----END PUBLIC KEY-----',
-               TRUE)
-            ON CONFLICT (ap_id) DO NOTHING;"
-
-      - name: Start Noombat server
-        run: |
-          nohup ./target/release/noombat > /tmp/noombat.log 2>&1 &
-          for i in $(seq 1 30); do
-            if curl -sf http://localhost:8443/healthz; then
-              echo "Server is ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Server failed to start within 60 seconds"
-          cat /tmp/noombat.log
-          exit 1
-
-      - name: Run interop tests
-        run: tests/interop/run.sh http://localhost:8443 http://gotosocial:8080
-
-      - name: Dump server log on failure
-        if: failure()
-        run: cat /tmp/noombat.log
 
   # ..... ON-DEMAND RELEASE BUILD .....
 
