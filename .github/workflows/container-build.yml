@@ -1,7 +1,7 @@
-# Verify that the Dockerfile builds successfully.
+# Verify that Dockerfiles build successfully.
 #
-# Gated to paths that affect the container image.
-# Does not push, i.e. the image is discarded after the job.
+# Gated to paths that affect either container image.
+# Does not push, i.e. images are discarded after the job.
 
 name: Container build
 
@@ -12,6 +12,8 @@ on:
     paths:
       - ".github/workflows/container-build.yml"
       - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
       - "compose.yml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -23,6 +25,8 @@ on:
     paths:
       - ".github/workflows/container-build.yml"
       - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
       - "compose.yml"
       - "Cargo.toml"
       - "Cargo.lock"
@@ -43,5 +47,7 @@ jobs:
       - name: Install dependencies
         run: apk add --no-cache docker-cli docker-cli-buildx git
       - uses: actions/checkout@v4
-      - name: Build container image
+      - name: Build server container image
         run: docker build --tag noombat:ci-test .
+      - name: Build chatmail container image
+        run: docker build --file Dockerfile.chatmail --tag noombat-chatmail:ci-test .

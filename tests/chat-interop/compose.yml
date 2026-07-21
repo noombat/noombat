@@ -42,15 +42,18 @@ services:
   # packages the standard Chatmail relay (Postfix + Dovecot +
   # doveauth + filtermail + OpenDKIM) alongside the
   # noombat-chatmail-admin sidecar daemon.
-  #
-  # If the image is not yet available, the Alpine stub below ensures
-  # the Compose file parses without a missing image error. Replace
-  # with the real image in CI (e.g. ghcr.io/noombat/noombat-chatmail).
 
   chatmail:
-    image: docker.io/library/alpine:3.20
-    # Stub: replace with the actual noombat-chatmail image in CI.
-    entrypoint: ["sh", "-c", "echo 'chatmail stub — replace with noombat-chatmail image in CI'; sleep infinity"]
+    build:
+      context: ../..
+      dockerfile: Dockerfile.chatmail
+    environment:
+      MAIL_DOMAIN: chat.test.local
+      CHATMAIL_ADMIN_SECRET: test-admin-secret
+      CHATMAIL_ADMIN_HOST: "0.0.0.0"
+      CHATMAIL_ADMIN_PORT: "9100"
+      # Disable allowlist polling in the test environment.
+      CHATMAIL_ALLOWLIST_URL: ""
     networks:
       chattest:
         aliases: [chat.test.local]
@@ -70,8 +73,9 @@ services:
       NOOMBAT_ADMIN_TOKEN: chat-test-token
       NOOMBAT_JWT_SECRET: test-secret-at-least-32-bytes-long!!
       NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
-      # NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:8444
-      # NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
+      NOOMBAT_CHATMAIL_AVAILABLE: "true"
+      NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
+      NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
     ports:
       - "8443:8443"
     depends_on:

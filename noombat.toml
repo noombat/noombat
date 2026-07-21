@@ -35,6 +35,14 @@ policies_dir = "policies"
 # Co-deployed Chatmail relay domain.
 # Every instance co-deploys its own Chatmail relay and admin sidecar.
 chatmail_domain = "chat.localhost"
+chatmail_available = true
 
 # Chatmail admin sidecar REST API URL (internal-only).
-# chatmail_admin_url = "http://chatmail-admin:8444"
+# Required for suspension/unsuspension orchestration and
+# chat moderation enforcement.
+# chatmail_admin_url = "http://chatmail:9100"
+
+# Shared secret for authenticating requests to the admin sidecar.
+# Must match the CHATMAIL_ADMIN_SECRET environment variable set on
+# the noombat-chatmail container.
+# chatmail_admin_secret = "change-this-to-a-random-secret"

@@ -11,6 +11,10 @@ services:
       NOOMBAT_REDIS_URL: redis://redis:6379
       NOOMBAT_MEILI_URL: http://meilisearch:7700
       NOOMBAT_MEILI_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
+      NOOMBAT_CHATMAIL_AVAILABLE: "true"
+      NOOMBAT_CHATMAIL_DOMAIN: chat.${NOOMBAT_DOMAIN:-localhost}
+      NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
+      NOOMBAT_CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
     ports:
       - "8443:8443"
     depends_on:
@@ -19,6 +23,8 @@ services:
       redis:
         condition: service_started
       meilisearch:
+        condition: service_started
+      chatmail:
         condition: service_started
 
   db:
@@ -64,7 +70,30 @@ services:
     volumes:
       - meili-data:/meili_data
 
+  chatmail:
+    build:
+      context: .
+      dockerfile: Dockerfile.chatmail
+    hostname: chat.${NOOMBAT_DOMAIN:-localhost}
+    environment:
+      MAIL_DOMAIN: chat.${NOOMBAT_DOMAIN:-localhost}
+      CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
+      CHATMAIL_ADMIN_HOST: "0.0.0.0"
+      CHATMAIL_ADMIN_PORT: "9100"
+      CHATMAIL_ALLOWLIST_URL: ${CHATMAIL_ALLOWLIST_URL:-https://noombat.org/chatmail-allowlist.json}
+    ports:
+      - "25:25"       # inbound SMTP (MX)
+      - "993:993"     # IMAP (TLS)
+      - "465:465"     # SMTP submission (TLS)
+    volumes:
+      - chatmail-data:/home/vmail
+    healthcheck:
+      test: ["CMD", "doveadm", "service", "status", "imap"]
+      interval: 30s
+      timeout: 5s
+
 volumes:
   pg-data:
   redis-data:
   meili-data:
+  chatmail-data:
