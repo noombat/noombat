@@ -93,6 +93,10 @@ pub struct Actor {
     pub instance_role: InstanceRole,
     /// Moderation state (compile-time exhaustive via [`ActorStatus`]).
     pub actor_status: ActorStatus,
+    /// Set on unsuspension; cleared after chat credential
+    /// re-provisioning. The browser detects this flag on
+    /// login and guides the user through re-provisioning.
+    pub chat_requires_reprovisioning: bool,
     pub chatmail_addr: Option<String>,
     pub orcid: Option<String>,
     /// Target actor URI if this actor has migrated via a `Move` activity.

@@ -481,6 +481,7 @@ mod tests {
             inbox_url: None,
             instance_role: InstanceRole::User,
             actor_status: ActorStatus::Active,
+            chat_requires_reprovisioning: false,
             chatmail_addr: None,
             orcid: None,
             moved_to: None,

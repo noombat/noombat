@@ -43,6 +43,7 @@ struct ActorRow {
     inbox_url: Option<String>,
     instance_role: InstanceRole,
     actor_status: ActorStatus,
+    chat_requires_reprovisioning: bool,
     chatmail_addr: Option<String>,
     orcid: Option<String>,
     moved_to: Option<String>,
@@ -76,6 +77,7 @@ impl ActorRow {
             inbox_url: self.inbox_url,
             instance_role: self.instance_role,
             actor_status: self.actor_status,
+            chat_requires_reprovisioning: self.chat_requires_reprovisioning,
             chatmail_addr: self.chatmail_addr,
             orcid: self.orcid,
             moved_to: self.moved_to,
@@ -155,6 +157,7 @@ where
         inbox_url: None,
         instance_role: InstanceRole::User,
         actor_status: ActorStatus::Active,
+        chat_requires_reprovisioning: false,
         chatmail_addr: None,
         orcid: None,
         moved_to: None,
@@ -172,6 +175,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
+               chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
@@ -193,6 +197,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
+               chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
@@ -620,6 +625,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
                headline, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
+               chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
                created_at, updated_at
            FROM actors
