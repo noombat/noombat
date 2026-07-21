@@ -17,6 +17,7 @@
 //!   messages.
 //! - [`report`]: Chat moderation report submission.
 
+pub mod admin_client;
 pub mod mime_bridge;
 pub mod provision;
 pub mod relay;
