@@ -4,6 +4,7 @@
 
 use std::sync::Arc;
 
+use noombat_chat::admin_client::ChatmailAdminClient;
 use noombat_core::auth::AuthorisationBackend;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
 use noombat_identity::oauth_orcid::OrcidConfig;
@@ -44,4 +45,7 @@ pub struct AppState {
     pub chatmail_admin_url: Option<String>,
     /// Shared secret for authenticating requests to the admin sidecar.
     pub chatmail_admin_secret: Option<String>,
+    /// Pre-constructed HTTP client for the Chatmail admin sidecar.
+    /// `None` when the sidecar URL or secret is not configured.
+    pub chatmail_admin_client: Option<ChatmailAdminClient>,
 }

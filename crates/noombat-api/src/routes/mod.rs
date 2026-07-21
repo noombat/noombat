@@ -13,6 +13,7 @@ pub mod hashtags;
 pub mod health;
 pub mod interactions;
 pub mod jobs;
+pub mod moderation;
 pub mod pages;
 pub mod posts;
 pub mod profile_sections;

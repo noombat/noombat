@@ -41,16 +41,23 @@ async fn ws_upgrade(
         )));
     }
 
-    // Fetch the actor's Chatmail address.
-    let chatmail_addr =
-        sqlx::query_scalar::<_, Option<String>>("SELECT chatmail_addr FROM actors WHERE id = $1")
-            .bind(actor_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| ApiError(NoombatError::Internal(format!("actor lookup failed: {e}"))))?
-            .ok_or(ApiError(NoombatError::BadRequest(
-                "chat not provisioned for this account".into(),
-            )))?;
+    // Fetch the actor's Chatmail address and moderation status.
+    let (chatmail_addr, actor_status): (Option<String>, String) = sqlx::query_as(
+        "SELECT chatmail_addr, actor_status FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(|e| ApiError(NoombatError::Internal(format!("actor lookup failed: {e}"))))?;
+
+    // Reject suspended actors.
+    if actor_status == "suspended" {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+
+    let chatmail_addr = chatmail_addr.ok_or(ApiError(NoombatError::BadRequest(
+        "chat not provisioned for this account".into(),
+    )))?;
 
     let pool = state.pool.clone();
 

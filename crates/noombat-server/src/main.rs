@@ -381,6 +381,10 @@ async fn main() -> anyhow::Result<()> {
         chatmail_domain: config.chatmail_domain.clone(),
         chatmail_admin_url: config.chatmail_admin_url.clone(),
         chatmail_admin_secret: config.chatmail_admin_secret.clone(),
+        chatmail_admin_client: noombat_chat::admin_client::ChatmailAdminClient::new(
+            config.chatmail_admin_url.as_deref(),
+            config.chatmail_admin_secret.as_deref(),
+        ),
     };
     let app = noombat_api::build_router(state);
 
