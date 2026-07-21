@@ -54,6 +54,9 @@ on:
           - "false"
           - "true"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -65,7 +68,7 @@ jobs:
     name: Formatting
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install Rust
         run: |
           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
@@ -78,7 +81,7 @@ jobs:
     name: Safe Rust only
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Verify all first-party crates forbid unsafe code
         run: |
           FAIL=0
@@ -117,9 +120,9 @@ jobs:
     container:
       image: ghcr.io/noombat/noombat-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -134,9 +137,9 @@ jobs:
     container:
       image: ghcr.io/noombat/noombat-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -154,9 +157,9 @@ jobs:
     container:
       image: ghcr.io/noombat/noombat-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -172,13 +175,13 @@ jobs:
     container:
       image: ghcr.io/noombat/noombat-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Install MSRV toolchain
         run: |
           rustup install 1.94.0
           rustup default 1.94.0
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -220,9 +223,9 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -243,10 +246,10 @@ jobs:
     container:
       image: ghcr.io/noombat/noombat-ci:latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
@@ -270,14 +273,14 @@ jobs:
         run: pnpm build:wasm
 
       - name: Upload release binary
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: noombat-release
           path: target/release/noombat
           retention-days: 30
 
       - name: Upload frontend assets
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: noombat-frontend
           path: frontend/dist/

@@ -37,6 +37,9 @@ on:
       - "Cargo.lock"
       - "rust-toolchain.toml"
 
+permissions:
+  contents: read
+
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
@@ -75,7 +78,7 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Install system build dependencies
         run: |
@@ -90,7 +93,7 @@ jobs:
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cargo/registry
@@ -179,7 +182,7 @@ jobs:
 
       - name: Upload Playwright report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: tests/e2e/playwright-report/
@@ -235,10 +238,10 @@ jobs:
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: interop-test-token
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Cache Cargo artefacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             /usr/local/cargo/registry
