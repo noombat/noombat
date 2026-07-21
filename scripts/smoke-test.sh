@@ -132,6 +132,29 @@ check_post "POST outbox for nonexistent user returns 404" \
     "Bearer $TOKEN" '{"content":"test"}'
 
 echo ""
+echo "..... Moderation ....."
+
+# A null UUID for a nonexistent actor.
+NULL_ID="00000000-0000-0000-0000-000000000000"
+
+check_post "POST suspend without auth returns 403" \
+    "$BASE/api/v1/admin/actors/$NULL_ID/suspend" "403" \
+    "" '{"reason":"test"}'
+
+check_post "POST unsuspend without auth returns 403" \
+    "$BASE/api/v1/admin/actors/$NULL_ID/unsuspend" "403"
+
+check_post "POST resolve chat report without auth returns 403" \
+    "$BASE/api/v1/admin/chat-reports/$NULL_ID/resolve" "403" \
+    "" '{"action":"dismiss"}'
+
+check "GET chat reports without auth returns 403" \
+    "$BASE/api/v1/admin/chat-reports" "403"
+
+check "GET reports without auth returns 403" \
+    "$BASE/api/v1/admin/reports" "403"
+
+echo ""
 echo "══ Results: $PASS passed, $FAIL failed ══"
 echo ""
 

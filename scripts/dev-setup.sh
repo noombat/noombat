@@ -5,8 +5,14 @@
 #
 # Prerequisites:
 #   - Rust >= 1.94.0
+#   - Node.js >= 20
+#   - pnpm >= 9
 #   - Podman with `podman-compose` or Docker with Docker Compose
 #   - sqlx-cli: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
+#
+# Optional (for encrypted chat WASM module):
+#   - wasm-pack: `cargo install wasm-pack`
+#   - wasm32-unknown-unknown target: `rustup target add wasm32-unknown-unknown`
 #
 # Usage:
 #   chmod +x scripts/dev-setup.sh
@@ -16,14 +22,18 @@ set -euo pipefail
 
 GREEN='\033[0;32m'
 RED='\033[0;31m'
+YELLOW='\033[0;33m'
 NC='\033[0m'
 
 info() { echo -e "${GREEN}[+]${NC} $1"; }
+warn() { echo -e "${YELLOW}[~]${NC} $1"; }
 fail() { echo -e "${RED}[!]${NC} $1"; exit 1; }
 
 # ..... CHECK PREREQUISITES .....
 
 command -v cargo >/dev/null 2>&1 || fail "cargo not found; install Rust via https://rustup.rs/"
+command -v node >/dev/null 2>&1 || fail "node not found; install Node.js >= 20"
+command -v pnpm >/dev/null 2>&1 || fail "pnpm not found; install via: npm install -g pnpm"
 
 # Detect container-compose command.
 if command -v docker >/dev/null 2>&1 && docker compose version >/dev/null 2>&1; then
@@ -49,7 +59,15 @@ command -v sqlx >/dev/null 2>&1 || {
     cargo install sqlx-cli --no-default-features --features rustls,postgres
 }
 
-command -v pnpm >/dev/null 2>&1 || fail "pnpm not found; install via: npm install -g pnpm"
+# Check optional WASM prerequisites.
+HAS_WASM_PACK=false
+if command -v wasm-pack >/dev/null 2>&1; then
+    HAS_WASM_PACK=true
+else
+    warn "wasm-pack not found; WASM chat module will be skipped."
+    warn "  Install with: cargo install wasm-pack"
+    warn "  Add target:   rustup target add wasm32-unknown-unknown"
+fi
 
 # ..... ENVIRONMENT FILE .....
 
@@ -64,7 +82,7 @@ set -a; source .env; set +a
 # ..... START INFRASTRUCTURE .....
 
 info "Starting PostgreSQL, Redis, and Meilisearch..."
-$COMPOSE up -d db redis meilisearch
+$COMPOSE up -d db redis meilisearch chatmail
 
 info "Waiting for PostgreSQL to accept connections..."
 # Determine the container name (Docker Compose v2 uses hyphens,
@@ -78,6 +96,19 @@ else
     until $CONTAINER_CLI exec "$DB_CONTAINER" pg_isready -U noombat >/dev/null 2>&1; do
         sleep 1
     done
+fi
+
+info "Waiting for Chatmail relay (Dovecot) to become healthy..."
+CHATMAIL_CONTAINER=$($CONTAINER_CLI ps --format '{{.Names}}' | grep -E '(noombat[-_]chatmail[-_]|^chatmail$)' | head -1)
+if [ -n "$CHATMAIL_CONTAINER" ]; then
+    for _i in $(seq 1 30); do
+        if $CONTAINER_CLI exec "$CHATMAIL_CONTAINER" doveadm service status imap >/dev/null 2>&1; then
+            break
+        fi
+        sleep 2
+    done
+else
+    warn "Could not identify chatmail container by name; skipping health wait."
 fi
 
 # ..... DATABASE SETUP .....
@@ -103,7 +134,15 @@ fi
 info "Installing frontend dependencies..."
 (cd frontend && pnpm install)
 
-info "Building frontend assets (TailwindCSS)..."
+if [ "$HAS_WASM_PACK" = true ]; then
+    info "Building WASM chat module..."
+    (cd frontend && pnpm build:wasm)
+else
+    warn "Skipping WASM build (wasm-pack not installed)."
+    warn "The chat island will fall back to plaintext pass-through."
+fi
+
+info "Building frontend assets..."
 (cd frontend && pnpm build)
 
 # ..... BUILD .....
@@ -116,4 +155,9 @@ cargo build --workspace
 info "Running tests..."
 cargo test --workspace
 
+# ..... DONE .....
+
 info "Setup complete. Start the server with:  cargo run --bin noombat"
+if [ "$HAS_WASM_PACK" = false ]; then
+    warn "Note: encrypted chat is unavailable until wasm-pack is installed and the WASM module is built."
+fi
