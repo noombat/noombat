@@ -1,0 +1,107 @@
+# Dependabot configuration: keeps pinned dependencies current.
+#
+# Covers four ecosystems:
+#   1. github-actions    SHA-pinned action references in workflows.
+#   2. cargo             Rust crate dependencies (Cargo.lock).
+#   3. npm               Frontend assets and Playwright test harness.
+#   4. docker            Base images in Dockerfiles.
+#
+# Minor and patch updates within each ecosystem are grouped into a
+# single pull request to reduce review noise. Major updates are
+# proposed individually so that breaking changes receive dedicated
+# review.
+#
+# Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
+
+version: 2
+
+updates:
+  # 1. GitHub Actions: SHA-pinned action references.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: "ci"
+      include: scope
+    groups:
+      github-actions:
+        patterns:
+          - "*"
+
+  # 2. Cargo: Rust workspace dependencies.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - rust
+    commit-message:
+      prefix: "deps"
+      include: scope
+    groups:
+      cargo-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # 3a. npm: Frontend assets (SolidJS, KaTeX, Vite, TailwindCSS).
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - frontend
+    commit-message:
+      prefix: "deps(frontend)"
+      include: scope
+    groups:
+      frontend-minor-patch:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+  # 3b. npm: Playwright end-to-end test harness.
+  #     Kept separate from the frontend because the Playwright package
+  #     version must stay synchronised with the Playwright container
+  #     image declared in ci-e2e.yml.
+  - package-ecosystem: npm
+    directory: /tests/e2e
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - testing
+    commit-message:
+      prefix: "deps(e2e)"
+      include: scope
+
+  # 4. Docker: base images across all Dockerfiles.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "deps(docker)"
+      include: scope
+    groups:
+      docker-base-images:
+        patterns:
+          - "*"
