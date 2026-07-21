@@ -25,23 +25,17 @@ RUN cargo build --release --bin noombat-chatmail-admin
 # packages directly and overlay the Chatmail-specific configuration.
 FROM debian:bookworm-slim
 
-# xz-utils is required to extract s6-overlay's .tar.xz archives and is
-# not present in bookworm-slim.
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends xz-utils && \
-    rm -rf /var/lib/apt/lists/*
-
 # Install s6-overlay for process supervision.
 ARG S6_OVERLAY_VERSION=3.2.0.2
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
-RUN tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz && \
-    tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz && \
-    rm /tmp/s6-overlay-*.tar.xz
 
-# Install Postfix, Dovecot, and OpenDKIM.
+# Install all system packages in a single layer.
+# xz-utils is required to extract the s6-overlay .tar.xz archives and is
+# not present in bookworm-slim.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
+        xz-utils \
         postfix \
         dovecot-imapd \
         dovecot-lmtpd \
@@ -50,7 +44,10 @@ RUN apt-get update && \
         ca-certificates \
         openssl \
         procps \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && tar -C / -Jxpf /tmp/s6-overlay-noarch.tar.xz \
+    && tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz \
+    && rm /tmp/s6-overlay-*.tar.xz
 
 # Create vmail user and directories.
 RUN groupadd -g 5000 vmail && \
