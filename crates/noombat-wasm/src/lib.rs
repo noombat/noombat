@@ -20,6 +20,7 @@ use pgp::composed::{
     SignedPublicKey, SignedSecretKey, SubkeyParamsBuilder,
 };
 use pgp::crypto::ecc_curve::ECCCurve;
+use pgp::crypto::hash::HashAlgorithm;
 use pgp::crypto::sym::SymmetricKeyAlgorithm;
 use pgp::ser::Serialize;
 use pgp::types::Password;
@@ -105,34 +106,43 @@ impl ChatCrypto {
         };
         Ok(label.into())
     }
+
+    /// Return the peer's public key bytes (binary serialisation), or
+    /// `null` if no key is known for the given address.
+    ///
+    /// This avoids serialising the entire peer state table on every
+    /// outgoing message.
+    #[wasm_bindgen(js_name = "getPeerPublicKey")]
+    pub fn get_peer_public_key(&self, addr: &str) -> Option<Vec<u8>> {
+        let canonical = addr.trim().to_lowercase();
+        self.peers.get(&canonical).and_then(|peer| {
+            if peer.public_key.is_empty() {
+                None
+            } else {
+                Some(peer.public_key.clone())
+            }
+        })
+    }
 }
 
 // ..... Message encryption .....
 
-/// Encrypt a plaintext message for the given recipient.
+/// Sign and encrypt a plaintext message for the given recipient
+/// (sign-then-encrypt per the Autocrypt Level 1 specification).
 ///
 /// - `recipient_key_bytes`: the recipient's OpenPGP Transferable
 ///   Public Key (binary serialisation).
 /// - `sender_key_bytes`: the sender's OpenPGP Transferable Secret
-///   Key (binary). Reserved for message signing once implemented
-///   (Autocrypt Level 1 specification requires sign-then-encrypt).
+///   Key (binary serialisation). Used to sign the message before
+///   encryption so the recipient can verify the sender's identity.
 /// - `plaintext`: the raw message body.
 ///
-/// Returns the encrypted OpenPGP message as binary bytes.
-///
-/// # Limitations
-///
-/// Messages are currently encrypted but not signed. The `pgp` 0.20
-/// `MessageBuilder::sign` method accepts `&dyn SigningKey`, which
-/// is an adapter trait not implemented by `SignedSecretKey` directly.
-/// Unsigned messages are valid OpenPGP and decrypt correctly, but
-/// Delta Chat will display them without sender verification until
-/// signing is added.
+/// Returns the signed-and-encrypted OpenPGP message as binary bytes.
 
 #[wasm_bindgen(js_name = "encryptMessage")]
 pub fn encrypt_message(
     recipient_key_bytes: &[u8],
-    _sender_key_bytes: &[u8],
+    sender_key_bytes: &[u8],
     plaintext: &[u8],
 ) -> Result<Vec<u8>, JsError> {
     let mut rng = rand::thread_rng();
@@ -140,26 +150,43 @@ pub fn encrypt_message(
     let recipient_key = SignedPublicKey::from_bytes(recipient_key_bytes)
         .map_err(|e| JsError::new(&format!("failed to parse recipient key: {e}")))?;
 
+    let sender_secret = SignedSecretKey::from_bytes(sender_key_bytes)
+        .map_err(|e| JsError::new(&format!("failed to parse sender key: {e}")))?;
+
     // MessageBuilder::from_bytes requires 'static data. Leak the
     // copy into WASM linear memory; reclaimed when the instance is
     // dropped (page navigation or tab close).
     let data: &'static [u8] = Box::leak(plaintext.to_vec().into_boxed_slice());
 
-    // Build the message: literal data to SEIPD v1 encryption.
-    // TODO: add .sign(...) before .seipd_v1(...).
-    let mut builder =
-        MessageBuilder::from_bytes("msg", data).seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
+    // Build the message: literal data --> sign --> SEIPD v1 encryption.
+    //
+    // `MessageBuilder::sign` accepts `&dyn SigningKey`, which is
+    // implemented by `packet::SecretKey` (the inner primary key type)
+    // but not by `SignedSecretKey` (the composite wrapper). Access
+    // the primary key via `sender_secret.primary_key`.
+    //
+    // The builder chain is split because `sign` takes `&mut self`
+    // (mutating in place), while `seipd_v1` consumes `self` and
+    // returns a new `Builder<..., EncryptionSeipdV1>` on which
+    // `encrypt_to_key` and `to_vec` are available.
+    let mut builder = MessageBuilder::from_bytes("msg", data);
+    builder.sign(
+        &sender_secret.primary_key,
+        Password::empty(),
+        HashAlgorithm::Sha256,
+    );
+    let mut enc_builder = builder.seipd_v1(&mut rng, SymmetricKeyAlgorithm::AES256);
 
     // Encrypt to the first encryption-capable subkey.
     if let Some(subkey) = recipient_key.public_subkeys.first() {
-        builder
+        enc_builder
             .encrypt_to_key(&mut rng, subkey)
             .map_err(|e| JsError::new(&format!("encryption failed: {e}")))?;
     } else {
         return Err(JsError::new("recipient key has no encryption subkey"));
     }
 
-    builder
+    enc_builder
         .to_vec(&mut rng)
         .map_err(|e| JsError::new(&format!("message serialisation failed: {e}")))
 }
