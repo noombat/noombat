@@ -11,14 +11,17 @@
 
 pub mod doi;
 pub mod hashtag;
+pub mod headings;
 pub mod sanitise;
 pub mod typst_conv;
 
+pub use headings::{extract_headings, inject_ids};
 pub use typst_conv::md_to_typst;
 
-use pulldown_cmark::{Event, Options, Parser};
+use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
 use crate::doi::DoiReference;
+use crate::headings::Heading;
 
 /// The result of rendering a (Markdown + KaTeX) source string.
 #[derive(Debug, Clone)]
@@ -29,6 +32,9 @@ pub struct MarkupOutput {
     pub hashtags: Vec<String>,
     /// DOIs detected in the source.
     pub dois: Vec<DoiReference>,
+    /// Headings extracted from the source (depth, text, slug).
+    /// Always populated; empty when the source contains no headings.
+    pub headings: Vec<Heading>,
 }
 
 /// Options controlling the rendering pipeline.
@@ -55,6 +61,14 @@ pub struct MarkupOptions {
     /// behaviour; it controls only which sanitisation profile is
     /// applied to the output.
     pub strict_sanitisation: bool,
+    /// When `true`, heading `id` attributes are injected into the
+    /// rendered HTML via [`headings::inject_ids`]. This bakes the
+    /// anchor targets into the stored `content_html` so that
+    /// federated HTML is self-contained (remote instances need not
+    /// re-extract headings to make TOC links functional).
+    ///
+    /// Defaults to `false` (Notes do not need heading anchors).
+    pub inject_heading_ids: bool,
 }
 
 /// Render a (Markdown + KaTeX) source string to sanitised HTML.
@@ -100,6 +114,12 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
         .flat_map(|event| transform_event(event, &mut hashtags, &mut dois))
         .collect();
 
+    // Extract headings from the already-collected event stream,
+    // avoiding a second parser pass. The heading extraction logic
+    // mirrors headings::extract_headings but operates on the
+    // transformed event list rather than re-parsing the source.
+    let headings = extract_headings_from_events(&events);
+
     // Render to HTML.
     let mut raw_html = String::with_capacity(input.len() * 2);
     pulldown_cmark::html::push_html(&mut raw_html, events.into_iter());
@@ -107,11 +127,19 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
     // Sanitise. When strict_sanitisation is enabled, user-authored
     // HTML reaches the sanitiser directly. Use the strict profile,
     // which strips `style` from `<span>` to prevent CSS-based attacks.
-    let html = if opts.strict_sanitisation {
+    let mut html = if opts.strict_sanitisation {
         sanitise::clean_strict(&raw_html)
     } else {
         sanitise::clean(&raw_html)
     };
+
+    // Inject heading `id` attributes when requested. This bakes the
+    // anchor targets into the HTML at render time (i.e. at post
+    // creation), so the stored content_html and federated HTML are
+    // self-contained.
+    if opts.inject_heading_ids && !headings.is_empty() {
+        html = headings::inject_ids(&html, &headings);
+    }
 
     // Deduplicate hashtags.
     hashtags.sort();
@@ -121,6 +149,7 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
         html,
         hashtags,
         dois,
+        headings,
     }
 }
 
@@ -207,6 +236,54 @@ fn transform_event<'a>(
         }
         _ => vec![event],
     }
+}
+
+/// Extract headings from an already-collected pulldown-cmark event
+/// stream, avoiding a second parser pass. The logic mirrors
+/// [`headings::extract_headings`] but operates on `&[Event]` rather
+/// than re-parsing the Markdown source.
+fn extract_headings_from_events(events: &[Event<'_>]) -> Vec<Heading> {
+    use std::collections::HashMap;
+
+    let mut headings_out = Vec::new();
+    let mut current_depth: Option<u8> = None;
+    let mut current_text = String::new();
+    let mut slug_counts: HashMap<String, u32> = HashMap::new();
+
+    for event in events {
+        match event {
+            Event::Start(Tag::Heading { level, .. }) => {
+                current_depth = Some(*level as u8);
+                current_text.clear();
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some(depth) = current_depth.take() {
+                    let text = current_text.trim().to_owned();
+                    if !text.is_empty() {
+                        let base_slug = headings::slugify_heading(&text);
+                        let count = slug_counts.entry(base_slug.clone()).or_insert(0);
+                        let slug = if *count == 0 {
+                            base_slug
+                        } else {
+                            format!("{base_slug}-{count}")
+                        };
+                        *count += 1;
+                        headings_out.push(Heading { depth, text, slug });
+                    }
+                }
+                current_text.clear();
+            }
+            Event::Text(t) if current_depth.is_some() => {
+                current_text.push_str(t);
+            }
+            Event::Code(c) if current_depth.is_some() => {
+                current_text.push_str(c);
+            }
+            _ => {}
+        }
+    }
+
+    headings_out
 }
 
 /// Render a KaTeX math expression to (HTML + MathML).
@@ -313,6 +390,7 @@ mod tests {
     fn strict_sanitisation_passes_safe_tags() {
         let opts = MarkupOptions {
             strict_sanitisation: true,
+            ..Default::default()
         };
         let output = render_with_options("<details><summary>More</summary>Hidden</details>", &opts);
         assert!(
@@ -326,6 +404,7 @@ mod tests {
     fn strict_sanitisation_strips_script() {
         let opts = MarkupOptions {
             strict_sanitisation: true,
+            ..Default::default()
         };
         let output = render_with_options("<script>alert('xss')</script>", &opts);
         assert!(
@@ -338,6 +417,7 @@ mod tests {
     fn strict_sanitisation_strips_style_from_span() {
         let opts = MarkupOptions {
             strict_sanitisation: true,
+            ..Default::default()
         };
         let output = render_with_options(
             r#"<span style="background-image:url(https://evil.example/t)">track</span>"#,
