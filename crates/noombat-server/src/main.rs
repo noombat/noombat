@@ -72,6 +72,10 @@ struct Config {
     chatmail_admin_url: Option<String>,
     /// Shared secret for authenticating requests to the admin sidecar.
     chatmail_admin_secret: Option<String>,
+    /// Administrative contact email address, used as the `mailto`
+    /// parameter for the CrossRef polite pool. Defaults to
+    /// `admin@{domain}` when not explicitly set.
+    contact_email: Option<String>,
     /// Whether group support is enabled (default `false`).
     #[serde(default)]
     groups_enabled: bool,
@@ -385,6 +389,10 @@ async fn main() -> anyhow::Result<()> {
             config.chatmail_admin_url.as_deref(),
             config.chatmail_admin_secret.as_deref(),
         ),
+        contact_email: config
+            .contact_email
+            .clone()
+            .unwrap_or_else(|| format!("admin@{}", config.domain)),
     };
     let app = noombat_api::build_router(state);
 

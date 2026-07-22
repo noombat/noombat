@@ -48,4 +48,9 @@ pub struct AppState {
     /// Pre-constructed HTTP client for the Chatmail admin sidecar.
     /// `None` when the sidecar URL or secret is not configured.
     pub chatmail_admin_client: Option<ChatmailAdminClient>,
+    /// Administrative contact email address, used as the `mailto`
+    /// parameter for the CrossRef polite pool (DOI resolution and
+    /// ORCID import). Defaults to `"admin@{domain}"` when not
+    /// explicitly configured via `NOOMBAT_CONTACT_EMAIL`.
+    pub contact_email: String,
 }

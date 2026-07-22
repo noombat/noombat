@@ -352,9 +352,10 @@ async fn orcid_callback(
         let orcid = result.orcid.clone();
         let actor_id = result.actor_id;
         let pub_api = orcid_config.pub_api_uri.clone();
+        let mailto = state.contact_email.clone();
         tokio::spawn(async move {
             if let Err(e) = noombat_identity::orcid_import::import_orcid_publications(
-                &pool, &client, actor_id, &orcid, &pub_api,
+                &pool, &client, actor_id, &orcid, &pub_api, &mailto,
             )
             .await
             {

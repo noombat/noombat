@@ -80,12 +80,19 @@ struct ExternalId {
 /// Resolves each DOI via the existing `doi_client` pipeline and
 /// inserts the publication into the `publications` table if it does
 /// not already exist.
+///
+/// # Arguments
+///
+/// * `mailto`: the contact email address sent to the CrossRef polite
+///   pool (per CrossRef's usage guidelines). Instance operators should
+///   configure this to a real administrative address.
 pub async fn import_orcid_publications(
     pool: &PgPool,
     http_client: &reqwest::Client,
     actor_id: Uuid,
     orcid: &str,
     pub_api_uri: &str,
+    mailto: &str,
 ) -> Result<ImportSummary> {
     let works_url = format!("{pub_api_uri}/v3.0/{orcid}/works");
 
@@ -147,10 +154,7 @@ pub async fn import_orcid_publications(
         }
 
         // Resolve the DOI via CrossRef or DataCite.
-        // The `resolve` function requires a `mailto` address for the
-        // CrossRef polite pool; use a placeholder that instance
-        // operators should configure.
-        match doi_client::resolve(http_client, &doi, "noombat@example.com").await {
+        match doi_client::resolve(http_client, &doi, mailto).await {
             Ok(metadata) => {
                 let authors: serde_json::Value =
                     serde_json::to_value(&metadata.authors).unwrap_or(serde_json::json!([]));
