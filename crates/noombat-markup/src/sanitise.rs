@@ -276,4 +276,27 @@ mod tests {
             "strict profile must preserve class on span: {result}"
         );
     }
+
+    /// Guard against RUSTSEC-2026-0213: ammonia up to 4.1.3 does
+    /// not sanitise the `to`, `from`, and `values` attributes on
+    /// SVG animation tags (`animate`, `set`, `animateTransform`,
+    /// `animateMotion`), enabling XSS via `javascript:` URLs.
+    ///
+    /// The advisory does not affect Noombat because none of these
+    /// tags are in the allowlist. This test ensures they are never
+    /// added while the advisory remains unpatched. Remove this test
+    /// (and the corresponding `ignore` entry in `deny.toml`) when
+    /// ammonia publishes a fixed version.
+    #[test]
+    fn svg_animation_tags_not_in_allowlist() {
+        const VULNERABLE_TAGS: &[&str] = &["animate", "set", "animateTransform", "animateMotion"];
+        for tag in VULNERABLE_TAGS {
+            assert!(
+                !EXTRA_TAGS.contains(tag),
+                "RUSTSEC-2026-0213: '{tag}' must not be in EXTRA_TAGS \
+                 while ammonia lacks attribute sanitisation for SVG \
+                 animation elements. See deny.toml for details."
+            );
+        }
+    }
 }
