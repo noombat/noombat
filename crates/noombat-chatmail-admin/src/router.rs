@@ -358,6 +358,14 @@ fn handle_block_recipient(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = validate_address(address) {
+        warn!(address = %address, error = %e, "block-recipient rejected: invalid address");
+        request.respond(json_response(
+            StatusCode(400),
+            &json!({"error": "invalid address"}),
+        ))?;
+        return Ok(());
+    }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.blocked_recipients.insert(address.to_owned());
@@ -382,6 +390,14 @@ fn handle_unblock_recipient(
     state: &Arc<AppState>,
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    if let Err(e) = validate_address(address) {
+        warn!(address = %address, error = %e, "unblock-recipient rejected: invalid address");
+        request.respond(json_response(
+            StatusCode(400),
+            &json!({"error": "invalid address"}),
+        ))?;
+        return Ok(());
+    }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.blocked_recipients.remove(address);
