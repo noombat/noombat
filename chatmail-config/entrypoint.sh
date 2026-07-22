@@ -20,6 +20,16 @@ echo "[entrypoint] configuring for domain: ${MAIL_DOMAIN}"
 sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/postfix/main.cf
 sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/dovecot/dovecot.conf
 
+# ..... FILTERMAIL CONTENT FILTER .....
+
+# Append the filtermail pipe service to master.cf if it has not
+# already been appended (idempotent across container restarts).
+if ! grep -q "^filtermail" /etc/postfix/master.cf 2>/dev/null; then
+    echo "" >> /etc/postfix/master.cf
+    cat /etc/postfix/master.cf.filtermail >> /etc/postfix/master.cf
+    echo "[entrypoint] appended filtermail service to master.cf"
+fi
+
 # ..... INITIALISE POSTFIX MAPS .....
 
 # Ensure the moderation access map files exist (they are managed by

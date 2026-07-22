@@ -103,6 +103,13 @@ milter_protocol = 6
 smtpd_milters = inet:localhost:8891
 non_smtpd_milters = inet:localhost:8891
 
+# ..... ENCRYPTION-ONLY ENFORCEMENT .....
+
+# filtermail content filter: rejects any message whose body is not
+# PGP-encrypted. The filter is invoked as an after-queue content
+# filter via a dedicated Postfix pipe(8) service defined in master.cf.
+content_filter = filtermail:dummy
+
 # ..... MISCELLANEOUS .....
 
 # Chatmail optimisations: small queue, fast delivery.

@@ -1,0 +1,29 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+#
+# Postfix master.cf snippet: defines the filtermail content filter
+# as a pipe(8) service and the re-injection listener (127.0.0.1:10025).
+#
+# Appended to /etc/postfix/master.cf by the container entrypoint.
+#
+# The filtermail service runs as the unprivileged 'filtermail' user.
+# Messages accepted by the filter are re-injected via sendmail(1)
+# with content_filter= cleared (to avoid a loop) and arrive at the
+# re-injection smtpd on 127.0.0.1:10025.
+
+# filtermail content filter (pipe transport).
+filtermail unix  -       n       n       -       10      pipe
+  flags=Rq user=filtermail argv=/usr/local/bin/noombat-filtermail -f ${sender} -- ${recipient}
+
+# Re-injection smtpd: receives messages from filtermail after
+# encryption verification. content_filter is empty to prevent the
+# message from re-entering the filter loop.
+127.0.0.1:10025 inet  n  -       n       -       10      smtpd
+  -o content_filter=
+  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o smtpd_helo_restrictions=
+  -o smtpd_client_restrictions=
+  -o smtpd_sender_restrictions=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o mynetworks=127.0.0.0/8
+  -o smtpd_authorized_xforward_hosts=127.0.0.0/8
