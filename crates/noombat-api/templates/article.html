@@ -1,0 +1,63 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base.html" %}
+
+{% block title %}{{ article_title }} — {{ i18n.t("nav_brand") }}{% endblock %}
+
+{% block head %}
+    <link rel="canonical" href="{{ canonical_url }}">
+    <!-- KaTeX CSS: required for correct visual rendering of the HTML
+         portion of the htmlAndMathml output. Built from the katex npm
+         package via the frontend/src/katex.ts Vite entry point. -->
+    <link rel="stylesheet" href="/assets/katex.css">
+{% endblock %}
+
+{% block content %}
+        <article aria-label="{{ aria_article_label }}">
+            <header class="mb-6">
+                <h1 class="text-3xl font-bold mb-2 leading-tight">{{ article_title }}</h1>
+                <div class="flex items-baseline gap-2 text-sm text-muted">
+                    <a href="/users/{{ author }}"
+                       class="text-accent font-semibold no-underline hover:underline">
+                        {{ author_display }}
+                    </a>
+                    <time datetime="{{ created_at }}">{{ created_at }}</time>
+                </div>
+            </header>
+
+            {% if featured_image_url.is_some() %}
+            <figure class="mb-6">
+                <!-- alt="" marks the image as decorative because
+                     Noombat does not collect alt text for featured
+                     images yet. A future enhancement should add an
+                     alt-text field to the article composer. -->
+                <img src="{{ featured_image_url.as_deref().unwrap_or_default() }}"
+                     alt=""
+                     class="w-full rounded"
+                     loading="lazy">
+            </figure>
+            {% endif %}
+
+            {% if !headings.is_empty() %}
+            <nav aria-label="{{ i18n.t("aria_article_toc") }}"
+                 class="border border-border rounded p-4 mb-8 text-sm">
+                <p class="font-semibold mb-2">{{ i18n.t("article_toc_heading") }}</p>
+                <ul class="space-y-1 list-none pl-0">
+                    {% for h in headings %}
+                    <li style="padding-left: {{ h.depth.saturating_sub(1) }}em">
+                        <a href="#{{ h.slug }}"
+                           class="text-accent no-underline hover:underline">
+                            {{ h.text }}
+                        </a>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </nav>
+            {% endif %}
+
+            <section class="prose leading-relaxed">
+                {{ content_html|safe }}
+            </section>
+        </article>
+{% endblock %}

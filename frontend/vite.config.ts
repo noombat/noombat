@@ -73,6 +73,7 @@ export default defineConfig({
         main: "src/main.css",
         htmx: "src/htmx.ts",
         auth: "src/auth.ts",
+        katex: "src/katex.ts",
         editor: "src/editor/index.tsx",
         chat: "src/chat/index.tsx",
       },
@@ -86,7 +87,8 @@ export default defineConfig({
             chunkInfo.name === "htmx" ||
             chunkInfo.name === "auth" ||
             chunkInfo.name === "editor" ||
-            chunkInfo.name === "chat"
+            chunkInfo.name === "chat" ||
+            chunkInfo.name === "katex"
           ) {
             return "assets/[name].js";
           }
