@@ -23,9 +23,33 @@ import {
   type JSX,
 } from "solid-js";
 import { loadCrypto } from "./crypto";
-// TODO: uncomment when syncPeerState is fully implemented (requires
-// threading the ChatCrypto handle through the component).
-// import { storeBlob } from "./blob";
+import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
+import { deriveBlobKey } from "../auth";
+
+// ..... Base64 helpers .....
+
+/** Encode a Uint8Array to a base64 string without stack overflow.
+ *  The spread operator in `String.fromCharCode(...arr)` exceeds the
+ *  maximum call-stack argument count for arrays larger than ~100 KiB.
+ *  This chunked approach avoids that limit. */
+function uint8ToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000; // 32 KiB per chunk
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(parts.join(""));
+}
+
+/** Decode a base64 string to a Uint8Array. */
+function base64ToUint8(b64: string): Uint8Array {
+  const bin = atob(b64);
+  const bytes = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) {
+    bytes[i] = bin.charCodeAt(i);
+  }
+  return bytes;
+}
 
 // Module-level handle for the loaded WASM module.
 type CryptoMod = Awaited<ReturnType<typeof loadCrypto>>;
@@ -43,6 +67,8 @@ interface ChatStrings {
   disconnected: string;
   notProvisioned: string;
   setupChat: string;
+  enterPassword: string;
+  unlock: string;
 }
 
 const TRANSLATIONS: Record<string, ChatStrings> = {
@@ -57,6 +83,8 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     disconnected: "Disconnected. Reconnecting\u2026",
     notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
+    enterPassword: "Enter your Noombat password to unlock encrypted chat.",
+    unlock: "Unlock",
   },
   "en-AU": {
     heading: "Messages",
@@ -69,6 +97,8 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     disconnected: "Disconnected. Reconnecting\u2026",
     notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
+    enterPassword: "Enter your Noombat password to unlock encrypted chat.",
+    unlock: "Unlock",
   },
   "pt-BR": {
     heading: "Mensagens",
@@ -81,6 +111,8 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     disconnected: "Desconectado. Reconectando\u2026",
     notProvisioned: "Para enviar mensagens criptografadas, defina uma senha para sua conta Noombat.",
     setupChat: "Configurar chat",
+    enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
+    unlock: "Desbloquear",
   },
 };
 
@@ -105,7 +137,7 @@ interface ChatMessage {
 
 /** A message from the relay server. */
 interface ServerMsg {
-  type: "message" | "sent" | "error";
+  type: "ready" | "message" | "sent" | "error";
   uid?: number;
   from?: string;
   body_b64?: string;
@@ -120,6 +152,10 @@ interface ServerMsg {
 export interface ChatProps {
   wsUrl: string;
   chatmailAddr: string;
+  /** The Noombat username (used as the PBKDF2 salt component for
+   *  blob encryption key derivation). This may differ from the
+   *  Chatmail address local part. */
+  username: string;
   locale?: string;
 }
 
@@ -133,52 +169,127 @@ export default function Chat(props: ChatProps): JSX.Element {
   const [connected, setConnected] = createSignal(false);
   const [showContacts, setShowContacts] = createSignal(false);
   const [status, setStatus] = createSignal<string>("");
+  const [needsUnlock, setNeedsUnlock] = createSignal(false);
+  const [unlockPassword, setUnlockPassword] = createSignal("");
 
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let msgCounter = 0;
   let crypto: CryptoMod | null = null;
 
+  // Decrypted credential material (held in memory for the session).
+  let credentials: CredentialBlob | null = null;
+  let privateKeyBytes: Uint8Array | null = null;
+  let publicKeyBytes: Uint8Array | null = null;
+  let cryptoHandle: InstanceType<CryptoMod["ChatCrypto"]> | null = null;
+  let blobKey: CryptoKey | null = null;
+
+  // ..... Blob decryption .....
+
+  /** Attempt to decrypt the credential blob. */
+  async function unlockBlob(password: string): Promise<boolean> {
+    const encryptedBlob = await fetchBlob();
+    if (!encryptedBlob) return false;
+
+    const domain = window.location.hostname;
+
+    try {
+      const key = await deriveBlobKey(password, props.username, domain);
+      const blob = await decryptBlob(key, encryptedBlob);
+      credentials = blob;
+      blobKey = key;
+
+      // Decode keys from base64.
+      privateKeyBytes = base64ToUint8(blob.privateKeyB64);
+      publicKeyBytes = base64ToUint8(blob.publicKeyB64);
+
+      // Restore the Autocrypt peer state.
+      if (crypto) {
+        cryptoHandle = blob.peerStateJson
+          ? crypto.ChatCrypto.fromJson(blob.peerStateJson)
+          : new crypto.ChatCrypto();
+      }
+
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  /** Handle the unlock form submission. */
+  async function handleUnlock(): Promise<void> {
+    const ok = await unlockBlob(unlockPassword());
+    if (ok) {
+      setNeedsUnlock(false);
+      setUnlockPassword("");
+      connect();
+      syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
+    } else {
+      setStatus("Incorrect password.");
+    }
+  }
+
   // ..... WebSocket lifecycle .....
 
   function connect(): void {
-    if (!props.wsUrl) return;
+    if (!props.wsUrl || !credentials) return;
 
     setStatus(strings().connecting);
 
-    // The noombat_session cookie is sent automatically by the browser
-    // with the WebSocket upgrade request; no explicit token is needed.
     ws = new WebSocket(props.wsUrl);
 
     ws.onopen = () => {
-      setConnected(true);
-      setStatus("");
-      // Fetch unseen messages.
-      ws?.send(JSON.stringify({ type: "fetch", since_uid: 0 }));
+      // Send the Auth handshake with the Chatmail password.
+      ws?.send(JSON.stringify({
+        type: "auth",
+        password: credentials!.chatmailPassword,
+      }));
     };
 
     ws.onmessage = (event) => {
       const msg: ServerMsg = JSON.parse(event.data);
 
+      if (msg.type === "ready") {
+        setConnected(true);
+        setStatus("");
+        // Fetch unseen messages now that the session is established.
+        ws?.send(JSON.stringify({ type: "fetch", since_uid: 0 }));
+        return;
+      }
+
       if (msg.type === "message" && msg.from && msg.body_b64) {
-        // Capture narrowed values before closures.
         const sender: string = msg.from;
 
         // Decrypt the message body via the WASM module.
-        // TODO: pass the user's actual private key once key lifecycle
-        // is implemented. Currently falls back to raw ciphertext.
-        const ciphertext = Uint8Array.from(atob(msg.body_b64), (c) => c.charCodeAt(0));
-        let plainBytes: Uint8Array;
+        const ciphertext = base64ToUint8(msg.body_b64);
+        let body: string;
         try {
-          plainBytes = crypto
-            ? crypto.decryptMessage(new Uint8Array(0), ciphertext)
-            : ciphertext;
+          if (crypto && privateKeyBytes) {
+            const plainBytes = crypto.decryptMessage(privateKeyBytes, ciphertext);
+            body = new TextDecoder().decode(plainBytes);
+          } else {
+            body = new TextDecoder().decode(ciphertext);
+          }
         } catch {
-          // Decryption fails when no private key is available;
-          // display the raw (base64-decoded) bytes as-is.
-          plainBytes = ciphertext;
+          body = "[decryption failed]";
         }
-        const body = new TextDecoder().decode(plainBytes);
+
+        // Update Autocrypt peer state if the message carried a header.
+        if (cryptoHandle && msg.autocrypt_header_b64) {
+          try {
+            const headerBytes = Uint8Array.from(
+              atob(msg.autocrypt_header_b64),
+              (c) => c.charCodeAt(0),
+            );
+            // The Autocrypt header contains the sender's public key;
+            // extract and update peer state.
+            const ts = BigInt(msg.timestamp ?? Math.floor(Date.now() / 1000));
+            cryptoHandle.updatePeerState(sender, ts, headerBytes, false);
+          } catch {
+            // Best-effort: peer state update failure is non-fatal.
+          }
+        }
+
         const chatMsg: ChatMessage = {
           id: `msg-${++msgCounter}`,
           uid: msg.uid ?? 0,
@@ -203,7 +314,7 @@ export default function Chat(props: ChatProps): JSX.Element {
       }
 
       if (msg.type === "sent" && msg.to) {
-        // The server confirmed the send.
+        // Server confirmed the send.
       }
 
       if (msg.type === "error" && msg.message) {
@@ -224,39 +335,62 @@ export default function Chat(props: ChatProps): JSX.Element {
   }
 
   // ..... Peer state synchronisation .....
-  //
-  // Periodically re-encrypt the Autocrypt peer state and upload the
-  // blob to the server. The blob encryption key must be available in
-  // sessionStorage (set during login by auth.ts). If the key is not
-  // available, synchronisation is silently skipped.
+
   let syncTimer: ReturnType<typeof setInterval> | undefined;
-  const SYNC_INTERVAL_MS = 60_000; // 60 seconds default.
+  const SYNC_INTERVAL_MS = 60_000;
 
   async function syncPeerState(): Promise<void> {
-    if (!crypto) return;
-    const blobKeyB64 = sessionStorage.getItem("noombat_blob_key");
-    if (!blobKeyB64) return;
+    if (!cryptoHandle || !blobKey || !credentials) return;
 
     try {
-      const cryptoHandle = (crypto as any).ChatCrypto;
-      // The ChatCrypto instance is not directly accessible here;
-      // peer state serialisation requires the WASM handle. For now,
-      // store a placeholder blob. Full integration requires threading
-      // the ChatCrypto instance through the component.
-      // TODO: pass the ChatCrypto handle from the WASM module and
-      // call handle.toJson() to get the current peer state.
+      const peerStateJson = cryptoHandle.toJson();
+      const updatedBlob: CredentialBlob = {
+        ...credentials,
+        peerStateJson,
+      };
+      const encrypted = await encryptBlob(blobKey, updatedBlob);
+      await storeBlob(encrypted);
     } catch {
       // Best-effort: sync failure is non-fatal.
     }
   }
 
   onMount(async () => {
-    if (props.chatmailAddr) {
-      crypto = await loadCrypto();
-      connect();
-      // Start periodic peer state synchronisation.
-      syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
+    if (!props.chatmailAddr) return;
+
+    crypto = await loadCrypto();
+
+    // Try to unlock the blob without a password prompt if the blob
+    // key is cached in sessionStorage (set during password-login).
+    const cachedBlobKeyB64 = sessionStorage.getItem("noombat_blob_key");
+    if (cachedBlobKeyB64) {
+      // Import the cached key.
+      try {
+        const keyBytes = base64ToUint8(cachedBlobKeyB64);
+        const key = await globalThis.crypto.subtle.importKey(
+          "raw", keyBytes.buffer as ArrayBuffer, "AES-GCM", false, ["encrypt", "decrypt"],
+        );
+        blobKey = key;
+        const encryptedBlob = await fetchBlob();
+        if (encryptedBlob) {
+          const blob = await decryptBlob(key, encryptedBlob);
+          credentials = blob;
+          privateKeyBytes = base64ToUint8(blob.privateKeyB64);
+          publicKeyBytes = base64ToUint8(blob.publicKeyB64);
+          cryptoHandle = blob.peerStateJson
+            ? crypto!.ChatCrypto.fromJson(blob.peerStateJson)
+            : new crypto!.ChatCrypto();
+          connect();
+          syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
+          return;
+        }
+      } catch {
+        // Cached key invalid or blob missing; fall through to prompt.
+      }
     }
+
+    // No cached key: prompt the user for their password.
+    setNeedsUnlock(true);
   });
 
   onCleanup(() => {
@@ -275,30 +409,54 @@ export default function Chat(props: ChatProps): JSX.Element {
     if (!body || !to || !ws || ws.readyState !== WebSocket.OPEN) return;
 
     // Encrypt the message body via the WASM module.
-    // TODO: pass the recipient's public key and sender's private key
-    // once key lifecycle is implemented. Currently sends plaintext.
     const plainBytes = new TextEncoder().encode(body);
     let cipherBytes: Uint8Array;
+
+    // Look up the recipient's public key from peer state.
+    let recipientKey: Uint8Array | null = null;
+    if (cryptoHandle) {
+      try {
+        const keyBytes = cryptoHandle.getPeerPublicKey(to.trim().toLowerCase());
+        if (keyBytes && keyBytes.length > 0) {
+          recipientKey = keyBytes instanceof Uint8Array ? keyBytes : new Uint8Array(keyBytes);
+        }
+      } catch {
+        // Peer lookup failed; fall through to plaintext.
+      }
+    }
+
     try {
-      cipherBytes = crypto
-        ? crypto.encryptMessage(new Uint8Array(0), new Uint8Array(0), plainBytes)
-        : plainBytes;
+      if (crypto && recipientKey && recipientKey.length > 0 && privateKeyBytes) {
+        cipherBytes = crypto.encryptMessage(recipientKey, privateKeyBytes, plainBytes);
+      } else {
+        // No recipient key available; send plaintext (Chatmail
+        // filtermail will reject this, so the user needs to
+        // have exchanged keys first via an Autocrypt-bearing
+        // message).
+        cipherBytes = plainBytes;
+      }
     } catch {
-      // Encryption fails when no keys are available; send plaintext.
       cipherBytes = plainBytes;
     }
-    const body_b64 = btoa(String.fromCharCode(...cipherBytes));
+
+    const body_b64 = uint8ToBase64(cipherBytes);
+
+    // Build the Autocrypt header with our public key for key exchange.
+    let autocrypt_header_b64: string | null = null;
+    if (publicKeyBytes && publicKeyBytes.length > 0) {
+      const headerValue = `addr=${props.chatmailAddr}; prefer-encrypt=mutual; keydata=${uint8ToBase64(publicKeyBytes)}`;
+      autocrypt_header_b64 = btoa(headerValue);
+    }
 
     ws.send(
       JSON.stringify({
         type: "send",
         to,
         body_b64,
-        autocrypt_header_b64: null,
+        autocrypt_header_b64,
       }),
     );
 
-    // Add to local message list immediately (optimistic).
     setMessages((prev) => [
       ...prev,
       {
@@ -350,15 +508,11 @@ export default function Chat(props: ChatProps): JSX.Element {
     });
   }
 
-  // ..... Provisioning check .....
-  //
-  // If chatmailAddr is empty, the user's chat is not yet provisioned.
-  // Show a prompt to set a password (OAuth-only users) or to trigger
-  // provisioning (password-having users).
   const needsProvisioning = () => !props.chatmailAddr;
 
   return (
     <div class="noombat-chat">
+      {/* Not provisioned: prompt to set a password. */}
       <Show when={needsProvisioning()}>
         <div class="max-w-md mx-auto py-12 text-center">
           <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
@@ -372,7 +526,41 @@ export default function Chat(props: ChatProps): JSX.Element {
         </div>
       </Show>
 
-      <Show when={!needsProvisioning()}>
+      {/* Password unlock prompt (OAuth-login sessions). */}
+      <Show when={!needsProvisioning() && needsUnlock()}>
+        <div class="max-w-md mx-auto py-12 text-center">
+          <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
+          <p class="text-sm text-muted mb-6">{strings().enterPassword}</p>
+          <Show when={status()}>
+            <p class="text-sm text-red-600 mb-4">{status()}</p>
+          </Show>
+          <div class="flex gap-2 justify-center">
+            <input
+              type="password"
+              class="border border-gray-300 rounded px-3 py-2 text-sm"
+              placeholder="Password"
+              value={unlockPassword()}
+              onInput={(e) => setUnlockPassword(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleUnlock();
+                }
+              }}
+            />
+            <button
+              type="button"
+              class="bg-accent text-white rounded px-4 py-2 text-sm"
+              onClick={() => void handleUnlock()}
+            >
+              {strings().unlock}
+            </button>
+          </div>
+        </div>
+      </Show>
+
+      {/* Main chat interface. */}
+      <Show when={!needsProvisioning() && !needsUnlock()}>
       {/* Status bar */}
       <Show when={status()}>
         <div class="noombat-chat__status" role="status">

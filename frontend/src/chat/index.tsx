@@ -5,8 +5,8 @@
  * Island entry point for the real-time Chatmail chat interface.
  *
  * The server-rendered template places a `<div id="chat-mount">` with
- * `data-ws-url`, `data-chatmail-addr`, and `data-locale` attributes.
- * This script hydrates that element into an interactive chat
+ * `data-ws-url`, `data-chatmail-addr`, `data-username`, and
+ * `data-locale` attributes. This script hydrates that element into an interactive chat
  * interface backed by WebSocket, rPGP (WASM), and the
  * noombat-autocrypt (WASM) state machine.
  */
@@ -20,6 +20,7 @@ const mount = document.getElementById("chat-mount");
 if (mount) {
   const wsUrl = mount.dataset.wsUrl ?? "";
   const chatmailAddr = mount.dataset.chatmailAddr ?? "";
+  const username = mount.dataset.username ?? "";
   const locale = mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
 
   render(
@@ -27,6 +28,7 @@ if (mount) {
       <Chat
         wsUrl={wsUrl}
         chatmailAddr={chatmailAddr}
+        username={username}
         locale={locale}
       />
     ),

@@ -74,6 +74,7 @@ struct ChatPage {
     nav_username: String,
     ws_url: String,
     chatmail_addr: String,
+    username: String,
 }
 
 #[derive(Template, WebTemplate)]
@@ -386,11 +387,13 @@ async fn chat_page(
             .flatten()
             .unwrap_or_default();
     let ws_url = format!("wss://{}/api/v1/chat/ws", state.domain);
+    let username = nav_username(&principal);
     ChatPage {
         i18n,
-        nav_username: nav_username(&principal),
+        nav_username: username.clone(),
         ws_url,
         chatmail_addr,
+        username,
     }
     .into_response()
 }

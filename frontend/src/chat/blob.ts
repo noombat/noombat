@@ -86,6 +86,7 @@ export async function decryptBlob(
  * `PUT /api/v1/me/chatmail_cred` with the raw bytes as the body.
  */
 export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
+  const token = sessionStorage.getItem("noombat_access_token") ?? "";
   // The `as ArrayBuffer` assertion is safe: the Uint8Array produced
   // by Web Crypto (AES-GCM) is always backed by an ArrayBuffer, not
   // a SharedArrayBuffer. TypeScript 5.7+ models Uint8Array as
@@ -93,7 +94,10 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
   // due to the SharedArrayBuffer half of the union.
   const resp = await fetch("/api/v1/me/chatmail_cred", {
     method: "PUT",
-    headers: { "Content-Type": "application/octet-stream" },
+    headers: {
+      "Content-Type": "application/octet-stream",
+      Authorization: `Bearer ${token}`,
+    },
     body: new Blob([encrypted.buffer as ArrayBuffer]),
   });
   return resp.ok;
@@ -106,7 +110,10 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
  * Returns `null` if the blob does not exist (HTTP 404).
  */
 export async function fetchBlob(): Promise<Uint8Array | null> {
-  const resp = await fetch("/api/v1/me/chatmail_cred");
+  const token = sessionStorage.getItem("noombat_access_token") ?? "";
+  const resp = await fetch("/api/v1/me/chatmail_cred", {
+    headers: { Authorization: `Bearer ${token}` },
+  });
   if (!resp.ok) return null;
   const buf = await resp.arrayBuffer();
   return new Uint8Array(buf);

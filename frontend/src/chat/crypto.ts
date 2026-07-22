@@ -41,6 +41,7 @@ interface ChatCryptoHandle {
   toJson: () => string;
   updatePeerState: (addr: string, ts: bigint, pubkey: Uint8Array, preferMutual: boolean) => void;
   encryptionRecommendation: (recipientsJson: string, senderPrefersMutual: boolean) => string;
+  getPeerPublicKey: (addr: string) => Uint8Array | undefined;
 }
 /* eslint-enable @typescript-eslint/no-explicit-any */
 
@@ -76,6 +77,7 @@ function fallbackModule(): WasmModule {
     toJson: () => "{}",
     updatePeerState: () => {},
     encryptionRecommendation: () => "disable",
+    getPeerPublicKey: () => undefined,
   };
 
   const mod: WasmModule = {

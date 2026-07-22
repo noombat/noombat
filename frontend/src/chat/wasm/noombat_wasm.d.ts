@@ -6,6 +6,14 @@ export class ChatCrypto {
     [Symbol.dispose](): void;
     encryptionRecommendation(recipients_json: string, sender_prefers_mutual: boolean): string;
     static fromJson(json: string): ChatCrypto;
+    /**
+     * Return the peer's public key bytes (binary serialisation), or
+     * `null` if no key is known for the given address.
+     *
+     * This avoids serialising the entire peer state table on every
+     * outgoing message.
+     */
+    getPeerPublicKey(addr: string): Uint8Array | undefined;
     constructor();
     toJson(): string;
     updatePeerState(addr: string, timestamp: bigint, public_key: Uint8Array, prefer_mutual: boolean): void;
@@ -23,27 +31,19 @@ export class ChatCrypto {
 export function decryptMessage(private_key_bytes: Uint8Array, ciphertext: Uint8Array): Uint8Array;
 
 /**
- * Encrypt a plaintext message for the given recipient.
+ * Sign and encrypt a plaintext message for the given recipient
+ * (sign-then-encrypt per the Autocrypt Level 1 specification).
  *
  * - `recipient_key_bytes`: the recipient's OpenPGP Transferable
  *   Public Key (binary serialisation).
  * - `sender_key_bytes`: the sender's OpenPGP Transferable Secret
- *   Key (binary). Reserved for message signing once implemented
- *   (Autocrypt Level 1 specification requires sign-then-encrypt).
+ *   Key (binary serialisation). Used to sign the message before
+ *   encryption so the recipient can verify the sender's identity.
  * - `plaintext`: the raw message body.
  *
- * Returns the encrypted OpenPGP message as binary bytes.
- *
- * # Limitations
- *
- * Messages are currently encrypted but not signed. The `pgp` 0.20
- * `MessageBuilder::sign` method accepts `&dyn SigningKey`, which
- * is an adapter trait not implemented by `SignedSecretKey` directly.
- * Unsigned messages are valid OpenPGP and decrypt correctly, but
- * Delta Chat will display them without sender verification until
- * signing is added.
+ * Returns the signed-and-encrypted OpenPGP message as binary bytes.
  */
-export function encryptMessage(recipient_key_bytes: Uint8Array, _sender_key_bytes: Uint8Array, plaintext: Uint8Array): Uint8Array;
+export function encryptMessage(recipient_key_bytes: Uint8Array, sender_key_bytes: Uint8Array, plaintext: Uint8Array): Uint8Array;
 
 /**
  * Generate a new OpenPGP key pair for the given email address.
@@ -66,6 +66,7 @@ export interface InitOutput {
     readonly __wbg_chatcrypto_free: (a: number, b: number) => void;
     readonly chatcrypto_encryptionRecommendation: (a: number, b: number, c: number, d: number) => [number, number, number, number];
     readonly chatcrypto_fromJson: (a: number, b: number) => [number, number, number];
+    readonly chatcrypto_getPeerPublicKey: (a: number, b: number, c: number) => [number, number];
     readonly chatcrypto_new: () => number;
     readonly chatcrypto_toJson: (a: number) => [number, number, number, number];
     readonly chatcrypto_updatePeerState: (a: number, b: number, c: number, d: bigint, e: number, f: number, g: number) => void;
