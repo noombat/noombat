@@ -4,13 +4,14 @@ Development and maintenance scripts for the Noombat workspace.
 
 ## Quick Reference
 
-| Script          | Purpose                     | When to use                                                |
-|-----------------|-----------------------------|------------------------------------------------------------|
-| `dev-setup.sh`  | First-time onboarding       | Once, after cloning the repository                         |
-| `build.sh`      | Full build pipeline         | After modifying Rust, frontend, or WASM source             |
-| `clean.sh`      | Remove all build artifacts  | Before a clean rebuild or to reclaim disk space            |
-| `test.sh`       | Run all verification checks | Before committing or pushing                               |
-| `smoke-test.sh` | Black-box HTTP tests        | After starting the server, to verify it responds correctly |
+| Script              | Purpose                     | When to use                                                |
+|---------------------|-----------------------------|------------------------------------------------------------|
+| `dev-setup.sh`      | First-time onboarding       | Once, after cloning the repository                         |
+| `build.sh`          | Full build pipeline         | After modifying Rust, frontend, or WASM source             |
+| `clean.sh`          | Remove all build artifacts  | Before a clean rebuild or to reclaim disk space            |
+| `test.sh`           | Run all verification checks | Before committing or pushing                               |
+| `smoke-test.sh`     | Black-box HTTP tests        | After starting the server, to verify it responds correctly |
+| `chatmail-setup.sh` | Chatmail DNS verification   | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
 
@@ -88,6 +89,19 @@ sleep 2
 ./scripts/smoke-test.sh
 kill %1
 ```
+
+## `chatmail-setup.sh`
+
+Pre-deployment DNS and network verification for the Chatmail relay.
+Checks A/AAAA records, MX record (self-referential), DKIM TXT record, outbound port 25 (tested against multiple well-known MX hosts), and inbound ports 25/993/465.
+
+```sh
+./scripts/chatmail-setup.sh chat.noombat.social
+```
+
+Run before deploying the `noombat-chatmail` container on a new domain.
+Requires `dig` (mandatory) and `nc` or `ncat` (optional, for port checks).
+Exits with a non-zero status if any mandatory check fails.
 
 ## Typical Workflows
 
