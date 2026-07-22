@@ -97,12 +97,3 @@ pub async fn generate_keypair_async() -> Result<ActorKeypair> {
         .await
         .map_err(|e| NoombatError::Internal(format!("key generation task failed: {e}")))?
 }
-
-/// Legacy async wrapper for RSA-only generation (used by callers that
-/// do not yet need Ed25519).
-pub async fn generate_rsa_keypair_async() -> Result<(String, String)> {
-    let kp = tokio::task::spawn_blocking(generate_rsa_keypair)
-        .await
-        .map_err(|e| NoombatError::Internal(format!("key generation task failed: {e}")))?;
-    kp.map(|k| (k.public_pem, k.private_pem))
-}
