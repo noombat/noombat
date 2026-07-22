@@ -145,6 +145,27 @@ pub fn clean_strict(html: &str) -> String {
     SANITISER_STRICT.clean(html).to_string()
 }
 
+/// Strip all HTML tags, returning plain text.
+///
+/// Configures `ammonia` with no allowed tags, so every tag is removed
+/// and only text content survives. HTML entities are decoded
+/// automatically by `ammonia`. This is used by the feed handler to
+/// generate plain-text article previews.
+static STRIP_TAGS: LazyLock<Builder<'static>> = LazyLock::new(|| {
+    let mut builder = Builder::new();
+    builder.tags(std::collections::HashSet::new());
+    builder
+});
+
+/// Remove all HTML tags from a string, returning decoded plain text.
+///
+/// Uses the `ammonia` sanitiser with an empty tag allowlist, which
+/// handles edge cases (self-closing tags, comments, CDATA, entity
+/// decoding) that a naive regex or char-by-char approach would miss.
+pub fn strip_tags(html: &str) -> String {
+    STRIP_TAGS.clean(html).to_string()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
