@@ -107,9 +107,12 @@ pub fn handle_request(request: Request, state: &Arc<AppState>) {
 
 /// Verify the `Authorization: Bearer <secret>` header.
 ///
-/// Comparison is constant-time (fold over all bytes, no
-/// short-circuit) to prevent timing side-channel attacks.
+/// Comparison is constant-time via the `subtle` crate's
+/// [`ConstantTimeEq`] implementation to prevent timing side-channel
+/// attacks.
 fn authenticate(request: &Request, expected: &str) -> bool {
+    use subtle::ConstantTimeEq;
+
     for header in request.headers() {
         if header.field.equiv("Authorization")
             && let Some(token) = header.value.as_str().strip_prefix("Bearer ")
@@ -117,11 +120,7 @@ fn authenticate(request: &Request, expected: &str) -> bool {
             if token.len() != expected.len() {
                 return false;
             }
-            let equal = token
-                .bytes()
-                .zip(expected.bytes())
-                .fold(0u8, |acc, (a, b)| acc | (a ^ b));
-            return equal == 0;
+            return token.as_bytes().ct_eq(expected.as_bytes()).into();
         }
     }
     false
