@@ -4,7 +4,8 @@
 //! Feed route: server-rendered home feed with HTMX pagination.
 //!
 //! The feed merges posts from followed actors and posts matching
-//! followed hashtags, deduplicated by post ID.
+//! followed hashtags, deduplicated by post ID. Articles are rendered
+//! with their title and a truncated preview; Notes are rendered inline.
 
 use askama::Template;
 use askama_web::WebTemplate;
@@ -150,7 +151,8 @@ async fn feed_partial(
     let mut posts: Vec<FeedPost> = Vec::new();
     for id in &post_ids {
         if let Ok(Some(row)) = sqlx::query_as::<_, PostRow>(
-            r#"SELECT p.id, p.actor_id, p.content_html, p.created_at,
+            r#"SELECT p.id, p.actor_id, p.post_type, p.title,
+                      p.featured_image_url, p.content_html, p.created_at,
                       p.ap_id, a.username, a.display_name, a.actor_status
                FROM posts p
                INNER JOIN actors a ON a.id = p.actor_id
@@ -174,14 +176,57 @@ async fn feed_partial(
                 continue;
             }
 
+            let is_article = row.post_type == "article";
+
+            // For articles, compute a plain-text preview by stripping
+            // HTML tags from content_html and truncating. Notes render
+            // their full HTML inline, so no preview is needed.
+            let preview_text = if is_article {
+                let plain = noombat_markup::sanitise::strip_tags(&row.content_html);
+                if plain.len() > 280 {
+                    let boundary = plain.floor_char_boundary(280);
+                    format!("{}…", &plain[..boundary])
+                } else {
+                    plain
+                }
+            } else {
+                String::new()
+            };
+
+            let author_display = row
+                .display_name
+                .unwrap_or_else(|| row.username.clone());
+
+            // Populate a meaningful ARIA label. An empty aria-label is
+            // worse than none: screen readers would announce the element
+            // as having no accessible name, overriding the text content.
+            let aria_label = if is_article {
+                let t = row.title.as_deref().unwrap_or("");
+                i18n.tf("aria_article_by", &[("title", t)])
+            } else {
+                i18n.tf("aria_post_by", &[("name", &author_display)])
+            };
+
+            // Ensure articles always carry a display title, using the
+            // i18n fallback rather than a hardcoded English string.
+            let title = if is_article && row.title.is_none() {
+                Some(i18n.t("article_untitled"))
+            } else {
+                row.title
+            };
+
             posts.push(FeedPost {
-                author: row.username.clone(),
-                author_display: row.display_name.unwrap_or(row.username),
+                author: row.username,
+                author_display,
                 content_html: row.content_html,
                 created_at: row.created_at.to_rfc3339(),
                 ap_id: row.ap_id,
                 post_id: row.id.to_string(),
-                aria_label: String::new(),
+                is_article,
+                title,
+                featured_image_url: row.featured_image_url,
+                preview_text,
+                aria_label,
             });
         }
     }
@@ -191,6 +236,7 @@ async fn feed_partial(
     FeedPartial {
         permalink_label: i18n.t("feed_permalink"),
         loading_more_label: i18n.t("feed_loading_more"),
+        read_more_label: i18n.t("feed_read_more"),
         posts,
         has_next,
         next_page: query.page + 1,
@@ -202,6 +248,9 @@ async fn feed_partial(
 struct PostRow {
     id: uuid::Uuid,
     actor_id: uuid::Uuid,
+    post_type: String,
+    title: Option<String>,
+    featured_image_url: Option<String>,
     content_html: String,
     created_at: chrono::DateTime<chrono::Utc>,
     ap_id: String,
@@ -227,6 +276,15 @@ pub struct FeedPost {
     pub ap_id: String,
     /// The post's UUID, used for permalink construction.
     pub post_id: String,
+    /// Whether this post is an article (affects rendering in the feed).
+    pub is_article: bool,
+    /// Article title (non-`None` when `is_article` is `true`).
+    pub title: Option<String>,
+    /// Featured image URL (optional, primarily for articles).
+    pub featured_image_url: Option<String>,
+    /// Plain-text preview for articles (HTML-stripped, truncated).
+    /// Empty for Notes (which render their full HTML inline).
+    pub preview_text: String,
     /// Pre-computed ARIA label (e.g. "Post by Alice").
     pub aria_label: String,
 }
@@ -239,4 +297,5 @@ struct FeedPartial {
     next_page: u32,
     permalink_label: String,
     loading_more_label: String,
+    read_more_label: String,
 }
