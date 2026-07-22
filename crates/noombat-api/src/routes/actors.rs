@@ -444,8 +444,11 @@ async fn post_outbox(
     // prevention); Notes use the default mode, which permits `style`
     // on `<span>` because only the trusted KaTeX renderer produces
     // styled spans.
+    // Articles also inject heading `id` attributes into the rendered
+    // HTML so that table-of-contents anchors work in federated HTML.
     let markup_opts = noombat_markup::MarkupOptions {
         strict_sanitisation: is_article,
+        inject_heading_ids: is_article,
     };
     let markup_output =
         noombat_markup::render_async_with_options(body.content.clone(), markup_opts).await?;
@@ -590,6 +593,8 @@ async fn post_outbox(
         &actor.id.to_string(),
         &content_html,
         &body.visibility,
+        &body.post_type,
+        body.title.as_deref(),
     );
 
     // Enqueue delivery to all accepted followers.

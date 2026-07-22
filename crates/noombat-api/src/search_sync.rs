@@ -139,12 +139,17 @@ pub async fn reindex_profile_from_db(
 /// Index a post in Meilisearch (fire-and-forget).
 ///
 /// Only public posts are indexed; non-public posts are silently skipped.
+/// Articles are indexed with their title and post type to enable
+/// differentiated search results (e.g. displaying article titles in
+/// search hits rather than content snippets).
 pub fn index_post(
     search: &Option<Arc<dyn SearchBackend>>,
     post_id: &str,
     actor_id: &str,
     content_html: &str,
     visibility: &str,
+    post_type: &str,
+    title: Option<&str>,
 ) {
     if visibility != "public" {
         return;
@@ -154,9 +159,12 @@ pub fn index_post(
     };
     let doc = json!({
         "id": post_id,
+        "ap_id": post_id,
         "content": content_html,
         "actor_id": actor_id,
         "visibility": visibility,
+        "post_type": post_type,
+        "title": title,
     });
     let id = post_id.to_owned();
     tokio::spawn(async move {
