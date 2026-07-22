@@ -222,3 +222,20 @@ migrate_confirm: "Are you sure? This will redirect your account and cannot be un
 # Settings navigation.
 settings_title: "Settings"
 settings_heading: "Settings"
+
+# Articles.
+article_toc_heading: "Contents"
+article_untitled: "Untitled Article"
+aria_article_by: "%{title}"
+aria_article_toc: "Table of contents"
+
+# Compose (article mode).
+compose_type_legend: "Post type"
+compose_type_note: "Post"
+compose_type_article: "Article"
+compose_article_title: "Title"
+compose_article_title_placeholder: "Article title"
+compose_article_image: "Featured image URL (optional)"
+
+# Feed (article entries).
+feed_read_more: "Read more"

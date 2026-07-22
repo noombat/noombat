@@ -222,3 +222,20 @@ migrate_confirm: "Tem certeza? Isso redirecionará sua conta e não pode ser des
 # Navegação de configurações.
 settings_title: "Configurações"
 settings_heading: "Configurações"
+
+# Artigos.
+article_toc_heading: "Sumário"
+article_untitled: "Artigo sem título"
+aria_article_by: "%{title}"
+aria_article_toc: "Sumário"
+
+# Compor (modo artigo).
+compose_type_legend: "Tipo de publicação"
+compose_type_note: "Publicação"
+compose_type_article: "Artigo"
+compose_article_title: "Título"
+compose_article_title_placeholder: "Título do artigo"
+compose_article_image: "URL da imagem de destaque (opcional)"
+
+# Feed (entradas de artigo).
+feed_read_more: "Ler mais"
