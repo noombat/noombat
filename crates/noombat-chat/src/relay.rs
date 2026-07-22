@@ -14,6 +14,17 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
+    /// Session establishment: the browser sends the Chatmail
+    /// password (decrypted from the credential blob client-side)
+    /// so the relay can authenticate to the Chatmail IMAP/SMTP
+    /// server. This must be the first message after connection.
+    /// The password is held in server memory only for the
+    /// duration of the WebSocket session and discarded on close.
+    #[serde(rename = "auth")]
+    Auth {
+        /// The Chatmail password (plaintext, from the decrypted blob).
+        password: String,
+    },
     /// Send an encrypted message via SMTP.
     #[serde(rename = "send")]
     Send {
@@ -39,6 +50,9 @@ pub enum ClientMessage {
 #[derive(Debug, Serialize)]
 #[serde(tag = "type")]
 pub enum ServerMessage {
+    /// Session established: IMAP login succeeded.
+    #[serde(rename = "ready")]
+    Ready,
     /// A new incoming encrypted message.
     #[serde(rename = "message")]
     Message {

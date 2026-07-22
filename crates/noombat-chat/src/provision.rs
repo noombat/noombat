@@ -6,13 +6,10 @@
 //! generates a random Chatmail password, performs the first-login
 //! IMAP connection, and returns the provisioned address and password.
 
-use std::sync::Arc;
-
 use noombat_core::error::{NoombatError, Result};
-use rustls::ClientConfig;
-use rustls_pki_types::ServerName;
-use tokio_rustls::TlsConnector;
 use tracing::info;
+
+use crate::session;
 
 /// The result of a successful Chatmail account provisioning.
 #[derive(Debug)]
@@ -21,20 +18,6 @@ pub struct ProvisionedAccount {
     pub address: String,
     /// The generated Chatmail password.
     pub password: String,
-}
-
-/// Build a `tokio-rustls` TLS connector using the Mozilla root
-/// certificates (via `webpki-roots`). This avoids the OpenSSL
-/// system-library dependency that `native-tls` would introduce.
-fn build_tls_connector() -> TlsConnector {
-    let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
-
-    let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
-
-    TlsConnector::from(Arc::new(config))
 }
 
 /// Provision a Chatmail account by performing a first-login IMAP
@@ -66,10 +49,11 @@ pub async fn provision_chatmail_account(
         })?;
 
     // Wrap the TCP stream in TLS via tokio-rustls.
-    let tls_connector = build_tls_connector();
-    let server_name = ServerName::try_from(chatmail_domain.to_owned()).map_err(|e| {
-        NoombatError::Internal(format!("invalid server name {chatmail_domain}: {e}"))
-    })?;
+    let tls_connector = session::build_tls_connector();
+    let server_name =
+        rustls_pki_types::ServerName::try_from(chatmail_domain.to_owned()).map_err(|e| {
+            NoombatError::Internal(format!("invalid server name {chatmail_domain}: {e}"))
+        })?;
     let tls_stream = tls_connector
         .connect(server_name, tcp_stream)
         .await
