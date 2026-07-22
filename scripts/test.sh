@@ -58,6 +58,11 @@ if [ "$QUICK" = false ]; then
     cd frontend
     run pnpm exec tsc --noEmit
     cd "$REPO_ROOT"
+
+    step "Linting frontend (eslint)"
+    cd frontend
+    run pnpm lint
+    cd "$REPO_ROOT"
 fi
 
 # ..... REUSE .....
