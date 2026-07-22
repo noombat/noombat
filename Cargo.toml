@@ -136,7 +136,7 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # IMAP client (Chatmail relay).
 # default-features = false to avoid the discontinued async-std (RUSTSEC-2025-0052);
 # runtime-tokio aligns with the project's async runtime.
-async-imap = { version = "0.10", default-features = false, features = ["runtime-tokio"] }
+async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
 
 # TLS connector for async-imap.
 tokio-rustls = "0.26"
