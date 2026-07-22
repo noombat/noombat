@@ -13,6 +13,46 @@
               action="/users/{{ username }}/outbox"
               aria-label="{{ i18n.t("aria_compose") }}"
               class="space-y-4">
+
+            <!-- Post type toggle -->
+            <fieldset class="flex gap-4 items-center">
+                <legend class="sr-only">{{ i18n.t("compose_type_legend") }}</legend>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name="post_type" value="note"
+                           id="post-type-note" checked
+                           class="accent-accent">
+                    {{ i18n.t("compose_type_note") }}
+                </label>
+                <label class="flex items-center gap-1.5 cursor-pointer">
+                    <input type="radio" name="post_type" value="article"
+                           id="post-type-article"
+                           class="accent-accent">
+                    {{ i18n.t("compose_type_article") }}
+                </label>
+            </fieldset>
+
+            <!-- Article-specific fields (hidden by default) -->
+            <div id="article-fields" hidden class="space-y-4">
+                <div>
+                    <label for="title" class="block text-sm font-medium mb-1">
+                        {{ i18n.t("compose_article_title") }}
+                    </label>
+                    <input type="text" id="title" name="title"
+                           class="w-full border border-border rounded p-2
+                                  bg-bg text-fg"
+                           placeholder="{{ i18n.t("compose_article_title_placeholder") }}">
+                </div>
+                <div>
+                    <label for="featured_image_url" class="block text-sm font-medium mb-1">
+                        {{ i18n.t("compose_article_image") }}
+                    </label>
+                    <input type="url" id="featured_image_url" name="featured_image_url"
+                           class="w-full border border-border rounded p-2
+                                  bg-bg text-fg"
+                           placeholder="https://example.com/image.jpg">
+                </div>
+            </div>
+
             <div id="editor-mount"
                  data-name="content"
                  data-placeholder="{{ i18n.t("compose_placeholder") }}"
@@ -26,6 +66,21 @@
                               placeholder="{{ i18n.t("compose_placeholder") }}"></textarea>
                 </noscript>
             </div>
+
+            <!-- Visibility selector -->
+            <div>
+                <label for="visibility" class="block text-sm font-medium mb-1">
+                    {{ i18n.t("edit_visibility") }}
+                </label>
+                <select id="visibility" name="visibility"
+                        class="border border-border rounded p-2 bg-bg text-fg
+                               min-h-[44px]">
+                    <option value="public" selected>{{ i18n.t("vis_public") }}</option>
+                    <option value="unlisted">{{ i18n.t("vis_unlisted") }}</option>
+                    <option value="followers">{{ i18n.t("vis_followers") }}</option>
+                </select>
+            </div>
+
             <div class="flex justify-end">
                 <button type="submit"
                         class="bg-accent text-white px-6 py-2 rounded hover:opacity-90
@@ -38,4 +93,17 @@
         </form>
 
         <script type="module" src="/assets/editor.js"></script>
+        <script>
+            // Toggle article-specific fields when the post-type radio
+            // changes. Uses a script block instead of inline `onchange`
+            // handlers for CSP compatibility (no `unsafe-inline`).
+            (function () {
+                var note = document.getElementById('post-type-note');
+                var article = document.getElementById('post-type-article');
+                var fields = document.getElementById('article-fields');
+                if (!note || !article || !fields) return;
+                note.addEventListener('change', function () { fields.hidden = true; });
+                article.addEventListener('change', function () { fields.hidden = false; });
+            })();
+        </script>
 {% endblock %}
