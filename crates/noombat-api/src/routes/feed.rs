@@ -193,9 +193,7 @@ async fn feed_partial(
                 String::new()
             };
 
-            let author_display = row
-                .display_name
-                .unwrap_or_else(|| row.username.clone());
+            let author_display = row.display_name.unwrap_or_else(|| row.username.clone());
 
             // Populate a meaningful ARIA label. An empty aria-label is
             // worse than none: screen readers would announce the element

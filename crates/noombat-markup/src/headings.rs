@@ -224,10 +224,38 @@ mod tests {
         let input = "# One\n## Two\n### Three\n#### Four";
         let headings = extract_headings(input);
         assert_eq!(headings.len(), 4);
-        assert_eq!(headings[0], Heading { depth: 1, text: "One".into(), slug: "one".into() });
-        assert_eq!(headings[1], Heading { depth: 2, text: "Two".into(), slug: "two".into() });
-        assert_eq!(headings[2], Heading { depth: 3, text: "Three".into(), slug: "three".into() });
-        assert_eq!(headings[3], Heading { depth: 4, text: "Four".into(), slug: "four".into() });
+        assert_eq!(
+            headings[0],
+            Heading {
+                depth: 1,
+                text: "One".into(),
+                slug: "one".into()
+            }
+        );
+        assert_eq!(
+            headings[1],
+            Heading {
+                depth: 2,
+                text: "Two".into(),
+                slug: "two".into()
+            }
+        );
+        assert_eq!(
+            headings[2],
+            Heading {
+                depth: 3,
+                text: "Three".into(),
+                slug: "three".into()
+            }
+        );
+        assert_eq!(
+            headings[3],
+            Heading {
+                depth: 4,
+                text: "Four".into(),
+                slug: "four".into()
+            }
+        );
     }
 
     #[test]
@@ -290,8 +318,16 @@ mod inject_tests {
     fn injects_ids_into_plain_headings() {
         let html = "<h2>Introduction</h2><p>Text</p><h2>Conclusion</h2>";
         let headings = vec![
-            Heading { depth: 2, text: "Introduction".into(), slug: "introduction".into() },
-            Heading { depth: 2, text: "Conclusion".into(), slug: "conclusion".into() },
+            Heading {
+                depth: 2,
+                text: "Introduction".into(),
+                slug: "introduction".into(),
+            },
+            Heading {
+                depth: 2,
+                text: "Conclusion".into(),
+                slug: "conclusion".into(),
+            },
         ];
         let result = inject_ids(html, &headings);
         assert!(result.contains(r#"<h2 id="introduction">"#));
@@ -301,9 +337,11 @@ mod inject_tests {
     #[test]
     fn preserves_existing_id() {
         let html = r#"<h2 id="custom">Title</h2>"#;
-        let headings = vec![
-            Heading { depth: 2, text: "Title".into(), slug: "title".into() },
-        ];
+        let headings = vec![Heading {
+            depth: 2,
+            text: "Title".into(),
+            slug: "title".into(),
+        }];
         let result = inject_ids(html, &headings);
         assert!(result.contains(r#"id="custom""#));
         assert!(!result.contains(r#"id="title""#));
@@ -319,9 +357,11 @@ mod inject_tests {
     #[test]
     fn preserves_other_attributes() {
         let html = r#"<h3 class="fancy">Styled</h3>"#;
-        let headings = vec![
-            Heading { depth: 3, text: "Styled".into(), slug: "styled".into() },
-        ];
+        let headings = vec![Heading {
+            depth: 3,
+            text: "Styled".into(),
+            slug: "styled".into(),
+        }];
         let result = inject_ids(html, &headings);
         assert!(result.contains(r#"<h3 id="styled" class="fancy">"#));
     }
@@ -330,9 +370,11 @@ mod inject_tests {
     fn does_not_match_non_heading_tags() {
         // `<h2x>` should not be matched as `<h2>`.
         let html = "<h2x>not a heading</h2x><h2>real</h2>";
-        let headings = vec![
-            Heading { depth: 2, text: "real".into(), slug: "real".into() },
-        ];
+        let headings = vec![Heading {
+            depth: 2,
+            text: "real".into(),
+            slug: "real".into(),
+        }];
         let result = inject_ids(html, &headings);
         assert!(result.contains("<h2x>not a heading</h2x>"));
         assert!(result.contains(r#"<h2 id="real">"#));
@@ -342,8 +384,16 @@ mod inject_tests {
     fn duplicate_slugs_produce_unique_ids() {
         let html = "<h2>Setup</h2><h2>Setup</h2>";
         let headings = vec![
-            Heading { depth: 2, text: "Setup".into(), slug: "setup".into() },
-            Heading { depth: 2, text: "Setup".into(), slug: "setup-1".into() },
+            Heading {
+                depth: 2,
+                text: "Setup".into(),
+                slug: "setup".into(),
+            },
+            Heading {
+                depth: 2,
+                text: "Setup".into(),
+                slug: "setup-1".into(),
+            },
         ];
         let result = inject_ids(html, &headings);
         assert!(result.contains(r#"<h2 id="setup">"#));

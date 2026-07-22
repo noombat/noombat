@@ -159,8 +159,7 @@ async fn get_post(
         let headings = noombat_markup::extract_headings(&row.content_md);
         let content_html = row.content_html;
 
-        let aria_article_label =
-            i18n.tf("aria_article_by", &[("title", &article_title)]);
+        let aria_article_label = i18n.tf("aria_article_by", &[("title", &article_title)]);
         let canonical_url = format!(
             "https://{}/users/{}/posts/{}",
             state.domain, row.username, row.id
