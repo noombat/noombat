@@ -104,14 +104,13 @@ async fn subscribe_relay(
     let admin = require_admin(&principal)?;
 
     // Validate the per-relay verification policy if specified.
-    if let Some(ref policy) = body.verification_policy {
-        if noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(policy).is_none()
+    if let Some(ref policy) = body.verification_policy
+        && noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(policy).is_none()
         {
             return Err(ApiError(NoombatError::BadRequest(format!(
                 "invalid verification policy: {policy} \
                  (expected 'verify', 'verify-or-fetch', or 'trust-relay')"
             ))));
-        }
     }
 
     // Find the instance actor for signing the Follow activity.

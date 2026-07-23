@@ -242,10 +242,9 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
 
     // Per the W3C spec: if the proof config does not carry `@context`,
     // inherit it from the document.
-    if proof_config.get("@context").is_none() {
-        if let Some(ctx) = activity.get("@context") {
+    if proof_config.get("@context").is_none()
+        && let Some(ctx) = activity.get("@context") {
             proof_config["@context"] = ctx.clone();
-        }
     }
 
     // Reconstruct the unsigned document (activity without `proof`).

@@ -63,18 +63,16 @@ pub async fn authentication(
     let mut principal = resolve_principal(&state, &request);
 
     // Look up instance_role for local principals (single indexed query).
-    if let Some(ref mut p) = principal {
-        if let Some(ref username) = p.username {
-            if let Ok(role) = sqlx::query_scalar::<_, noombat_core::actor::InstanceRole>(
-                "SELECT instance_role FROM actors WHERE username = $1 AND is_local = TRUE",
-            )
-            .bind(username.as_str())
-            .fetch_optional(&state.pool)
-            .await
-            {
-                p.instance_role = role;
-            }
-        }
+    if let Some(ref mut p) = principal
+        && let Some(ref username) = p.username
+        && let Ok(role) = sqlx::query_scalar::<_, noombat_core::actor::InstanceRole>(
+            "SELECT instance_role FROM actors WHERE username = $1 AND is_local = TRUE",
+        )
+        .bind(username.as_str())
+        .fetch_optional(&state.pool)
+        .await
+    {
+        p.instance_role = role;
     }
 
     if let Some(ref p) = principal {
