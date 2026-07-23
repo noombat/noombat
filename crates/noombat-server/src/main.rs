@@ -373,6 +373,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Pre-construct shared resources before AppState consumes pool.
     let trending_cache = noombat_api::trending::TrendingCache::new();
+    let analytics_backend: Option<Arc<dyn noombat_core::extension::AnalyticsBackend>> =
+        Some(Arc::new(noombat_api::analytics::PgAnalyticsBackend::new(
+            pool.clone(),
+        )));
     // Clone pool for the trending worker (spawned after AppState is built).
     let trending_pool = pool.clone();
     let trending_cache_for_worker = trending_cache.clone();
@@ -409,6 +413,7 @@ async fn main() -> anyhow::Result<()> {
             .clone()
             .unwrap_or_else(|| format!("admin@{}", config.domain)),
         trending_cache: Some(trending_cache),
+        analytics: analytics_backend,
         relay_verification_policy: config.relay_verification_policy.clone(),
     };
     let app = noombat_api::build_router(state);

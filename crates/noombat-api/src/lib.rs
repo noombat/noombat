@@ -6,6 +6,7 @@
 
 rust_i18n::i18n!("locales", fallback = "en-US");
 
+pub mod analytics;
 pub mod auth;
 pub mod cookie;
 pub mod error;

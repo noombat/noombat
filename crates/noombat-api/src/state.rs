@@ -55,6 +55,8 @@ pub struct AppState {
     pub contact_email: String,
     /// Trending hashtags cache, updated by the background worker.
     pub trending_cache: Option<crate::trending::TrendingCache>,
+    /// Analytics backend (default: PostgreSQL counters).
+    pub analytics: Option<Arc<dyn noombat_core::extension::AnalyticsBackend>>,
     /// Relay verification policy in effect for this instance.
     pub relay_verification_policy: Option<String>,
 }
