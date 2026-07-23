@@ -6,6 +6,7 @@ pub mod actors;
 pub mod admin_relays;
 pub mod auth;
 pub mod chat;
+pub mod company;
 pub mod cv;
 pub mod explore;
 pub mod federation;
