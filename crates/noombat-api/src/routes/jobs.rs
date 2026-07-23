@@ -95,7 +95,7 @@ async fn delete_job(
 ) -> Result<StatusCode, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     // Development only: Require the admin token; proper ownership check will
-    // use the authenticated principal from the Cedar middleware.
+    // use the authenticated principal from the authentication middleware.
     // Fetch the job to get the actor_id, then delete.
     let job = noombat_jobs::get_job(&state.pool, id).await?;
     noombat_jobs::delete_job(&state.pool, job.actor_id, id).await?;

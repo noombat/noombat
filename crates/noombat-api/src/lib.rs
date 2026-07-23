@@ -51,7 +51,7 @@ pub fn build_router(state: AppState) -> Router {
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
-            middleware::authorisation,
+            middleware::authentication,
         ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),

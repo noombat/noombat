@@ -31,8 +31,6 @@ path = [
     "compose.yml",
     # Database migrations.
     "migrations/**",
-    # Cedar authorisation policies.
-    "policies/**",
     # Typst CV templates.
     "templates/**",
     # Locale files.

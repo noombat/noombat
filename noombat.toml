@@ -12,9 +12,6 @@ open_registrations = true
 # Set to enable POST /users/{username}/outbox. Omit to disable.
 admin_token = "noombat"
 
-# Path to the Cedar authorisation policy files.
-policies_dir = "policies"
-
 # Redis connection URL (optional; enables rate limiting and session storage).
 # redis_url = "redis://127.0.0.1:6379"
 

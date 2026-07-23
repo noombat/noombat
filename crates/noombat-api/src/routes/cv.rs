@@ -2,10 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! CV PDF download endpoint.
 //!
-//! Access control is enforced by the authorisation middleware via the
-//! `download_cv` Cedar policy (see `policies/noombat.cedar`). This
-//! handler determines *which sections* to include based on the
-//! requester's relationship to the profile owner.
+//! Access control is enforced by the `cv_downloadable_by` domain
+//! method on `Actor` (see `noombat_core::authorisation`). This handler
+//! determines *which sections* to include based on the requester's
+//! relationship to the profile owner.
 
 use axum::Router;
 use axum::extract::{Path, Query, State};
@@ -49,9 +49,9 @@ pub fn router() -> Router<AppState> {
 ///
 /// Generates and streams a PDF curriculum vitae.
 ///
-/// The authorisation middleware has already evaluated the `download_cv`
-/// Cedar policy before this handler runs. The handler determines the
-/// maximum section visibility to include:
+/// The `cv_downloadable_by` domain method on `Actor` enforces the
+/// `cv_download` privacy setting before this handler runs. The
+/// handler determines the maximum section visibility to include:
 ///
 /// | Requester   | Sections included                  |
 /// |-------------|------------------------------------|

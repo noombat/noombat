@@ -2,9 +2,9 @@
 #
 # Gated on paths that affect Rust compilation, linting, formatting,
 # dependency auditing, or database-backed integration tests. Commits
-# that touch only documentation, licence files, Cedar policies, shell
-# scripts, container definitions, or CI infrastructure that does not
-# affect the Rust build are skipped.
+# that touch only documentation, licence files, shell scripts,
+# container definitions, or CI infrastructure that does not affect
+# the Rust build are skipped.
 #
 # All jobs run on GitHub-hosted runners (`ubuntu-latest`). The
 # `integration` job additionally uses PostgreSQL and Redis service

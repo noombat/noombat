@@ -19,7 +19,6 @@ noombat-federation = { workspace = true }
 noombat-identity = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
-cedar-policy = { workspace = true, optional = true }
 dotenvy = { workspace = true }
 figment = { workspace = true }
 reqwest = { workspace = true }
@@ -32,7 +31,3 @@ meilisearch-sdk = { workspace = true }
 redis = { workspace = true }
 rand = { workspace = true }
 serde_json = { workspace = true }
-
-[features]
-default = []
-cedar = ["dep:cedar-policy"]

@@ -91,9 +91,6 @@ figment = { version = "0.10", features = ["env", "toml"] }
 # Internationalisation.
 rust-i18n = "4"
 
-# Authorisation (optional: compiled only with the `cedar` feature).
-cedar-policy = "4.11"
-
 # Markup pipeline.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 ammonia = "4"

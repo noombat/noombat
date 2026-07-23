@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use noombat_chat::admin_client::ChatmailAdminClient;
-use noombat_core::auth::AuthorisationBackend;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
 use noombat_identity::oauth_orcid::OrcidConfig;
 use noombat_identity::session::SessionConfig;
@@ -22,8 +21,6 @@ pub struct AppState {
     /// Development-only bearer token for C2S outbox POST!
     /// To be replaced by full authentication!
     pub admin_token: Option<String>,
-    /// Authorisation backend (default: Cedar).
-    pub auth: Arc<dyn AuthorisationBackend>,
     /// Search backend (default: Meilisearch).
     pub search: Option<Arc<dyn noombat_core::extension::SearchBackend>>,
     /// Instance-level feature flags exposed via NodeInfo.

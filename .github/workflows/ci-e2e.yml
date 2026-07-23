@@ -3,8 +3,8 @@
 # The path filter below triggers these jobs only when the change set
 # includes files that can affect the built server binary, the frontend
 # assets, the database schema, or the test suites themselves.
-# Documentation, licence files, Cedar policies, and CI-infrastructure
-# changes that do not touch the artefact are excluded.
+# Documentation, licence files, and CI-infrastructure changes that
+# do not touch the artefact are excluded.
 
 name: E2E & interop
 

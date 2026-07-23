@@ -122,7 +122,6 @@ noombat/
 │       ├── editor/               # SolidJS (Markdown and KaTeX) editor island.
 │       └── htmx.ts               # HTMX bundled entry point.
 ├── migrations/                   # SQL migrations (sqlx).
-├── policies/                     # Cedar authorisation policies and schema.
 ├── templates/                    # Typst CV templates.
 ├── tests/
 │   ├── chat-interop/             # Chat and Delta Chat interoperability tests.
@@ -163,7 +162,6 @@ Environment variables take precedence.
 | Key                  | Env Var                      | Description                                                       |
 |----------------------|------------------------------|-------------------------------------------------------------------|
 | `open_registrations` | `NOOMBAT_OPEN_REGISTRATIONS` | Enable open registration (default `true`).                        |
-| `policies_dir`       | `NOOMBAT_POLICIES_DIR`       | Path to Cedar policy files (default `policies`).                  |
 | `redis_url`          | `NOOMBAT_REDIS_URL`          | Redis connection URL (enables rate limiting and session storage). |
 
 ### ORCID integration
