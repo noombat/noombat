@@ -29,7 +29,6 @@ COPY crates/ crates/
 COPY migrations/ migrations/
 COPY frontend/ frontend/
 COPY templates/ templates/
-COPY policies/ policies/
 
 # Copy the compiled frontend assets from the previous stage.
 COPY --from=frontend /build/frontend/dist frontend/dist
@@ -54,7 +53,6 @@ COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY --from=builder /build/target/release/noombat /usr/local/bin/noombat
 COPY --from=builder /build/migrations /opt/noombat/migrations
 COPY --from=builder /build/templates /opt/noombat/templates
-COPY --from=builder /build/policies /opt/noombat/policies
 COPY --from=frontend /build/frontend/dist /opt/noombat/frontend/dist
 
 WORKDIR /opt/noombat
