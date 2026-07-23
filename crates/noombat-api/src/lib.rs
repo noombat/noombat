@@ -44,6 +44,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::health::router())
         .merge(routes::pages::router())
         .merge(routes::ws_chat::router())
+        .merge(routes::admin_relays::router())
         .merge(routes::explore::router())
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
         .layer(axum::middleware::from_fn_with_state(

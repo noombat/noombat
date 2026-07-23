@@ -54,6 +54,12 @@ pub struct NodeInfoFeatures {
     pub groups_enabled: bool,
     pub events_enabled: bool,
     pub articles_enabled: bool,
+    /// Whether FEP-8b32 integrity proofs (`eddsa-jcs-2022`) are
+    /// attached to all outbound activities.
+    pub integrity_proofs_enabled: bool,
+    /// Whether relay subscriptions are accepted and the verification
+    /// policy in effect.
+    pub relay_verification_policy: Option<String>,
 }
 
 /// Build the full NodeInfo 2.1 document with Noombat-specific metadata.
@@ -77,6 +83,14 @@ pub fn build(params: &NodeInfoParams) -> Value {
     });
     if let Some(ref domain) = params.features.chatmail_domain {
         metadata["noombat:chatmailDomain"] = json!(domain);
+    }
+    if params.features.integrity_proofs_enabled {
+        metadata["noombat:integrityProofsEnabled"] = json!(true);
+        metadata["noombat:integrityProofsCryptosuite"] = json!("eddsa-jcs-2022");
+    }
+    if let Some(ref policy) = params.features.relay_verification_policy {
+        metadata["noombat:relaySupported"] = json!(true);
+        metadata["noombat:relayVerificationPolicy"] = json!(policy);
     }
 
     json!({
@@ -146,6 +160,8 @@ mod tests {
                 groups_enabled: true,
                 events_enabled: false,
                 articles_enabled: true,
+                integrity_proofs_enabled: false,
+                relay_verification_policy: None,
             },
         };
         let doc = build(&params);

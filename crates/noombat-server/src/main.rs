@@ -105,6 +105,9 @@ struct Config {
     /// attached to all outbound activities (default `true`).
     #[serde(default = "default_true")]
     integrity_proofs_enabled: bool,
+    /// Relay verification policy: `verify`, `verify-or-fetch`, or
+    /// `trust-relay`. `None` when relay support is not activated.
+    relay_verification_policy: Option<String>,
 }
 
 fn default_host() -> String {
@@ -389,6 +392,7 @@ async fn main() -> anyhow::Result<()> {
             events_enabled: config.events_enabled,
             articles_enabled: config.articles_enabled,
             integrity_proofs_enabled: config.integrity_proofs_enabled,
+            relay_verification_policy: config.relay_verification_policy.clone(),
         },
         redis,
         session_config,
@@ -405,6 +409,7 @@ async fn main() -> anyhow::Result<()> {
             .clone()
             .unwrap_or_else(|| format!("admin@{}", config.domain)),
         trending_cache: Some(trending_cache),
+        relay_verification_policy: config.relay_verification_policy.clone(),
     };
     let app = noombat_api::build_router(state);
 

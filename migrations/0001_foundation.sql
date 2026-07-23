@@ -206,39 +206,41 @@ CREATE TABLE publications (
 -- ..... JOB LISTINGS .....
 
 CREATE TABLE job_listings (
-    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_id         UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    ap_id            TEXT NOT NULL UNIQUE,
-    title            TEXT NOT NULL,
-    description_md   TEXT NOT NULL,
-    description_html TEXT NOT NULL,
-    location         TEXT,
-    remote           BOOLEAN NOT NULL DEFAULT FALSE,
-    salary_min       INTEGER,
-    salary_max       INTEGER,
-    currency         TEXT,
-    requirements     JSONB,
-    published_at     TIMESTAMPTZ,
-    expires_at       TIMESTAMPTZ,
-    created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id                 UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    ap_id                    TEXT NOT NULL UNIQUE,
+    title                    TEXT NOT NULL,
+    description_md           TEXT NOT NULL,
+    description_html         TEXT NOT NULL,
+    location                 TEXT,
+    remote                   BOOLEAN NOT NULL DEFAULT FALSE,
+    salary_min               INTEGER,
+    salary_max               INTEGER,
+    currency                 TEXT,
+    requirements             JSONB,
+    published_at             TIMESTAMPTZ,
+    expires_at               TIMESTAMPTZ,
+    integrity_proof_verified BOOLEAN, -- NULL = no proof; TRUE = valid; FALSE = invalid
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ..... POSTS .....
 
 CREATE TABLE posts (
-    id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_id           UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    ap_id              TEXT NOT NULL UNIQUE,
-    post_type          TEXT NOT NULL DEFAULT 'note' CHECK (post_type IN ('note', 'article')),
-    title              TEXT,
-    featured_image_url TEXT,
-    content_md         TEXT NOT NULL,
-    content_html       TEXT NOT NULL,
-    in_reply_to        TEXT,
-    canonical_uri      TEXT,
-    visibility         TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
-    ap_object          JSONB NOT NULL,
-    created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id                 UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    ap_id                    TEXT NOT NULL UNIQUE,
+    post_type                TEXT NOT NULL DEFAULT 'note' CHECK (post_type IN ('note', 'article')),
+    title                    TEXT,
+    featured_image_url       TEXT,
+    content_md               TEXT NOT NULL,
+    content_html             TEXT NOT NULL,
+    in_reply_to              TEXT,
+    canonical_uri            TEXT,
+    visibility               TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
+    integrity_proof_verified BOOLEAN, -- NULL = no proof; TRUE = valid; FALSE = invalid
+    ap_object                JSONB NOT NULL,
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX idx_posts_actor ON posts (actor_id, created_at DESC);
@@ -477,11 +479,12 @@ CREATE TABLE chatmail_blocks (
 -- A relay receives all public activities and rebroadcasts them to
 -- subscribers, widening content discovery.
 CREATE TABLE relay_subscriptions (
-    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    inbox_url   TEXT NOT NULL UNIQUE,
-    status      TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    inbox_url           TEXT NOT NULL UNIQUE,
+    status              TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'accepted', 'rejected')),
+    verification_policy TEXT CHECK (verification_policy IN ('verify', 'verify-or-fetch', 'trust-relay')),
+    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ..... TOMBSTONED ACTORS .....

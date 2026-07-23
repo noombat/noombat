@@ -46,3 +46,12 @@ chatmail_available = true
 # Must match the CHATMAIL_ADMIN_SECRET environment variable set on
 # the noombat-chatmail container.
 # chatmail_admin_secret = "change-this-to-a-random-secret"
+
+# Whether eddsa-jcs-2022 integrity proofs are attached to all
+# outbound ActivityPub activities (default: true).
+integrity_proofs_enabled = true
+
+# Relay verification policy for inbound relay traffic.
+# Values: "verify", "verify-or-fetch", "trust-relay".
+# Uncomment to activate relay support.
+# relay_verification_policy = "verify-or-fetch"
