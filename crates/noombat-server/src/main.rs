@@ -368,6 +368,12 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // Pre-construct shared resources before AppState consumes pool.
+    let trending_cache = noombat_api::trending::TrendingCache::new();
+    // Clone pool for the trending worker (spawned after AppState is built).
+    let trending_pool = pool.clone();
+    let trending_cache_for_worker = trending_cache.clone();
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -398,8 +404,21 @@ async fn main() -> anyhow::Result<()> {
             .contact_email
             .clone()
             .unwrap_or_else(|| format!("admin@{}", config.domain)),
+        trending_cache: Some(trending_cache),
     };
     let app = noombat_api::build_router(state);
+
+    // Spawn the trending hashtags background worker.
+    tokio::spawn(async move {
+        noombat_api::trending::run_worker(
+            trending_pool,
+            trending_cache_for_worker,
+            Duration::from_secs(300), // recompute every 5 minutes
+            24,                   // 24-hour rolling window
+            20,                          // top 20 tags
+        )
+        .await;
+    });
 
     // Bind and serve.
     let addr: SocketAddr = format!("{}:{}", config.host, config.port).parse()?;

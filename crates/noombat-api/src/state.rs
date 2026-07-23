@@ -53,4 +53,6 @@ pub struct AppState {
     /// ORCID import). Defaults to `"admin@{domain}"` when not
     /// explicitly configured via `NOOMBAT_CONTACT_EMAIL`.
     pub contact_email: String,
+    /// Trending hashtags cache, updated by the background worker.
+    pub trending_cache: Option<crate::trending::TrendingCache>,
 }
