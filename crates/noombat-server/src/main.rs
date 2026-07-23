@@ -101,6 +101,10 @@ struct Config {
     orcid_client_id: Option<String>,
     /// ORCID OAuth client secret.
     orcid_client_secret: Option<String>,
+    /// Whether FEP-8b32 integrity proofs (`eddsa-jcs-2022`) are
+    /// attached to all outbound activities (default `true`).
+    #[serde(default = "default_true")]
+    integrity_proofs_enabled: bool,
 }
 
 fn default_host() -> String {
@@ -378,6 +382,7 @@ async fn main() -> anyhow::Result<()> {
             groups_enabled: config.groups_enabled,
             events_enabled: config.events_enabled,
             articles_enabled: config.articles_enabled,
+            integrity_proofs_enabled: config.integrity_proofs_enabled,
         },
         redis,
         session_config,

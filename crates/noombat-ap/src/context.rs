@@ -17,6 +17,9 @@ pub const AS_PUBLIC: &str = "https://www.w3.org/ns/activitystreams#Public";
 /// The W3C Security Vocabulary context URI.
 pub const SECURITY_CONTEXT: &str = "https://w3id.org/security/v1";
 
+/// The W3C Data Integrity context URI (for FEP-8b32 integrity proofs).
+pub const DATA_INTEGRITY_CONTEXT: &str = "https://w3id.org/security/data-integrity/v1";
+
 /// The Noombat extension namespace.
 pub const NOOMBAT_NS: &str = "https://noombat.org/ns#";
 

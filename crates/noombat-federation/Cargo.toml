@@ -10,6 +10,7 @@ description = "ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, N
 noombat-core = { workspace = true }
 noombat-ap = { workspace = true }
 noombat-identity = { workspace = true }
+async-trait = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
 rsa = { workspace = true }
@@ -24,3 +25,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 rand = { workspace = true }
+ed25519-dalek = { workspace = true }
+bs58 = { workspace = true }
+serde_json_canonicalizer = { workspace = true }

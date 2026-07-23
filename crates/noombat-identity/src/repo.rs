@@ -343,7 +343,7 @@ pub struct RemoteActor {
     /// Multibase-encoded Ed25519 public key extracted from the remote
     /// actor's `assertionMethod` (FEP-521a). `None` if the remote
     /// actor does not publish an Ed25519 key. Stored for future
-    /// FEP-8b32 Object Integrity Proof verification (Phase 5).
+    /// FEP-8b32 Object Integrity Proof verification.
     pub ed25519_public_key: Option<String>,
 }
 

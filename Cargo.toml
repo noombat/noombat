@@ -156,6 +156,9 @@ tokio-tungstenite = "0.26"
 # Base58 encoding (Ed25519 multibase public keys, FEP-521a).
 bs58 = "0.5"
 
+# JSON Canonicalization Scheme (RFC 8785) for FEP-8b32 Object Integrity Proofs.
+serde_json_canonicalizer = "0.3"
+
 # HTML parsing (domain verification).
 scraper = "0.27"
 

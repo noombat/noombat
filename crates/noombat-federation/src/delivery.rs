@@ -39,6 +39,13 @@ struct SigningCredentials {
     /// Pre-parsed RSA private key (avoids redundant PEM parsing on
     /// every invocation of the signing closure).
     private_key: rsa::RsaPrivateKey,
+    /// The actor's AP identifier (used to derive the Ed25519
+    /// verification method URI for integrity proofs).
+    ap_id: String,
+    /// Raw 32-byte Ed25519 private key (decoded from Base64).
+    /// `None` if the actor does not have an Ed25519 key (remote
+    /// actors, or actors created before Ed25519 provisioning).
+    ed25519_private_key: Option<[u8; 32]>,
 }
 
 /// Enqueue an activity for delivery to a remote inbox.
@@ -145,13 +152,14 @@ pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
 ///
 /// The PEM is parsed into an [`rsa::RsaPrivateKey`] here (once per
 /// delivery cycle) rather than inside the signing closure (which
-/// would re-parse on every invocation).
+/// would re-parse on every invocation). The Ed25519 private key is
+/// decoded from Base64 for integrity proof attachment.
 async fn fetch_signing_credentials(
     pool: &PgPool,
     actor_id: Uuid,
 ) -> noombat_core::error::Result<SigningCredentials> {
-    let row = sqlx::query_as::<_, (String, Option<String>)>(
-        r#"SELECT ap_id, private_key_pem FROM actors WHERE id = $1"#,
+    let row = sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        r#"SELECT ap_id, private_key_pem, ed25519_private_key FROM actors WHERE id = $1"#,
     )
     .bind(actor_id)
     .fetch_one(pool)
@@ -171,9 +179,29 @@ async fn fetch_signing_credentials(
         ))
     })?;
 
+    // Decode the Ed25519 private key (Base64 to 32 bytes) if available.
+    let ed25519_private_key = match row.2 {
+        Some(ref b64) => {
+            match crate::integrity_proof::decode_private_key_base64(b64) {
+                Ok(key_bytes) => Some(key_bytes),
+                Err(e) => {
+                    warn!(
+                        actor = %row.0,
+                        "failed to decode Ed25519 private key: {e}; \
+                         integrity proofs will not be attached"
+                    );
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
     Ok(SigningCredentials {
         key_id: format!("{}#main-key", row.0),
         private_key,
+        ap_id: row.0,
+        ed25519_private_key,
     })
 }
 
@@ -238,7 +266,25 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
         }
     };
 
-    let body = serde_json::to_string(&row.payload).unwrap_or_default();
+    // Attach an FEP-8b32 integrity proof (eddsa-jcs-2022) to the
+    // payload before serialising the body. The proof must be included
+    // in the body before the HTTP Signature is computed, since the
+    // HTTP Signature covers the body digest.
+    let mut payload = row.payload.clone();
+    if let Some(ref ed25519_key) = creds.ed25519_private_key {
+        let vm_id = format!("{}#ed25519-key", creds.ap_id);
+        if let Err(e) = crate::integrity_proof::sign(&mut payload, ed25519_key, &vm_id) {
+            // Non-fatal: the activity is still delivered without a
+            // proof; HTTP Signatures remain the primary authentication
+            // mechanism.
+            warn!(
+                target_inbox = %row.target_inbox,
+                "failed to attach integrity proof: {e}"
+            );
+        }
+    }
+
+    let body = serde_json::to_string(&payload).unwrap_or_default();
 
     // Build the request with an HTTP Signature via the Sign trait.
     //

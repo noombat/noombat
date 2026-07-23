@@ -12,6 +12,7 @@ pub mod digest;
 pub mod downgrade;
 pub mod flag;
 pub mod inbox;
+pub mod integrity_proof;
 pub mod move_actor;
 pub mod nodeinfo;
 pub mod relay;
