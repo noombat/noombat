@@ -223,7 +223,7 @@ if [ "${FAILURES}" -eq 0 ]; then
     echo "Next steps:"
     echo "  1. If you have not yet registered this Chatmail domain in the"
     echo "     Noombat project allowlist, do so before inter-instance"
-    echo "     messaging will function (§4.8.7)."
+    echo "     messaging will function."
     echo "  2. Start the Compose stack:"
     echo "     NOOMBAT_DOMAIN=<your_domain> docker compose up -d"
     echo ""

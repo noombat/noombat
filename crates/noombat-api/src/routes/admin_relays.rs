@@ -36,9 +36,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Verify that the authenticated principal holds the admin role.
-fn require_admin(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, ApiError> {
+fn require_admin(principal: &Option<axum::Extension<Principal>>) -> Result<&Principal, ApiError> {
     let principal = principal
         .as_ref()
         .ok_or(ApiError(NoombatError::Forbidden))?;
@@ -106,11 +104,11 @@ async fn subscribe_relay(
     // Validate the per-relay verification policy if specified.
     if let Some(ref policy) = body.verification_policy
         && noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(policy).is_none()
-        {
-            return Err(ApiError(NoombatError::BadRequest(format!(
-                "invalid verification policy: {policy} \
+    {
+        return Err(ApiError(NoombatError::BadRequest(format!(
+            "invalid verification policy: {policy} \
                  (expected 'verify', 'verify-or-fetch', or 'trust-relay')"
-            ))));
+        ))));
     }
 
     // Find the instance actor for signing the Follow activity.
@@ -128,14 +126,12 @@ async fn subscribe_relay(
 
     // Store the per-relay verification policy if specified.
     if let Some(ref policy) = body.verification_policy {
-        sqlx::query(
-            "UPDATE relay_subscriptions SET verification_policy = $1 WHERE inbox_url = $2",
-        )
-        .bind(policy)
-        .bind(&body.inbox_url)
-        .execute(&state.pool)
-        .await
-        .map_err(NoombatError::from)?;
+        sqlx::query("UPDATE relay_subscriptions SET verification_policy = $1 WHERE inbox_url = $2")
+            .bind(policy)
+            .bind(&body.inbox_url)
+            .execute(&state.pool)
+            .await
+            .map_err(NoombatError::from)?;
     }
 
     info!(
@@ -155,13 +151,12 @@ async fn unsubscribe_relay(
 ) -> Result<StatusCode, ApiError> {
     let admin = require_admin(&principal)?;
 
-    let row = sqlx::query_as::<_, (String,)>(
-        "SELECT inbox_url FROM relay_subscriptions WHERE id = $1",
-    )
-    .bind(relay_id)
-    .fetch_optional(&state.pool)
-    .await
-    .map_err(NoombatError::from)?;
+    let row =
+        sqlx::query_as::<_, (String,)>("SELECT inbox_url FROM relay_subscriptions WHERE id = $1")
+            .bind(relay_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(NoombatError::from)?;
 
     let inbox_url = match row {
         Some((url,)) => url,

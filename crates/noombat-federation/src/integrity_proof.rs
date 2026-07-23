@@ -127,10 +127,7 @@ pub fn sign(
     // Remove `@context` from the proof before embedding: it was needed
     // for the hash computation but is redundant in the output (the
     // document's own `@context` is authoritative).
-    proof_config
-        .as_object_mut()
-        .unwrap()
-        .remove("@context");
+    proof_config.as_object_mut().unwrap().remove("@context");
 
     activity["proof"] = proof_config;
 
@@ -192,10 +189,7 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
 
     let proof_type = proof.get("type").and_then(|v| v.as_str());
     if proof_type != Some(PROOF_TYPE) {
-        debug!(
-            ?proof_type,
-            "integrity proof has unexpected type; skipping"
-        );
+        debug!(?proof_type, "integrity proof has unexpected type; skipping");
         return VerificationResult::Absent;
     }
 
@@ -235,16 +229,14 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
 
     // Reconstruct the proof configuration (without proofValue).
     let mut proof_config = proof.clone();
-    proof_config
-        .as_object_mut()
-        .unwrap()
-        .remove("proofValue");
+    proof_config.as_object_mut().unwrap().remove("proofValue");
 
     // Per the W3C spec: if the proof config does not carry `@context`,
     // inherit it from the document.
     if proof_config.get("@context").is_none()
-        && let Some(ctx) = activity.get("@context") {
-            proof_config["@context"] = ctx.clone();
+        && let Some(ctx) = activity.get("@context")
+    {
+        proof_config["@context"] = ctx.clone();
     }
 
     // Reconstruct the unsigned document (activity without `proof`).
@@ -325,14 +317,12 @@ pub fn decode_private_key_base64(base64_str: &str) -> Result<[u8; 32]> {
         .decode(base64_str)
         .map_err(|e| NoombatError::Internal(format!("Ed25519 private key Base64 decode: {e}")))?;
 
-    bytes
-        .try_into()
-        .map_err(|v: Vec<u8>| {
-            NoombatError::Internal(format!(
-                "Ed25519 private key has unexpected length {} (expected 32)",
-                v.len()
-            ))
-        })
+    bytes.try_into().map_err(|v: Vec<u8>| {
+        NoombatError::Internal(format!(
+            "Ed25519 private key has unexpected length {} (expected 32)",
+            v.len()
+        ))
+    })
 }
 
 // ..... Internal helpers .....
@@ -357,19 +347,15 @@ fn sha256(data: &[u8]) -> [u8; 32] {
 /// 32-byte public key (as produced by
 /// [`noombat_identity::keys::generate_ed25519_keypair`]).
 fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
-    let raw = multibase
-        .strip_prefix('z')
-        .ok_or_else(|| {
-            NoombatError::Internal(format!(
-                "multibase public key does not start with 'z': {multibase}"
-            ))
-        })?;
+    let raw = multibase.strip_prefix('z').ok_or_else(|| {
+        NoombatError::Internal(format!(
+            "multibase public key does not start with 'z': {multibase}"
+        ))
+    })?;
 
-    let decoded = bs58::decode(raw)
-        .into_vec()
-        .map_err(|e| {
-            NoombatError::Internal(format!("base58btc decode of public key failed: {e}"))
-        })?;
+    let decoded = bs58::decode(raw).into_vec().map_err(|e| {
+        NoombatError::Internal(format!("base58btc decode of public key failed: {e}"))
+    })?;
 
     // The key may be stored with or without a multicodec prefix.
     // Noombat's key generation stores the raw 32-byte key without
@@ -386,9 +372,9 @@ fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
         )));
     };
 
-    key_bytes.try_into().map_err(|_| {
-        NoombatError::Internal("Ed25519 public key slice conversion failed".into())
-    })
+    key_bytes
+        .try_into()
+        .map_err(|_| NoombatError::Internal("Ed25519 public key slice conversion failed".into()))
 }
 
 /// Decode a multibase-encoded Ed25519 signature.
@@ -396,19 +382,15 @@ fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
 /// Expected format: `z` prefix followed by base58btc-encoded raw
 /// 64-byte signature.
 fn decode_multibase_signature(multibase: &str) -> Result<Vec<u8>> {
-    let raw = multibase
-        .strip_prefix('z')
-        .ok_or_else(|| {
-            NoombatError::Internal(format!(
-                "multibase signature does not start with 'z': {multibase}"
-            ))
-        })?;
+    let raw = multibase.strip_prefix('z').ok_or_else(|| {
+        NoombatError::Internal(format!(
+            "multibase signature does not start with 'z': {multibase}"
+        ))
+    })?;
 
-    let decoded = bs58::decode(raw)
-        .into_vec()
-        .map_err(|e| {
-            NoombatError::Internal(format!("base58btc decode of signature failed: {e}"))
-        })?;
+    let decoded = bs58::decode(raw).into_vec().map_err(|e| {
+        NoombatError::Internal(format!("base58btc decode of signature failed: {e}"))
+    })?;
 
     if decoded.len() != 64 {
         return Err(NoombatError::Internal(format!(
@@ -434,9 +416,9 @@ fn ensure_data_integrity_context(activity: &mut Value) {
 
     match context {
         Value::Array(arr) => {
-            let already_present = arr.iter().any(|v| {
-                v.as_str() == Some(DATA_INTEGRITY_CONTEXT)
-            });
+            let already_present = arr
+                .iter()
+                .any(|v| v.as_str() == Some(DATA_INTEGRITY_CONTEXT));
             if !already_present {
                 arr.push(Value::String(DATA_INTEGRITY_CONTEXT.to_owned()));
             }
@@ -483,13 +465,12 @@ impl noombat_core::extension::FederationSignature for EddsaJcs2022Signer {
     /// looks up the actor's Ed25519 private key from the database and
     /// derives the verification method URI as `{ap_id}#ed25519-key`.
     async fn sign(&self, activity: &mut Value, signing_key_id: &str) -> Result<()> {
-        let row: Option<(String, Option<String>)> = sqlx::query_as(
-            "SELECT ap_id, ed25519_private_key FROM actors WHERE ap_id = $1",
-        )
-        .bind(signing_key_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(NoombatError::from)?;
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT ap_id, ed25519_private_key FROM actors WHERE ap_id = $1")
+                .bind(signing_key_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(NoombatError::from)?;
 
         let (ap_id, ed25519_private) = match row {
             Some((ap_id, Some(key))) => (ap_id, key),
@@ -521,20 +502,16 @@ impl noombat_core::extension::FederationSignature for EddsaJcs2022Signer {
 
         // Extract the actor AP ID from the verification method.
         // Convention: `{actor_ap_id}#ed25519-key`.
-        let actor_ap_id = vm_id
-            .split('#')
-            .next()
-            .unwrap_or(&vm_id);
+        let actor_ap_id = vm_id.split('#').next().unwrap_or(&vm_id);
 
         // Look up the actor's Ed25519 public key.
-        let public_key: Option<String> = sqlx::query_scalar(
-            "SELECT ed25519_public_key FROM actors WHERE ap_id = $1",
-        )
-        .bind(actor_ap_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(NoombatError::from)?
-        .flatten();
+        let public_key: Option<String> =
+            sqlx::query_scalar("SELECT ed25519_public_key FROM actors WHERE ap_id = $1")
+                .bind(actor_ap_id)
+                .fetch_optional(&self.pool)
+                .await
+                .map_err(NoombatError::from)?
+                .flatten();
 
         let public_key_multibase = match public_key {
             Some(pk) => pk,
@@ -561,10 +538,9 @@ mod tests {
     /// Generate a deterministic test key pair from a fixed seed.
     fn test_keypair() -> (SigningKey, VerifyingKey) {
         let seed: [u8; 32] = [
-            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60,
-            0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c, 0xc4,
-            0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19,
-            0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae, 0x7f, 0x60,
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
         ];
         let signing_key = SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key();
@@ -591,10 +567,7 @@ mod tests {
     #[test]
     fn sign_and_verify_roundtrip() {
         let (signing_key, verifying_key) = test_keypair();
-        let public_multibase = format!(
-            "z{}",
-            bs58::encode(verifying_key.as_bytes()).into_string()
-        );
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
 
         let mut activity = test_activity();
         let vm_id = "https://noombat.social/users/alice#ed25519-key";
@@ -620,10 +593,7 @@ mod tests {
     #[test]
     fn verify_fails_on_tampered_content() {
         let (signing_key, verifying_key) = test_keypair();
-        let public_multibase = format!(
-            "z{}",
-            bs58::encode(verifying_key.as_bytes()).into_string()
-        );
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
 
         let mut activity = test_activity();
         sign(
@@ -692,9 +662,9 @@ mod tests {
         ensure_data_integrity_context(&mut activity);
 
         let ctx = activity["@context"].as_array().unwrap();
-        let has_di = ctx.iter().any(|v| {
-            v.as_str() == Some(DATA_INTEGRITY_CONTEXT)
-        });
+        let has_di = ctx
+            .iter()
+            .any(|v| v.as_str() == Some(DATA_INTEGRITY_CONTEXT));
         assert!(has_di);
     }
 
@@ -754,10 +724,7 @@ mod tests {
         let (_, verifying_key) = test_keypair();
 
         // Encode without multicodec prefix (Noombat's own format).
-        let multibase = format!(
-            "z{}",
-            bs58::encode(verifying_key.as_bytes()).into_string()
-        );
+        let multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
 
         let decoded = decode_multibase_public_key(&multibase).unwrap();
         assert_eq!(&decoded, verifying_key.as_bytes());
@@ -810,6 +777,9 @@ mod tests {
         let sig = SigningKey::from_bytes(&signing_key.to_bytes()).sign(&input);
         let pv2 = format!("z{}", bs58::encode(sig.to_bytes()).into_string());
 
-        assert_eq!(pv1, pv2, "same key + same document + same timestamp must produce the same proofValue");
+        assert_eq!(
+            pv1, pv2,
+            "same key + same document + same timestamp must produce the same proofValue"
+        );
     }
 }

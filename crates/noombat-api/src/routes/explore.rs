@@ -20,9 +20,7 @@ pub fn router() -> Router<AppState> {
 /// Returns the cached trending hashtags list. The list is recomputed
 /// periodically by the background worker
 /// ([`crate::trending::run_worker`]).
-async fn trending_hashtags(
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn trending_hashtags(State(state): State<AppState>) -> impl IntoResponse {
     let tags = match state.trending_cache {
         Some(ref cache) => cache.get().await,
         None => Vec::new(),

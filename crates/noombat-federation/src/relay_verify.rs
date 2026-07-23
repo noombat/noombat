@@ -171,15 +171,14 @@ async fn attempt_proof_verification(pool: &PgPool, activity: &Value) -> Option<b
     let actor_ap_id = vm_id.split('#').next().unwrap_or(vm_id);
 
     // Look up the actor's Ed25519 public key.
-    let public_key: Option<String> = sqlx::query_scalar(
-        "SELECT ed25519_public_key FROM actors WHERE ap_id = $1",
-    )
-    .bind(actor_ap_id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    let public_key: Option<String> =
+        sqlx::query_scalar("SELECT ed25519_public_key FROM actors WHERE ap_id = $1")
+            .bind(actor_ap_id)
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
 
     let public_key_multibase = match public_key {
         Some(pk) => pk,
@@ -219,13 +218,8 @@ async fn refetch_and_verify(
     // Use a signed fetch so that instances requiring authenticated
     // requests do not reject the lookup.
     let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool).await?;
-    let response = crate::signed_fetch::signed_get(
-        pool,
-        http_client,
-        object_id,
-        signing_actor_id,
-    )
-    .await?;
+    let response =
+        crate::signed_fetch::signed_get(pool, http_client, object_id, signing_actor_id).await?;
 
     if !response.status().is_success() {
         return Err(NoombatError::Federation(format!(
@@ -234,12 +228,9 @@ async fn refetch_and_verify(
         )));
     }
 
-    let origin_object: Value = response
-        .json()
-        .await
-        .map_err(|e| NoombatError::Federation(format!(
-            "invalid JSON from origin for {object_id}: {e}"
-        )))?;
+    let origin_object: Value = response.json().await.map_err(|e| {
+        NoombatError::Federation(format!("invalid JSON from origin for {object_id}: {e}"))
+    })?;
 
     // Verify that the origin's `id` matches the claimed AP ID.
     let origin_id = origin_object.get("id").and_then(|v| v.as_str());

@@ -181,19 +181,17 @@ async fn fetch_signing_credentials(
 
     // Decode the Ed25519 private key (Base64 to 32 bytes) if available.
     let ed25519_private_key = match row.2 {
-        Some(ref b64) => {
-            match crate::integrity_proof::decode_private_key_base64(b64) {
-                Ok(key_bytes) => Some(key_bytes),
-                Err(e) => {
-                    warn!(
-                        actor = %row.0,
-                        "failed to decode Ed25519 private key: {e}; \
-                         integrity proofs will not be attached"
-                    );
-                    None
-                }
+        Some(ref b64) => match crate::integrity_proof::decode_private_key_base64(b64) {
+            Ok(key_bytes) => Some(key_bytes),
+            Err(e) => {
+                warn!(
+                    actor = %row.0,
+                    "failed to decode Ed25519 private key: {e}; \
+                     integrity proofs will not be attached"
+                );
+                None
             }
-        }
+        },
         None => None,
     };
 

@@ -27,10 +27,7 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/candidates", get(search_candidates))
-        .route(
-            "/api/v1/jobs/{job_id}/applications",
-            get(list_applications),
-        )
+        .route("/api/v1/jobs/{job_id}/applications", get(list_applications))
         .route(
             "/api/v1/jobs/{job_id}/applications/{app_id}/status",
             axum::routing::post(update_application_status),
@@ -66,16 +63,21 @@ async fn search_candidates(
     _principal: Option<axum::Extension<Principal>>,
     Query(query): Query<CandidateSearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let backend = state
-        .search
-        .as_ref()
-        .ok_or_else(|| ApiError(NoombatError::ServiceUnavailable(
+    let backend = state.search.as_ref().ok_or_else(|| {
+        ApiError(NoombatError::ServiceUnavailable(
             "search is not configured".into(),
-        )))?;
+        ))
+    })?;
 
     let filter = r#"actor_type = "Individual""#;
     let results = backend
-        .search("profiles", &query.q, Some(filter), query.limit, query.offset)
+        .search(
+            "profiles",
+            &query.q,
+            Some(filter),
+            query.limit,
+            query.offset,
+        )
         .await?;
 
     debug!(
@@ -126,7 +128,9 @@ async fn list_applications(
         .unwrap_or(false);
     let is_moderator = matches!(
         principal.instance_role,
-        Some(noombat_core::actor::InstanceRole::Moderator | noombat_core::actor::InstanceRole::Admin)
+        Some(
+            noombat_core::actor::InstanceRole::Moderator | noombat_core::actor::InstanceRole::Admin
+        )
     );
 
     if !is_owner && !is_moderator {
@@ -180,7 +184,13 @@ async fn update_application_status(
         .ok_or(ApiError(NoombatError::Forbidden))?;
 
     // Validate status value.
-    let valid_statuses = ["submitted", "reviewed", "shortlisted", "rejected", "withdrawn"];
+    let valid_statuses = [
+        "submitted",
+        "reviewed",
+        "shortlisted",
+        "rejected",
+        "withdrawn",
+    ];
     if !valid_statuses.contains(&body.status.as_str()) {
         return Err(ApiError(NoombatError::BadRequest(format!(
             "invalid status: {} (expected one of: {})",

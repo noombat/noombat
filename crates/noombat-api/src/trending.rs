@@ -132,9 +132,7 @@ pub async fn run_worker(
 ) {
     info!(
         interval_secs = interval.as_secs(),
-        window_hours,
-        limit,
-        "trending hashtags worker started"
+        window_hours, limit, "trending hashtags worker started"
     );
 
     loop {

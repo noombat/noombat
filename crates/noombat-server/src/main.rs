@@ -368,8 +368,8 @@ async fn main() -> anyhow::Result<()> {
             trending_pool,
             trending_cache_for_worker,
             Duration::from_secs(300), // recompute every 5 minutes
-            24,                   // 24-hour rolling window
-            20,                          // top 20 tags
+            24,                       // 24-hour rolling window
+            20,                       // top 20 tags
         )
         .await;
     });
