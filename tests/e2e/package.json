@@ -7,10 +7,15 @@
     "test": "playwright test",
     "test:firefox": "playwright test --project=firefox",
     "test:chromium": "playwright test --project=chromium",
-    "test:webkit": "playwright test --project=webkit"
+    "test:webkit": "playwright test --project=webkit",
+    "test:a11y": "playwright test accessibility.spec.ts",
+    "test:a11y:firefox": "playwright test accessibility.spec.ts --project=firefox"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.12.1",
     "@playwright/test": "1.60.0",
-    "@types/node": "22.15.30"
+    "@types/node": "22.15.30",
+    "axe-core": "4.12.1",
+    "typescript": "^5.6.0"
   }
 }
