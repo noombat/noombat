@@ -55,10 +55,7 @@ pub fn router() -> Router<AppState> {
             delete(remove_domain_restriction),
         )
         .route("/api/v1/admin/settings", patch(update_settings))
-        .route(
-            "/api/v1/admin/announcements",
-            post(create_announcement),
-        )
+        .route("/api/v1/admin/announcements", post(create_announcement))
         .route(
             "/api/v1/admin/announcements/{id}",
             delete(delete_announcement),
@@ -79,7 +76,9 @@ fn require_moderator(
     }
 }
 
-fn require_admin(principal: &Option<axum::Extension<Principal>>) -> Result<&Principal, Box<Response>> {
+fn require_admin(
+    principal: &Option<axum::Extension<Principal>>,
+) -> Result<&Principal, Box<Response>> {
     let principal = principal
         .as_ref()
         .ok_or_else(|| Box::new(Redirect::temporary("/auth/login").into_response()))?;
@@ -175,13 +174,14 @@ async fn moderation_page(
     i18n: I18n,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) { return *r; }
+    if let Err(r) = require_moderator(&principal) {
+        return *r;
+    }
     let uname = nav_username(&principal);
 
     // Fetch open AP reports with reporter and target names via JOIN.
-    let ap_rows: Vec<ApReportRow> =
-        sqlx::query_as(
-            r#"SELECT r.id,
+    let ap_rows: Vec<ApReportRow> = sqlx::query_as(
+        r#"SELECT r.id,
                       COALESCE(reporter.display_name, reporter.username) AS reporter_name,
                       COALESCE(target.display_name, target.username) AS target_name,
                       r.target_post_id,
@@ -193,15 +193,14 @@ async fn moderation_page(
                LEFT JOIN actors target ON target.id = r.target_actor_id
                WHERE r.status = 'open'
                ORDER BY r.created_at ASC LIMIT 200"#,
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     // Fetch open chat reports with reporter name via JOIN.
-    let chat_rows: Vec<ChatReportRow> =
-        sqlx::query_as(
-            r#"SELECT cr.id,
+    let chat_rows: Vec<ChatReportRow> = sqlx::query_as(
+        r#"SELECT cr.id,
                       COALESCE(reporter.display_name, reporter.username) AS reporter_name,
                       cr.target_addr,
                       cr.reason,
@@ -211,10 +210,10 @@ async fn moderation_page(
                JOIN actors reporter ON reporter.id = cr.reporter_id
                WHERE cr.status = 'open'
                ORDER BY cr.created_at ASC LIMIT 200"#,
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     // Build unified entries with raw timestamps for correct sorting.
     struct RawEntry {
@@ -315,7 +314,9 @@ async fn users_page(
     principal: Option<axum::Extension<Principal>>,
     axum::extract::Query(params): axum::extract::Query<UsersQuery>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) { return *r; }
+    if let Err(r) = require_moderator(&principal) {
+        return *r;
+    }
     let uname = nav_username(&principal);
 
     let filter_role = params.role.unwrap_or_default();
@@ -404,21 +405,22 @@ async fn domains_page(
     i18n: I18n,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) { return *r; }
+    if let Err(r) = require_moderator(&principal) {
+        return *r;
+    }
     let uname = nav_username(&principal);
 
-    let rows: Vec<DomainRestrictionRow> =
-        sqlx::query_as(
-            r#"SELECT dr.id, dr.domain, dr.restriction, dr.reason,
+    let rows: Vec<DomainRestrictionRow> = sqlx::query_as(
+        r#"SELECT dr.id, dr.domain, dr.restriction, dr.reason,
                       COALESCE(a.display_name, a.username) AS created_by_name,
                       dr.created_at
                FROM domain_restrictions dr
                LEFT JOIN actors a ON a.id = dr.created_by
                ORDER BY dr.domain ASC"#,
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     let domains = rows
         .into_iter()
@@ -527,7 +529,9 @@ async fn settings_page(
     i18n: I18n,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
-    if let Err(r) = require_admin(&principal) { return *r; }
+    if let Err(r) = require_admin(&principal) {
+        return *r;
+    }
     let uname = nav_username(&principal);
 
     let settings: Option<(String, bool, i32)> = sqlx::query_as(
@@ -539,8 +543,8 @@ async fn settings_page(
     .ok()
     .flatten();
 
-    let (registration_mode, default_job_approval, analytics_retention_days) = settings
-        .unwrap_or(("open".into(), true, 90));
+    let (registration_mode, default_job_approval, analytics_retention_days) =
+        settings.unwrap_or(("open".into(), true, 90));
 
     let announcement_rows: Vec<(Uuid, String, bool, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
@@ -618,15 +622,13 @@ async fn create_announcement(
     let admin = require_admin_api(&principal)?;
     let admin_id = admin.actor_id();
 
-    sqlx::query(
-        "INSERT INTO announcements (content, created_by, expires_at) VALUES ($1, $2, $3)",
-    )
-    .bind(&body.content)
-    .bind(admin_id)
-    .bind(body.expires_at)
-    .execute(&state.pool)
-    .await
-    .map_err(NoombatError::from)?;
+    sqlx::query("INSERT INTO announcements (content, created_by, expires_at) VALUES ($1, $2, $3)")
+        .bind(&body.content)
+        .bind(admin_id)
+        .bind(body.expires_at)
+        .execute(&state.pool)
+        .await
+        .map_err(NoombatError::from)?;
 
     Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true }))))
 }
@@ -669,7 +671,9 @@ async fn federation_page(
     i18n: I18n,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
-    if let Err(r) = require_admin(&principal) { return *r; }
+    if let Err(r) = require_admin(&principal) {
+        return *r;
+    }
     let uname = nav_username(&principal);
 
     let queue_depth: i64 =
@@ -700,11 +704,10 @@ async fn federation_page(
         })
         .collect();
 
-    let tombstoned_count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM tombstoned_actors")
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(0);
+    let tombstoned_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tombstoned_actors")
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or(0);
 
     FederationPage {
         i18n,

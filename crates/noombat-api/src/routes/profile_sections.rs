@@ -531,9 +531,7 @@ async fn update_section_visibility(
     ];
 
     for table in tables {
-        let query = format!(
-            "UPDATE {table} SET visibility = $1 WHERE id = $2 AND actor_id = $3"
-        );
+        let query = format!("UPDATE {table} SET visibility = $1 WHERE id = $2 AND actor_id = $3");
         let result = sqlx::query(sqlx::AssertSqlSafe(query))
             .bind(&body.visibility)
             .bind(section_id)

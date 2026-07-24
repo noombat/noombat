@@ -43,10 +43,7 @@ pub fn router() -> Router<AppState> {
         // User-facing: create a report.
         .route("/api/v1/reports", post(create_report))
         // Moderator: resolve an AP report.
-        .route(
-            "/api/v1/admin/reports/{id}/resolve",
-            post(resolve_report),
-        )
+        .route("/api/v1/admin/reports/{id}/resolve", post(resolve_report))
 }
 
 // ..... HELPERS .....
@@ -608,13 +605,8 @@ async fn forward_flag(
         .clone()
         .unwrap_or_else(|| format!("{}/inbox", target.ap_id));
 
-    noombat_federation::delivery::enqueue(
-        &state.pool,
-        reporter_id,
-        &flag_activity,
-        &target_inbox,
-    )
-    .await?;
+    noombat_federation::delivery::enqueue(&state.pool, reporter_id, &flag_activity, &target_inbox)
+        .await?;
 
     // Mark the report as forwarded.
     sqlx::query(
@@ -667,17 +659,15 @@ async fn resolve_report(
 
     // Fetch the report.
     let (target_actor_id, target_post_id, status): (Option<Uuid>, Option<Uuid>, String) =
-        sqlx::query_as(
-            "SELECT target_actor_id, target_post_id, status FROM reports WHERE id = $1",
-        )
-        .bind(report_id)
-        .fetch_optional(&state.pool)
-        .await
-        .map_err(NoombatError::from)?
-        .ok_or(NoombatError::NotFound {
-            entity: "report",
-            id: report_id,
-        })?;
+        sqlx::query_as("SELECT target_actor_id, target_post_id, status FROM reports WHERE id = $1")
+            .bind(report_id)
+            .fetch_optional(&state.pool)
+            .await
+            .map_err(NoombatError::from)?
+            .ok_or(NoombatError::NotFound {
+                entity: "report",
+                id: report_id,
+            })?;
 
     if status != "open" {
         return Err(ApiError(NoombatError::BadRequest(

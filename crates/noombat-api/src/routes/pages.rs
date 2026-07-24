@@ -738,13 +738,12 @@ async fn privacy_page(
         });
     }
 
-    let link_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, url, visibility FROM verified_links WHERE actor_id = $1",
-    )
-    .bind(actor_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let link_rows: Vec<(uuid::Uuid, String, String)> =
+        sqlx::query_as("SELECT id, url, visibility FROM verified_links WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
     for (id, label, vis) in link_rows {
         section_rows.push(SectionVisibilityRow {
             section_id: id.to_string(),
@@ -754,13 +753,12 @@ async fn privacy_page(
         });
     }
 
-    let skill_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, name, visibility FROM skills WHERE actor_id = $1 ORDER BY name",
-    )
-    .bind(actor_id)
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
+    let skill_rows: Vec<(uuid::Uuid, String, String)> =
+        sqlx::query_as("SELECT id, name, visibility FROM skills WHERE actor_id = $1 ORDER BY name")
+            .bind(actor_id)
+            .fetch_all(&state.pool)
+            .await
+            .unwrap_or_default();
     for (id, label, vis) in skill_rows {
         section_rows.push(SectionVisibilityRow {
             section_id: id.to_string(),
@@ -871,7 +869,10 @@ async fn privacy_preview_partial(
         headline_html = if headline.is_empty() {
             String::new()
         } else {
-            format!(r#"<p class="text-sm text-muted">{}</p>"#, ammonia::clean(&headline))
+            format!(
+                r#"<p class="text-sm text-muted">{}</p>"#,
+                ammonia::clean(&headline)
+            )
         },
         summary = summary,
         exp_count = exp_count,
@@ -902,13 +903,12 @@ async fn account_settings_page(
     };
     let uname = nav_username(&principal);
 
-    let deletion_requested: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT deletion_requested_at FROM actors WHERE id = $1",
-    )
-    .bind(actor_id)
-    .fetch_one(&state.pool)
-    .await
-    .unwrap_or(None);
+    let deletion_requested: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT deletion_requested_at FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(None);
 
     AccountSettingsPage {
         i18n,

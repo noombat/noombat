@@ -17,8 +17,8 @@ use serde::Serialize;
 use std::io::Write;
 use tracing::info;
 use uuid::Uuid;
-use zip::write::SimpleFileOptions;
 use zip::ZipWriter;
+use zip::write::SimpleFileOptions;
 
 use crate::error::ApiError;
 use crate::middleware::Principal;
@@ -63,8 +63,8 @@ async fn export_data(
     let mut buf = Vec::new();
     {
         let mut zip = ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let opts = SimpleFileOptions::default()
-            .compression_method(zip::CompressionMethod::Deflated);
+        let opts =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // Actor profile (sensitive columns excluded).
         let actor: serde_json::Value = sqlx::query_scalar(
@@ -105,13 +105,12 @@ async fn export_data(
         write_json_entry(&mut zip, "educations.json", &educations, opts)?;
 
         // Skills.
-        let skills: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(s) FROM skills s WHERE actor_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let skills: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(s) FROM skills s WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "skills.json", &skills, opts)?;
 
         // Publications.
@@ -178,56 +177,52 @@ async fn export_data(
         write_json_entry(&mut zip, "group_memberships.json", &memberships, opts)?;
 
         // Event RSVPs.
-        let rsvps: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(r) FROM event_rsvps r WHERE actor_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let rsvps: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(r) FROM event_rsvps r WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "event_rsvps.json", &rsvps, opts)?;
 
         // Verified links.
-        let links: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(l) FROM verified_links l WHERE actor_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let links: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(l) FROM verified_links l WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "verified_links.json", &links, opts)?;
 
         // Blocks.
-        let blocks: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(b) FROM blocks b WHERE actor_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let blocks: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(b) FROM blocks b WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "blocks.json", &blocks, opts)?;
 
         // Mutes.
-        let mutes: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(m) FROM mutes m WHERE actor_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let mutes: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(m) FROM mutes m WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "mutes.json", &mutes, opts)?;
 
         // Job applications (applicant side).
-        let applications: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(a) FROM applications a WHERE applicant_id = $1",
-        )
-        .bind(actor_id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+        let applications: Vec<serde_json::Value> =
+            sqlx::query_scalar("SELECT row_to_json(a) FROM applications a WHERE applicant_id = $1")
+                .bind(actor_id)
+                .fetch_all(&state.pool)
+                .await
+                .unwrap_or_default();
         write_json_entry(&mut zip, "job_applications.json", &applications, opts)?;
 
-        zip.finish().map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
+        zip.finish()
+            .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
     }
 
     info!(actor_id = %actor_id, "data export generated");
@@ -253,8 +248,7 @@ fn write_json_entry<W: Write + std::io::Seek>(
     value: &impl Serialize,
     options: SimpleFileOptions,
 ) -> Result<(), ApiError> {
-    let json_bytes =
-        serde_json::to_vec_pretty(value).map_err(NoombatError::from)?;
+    let json_bytes = serde_json::to_vec_pretty(value).map_err(NoombatError::from)?;
     zip.start_file(name, options)
         .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
     zip.write_all(&json_bytes)
@@ -276,13 +270,12 @@ async fn request_deletion(
     let (actor_id, username) = require_actor(&principal)?;
 
     // Check whether a deletion is already pending.
-    let existing: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT deletion_requested_at FROM actors WHERE id = $1",
-    )
-    .bind(actor_id)
-    .fetch_one(&state.pool)
-    .await
-    .map_err(NoombatError::from)?;
+    let existing: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT deletion_requested_at FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_one(&state.pool)
+            .await
+            .map_err(NoombatError::from)?;
 
     if existing.is_some() {
         return Err(ApiError(NoombatError::BadRequest(
