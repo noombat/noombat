@@ -33,6 +33,7 @@ CREATE TABLE actors (
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
     headline                     TEXT,
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
+    deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -167,7 +168,7 @@ CREATE TABLE skills (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id   UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
-    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'private')),
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
     UNIQUE (actor_id, name)
 );
 
@@ -501,6 +502,33 @@ CREATE TABLE tombstoned_actors (
     tombstoned_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- ..... INSTANCE SETTINGS .....
+
+-- Single-row configuration table for instance-wide settings
+-- managed via the admin UI.
+CREATE TABLE instance_settings (
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    registration_mode        TEXT NOT NULL DEFAULT 'open' CHECK (registration_mode IN ('open', 'approval', 'closed')),
+    default_job_approval     BOOLEAN NOT NULL DEFAULT TRUE,
+    analytics_retention_days INTEGER NOT NULL DEFAULT 90,
+    updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Seed a single default row.
+INSERT INTO instance_settings (id) VALUES (gen_random_uuid());
+
+-- ..... ANNOUNCEMENTS .....
+
+-- Instance-wide banner announcements displayed to all local users.
+CREATE TABLE announcements (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    content     TEXT NOT NULL,
+    active      BOOLEAN NOT NULL DEFAULT TRUE,
+    created_by  UUID REFERENCES actors(id),
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
+    expires_at  TIMESTAMPTZ
+);
+
 -- ..... DELIVERY QUEUE .....
 
 CREATE TABLE delivery_queue (
@@ -563,3 +591,5 @@ CREATE TRIGGER trg_actors_updated_at BEFORE UPDATE ON actors FOR EACH ROW EXECUT
 CREATE TRIGGER trg_applications_updated_at BEFORE UPDATE ON applications FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_relay_subscriptions_updated_at BEFORE UPDATE ON relay_subscriptions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
+CREATE TRIGGER trg_instance_settings_updated_at BEFORE UPDATE ON instance_settings FOR EACH ROW EXECUTE FUNCTION set_updated_at();
