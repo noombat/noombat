@@ -165,6 +165,9 @@ tiny_http = "0.12"
 # Synchronous HTTP client (noombat-chatmail-admin allowlist sync).
 ureq = "3"
 
+# ZIP archive creation (GDPR data export).
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
 [profile.dev.package.sqlx-macros]
 opt-level = 2
 
