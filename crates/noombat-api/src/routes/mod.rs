@@ -3,6 +3,7 @@
 //! Route modules.
 
 pub mod actors;
+pub mod admin;
 pub mod admin_relays;
 pub mod auth;
 pub mod chat;

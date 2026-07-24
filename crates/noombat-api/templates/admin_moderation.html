@@ -1,0 +1,69 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("admin_moderation_title") }}{% endblock %}
+
+{% block content %}
+        <!-- Admin navigation sidebar (collapses to horizontal links on narrow viewports) -->
+        <nav aria-label="{{ i18n.t("admin_nav_label") }}" class="mb-6 flex flex-wrap gap-3 text-sm">
+            <a href="/admin/moderation" class="font-semibold text-accent" aria-current="page">{{ i18n.t("admin_moderation_title") }}</a>
+            <a href="/admin/users" class="text-muted no-underline hover:underline">{{ i18n.t("admin_users_title") }}</a>
+            <a href="/admin/domains" class="text-muted no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
+            <a href="/admin/settings" class="text-muted no-underline hover:underline">{{ i18n.t("admin_settings_title") }}</a>
+            <a href="/admin/federation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_federation_title") }}</a>
+        </nav>
+
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("admin_moderation_heading") }}</h1>
+
+        {% if reports.is_empty() %}
+        <p class="text-muted">{{ i18n.t("admin_moderation_empty") }}</p>
+        {% else %}
+        <div class="space-y-4">
+            {% for report in reports %}
+            <article class="border border-border rounded p-4" aria-label="{{ i18n.t("admin_report_label") }}">
+                <div class="flex flex-col sm:flex-row sm:items-center gap-2 mb-2">
+                    <span class="text-xs px-2 py-0.5 rounded bg-surface-alt font-mono">{{ report.source }}</span>
+                    <span class="text-sm font-semibold">{{ report.reason }}</span>
+                    <span class="text-xs text-muted ml-auto">{{ report.created_at }}</span>
+                </div>
+                <p class="text-sm mb-1">
+                    <span class="text-muted">{{ i18n.t("admin_report_by") }}</span>
+                    {{ report.reporter_name }}
+                </p>
+                <p class="text-sm mb-1">
+                    <span class="text-muted">{{ i18n.t("admin_report_target") }}</span>
+                    {{ report.target_description }}
+                </p>
+                {% if !report.comment.is_empty() %}
+                <p class="text-sm text-muted italic">{{ report.comment }}</p>
+                {% endif %}
+
+                <!-- Resolution actions -->
+                <div class="mt-3 flex flex-wrap gap-2">
+                    {% if report.source == "ap" %}
+                    <form hx-post="/api/v1/admin/reports/{{ report.id }}/resolve"
+                          hx-swap="outerHTML" hx-target="closest article" class="inline">
+                        <input type="hidden" name="action" value="dismiss">
+                        <button type="submit"
+                                class="text-xs border border-border rounded px-3 py-1 hover:bg-surface-alt">
+                            {{ i18n.t("admin_action_dismiss") }}
+                        </button>
+                    </form>
+                    {% else %}
+                    <form hx-post="/api/v1/admin/chat-reports/{{ report.id }}/resolve"
+                          hx-swap="outerHTML" hx-target="closest article" class="inline">
+                        <input type="hidden" name="action" value="dismiss">
+                        <button type="submit"
+                                class="text-xs border border-border rounded px-3 py-1 hover:bg-surface-alt">
+                            {{ i18n.t("admin_action_dismiss") }}
+                        </button>
+                    </form>
+                    {% endif %}
+                </div>
+            </article>
+            {% endfor %}
+        </div>
+        {% endif %}
+{% endblock %}

@@ -1,0 +1,93 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% extends "base_auth.html" %}
+
+{% block title %}{{ i18n.t("admin_settings_title") }}{% endblock %}
+
+{% block content %}
+        <nav aria-label="{{ i18n.t("admin_nav_label") }}" class="mb-6 flex flex-wrap gap-3 text-sm">
+            <a href="/admin/moderation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_moderation_title") }}</a>
+            <a href="/admin/users" class="text-muted no-underline hover:underline">{{ i18n.t("admin_users_title") }}</a>
+            <a href="/admin/domains" class="text-muted no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
+            <a href="/admin/settings" class="font-semibold text-accent" aria-current="page">{{ i18n.t("admin_settings_title") }}</a>
+            <a href="/admin/federation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_federation_title") }}</a>
+        </nav>
+
+        <h1 class="text-2xl font-bold mb-6">{{ i18n.t("admin_settings_heading") }}</h1>
+
+        <form hx-patch="/api/v1/admin/settings" hx-swap="none"
+              class="space-y-6 max-w-lg">
+
+            <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_registration") }}</legend>
+                <select name="registration_mode"
+                        class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                    <option value="open" {% if registration_mode == "open" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_open") }}</option>
+                    <option value="approval" {% if registration_mode == "approval" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_approval") }}</option>
+                    <option value="closed" {% if registration_mode == "closed" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_closed") }}</option>
+                </select>
+            </fieldset>
+
+            <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_federation") }}</legend>
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="default_job_approval" value="true"
+                           {% if default_job_approval %}checked{% endif %}
+                           class="rounded border-border">
+                    <span class="text-sm">{{ i18n.t("admin_settings_job_approval") }}</span>
+                </label>
+            </fieldset>
+
+            <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_analytics") }}</legend>
+                <label class="text-sm">
+                    {{ i18n.t("admin_settings_retention_days") }}
+                    <input type="number" name="analytics_retention_days"
+                           value="{{ analytics_retention_days }}" min="1" max="3650"
+                           class="ml-2 border border-border rounded px-3 py-1 bg-surface text-fg text-sm w-24">
+                </label>
+            </fieldset>
+
+            <button type="submit"
+                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+
+        <!-- Announcements -->
+        <section class="mt-10">
+            <h2 class="text-xl font-bold mb-4">{{ i18n.t("admin_announcements_heading") }}</h2>
+
+            <form hx-post="/api/v1/admin/announcements" hx-swap="afterbegin" hx-target="#announcement-list"
+                  class="flex gap-3 mb-4 items-end">
+                <label class="text-sm flex-1">
+                    {{ i18n.t("admin_announcements_content") }}
+                    <input type="text" name="content" required
+                           class="block w-full border border-border rounded px-3 py-1 bg-surface text-fg text-sm mt-1">
+                </label>
+                <button type="submit" class="bg-accent text-white rounded px-4 py-1 text-sm hover:opacity-90">
+                    {{ i18n.t("admin_announcements_create") }}
+                </button>
+            </form>
+
+            <div id="announcement-list" class="space-y-2">
+                {% for ann in announcements %}
+                <div class="flex items-center gap-3 border border-border rounded p-3 text-sm">
+                    <span class="flex-1">{{ ann.content }}</span>
+                    {% if ann.active %}
+                    <span class="text-xs text-accent">{{ i18n.t("admin_announcements_active") }}</span>
+                    {% else %}
+                    <span class="text-xs text-muted">{{ i18n.t("admin_announcements_inactive") }}</span>
+                    {% endif %}
+                    <span class="text-xs text-muted">{{ ann.created_at }}</span>
+                    <button hx-delete="/api/v1/admin/announcements/{{ ann.id }}"
+                            hx-swap="outerHTML" hx-target="closest div"
+                            class="text-xs border border-border rounded px-2 py-0.5 hover:bg-surface-alt">
+                        {{ i18n.t("admin_announcements_delete") }}
+                    </button>
+                </div>
+                {% endfor %}
+            </div>
+        </section>
+{% endblock %}
