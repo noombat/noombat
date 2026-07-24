@@ -63,6 +63,11 @@ pub fn router() -> Router<AppState> {
         )
         // DOI resolution (lookup only: not persisted until user confirms).
         .route("/api/v1/doi/{doi_prefix}/{doi_suffix}", get(resolve_doi))
+        // Section visibility (Privacy & Safety grid).
+        .route(
+            "/api/v1/sections/{id}/visibility",
+            patch(update_section_visibility),
+        )
 }
 
 // ..... Experiences .....
@@ -481,4 +486,68 @@ fn parse_partial_date(s: &str) -> Option<chrono::NaiveDate> {
     let year: i32 = parts.first()?.parse().ok()?;
     let month: u32 = parts.get(1).and_then(|m| m.parse().ok()).unwrap_or(1);
     chrono::NaiveDate::from_ymd_opt(year, month, 1)
+}
+
+// ..... Section visibility (Privacy & Safety grid) .....
+
+#[derive(serde::Deserialize)]
+struct VisibilityUpdate {
+    visibility: String,
+}
+
+/// `PATCH /api/v1/sections/{id}/visibility`
+///
+/// Updates the visibility of a profile section entry. The section ID
+/// is looked up across all section tables; the first match is updated.
+async fn update_section_visibility(
+    State(state): State<AppState>,
+    Path(section_id): Path<uuid::Uuid>,
+    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    axum::Form(body): axum::Form<VisibilityUpdate>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor_id = principal
+        .as_ref()
+        .and_then(|p| p.actor_id())
+        .ok_or(ApiError(noombat_core::error::NoombatError::Forbidden))?;
+
+    let valid = ["public", "followers", "private"];
+    if !valid.contains(&body.visibility.as_str()) {
+        return Err(ApiError(noombat_core::error::NoombatError::BadRequest(
+            "visibility must be public, followers, or private".into(),
+        )));
+    }
+
+    // Try each section table in turn; the first match wins.
+    //
+    // SAFETY: the table names are hardcoded constants, not user input,
+    // so the `format!` interpolation does not introduce SQL injection.
+    let tables: &[&str] = &[
+        "experiences",
+        "educations",
+        "publications",
+        "verified_links",
+        "skills",
+        "custom_profile_sections",
+    ];
+
+    for table in tables {
+        let query = format!(
+            "UPDATE {table} SET visibility = $1 WHERE id = $2 AND actor_id = $3"
+        );
+        let result = sqlx::query(sqlx::AssertSqlSafe(query))
+            .bind(&body.visibility)
+            .bind(section_id)
+            .bind(actor_id)
+            .execute(&state.pool)
+            .await
+            .map_err(noombat_core::error::NoombatError::from)?;
+        if result.rows_affected() > 0 {
+            return Ok(StatusCode::NO_CONTENT);
+        }
+    }
+
+    Err(ApiError(noombat_core::error::NoombatError::NotFound {
+        entity: "section",
+        id: section_id,
+    }))
 }

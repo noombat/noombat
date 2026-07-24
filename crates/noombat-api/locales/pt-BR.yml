@@ -334,3 +334,11 @@ account_delete_description: "Solicitar exclusão permanente da conta. Aplica-se 
 account_delete_confirm: "Tem certeza? Sua conta será excluída permanentemente após 30 dias."
 account_delete_cancel: "Cancelar exclusão"
 account_delete_pending: "A exclusão da conta está pendente."
+
+# Aprimoramentos de privacidade.
+privacy_section_visibility: "Visibilidade das seções"
+privacy_no_sections: "Nenhuma seção de perfil para configurar."
+privacy_preview: "Visualização do perfil"
+privacy_preview_as_public: "Como visitante público"
+privacy_preview_as_follower: "Como seguidor"
+privacy_preview_as_owner: "Como proprietário"

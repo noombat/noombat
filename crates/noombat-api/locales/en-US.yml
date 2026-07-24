@@ -334,3 +334,11 @@ account_delete_description: "Request permanent account deletion. A 30-day grace 
 account_delete_confirm: "Are you sure? Your account will be permanently deleted after 30 days."
 account_delete_cancel: "Cancel deletion"
 account_delete_pending: "Account deletion is pending."
+
+# Privacy settings enhancements.
+privacy_section_visibility: "Section visibility"
+privacy_no_sections: "No profile sections to configure."
+privacy_preview: "Profile preview"
+privacy_preview_as_public: "As public viewer"
+privacy_preview_as_follower: "As follower"
+privacy_preview_as_owner: "As owner"

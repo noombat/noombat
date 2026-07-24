@@ -250,6 +250,14 @@ struct BlockedMutedPage {
     muted: Vec<MuteEntry>,
 }
 
+// Section visibility entry for the privacy page.
+struct SectionVisibilityRow {
+    section_id: String,
+    table_name: String,
+    label: String,
+    visibility: String,
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "settings_privacy.html")]
 struct PrivacyPage {
@@ -264,6 +272,7 @@ struct PrivacyPage {
     chatmail_visible: bool,
     cv_download: String,
     default_visibility: String,
+    section_rows: Vec<SectionVisibilityRow>,
 }
 
 // Alias entry for the template.
@@ -302,6 +311,7 @@ pub fn router() -> Router<AppState> {
         .route("/settings/links", get(edit_links_page))
         .route("/settings/jobs/new", get(edit_job_page))
         .route("/settings/privacy", get(privacy_page))
+        .route("/settings/privacy/preview", get(privacy_preview_partial))
         .route("/settings/account", get(account_settings_page))
         .route("/settings/blocked", get(blocked_muted_page))
         .route("/settings/follow-requests", get(follow_requests_page))
@@ -676,6 +686,90 @@ async fn privacy_page(
             .fetch_one(&state.pool)
             .await
             .unwrap_or_default();
+
+    // Gather section visibility rows from each profile section table.
+    let mut section_rows = Vec::new();
+
+    let exp_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, title, visibility FROM experiences WHERE actor_id = $1 ORDER BY sort_order",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for (id, label, vis) in exp_rows {
+        section_rows.push(SectionVisibilityRow {
+            section_id: id.to_string(),
+            table_name: "experience".into(),
+            label,
+            visibility: vis,
+        });
+    }
+
+    let edu_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, institution, visibility FROM educations WHERE actor_id = $1 ORDER BY sort_order",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for (id, label, vis) in edu_rows {
+        section_rows.push(SectionVisibilityRow {
+            section_id: id.to_string(),
+            table_name: "education".into(),
+            label,
+            visibility: vis,
+        });
+    }
+
+    let pub_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, title, visibility FROM publications WHERE actor_id = $1 ORDER BY sort_order",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for (id, label, vis) in pub_rows {
+        section_rows.push(SectionVisibilityRow {
+            section_id: id.to_string(),
+            table_name: "publication".into(),
+            label,
+            visibility: vis,
+        });
+    }
+
+    let link_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, url, visibility FROM verified_links WHERE actor_id = $1",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for (id, label, vis) in link_rows {
+        section_rows.push(SectionVisibilityRow {
+            section_id: id.to_string(),
+            table_name: "link".into(),
+            label,
+            visibility: vis,
+        });
+    }
+
+    let skill_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
+        "SELECT id, name, visibility FROM skills WHERE actor_id = $1 ORDER BY name",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
+    for (id, label, vis) in skill_rows {
+        section_rows.push(SectionVisibilityRow {
+            section_id: id.to_string(),
+            table_name: "skill".into(),
+            label,
+            visibility: vis,
+        });
+    }
+
     PrivacyPage {
         i18n,
         nav_username: uname.clone(),
@@ -693,6 +787,100 @@ async fn privacy_page(
             .unwrap_or("public")
             .to_owned(),
         default_visibility: "public".into(),
+        section_rows,
+    }
+    .into_response()
+}
+
+/// HTMX partial: profile preview as seen by public / follower / owner.
+#[derive(serde::Deserialize)]
+struct PreviewQuery {
+    #[serde(rename = "as")]
+    perspective: Option<String>,
+}
+
+async fn privacy_preview_partial(
+    State(state): State<AppState>,
+    _i18n: I18n,
+    principal: Option<axum::Extension<Principal>>,
+    axum::extract::Query(params): axum::extract::Query<PreviewQuery>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&principal) else {
+        return Redirect::temporary("/auth/login").into_response();
+    };
+    let perspective = params.perspective.unwrap_or_else(|| "public".into());
+
+    let row: Option<(String, String, String)> = sqlx::query_as(
+        "SELECT COALESCE(display_name, username), COALESCE(headline, ''), COALESCE(summary_html, '') FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten();
+
+    let (display_name, headline, summary) = row.unwrap_or_default();
+
+    // For the public view, suppress sections marked as followers-only or private.
+    // For the follower view, suppress sections marked as private.
+    // For the owner view, show everything.
+    let vis_filter: &[&str] = match perspective.as_str() {
+        "public" => &["public"],
+        "follower" => &["public", "followers"],
+        _ => &["public", "followers", "private"],
+    };
+
+    let exp_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM experiences WHERE actor_id = $1 AND visibility = ANY($2)",
+    )
+    .bind(actor_id)
+    .bind(vis_filter)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    let edu_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM educations WHERE actor_id = $1 AND visibility = ANY($2)",
+    )
+    .bind(actor_id)
+    .bind(vis_filter)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    let pub_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM publications WHERE actor_id = $1 AND visibility = ANY($2)",
+    )
+    .bind(actor_id)
+    .bind(vis_filter)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(0);
+
+    // Render a simple preview fragment (this is an HTMX partial, not a full page).
+    // Note: `summary` is `summary_html` from the database, which is
+    // pre-sanitised by the noombat-markup pipeline on write (ammonia
+    // allowlist). It is safe to interpolate without re-sanitising,
+    // consistent with the profile template's `{{ summary_html|safe }}`.
+    let html = format!(
+        r#"<p class="font-semibold text-lg">{display_name}</p>
+{headline_html}
+<div class="text-sm leading-relaxed mt-2">{summary}</div>
+<p class="text-xs text-muted mt-3">{exp_count} experience · {edu_count} education · {pub_count} publications visible</p>"#,
+        display_name = ammonia::clean(&display_name),
+        headline_html = if headline.is_empty() {
+            String::new()
+        } else {
+            format!(r#"<p class="text-sm text-muted">{}</p>"#, ammonia::clean(&headline))
+        },
+        summary = summary,
+        exp_count = exp_count,
+        edu_count = edu_count,
+        pub_count = pub_count,
+    );
+
+    axum::response::Html(html).into_response()
+}
 
 // Account settings page (data export and deletion).
 
