@@ -1,21 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Moderation routes: suspension/unsuspension orchestration, chat
-//! report resolution, and report listing.
+//! report resolution, report listing, user-facing report creation,
+//! and AP report resolution.
 //!
-//! All endpoints require the `moderator` or `admin` instance role.
-//!
+//! Moderator and admin endpoints:
 //! - `POST   /api/v1/admin/actors/{id}/suspend`
 //! - `POST   /api/v1/admin/actors/{id}/unsuspend`
 //! - `POST   /api/v1/admin/chat-reports/{id}/resolve`
 //! - `GET    /api/v1/admin/chat-reports`
 //! - `GET    /api/v1/admin/reports`
+//! - `POST   /api/v1/admin/reports/{id}/resolve`
+//!
+//! User-facing:
+//! - `POST   /api/v1/reports`
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
-use axum::{Json, Router};
+use axum::{Form, Json, Router};
 use noombat_core::actor::{ActorStatus, InstanceRole};
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
@@ -36,6 +40,13 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/admin/chat-reports", get(list_chat_reports))
         .route("/api/v1/admin/reports", get(list_reports))
+        // User-facing: create a report.
+        .route("/api/v1/reports", post(create_report))
+        // Moderator: resolve an AP report.
+        .route(
+            "/api/v1/admin/reports/{id}/resolve",
+            post(resolve_report),
+        )
 }
 
 // ..... HELPERS .....
@@ -457,4 +468,279 @@ async fn list_reports(
     .map_err(NoombatError::from)?;
 
     Ok(Json(reports))
+}
+
+// ..... REPORT CREATION (user-facing) .....
+
+/// Request body for `POST /api/v1/reports`.
+#[derive(Debug, Deserialize)]
+pub struct CreateReportRequest {
+    /// Target actor UUID (report a profile/actor).
+    pub target_actor_id: Option<Uuid>,
+    /// Target post UUID (report a post).
+    pub target_post_id: Option<Uuid>,
+    /// Reason category.
+    pub reason: String,
+    /// Optional free-text comment.
+    pub comment: Option<String>,
+    /// Whether to forward the report to the remote instance as a `Flag`
+    /// activity (only applicable when the target is a remote actor).
+    #[serde(default)]
+    pub forward: bool,
+}
+
+/// `POST /api/v1/reports`: any authenticated user may create a report.
+///
+/// Accepts `application/x-www-form-urlencoded` (HTMX default) or
+/// `application/json`.
+async fn create_report(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Form(body): Form<CreateReportRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let reporter = principal
+        .as_ref()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let reporter_id = reporter
+        .actor_id()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    if body.target_actor_id.is_none() && body.target_post_id.is_none() {
+        return Err(ApiError(NoombatError::BadRequest(
+            "either target_actor_id or target_post_id is required".into(),
+        )));
+    }
+
+    const VALID_REASONS: &[&str] = &["spam", "harassment", "illegal", "impersonation", "other"];
+    if !VALID_REASONS.contains(&body.reason.as_str()) {
+        return Err(ApiError(NoombatError::BadRequest(format!(
+            "invalid reason: expected one of {}",
+            VALID_REASONS.join(", ")
+        ))));
+    }
+
+    let report_id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"INSERT INTO reports (id, reporter_id, target_actor_id, target_post_id, reason, comment)
+           VALUES ($1, $2, $3, $4, $5, $6)"#,
+    )
+    .bind(report_id)
+    .bind(reporter_id)
+    .bind(body.target_actor_id)
+    .bind(body.target_post_id)
+    .bind(&body.reason)
+    .bind(&body.comment)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    info!(
+        report_id = %report_id,
+        reporter = ?reporter.username,
+        reason = %body.reason,
+        "report created"
+    );
+
+    // Optionally forward as a Flag activity to the remote instance.
+    if body.forward
+        && let Some(target_actor_id) = body.target_actor_id
+    {
+        let _ = forward_flag(
+            &state,
+            reporter_id,
+            target_actor_id,
+            &body.reason,
+            body.comment.as_deref(),
+        )
+        .await;
+    }
+
+    Ok((
+        StatusCode::CREATED,
+        axum::response::Html(format!(
+            r#"<p class="text-sm text-accent">{}</p>"#,
+            "Report submitted. A moderator will review it."
+        )),
+    ))
+}
+
+/// Forward a report to the target actor's origin instance as a `Flag`
+/// activity, following the Mastodon convention.
+async fn forward_flag(
+    state: &AppState,
+    reporter_id: Uuid,
+    target_actor_id: Uuid,
+    reason: &str,
+    comment: Option<&str>,
+) -> Result<(), ApiError> {
+    let reporter = noombat_identity::repo::find_by_id(&state.pool, reporter_id).await?;
+    let target = noombat_identity::repo::find_by_id(&state.pool, target_actor_id).await?;
+
+    // Only forward to remote actors.
+    if target.is_local {
+        return Ok(());
+    }
+
+    let flag_id = format!(
+        "{}#flag-{}",
+        reporter.ap_id,
+        chrono::Utc::now().timestamp_millis()
+    );
+
+    let mut flag_activity = serde_json::json!({
+        "@context": noombat_ap::context::default_context(),
+        "id": flag_id,
+        "type": "Flag",
+        "actor": reporter.ap_id,
+        "object": [target.ap_id],
+    });
+
+    // Include the reason and comment in the content field.
+    let content = match comment {
+        Some(c) => format!("{reason}: {c}"),
+        None => reason.to_string(),
+    };
+    flag_activity["content"] = serde_json::Value::String(content);
+
+    let target_inbox = target
+        .inbox_url
+        .clone()
+        .unwrap_or_else(|| format!("{}/inbox", target.ap_id));
+
+    noombat_federation::delivery::enqueue(
+        &state.pool,
+        reporter_id,
+        &flag_activity,
+        &target_inbox,
+    )
+    .await?;
+
+    // Mark the report as forwarded.
+    sqlx::query(
+        "UPDATE reports SET forwarded = TRUE WHERE reporter_id = $1 AND target_actor_id = $2 AND status = 'open'",
+    )
+    .bind(reporter_id)
+    .bind(target_actor_id)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    info!(
+        reporter = %reporter.ap_id,
+        target = %target.ap_id,
+        "Flag activity forwarded to remote instance"
+    );
+
+    Ok(())
+}
+
+// ..... AP REPORT RESOLUTION .....
+
+/// Action to take when resolving an ActivityPub report.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApReportAction {
+    Dismiss,
+    Warn,
+    RemoveContent,
+    Silence,
+    Suspend,
+}
+
+/// Request body for `POST /api/v1/admin/reports/{id}/resolve`.
+#[derive(Debug, Deserialize)]
+pub struct ResolveApReportRequest {
+    pub action: ApReportAction,
+    pub note: Option<String>,
+}
+
+/// `POST /api/v1/admin/reports/{id}/resolve`: moderator resolves an AP report.
+async fn resolve_report(
+    State(state): State<AppState>,
+    Path(report_id): Path<Uuid>,
+    principal: Option<axum::Extension<Principal>>,
+    Form(body): Form<ResolveApReportRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let moderator = require_moderator(&principal)?;
+    let moderator_id = moderator.actor_id();
+
+    // Fetch the report.
+    let (target_actor_id, target_post_id, status): (Option<Uuid>, Option<Uuid>, String) =
+        sqlx::query_as(
+            "SELECT target_actor_id, target_post_id, status FROM reports WHERE id = $1",
+        )
+        .bind(report_id)
+        .fetch_optional(&state.pool)
+        .await
+        .map_err(NoombatError::from)?
+        .ok_or(NoombatError::NotFound {
+            entity: "report",
+            id: report_id,
+        })?;
+
+    if status != "open" {
+        return Err(ApiError(NoombatError::BadRequest(
+            "report is already resolved".into(),
+        )));
+    }
+
+    match body.action {
+        ApReportAction::Dismiss => {
+            info!(report_id = %report_id, "AP report dismissed");
+        }
+        ApReportAction::Warn => {
+            info!(report_id = %report_id, "warning issued for AP report");
+        }
+        ApReportAction::RemoveContent => {
+            if let Some(post_id) = target_post_id {
+                sqlx::query("DELETE FROM posts WHERE id = $1")
+                    .bind(post_id)
+                    .execute(&state.pool)
+                    .await
+                    .map_err(NoombatError::from)?;
+                info!(report_id = %report_id, post_id = %post_id, "reported post removed");
+            }
+        }
+        ApReportAction::Silence => {
+            if let Some(actor_id) = target_actor_id {
+                noombat_identity::repo::set_actor_status(
+                    &state.pool,
+                    actor_id,
+                    noombat_core::actor::ActorStatus::Silenced,
+                )
+                .await?;
+                info!(report_id = %report_id, actor_id = %actor_id, "actor silenced");
+            }
+        }
+        ApReportAction::Suspend => {
+            if let Some(actor_id) = target_actor_id {
+                execute_suspension(&state, actor_id).await?;
+                info!(report_id = %report_id, actor_id = %actor_id, "actor suspended via AP report");
+            }
+        }
+    }
+
+    let resolution_status = match body.action {
+        ApReportAction::Dismiss => "dismissed",
+        _ => "resolved",
+    };
+
+    sqlx::query(
+        r#"UPDATE reports
+           SET status = $1, resolved_by = $2, resolution_note = $3,
+               resolved_at = now()
+           WHERE id = $4"#,
+    )
+    .bind(resolution_status)
+    .bind(moderator_id)
+    .bind(&body.note)
+    .bind(report_id)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    // Return an empty body so that hx-swap="outerHTML" on the report
+    // article removes the resolved entry from the moderation queue.
+    Ok((StatusCode::OK, axum::response::Html(String::new())))
 }

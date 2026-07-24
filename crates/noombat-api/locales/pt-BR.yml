@@ -239,3 +239,18 @@ compose_article_image: "URL da imagem de destaque (opcional)"
 
 # Feed (entradas de artigo).
 feed_read_more: "Ler mais"
+
+# Denúncia.
+report_title: "Denunciar"
+report_heading: "Denunciar conteúdo"
+report_reason: "Motivo"
+report_reason_spam: "Spam"
+report_reason_harassment: "Assédio"
+report_reason_illegal: "Conteúdo ilegal"
+report_reason_impersonation: "Falsidade ideológica"
+report_reason_other: "Outro"
+report_comment: "Detalhes adicionais (opcional)"
+report_submit: "Enviar denúncia"
+report_success: "Denúncia enviada. Um moderador irá analisá-la."
+report_action: "Denunciar"
+report_forward: "Encaminhar denúncia para a instância remota"

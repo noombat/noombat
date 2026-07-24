@@ -239,3 +239,18 @@ compose_article_image: "Featured image URL (optional)"
 
 # Feed (article entries).
 feed_read_more: "Read more"
+
+# Reporting.
+report_title: "Report"
+report_heading: "Report content"
+report_reason: "Reason"
+report_reason_spam: "Spam"
+report_reason_harassment: "Harassment"
+report_reason_illegal: "Illegal content"
+report_reason_impersonation: "Impersonation"
+report_reason_other: "Other"
+report_comment: "Additional details (optional)"
+report_submit: "Submit report"
+report_success: "Report submitted. A moderator will review it."
+report_action: "Report"
+report_forward: "Forward report to the remote instance"

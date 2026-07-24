@@ -251,6 +251,11 @@ async fn get_actor(
         summary_html: actor.summary_html.clone().unwrap_or_default(),
         domain: state.domain.clone(),
         indexable: actor.actor_privacy.indexable,
+        actor_id: actor.id.to_string(),
+        show_report: principal
+            .as_ref()
+            .and_then(|p| p.username.as_deref())
+            .is_some_and(|viewer| viewer != actor.username),
         experiences: experiences.unwrap_or_default(),
         educations: educations.unwrap_or_default(),
         skills: skills.unwrap_or_default(),
@@ -795,6 +800,11 @@ struct ProfilePage {
     domain: String,
     /// When `false`, emit `<meta name="robots" content="noindex">`.
     indexable: bool,
+    /// The actor's UUID (used by the report form hidden input).
+    actor_id: String,
+    /// Whether to show the "Report" button (true when the viewer is
+    /// authenticated and is not viewing their own profile).
+    show_report: bool,
     experiences: Vec<noombat_identity::profile::Experience>,
     educations: Vec<noombat_identity::profile::Education>,
     skills: Vec<noombat_identity::profile::Skill>,
