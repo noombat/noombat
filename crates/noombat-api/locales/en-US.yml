@@ -325,3 +325,12 @@ admin_federation_failing_domains: "Failing domains"
 admin_federation_failing_heading: "Domains with delivery failures"
 admin_federation_col_domain: "Domain"
 admin_federation_col_failed: "Failed deliveries"
+
+# Data export and account deletion (GDPR).
+account_export: "Export data"
+account_export_description: "Download a ZIP archive of all your data."
+account_delete: "Delete account"
+account_delete_description: "Request permanent account deletion. A 30-day grace period applies."
+account_delete_confirm: "Are you sure? Your account will be permanently deleted after 30 days."
+account_delete_cancel: "Cancel deletion"
+account_delete_pending: "Account deletion is pending."

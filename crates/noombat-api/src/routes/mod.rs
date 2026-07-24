@@ -2,6 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Route modules.
 
+pub mod account;
 pub mod actors;
 pub mod admin;
 pub mod admin_relays;

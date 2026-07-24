@@ -325,3 +325,12 @@ admin_federation_failing_domains: "Domínios com falhas"
 admin_federation_failing_heading: "Domínios com falhas de entrega"
 admin_federation_col_domain: "Domínio"
 admin_federation_col_failed: "Entregas com falha"
+
+# Exportação de dados e exclusão de conta (GDPR).
+account_export: "Exportar dados"
+account_export_description: "Baixe um arquivo ZIP com todos os seus dados."
+account_delete: "Excluir conta"
+account_delete_description: "Solicitar exclusão permanente da conta. Aplica-se um prazo de 30 dias."
+account_delete_confirm: "Tem certeza? Sua conta será excluída permanentemente após 30 dias."
+account_delete_cancel: "Cancelar exclusão"
+account_delete_pending: "A exclusão da conta está pendente."

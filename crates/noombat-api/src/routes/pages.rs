@@ -302,6 +302,7 @@ pub fn router() -> Router<AppState> {
         .route("/settings/links", get(edit_links_page))
         .route("/settings/jobs/new", get(edit_job_page))
         .route("/settings/privacy", get(privacy_page))
+        .route("/settings/account", get(account_settings_page))
         .route("/settings/blocked", get(blocked_muted_page))
         .route("/settings/follow-requests", get(follow_requests_page))
         .route("/settings/chat", get(chat_credentials_page))
@@ -692,6 +693,39 @@ async fn privacy_page(
             .unwrap_or("public")
             .to_owned(),
         default_visibility: "public".into(),
+
+// Account settings page (data export and deletion).
+
+#[derive(Template, WebTemplate)]
+#[template(path = "account_settings.html")]
+struct AccountSettingsPage {
+    i18n: I18n,
+    nav_username: String,
+    deletion_pending: bool,
+}
+
+async fn account_settings_page(
+    State(state): State<AppState>,
+    i18n: I18n,
+    principal: Option<axum::Extension<Principal>>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&principal) else {
+        return Redirect::temporary("/auth/login").into_response();
+    };
+    let uname = nav_username(&principal);
+
+    let deletion_requested: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT deletion_requested_at FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    AccountSettingsPage {
+        i18n,
+        nav_username: uname,
+        deletion_pending: deletion_requested.is_some(),
     }
     .into_response()
 }
