@@ -1,0 +1,20 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Caddyfile for Noombat production deployment.
+#
+# Replace {$NOOMBAT_DOMAIN} with the actual domain, or set the
+# environment variable before starting Caddy.
+
+{$NOOMBAT_DOMAIN} {
+    reverse_proxy noombat:8443
+
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains; preload"
+        X-Content-Type-Options    "nosniff"
+        X-Frame-Options           "DENY"
+        Referrer-Policy           "strict-origin-when-cross-origin"
+    }
+
+    encode gzip
+}

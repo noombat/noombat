@@ -1,0 +1,75 @@
+# Publish the noombat-server and noombat-chatmail container images to
+# GitHub Container Registry when a version tag (v*) is pushed.
+#
+# Each image is tagged with both `latest` and the version string
+# (e.g. `v1.0.0`). The job requires `packages: write` to push to
+# ghcr.io; all other token scopes are restricted to read-only.
+#
+# Related workflows:
+#   container-build.yml     build-only verification on push/PR (no push).
+#   ci-image.yml            CI runner image (separate lifecycle).
+
+name: Publish container images
+ 
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Version tag to publish (e.g. v0.1.0)"
+        required: true
+        type: string
+ 
+permissions:
+  contents: read
+  packages: write
+ 
+env:
+  VERSION: ${{ github.event.inputs.tag || github.ref_name }}
+ 
+jobs:
+  publish-server:
+    name: Publish server image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+ 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+ 
+      - name: Build and push server image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/noombat-server:latest
+            ghcr.io/${{ github.repository }}/noombat-server:${{ env.VERSION }}
+ 
+  publish-chatmail:
+    name: Publish chatmail image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+ 
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+ 
+      - name: Build and push chatmail image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Dockerfile.chatmail
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository }}/noombat-chatmail:latest
+            ghcr.io/${{ github.repository }}/noombat-chatmail:${{ env.VERSION }}

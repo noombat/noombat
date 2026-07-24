@@ -28,7 +28,6 @@ path = [
     "noombat.toml",
     ".env.example",
     ".gitignore",
-    "compose.yml",
     # Database migrations.
     "migrations/**",
     # Typst CV templates.

@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Production override for Noombat.
+#
+# Usage:
+#   podman compose -f compose.yml -f compose.prod.yml up -d
+#
+# This file adds:
+# - A Caddy reverse proxy with automatic TLS via Let's Encrypt.
+# - Resource limits on all services.
+# - Restart policies for resilience.
+# - Production Meilisearch configuration.
+# - Named volumes for all persistent data.
+# - Log rotation via max-size / max-file.
+
+services:
+  caddy:
+    image: docker.io/library/caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - noombat
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: "0.5"
+
+  noombat:
+    restart: unless-stopped
+    ports: [] # Caddy handles external traffic.
+    expose:
+      - "8443"
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "2"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  db:
+    restart: unless-stopped
+    ports: [] # No external access in production.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  redis:
+    restart: unless-stopped
+    ports: []
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: "0.5"
+
+  meilisearch:
+    restart: unless-stopped
+    ports: []
+    environment:
+      MEILI_ENV: production
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
+
+  chatmail:
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1"
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+volumes:
+  caddy-data:
+  caddy-config:
