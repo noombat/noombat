@@ -15,6 +15,7 @@
                    placeholder="{{ i18n.t("search_placeholder") }}"
                    class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
             <select name="index"
+                    aria-label="{{ i18n.t("search_index_label") }}"
                     class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
                 <option value="profiles" {% if index == "profiles" %}selected{% endif %}>{{ i18n.t("search_profiles") }}</option>
                 <option value="jobs" {% if index == "jobs" %}selected{% endif %}>{{ i18n.t("search_jobs") }}</option>

@@ -173,6 +173,7 @@ search_placeholder: "Buscar..."
 search_profiles: "Perfis"
 search_jobs: "Vagas"
 search_posts: "Publicações"
+search_index_label: "Categoria de busca"
 search_submit: "Buscar"
 search_no_results: "Nenhum resultado encontrado."
 
