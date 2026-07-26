@@ -6,9 +6,9 @@
  *
  * The server-rendered template places a `<div id="chat-mount">` with
  * `data-ws-url`, `data-chatmail-addr`, `data-username`, and
- * `data-locale` attributes. This script hydrates that element into an interactive chat
- * interface backed by WebSocket, rPGP (WASM), and the
- * noombat-autocrypt (WASM) state machine.
+ * `data-locale` attributes. This script hydrates that element into
+ * an interactive chat interface backed by WebSocket, OpenPGP.js, and
+ * the Autocrypt Level 1 state machine.
  */
 
 import { render } from "solid-js/web";

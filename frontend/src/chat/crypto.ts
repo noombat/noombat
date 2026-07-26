@@ -2,99 +2,157 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * WASM crypto module loader.
+ * OpenPGP crypto module.
  *
- * Lazy-loads the `noombat-wasm` WebAssembly module (built via
- * `wasm-pack build --target web crates/noombat-wasm`) and exposes a
- * typed API to the SolidJS chat island.
+ * Wraps OpenPGP.js v6 to expose typed, async functions for key
+ * generation, message encryption, decryption, and signature
+ * verification.
  *
- * The WASM binary is loaded only when the user navigates to the chat
- * interface, avoiding payload cost for users who never use chat.
- *
- * ## Build instructions
- *
- * ```sh
- * wasm-pack build --target web --out-dir ../../frontend/src/chat/wasm \
- *   crates/noombat-wasm
- * ```
- *
- * The output directory (`frontend/src/chat/wasm/`) is gitignored and
- * generated during the build step.
+ * All functions accept and return binary key/message representations
+ * (Uint8Array) to preserve blob-format compatibility with the
+ * existing credential storage layer.
  */
 
-// The wasm-pack output exposes an `init` default export and the
-// bindgen-generated functions. The types below mirror the Rust API.
+import * as openpgp from "openpgp";
 
-/* eslint-disable @typescript-eslint/no-explicit-any */
-type WasmModule = {
-  default: (input?: any) => Promise<any>;
-  ChatCrypto: {
-    new (): ChatCryptoHandle;
-    fromJson: (json: string) => ChatCryptoHandle;
-  };
-  encryptMessage: (recipientKey: Uint8Array, senderKey: Uint8Array, plaintext: Uint8Array) => Uint8Array;
-  decryptMessage: (privateKey: Uint8Array, ciphertext: Uint8Array) => Uint8Array;
-  generateKeyPair: (email: string) => string;
-};
+// ..... Key generation .....
 
-interface ChatCryptoHandle {
-  toJson: () => string;
-  updatePeerState: (addr: string, ts: bigint, pubkey: Uint8Array, preferMutual: boolean) => void;
-  encryptionRecommendation: (recipientsJson: string, senderPrefersMutual: boolean) => string;
-  getPeerPublicKey: (addr: string) => Uint8Array | undefined;
+export interface KeyPair {
+  /** Binary OpenPGP Transferable Public Key. */
+  publicKey: Uint8Array;
+  /** Binary OpenPGP Transferable Secret Key. */
+  privateKey: Uint8Array;
 }
-/* eslint-enable @typescript-eslint/no-explicit-any */
-
-let wasmModule: WasmModule | null = null;
 
 /**
- * Load and initialise the WASM module. Subsequent calls return the
- * cached module.
+ * Generate a new OpenPGP key pair for the given email address.
+ *
+ * Produces an Ed25519 primary key (signing) with a Curve25519
+ * subkey (encryption), matching the Autocrypt Level 1 key profile.
  */
-export async function loadCrypto(): Promise<WasmModule> {
-  if (wasmModule) return wasmModule;
-
-  try {
-    // Dynamic import: Vite resolves this at build time. The WASM
-    // binary is placed alongside the JS glue by wasm-pack.
-    const mod = (await import("./wasm/noombat_wasm.js")) as WasmModule;
-    await mod.default();
-    wasmModule = mod;
-    return mod;
-  } catch {
-    // WASM not available (build step not run, or browser lacks
-    // WebAssembly support). Return a no-op fallback so the chat
-    // island degrades gracefully to plaintext pass-through.
-    console.warn("noombat-wasm not available; chat crypto is disabled.");
-    return fallbackModule();
-  }
+export async function generateKeyPair(email: string): Promise<KeyPair> {
+  const { privateKey, publicKey } = await openpgp.generateKey({
+    type: "ecc",
+    curve: "curve25519Legacy",
+    userIDs: [{ email }],
+    format: "binary",
+  });
+  return {
+    publicKey: publicKey as Uint8Array,
+    privateKey: privateKey as Uint8Array,
+  };
 }
 
-// ..... Fallback (plaintext pass-through) .....
+// ..... Message encryption .....
 
-function fallbackModule(): WasmModule {
-  const noop: ChatCryptoHandle = {
-    toJson: () => "{}",
-    updatePeerState: () => {},
-    encryptionRecommendation: () => "disable",
-    getPeerPublicKey: () => undefined,
+/**
+ * Sign and encrypt a plaintext message for the given recipient
+ * (sign-then-encrypt per the Autocrypt Level 1 specification).
+ *
+ * @param recipientKeyBytes: The recipient's binary Transferable
+ *   Public Key.
+ * @param senderKeyBytes: The sender's binary Transferable Secret
+ *   Key (used to sign the message).
+ * @param plaintext: The raw message body (UTF-8 bytes).
+ * @returns The signed-and-encrypted OpenPGP message (binary).
+ */
+export async function encryptMessage(
+  recipientKeyBytes: Uint8Array,
+  senderKeyBytes: Uint8Array,
+  plaintext: Uint8Array,
+): Promise<Uint8Array> {
+  const recipientKey = await openpgp.readKey({ binaryKey: recipientKeyBytes });
+  const senderKey = await openpgp.readPrivateKey({ binaryKey: senderKeyBytes });
+  const message = await openpgp.createMessage({ binary: plaintext });
+
+  const encrypted = await openpgp.encrypt({
+    message,
+    encryptionKeys: recipientKey,
+    signingKeys: senderKey,
+    format: "binary",
+  });
+
+  return encrypted as Uint8Array;
+}
+
+// ..... Message decryption .....
+
+/**
+ * Decrypt an OpenPGP-encrypted message without signature verification.
+ *
+ * Use `decryptAndVerify` when the sender's public key is available.
+ *
+ * @param privateKeyBytes: The recipient's binary Transferable Secret Key.
+ * @param ciphertext: The encrypted OpenPGP message (binary).
+ * @returns The decrypted plaintext as bytes.
+ */
+export async function decryptMessage(
+  privateKeyBytes: Uint8Array,
+  ciphertext: Uint8Array,
+): Promise<Uint8Array> {
+  const privateKey = await openpgp.readPrivateKey({ binaryKey: privateKeyBytes });
+  const message = await openpgp.readMessage({ binaryMessage: ciphertext });
+
+  const { data } = await openpgp.decrypt({
+    message,
+    decryptionKeys: privateKey,
+    format: "binary",
+  });
+
+  return data as Uint8Array;
+}
+
+// ..... Message decryption with signature verification .....
+
+export interface DecryptAndVerifyResult {
+  /** The decrypted plaintext string. */
+  plaintext: string;
+  /** Whether the embedded signature was verified against the
+   *  sender's public key. */
+  signatureVerified: boolean;
+}
+
+/**
+ * Decrypt an OpenPGP-encrypted message and verify the embedded
+ * signature against the sender's public key.
+ *
+ * Decryption failure throws. Signature verification failure is
+ * **not** an error, i.e. the plaintext is still returned, with
+ * `signatureVerified` set to `false`, so the caller can display a
+ * warning in the UI.
+ *
+ * @param privateKeyBytes: The recipient's binary Transferable Secret Key.
+ * @param senderKeyBytes: The sender's binary Transferable Public Key.
+ * @param ciphertext: The encrypted OpenPGP message (binary).
+ */
+export async function decryptAndVerify(
+  privateKeyBytes: Uint8Array,
+  senderKeyBytes: Uint8Array,
+  ciphertext: Uint8Array,
+): Promise<DecryptAndVerifyResult> {
+  const privateKey = await openpgp.readPrivateKey({ binaryKey: privateKeyBytes });
+  const senderKey = await openpgp.readKey({ binaryKey: senderKeyBytes });
+  const message = await openpgp.readMessage({ binaryMessage: ciphertext });
+
+  const { data, signatures } = await openpgp.decrypt({
+    message,
+    decryptionKeys: privateKey,
+    verificationKeys: senderKey,
+    format: "utf8",
+  });
+
+  let signatureVerified = false;
+  if (signatures.length > 0) {
+    try {
+      await signatures[0].verified;
+      signatureVerified = true;
+    } catch {
+      // Signature verification failed; signatureVerified remains false.
+    }
+  }
+
+  return {
+    plaintext: data as string,
+    signatureVerified,
   };
-
-  const mod: WasmModule = {
-    default: async () => {},
-    ChatCrypto: {
-      new: () => ({ ...noop }),
-      fromJson: () => ({ ...noop }),
-    } as unknown as WasmModule["ChatCrypto"],
-    encryptMessage: (_rk, _sk, pt) => pt,
-    decryptMessage: (_pk, ct) => ct,
-    generateKeyPair: (_email) =>
-      JSON.stringify({
-        public_key: Array(32).fill(0),
-        private_key: Array(32).fill(0),
-      }),
-  };
-
-  wasmModule = mod;
-  return mod;
 }

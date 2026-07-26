@@ -7,7 +7,7 @@
  * Manages the WebSocket connection to the Noombat chat relay,
  * renders a contact list and conversation view, and delegates
  * cryptographic operations (encryption, decryption, Autocrypt state)
- * to the rPGP and noombat-autocrypt WASM modules.
+ * to OpenPGP.js and the TypeScript Autocrypt state machine.
  *
  * On narrow viewports the component renders a full-screen
  * conversation view with a drawer-based contact list. On wide
@@ -22,7 +22,15 @@ import {
   Show,
   type JSX,
 } from "solid-js";
-import { loadCrypto } from "./crypto";
+import {
+  encryptMessage,
+  decryptMessage,
+  decryptAndVerify,
+} from "./crypto";
+import {
+  PeerStateTable,
+  parseAutocryptHeader,
+} from "./autocrypt";
 import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
 import { deriveBlobKey } from "../auth";
 
@@ -50,9 +58,6 @@ function base64ToUint8(b64: string): Uint8Array {
   }
   return bytes;
 }
-
-// Module-level handle for the loaded WASM module.
-type CryptoMod = Awaited<ReturnType<typeof loadCrypto>>;
 
 // ..... i18n .....
 
@@ -133,6 +138,10 @@ interface ChatMessage {
   body: string;
   timestamp: number;
   outgoing: boolean;
+  /** Whether the embedded signature was verified against the
+   *  sender's known public key. `null` if no sender key was
+   *  available or the message was not signed. */
+  signatureVerified: boolean | null;
 }
 
 /** A message from the relay server. */
@@ -175,13 +184,12 @@ export default function Chat(props: ChatProps): JSX.Element {
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let msgCounter = 0;
-  let crypto: CryptoMod | null = null;
 
   // Decrypted credential material (held in memory for the session).
   let credentials: CredentialBlob | null = null;
   let privateKeyBytes: Uint8Array | null = null;
   let publicKeyBytes: Uint8Array | null = null;
-  let cryptoHandle: InstanceType<CryptoMod["ChatCrypto"]> | null = null;
+  let peerState: PeerStateTable | null = null;
   let blobKey: CryptoKey | null = null;
 
   // ..... Blob decryption .....
@@ -204,11 +212,9 @@ export default function Chat(props: ChatProps): JSX.Element {
       publicKeyBytes = base64ToUint8(blob.publicKeyB64);
 
       // Restore the Autocrypt peer state.
-      if (crypto) {
-        cryptoHandle = blob.peerStateJson
-          ? crypto.ChatCrypto.fromJson(blob.peerStateJson)
-          : new crypto.ChatCrypto();
-      }
+      peerState = blob.peerStateJson
+        ? PeerStateTable.fromJson(blob.peerStateJson)
+        : new PeerStateTable();
 
       return true;
     } catch {
@@ -224,6 +230,7 @@ export default function Chat(props: ChatProps): JSX.Element {
       setUnlockPassword("");
       connect();
       syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
+      document.addEventListener("visibilitychange", handleVisibilityChange);
     } else {
       setStatus("Incorrect password.");
     }
@@ -258,59 +265,8 @@ export default function Chat(props: ChatProps): JSX.Element {
       }
 
       if (msg.type === "message" && msg.from && msg.body_b64) {
-        const sender: string = msg.from;
-
-        // Decrypt the message body via the WASM module.
-        const ciphertext = base64ToUint8(msg.body_b64);
-        let body: string;
-        try {
-          if (crypto && privateKeyBytes) {
-            const plainBytes = crypto.decryptMessage(privateKeyBytes, ciphertext);
-            body = new TextDecoder().decode(plainBytes);
-          } else {
-            body = new TextDecoder().decode(ciphertext);
-          }
-        } catch {
-          body = "[decryption failed]";
-        }
-
-        // Update Autocrypt peer state if the message carried a header.
-        if (cryptoHandle && msg.autocrypt_header_b64) {
-          try {
-            const headerBytes = Uint8Array.from(
-              atob(msg.autocrypt_header_b64),
-              (c) => c.charCodeAt(0),
-            );
-            // The Autocrypt header contains the sender's public key;
-            // extract and update peer state.
-            const ts = BigInt(msg.timestamp ?? Math.floor(Date.now() / 1000));
-            cryptoHandle.updatePeerState(sender, ts, headerBytes, false);
-          } catch {
-            // Best-effort: peer state update failure is non-fatal.
-          }
-        }
-
-        const chatMsg: ChatMessage = {
-          id: `msg-${++msgCounter}`,
-          uid: msg.uid ?? 0,
-          from: sender,
-          to: props.chatmailAddr,
-          body,
-          timestamp: msg.timestamp ?? Math.floor(Date.now() / 1000),
-          outgoing: false,
-        };
-
-        setMessages((prev) => [...prev, chatMsg]);
-
-        // Track contacts.
-        if (!contacts().includes(sender)) {
-          setContacts((prev) => [...prev, sender]);
-        }
-
-        // Acknowledge receipt.
-        if (msg.uid) {
-          ws?.send(JSON.stringify({ type: "ack", uid: msg.uid }));
-        }
+        // Decrypt asynchronously via OpenPGP.js.
+        void handleIncomingMessage(msg);
       }
 
       if (msg.type === "sent" && msg.to) {
@@ -334,16 +290,98 @@ export default function Chat(props: ChatProps): JSX.Element {
     };
   }
 
+  // ..... Incoming message handler (async) .....
+
+  async function handleIncomingMessage(msg: ServerMsg): Promise<void> {
+    const sender = msg.from!;
+
+    // Update Autocrypt peer state first (if the message carried a
+    // header) so the sender's key is available for signature
+    // verification during decryption.
+    if (peerState && msg.autocrypt_header_b64) {
+      try {
+        const headerBytes = Uint8Array.from(
+          atob(msg.autocrypt_header_b64),
+          (c) => c.charCodeAt(0),
+        );
+        const headerStr = new TextDecoder().decode(headerBytes);
+        const parsed = parseAutocryptHeader(headerStr);
+        if (parsed) {
+          const ts = msg.timestamp ?? Math.floor(Date.now() / 1000);
+          peerState.update({
+            from: sender,
+            effectiveDate: ts,
+            autocryptHeader: parsed,
+          });
+        }
+      } catch {
+        // Best-effort: peer state update failure is non-fatal.
+      }
+    }
+
+    // Decrypt the message body via OpenPGP.js. When the sender's
+    // public key is known, use decryptAndVerify to check the
+    // embedded signature.
+    const ciphertext = base64ToUint8(msg.body_b64!);
+    let body: string;
+    let signatureVerified: boolean | null = null;
+
+    try {
+      if (privateKeyBytes) {
+        // Look up the sender's public key for signature verification.
+        const senderKey = peerState?.getPublicKey(sender.trim().toLowerCase()) ?? null;
+
+        if (senderKey && senderKey.length > 0) {
+          // Decrypt and verify signature against known sender key.
+          const result = await decryptAndVerify(privateKeyBytes, senderKey, ciphertext);
+          body = result.plaintext;
+          signatureVerified = result.signatureVerified;
+        } else {
+          // No sender key available; decrypt without verification.
+          const plainBytes = await decryptMessage(privateKeyBytes, ciphertext);
+          body = new TextDecoder().decode(plainBytes);
+        }
+      } else {
+        body = "[encryption module unavailable]";
+      }
+    } catch {
+      body = "[decryption failed]";
+    }
+
+    const chatMsg: ChatMessage = {
+      id: `msg-${++msgCounter}`,
+      uid: msg.uid ?? 0,
+      from: sender,
+      to: props.chatmailAddr,
+      body,
+      timestamp: msg.timestamp ?? Math.floor(Date.now() / 1000),
+      outgoing: false,
+      signatureVerified,
+    };
+
+    setMessages((prev) => [...prev, chatMsg]);
+
+    // Track contacts.
+    if (!contacts().includes(sender)) {
+      setContacts((prev) => [...prev, sender]);
+    }
+
+    // Acknowledge receipt.
+    if (msg.uid) {
+      ws?.send(JSON.stringify({ type: "ack", uid: msg.uid }));
+    }
+  }
+
   // ..... Peer state synchronisation .....
 
   let syncTimer: ReturnType<typeof setInterval> | undefined;
-  const SYNC_INTERVAL_MS = 60_000;
+  const SYNC_INTERVAL_MS = 30_000;
 
   async function syncPeerState(): Promise<void> {
-    if (!cryptoHandle || !blobKey || !credentials) return;
+    if (!peerState || !blobKey || !credentials) return;
 
     try {
-      const peerStateJson = cryptoHandle.toJson();
+      const peerStateJson = peerState.toJson();
       const updatedBlob: CredentialBlob = {
         ...credentials,
         peerStateJson,
@@ -355,47 +393,25 @@ export default function Chat(props: ChatProps): JSX.Element {
     }
   }
 
+  // Sync peer state when the tab becomes hidden (mobile browsers
+  // may terminate background tabs without firing beforeunload).
+  function handleVisibilityChange(): void {
+    if (document.visibilityState === "hidden") {
+      void syncPeerState();
+    }
+  }
+
   onMount(async () => {
     if (!props.chatmailAddr) return;
 
-    crypto = await loadCrypto();
-
-    // Try to unlock the blob without a password prompt if the blob
-    // key is cached in sessionStorage (set during password-login).
-    const cachedBlobKeyB64 = sessionStorage.getItem("noombat_blob_key");
-    if (cachedBlobKeyB64) {
-      // Import the cached key.
-      try {
-        const keyBytes = base64ToUint8(cachedBlobKeyB64);
-        const key = await globalThis.crypto.subtle.importKey(
-          "raw", keyBytes.buffer as ArrayBuffer, "AES-GCM", false, ["encrypt", "decrypt"],
-        );
-        blobKey = key;
-        const encryptedBlob = await fetchBlob();
-        if (encryptedBlob) {
-          const blob = await decryptBlob(key, encryptedBlob);
-          credentials = blob;
-          privateKeyBytes = base64ToUint8(blob.privateKeyB64);
-          publicKeyBytes = base64ToUint8(blob.publicKeyB64);
-          cryptoHandle = blob.peerStateJson
-            ? crypto!.ChatCrypto.fromJson(blob.peerStateJson)
-            : new crypto!.ChatCrypto();
-          connect();
-          syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
-          return;
-        }
-      } catch {
-        // Cached key invalid or blob missing; fall through to prompt.
-      }
-    }
-
-    // No cached key: prompt the user for their password.
+    // Prompt the user for their password to derive the blob key.
     setNeedsUnlock(true);
   });
 
   onCleanup(() => {
     clearTimeout(reconnectTimer);
     clearInterval(syncTimer);
+    document.removeEventListener("visibilitychange", handleVisibilityChange);
     // Final sync on session close.
     void syncPeerState();
     ws?.close();
@@ -403,31 +419,21 @@ export default function Chat(props: ChatProps): JSX.Element {
 
   // ..... Actions .....
 
-  function sendMessage(): void {
+  async function sendMessage(): Promise<void> {
     const body = draft().trim();
     const to = recipient().trim();
     if (!body || !to || !ws || ws.readyState !== WebSocket.OPEN) return;
 
-    // Encrypt the message body via the WASM module.
+    // Encrypt the message body via OpenPGP.js.
     const plainBytes = new TextEncoder().encode(body);
     let cipherBytes: Uint8Array;
 
     // Look up the recipient's public key from peer state.
-    let recipientKey: Uint8Array | null = null;
-    if (cryptoHandle) {
-      try {
-        const keyBytes = cryptoHandle.getPeerPublicKey(to.trim().toLowerCase());
-        if (keyBytes && keyBytes.length > 0) {
-          recipientKey = keyBytes instanceof Uint8Array ? keyBytes : new Uint8Array(keyBytes);
-        }
-      } catch {
-        // Peer lookup failed; fall through to plaintext.
-      }
-    }
+    const recipientKey = peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
 
     try {
-      if (crypto && recipientKey && recipientKey.length > 0 && privateKeyBytes) {
-        cipherBytes = crypto.encryptMessage(recipientKey, privateKeyBytes, plainBytes);
+      if (recipientKey && recipientKey.length > 0 && privateKeyBytes) {
+        cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
       } else {
         // No recipient key available; send plaintext (Chatmail
         // filtermail will reject this, so the user needs to
@@ -435,8 +441,12 @@ export default function Chat(props: ChatProps): JSX.Element {
         // message).
         cipherBytes = plainBytes;
       }
-    } catch {
-      cipherBytes = plainBytes;
+    } catch (err) {
+      // Encryption failed: do not fall through to plaintext.
+      // Display an error and abort the send.
+      const detail = err instanceof Error ? err.message : String(err);
+      setStatus(`Encryption failed: ${detail}`);
+      return;
     }
 
     const body_b64 = uint8ToBase64(cipherBytes);
@@ -467,6 +477,7 @@ export default function Chat(props: ChatProps): JSX.Element {
         body,
         timestamp: Math.floor(Date.now() / 1000),
         outgoing: true,
+        signatureVerified: null,
       },
     ]);
 
@@ -645,6 +656,24 @@ export default function Chat(props: ChatProps): JSX.Element {
                       <time class="text-xs text-muted">
                         {formatTime(msg.timestamp)}
                       </time>
+                      {/* Signature / encryption trust indicator */}
+                      <Show when={!msg.outgoing}>
+                        <Show when={msg.signatureVerified === true}>
+                          <span class="text-xs text-green-600" title="Signature verified">
+                            &#x2713; verified
+                          </span>
+                        </Show>
+                        <Show when={msg.signatureVerified === false}>
+                          <span class="text-xs text-amber-600" title="Signature verification failed">
+                            &#x26A0; signature failed
+                          </span>
+                        </Show>
+                        <Show when={msg.signatureVerified === null}>
+                          <span class="text-xs text-gray-400" title="Encrypted (unverified key)">
+                            &#x1F512;
+                          </span>
+                        </Show>
+                      </Show>
                       <Show when={!msg.outgoing}>
                         <button
                           type="button"
@@ -680,7 +709,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && !e.shiftKey) {
                     e.preventDefault();
-                    sendMessage();
+                    void sendMessage();
                   }
                 }}
               />
@@ -688,7 +717,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                 type="button"
                 class="noombat-chat__send"
                 disabled={!connected() || !draft().trim() || !recipient().trim()}
-                onClick={sendMessage}
+                onClick={() => void sendMessage()}
               >
                 {strings().send}
               </button>
