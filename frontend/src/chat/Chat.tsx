@@ -14,23 +14,10 @@
  * viewports it renders a two-column layout.
  */
 
-import {
-  createSignal,
-  onCleanup,
-  onMount,
-  For,
-  Show,
-  type JSX,
-} from "solid-js";
+import { createSignal, onCleanup, onMount, For, Show, type JSX } from "solid-js";
 import { encryptMessage, decryptMessage, decryptAndVerify } from "./crypto";
 import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
-import {
-  decryptBlob,
-  encryptBlob,
-  fetchBlob,
-  storeBlob,
-  type CredentialBlob,
-} from "./blob";
+import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
 import { deriveBlobKey } from "../auth";
 
 // ..... Base64 helpers .....
@@ -85,8 +72,7 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     contacts: "Contacts",
     connecting: "Connecting\u2026",
     disconnected: "Disconnected. Reconnecting\u2026",
-    notProvisioned:
-      "To send encrypted messages, set a password for your Noombat account.",
+    notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
@@ -100,8 +86,7 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     contacts: "Contacts",
     connecting: "Connecting\u2026",
     disconnected: "Disconnected. Reconnecting\u2026",
-    notProvisioned:
-      "To send encrypted messages, set a password for your Noombat account.",
+    notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
@@ -118,8 +103,7 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     notProvisioned:
       "Para enviar mensagens criptografadas, defina uma senha para sua conta Noombat.",
     setupChat: "Configurar chat",
-    enterPassword:
-      "Digite sua senha Noombat para desbloquear o chat criptografado.",
+    enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
     unlock: "Desbloquear",
   },
 };
@@ -307,10 +291,7 @@ export default function Chat(props: ChatProps): JSX.Element {
     // verification during decryption.
     if (peerState && msg.autocrypt_header_b64) {
       try {
-        const headerBytes = Uint8Array.from(
-          atob(msg.autocrypt_header_b64),
-          (c) => c.charCodeAt(0),
-        );
+        const headerBytes = Uint8Array.from(atob(msg.autocrypt_header_b64), (c) => c.charCodeAt(0));
         const headerStr = new TextDecoder().decode(headerBytes);
         const parsed = parseAutocryptHeader(headerStr);
         if (parsed) {
@@ -336,16 +317,11 @@ export default function Chat(props: ChatProps): JSX.Element {
     try {
       if (privateKeyBytes) {
         // Look up the sender's public key for signature verification.
-        const senderKey =
-          peerState?.getPublicKey(sender.trim().toLowerCase()) ?? null;
+        const senderKey = peerState?.getPublicKey(sender.trim().toLowerCase()) ?? null;
 
         if (senderKey && senderKey.length > 0) {
           // Decrypt and verify signature against known sender key.
-          const result = await decryptAndVerify(
-            privateKeyBytes,
-            senderKey,
-            ciphertext,
-          );
+          const result = await decryptAndVerify(privateKeyBytes, senderKey, ciphertext);
           body = result.plaintext;
           signatureVerified = result.signatureVerified;
         } else {
@@ -441,16 +417,11 @@ export default function Chat(props: ChatProps): JSX.Element {
     let cipherBytes: Uint8Array;
 
     // Look up the recipient's public key from peer state.
-    const recipientKey =
-      peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
+    const recipientKey = peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
 
     try {
       if (recipientKey && recipientKey.length > 0 && privateKeyBytes) {
-        cipherBytes = await encryptMessage(
-          recipientKey,
-          privateKeyBytes,
-          plainBytes,
-        );
+        cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
       } else {
         // No recipient key available; send plaintext (Chatmail
         // filtermail will reject this, so the user needs to
@@ -524,9 +495,7 @@ export default function Chat(props: ChatProps): JSX.Element {
 
   const filteredMessages = () =>
     recipient()
-      ? messages().filter(
-          (m) => m.from === recipient() || (m.outgoing && m.to === recipient()),
-        )
+      ? messages().filter((m) => m.from === recipient() || (m.outgoing && m.to === recipient()))
       : messages();
 
   function formatTime(ts: number): string {
@@ -602,14 +571,10 @@ export default function Chat(props: ChatProps): JSX.Element {
             class={`noombat-chat__contacts ${showContacts() ? "noombat-chat__contacts--open" : ""}`}
             aria-label={strings().contacts}
           >
-            <h2 class="text-sm font-semibold text-muted px-3 py-2">
-              {strings().contacts}
-            </h2>
+            <h2 class="text-sm font-semibold text-muted px-3 py-2">{strings().contacts}</h2>
             <Show
               when={contacts().length > 0}
-              fallback={
-                <p class="px-3 text-sm text-muted">{strings().empty}</p>
-              }
+              fallback={<p class="px-3 text-sm text-muted">{strings().empty}</p>}
             >
               <ul class="space-y-1">
                 <For each={contacts()}>
@@ -635,10 +600,7 @@ export default function Chat(props: ChatProps): JSX.Element {
           </aside>
 
           {/* Conversation */}
-          <section
-            class="noombat-chat__conversation"
-            aria-label={strings().heading}
-          >
+          <section class="noombat-chat__conversation" aria-label={strings().heading}>
             {/* Mobile: toggle contact list */}
             <div class="noombat-chat__topbar">
               <button
@@ -650,20 +612,14 @@ export default function Chat(props: ChatProps): JSX.Element {
               >
                 ☰
               </button>
-              <span class="text-sm font-semibold truncate">
-                {recipient() || strings().heading}
-              </span>
+              <span class="text-sm font-semibold truncate">{recipient() || strings().heading}</span>
             </div>
 
             {/* Message list */}
             <div class="noombat-chat__messages" role="log" aria-live="polite">
               <Show
                 when={filteredMessages().length > 0}
-                fallback={
-                  <p class="text-center text-muted text-sm py-8">
-                    {strings().empty}
-                  </p>
-                }
+                fallback={<p class="text-center text-muted text-sm py-8">{strings().empty}</p>}
               >
                 <For each={filteredMessages()}>
                   {(msg) => (
@@ -672,16 +628,11 @@ export default function Chat(props: ChatProps): JSX.Element {
                     >
                       <p class="text-sm">{msg.body}</p>
                       <div class="flex items-center gap-2 mt-1">
-                        <time class="text-xs text-muted">
-                          {formatTime(msg.timestamp)}
-                        </time>
+                        <time class="text-xs text-muted">{formatTime(msg.timestamp)}</time>
                         {/* Signature / encryption trust indicator */}
                         <Show when={!msg.outgoing}>
                           <Show when={msg.signatureVerified === true}>
-                            <span
-                              class="text-xs text-green-600"
-                              title="Signature verified"
-                            >
+                            <span class="text-xs text-green-600" title="Signature verified">
                               &#x2713; verified
                             </span>
                           </Show>
@@ -694,10 +645,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                             </span>
                           </Show>
                           <Show when={msg.signatureVerified === null}>
-                            <span
-                              class="text-xs text-gray-400"
-                              title="Encrypted (unverified key)"
-                            >
+                            <span class="text-xs text-gray-400" title="Encrypted (unverified key)">
                               &#x1F512;
                             </span>
                           </Show>
@@ -744,9 +692,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                 <button
                   type="button"
                   class="noombat-chat__send"
-                  disabled={
-                    !connected() || !draft().trim() || !recipient().trim()
-                  }
+                  disabled={!connected() || !draft().trim() || !recipient().trim()}
                   onClick={() => void sendMessage()}
                 >
                   {strings().send}

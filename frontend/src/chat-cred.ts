@@ -48,12 +48,8 @@ document.addEventListener("DOMContentLoaded", () => {
     `;
     container.appendChild(prompt);
 
-    const passwordInput = document.getElementById(
-      "cred-password",
-    ) as HTMLInputElement;
-    const unlockBtn = document.getElementById(
-      "cred-unlock",
-    ) as HTMLButtonElement;
+    const passwordInput = document.getElementById("cred-password") as HTMLInputElement;
+    const unlockBtn = document.getElementById("cred-unlock") as HTMLButtonElement;
     passwordInput.focus();
 
     async function unlock(): Promise<void> {
@@ -68,10 +64,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const blobKey = await deriveBlobKey(password, username, domain);
         const encrypted = await fetchBlob();
         if (!encrypted) {
-          showError(
-            container,
-            "No credential blob found. Chat may not be provisioned.",
-          );
+          showError(container, "No credential blob found. Chat may not be provisioned.");
           return;
         }
 
@@ -102,9 +95,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Render the QR code for Delta Chat import.
         if (qrSection) {
           qrSection.classList.remove("hidden");
-          const canvas = document.getElementById(
-            "cred-qr",
-          ) as HTMLCanvasElement | null;
+          const canvas = document.getElementById("cred-qr") as HTMLCanvasElement | null;
           if (canvas) {
             // Delta Chat DCACCOUNT URI format.
             const uri = `DCACCOUNT:https://${chatmailDomain}?p=${encodeURIComponent(chatmailPassword)}&a=${encodeURIComponent(chatmailAddr)}`;
@@ -129,8 +120,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Show the URI as a copyable fallback below the QR code.
             const uriDisplay = document.createElement("code");
-            uriDisplay.className =
-              "block mt-2 text-xs font-mono break-all select-all text-muted";
+            uriDisplay.className = "block mt-2 text-xs font-mono break-all select-all text-muted";
             uriDisplay.textContent = uri;
             canvas.after(uriDisplay);
           }
@@ -157,8 +147,7 @@ function showError(container: HTMLElement, message: string): void {
   if (!alert) {
     alert = document.createElement("div");
     alert.setAttribute("role", "alert");
-    alert.className =
-      "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mt-2 text-sm";
+    alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mt-2 text-sm";
     container.appendChild(alert);
   }
   alert.textContent = message;

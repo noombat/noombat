@@ -21,18 +21,10 @@ if (mount) {
   const wsUrl = mount.dataset.wsUrl ?? "";
   const chatmailAddr = mount.dataset.chatmailAddr ?? "";
   const username = mount.dataset.username ?? "";
-  const locale =
-    mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
+  const locale = mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
 
   render(
-    () => (
-      <Chat
-        wsUrl={wsUrl}
-        chatmailAddr={chatmailAddr}
-        username={username}
-        locale={locale}
-      />
-    ),
+    () => <Chat wsUrl={wsUrl} chatmailAddr={chatmailAddr} username={username} locale={locale} />,
     mount,
   );
 }

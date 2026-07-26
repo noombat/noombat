@@ -65,9 +65,7 @@ function canonicalise(addr: string): string {
  * Returns `null` if the header is missing the `keydata` attribute or if the
  * base64 decoding fails.
  */
-export function parseAutocryptHeader(
-  headerValue: string,
-): AutocryptHeader | null {
+export function parseAutocryptHeader(headerValue: string): AutocryptHeader | null {
   let addr: string | null = null;
   let keydataB64: string | null = null;
   let preferEncrypt: PreferEncrypt = "nopreference";
@@ -197,8 +195,7 @@ export class PeerStateTable {
       this.peers.set(canonical, entry);
     }
 
-    const dominated =
-      entry.gossipTimestamp === null || timestamp > entry.gossipTimestamp;
+    const dominated = entry.gossipTimestamp === null || timestamp > entry.gossipTimestamp;
     if (dominated) {
       entry.gossipKey = Array.from(key);
       entry.gossipTimestamp = timestamp;

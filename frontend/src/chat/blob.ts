@@ -35,18 +35,11 @@ export interface CredentialBlob {
  * Returns the raw bytes (`iv || ciphertext || tag`) suitable for
  * storage in the `chatmail_cred` BYTEA column.
  */
-export async function encryptBlob(
-  blobKey: CryptoKey,
-  blob: CredentialBlob,
-): Promise<Uint8Array> {
+export async function encryptBlob(blobKey: CryptoKey, blob: CredentialBlob): Promise<Uint8Array> {
   const plaintext = new TextEncoder().encode(JSON.stringify(blob));
   const iv = crypto.getRandomValues(new Uint8Array(12));
 
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    blobKey,
-    plaintext,
-  );
+  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, blobKey, plaintext);
 
   // Prepend the IV to the ciphertext.
   const result = new Uint8Array(iv.byteLength + ciphertext.byteLength);
@@ -68,11 +61,7 @@ export async function decryptBlob(
   const iv = encrypted.slice(0, 12);
   const ciphertext = encrypted.slice(12);
 
-  const plaintext = await crypto.subtle.decrypt(
-    { name: "AES-GCM", iv },
-    blobKey,
-    ciphertext,
-  );
+  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, blobKey, ciphertext);
 
   const json = new TextDecoder().decode(plaintext);
   return JSON.parse(json) as CredentialBlob;
