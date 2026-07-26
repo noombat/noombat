@@ -18,6 +18,8 @@ services:
   caddy:
     image: docker.io/library/caddy:2-alpine
     restart: unless-stopped
+    environment:
+      NOOMBAT_DOMAIN: ${NOOMBAT_DOMAIN}
     ports:
       - "80:80"
       - "443:443"
