@@ -25,6 +25,7 @@ export default defineConfig({
         katex: "src/katex.ts",
         editor: "src/editor/index.tsx",
         chat: "src/chat/index.tsx",
+        "chat-cred": "src/chat-cred.ts",
       },
       output: {
         // CSS assets keep stable names; JS islands get hashed names.
@@ -37,6 +38,7 @@ export default defineConfig({
             chunkInfo.name === "auth" ||
             chunkInfo.name === "editor" ||
             chunkInfo.name === "chat" ||
+            chunkInfo.name === "chat-cred" ||
             chunkInfo.name === "katex"
           ) {
             return "assets/[name].js";

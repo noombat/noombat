@@ -89,6 +89,7 @@ struct UpgradePage {
 struct ChatCredentialsPage {
     i18n: I18n,
     nav_username: String,
+    username: String,
     chatmail_addr: String,
     chatmail_domain: String,
     suspended: bool,
@@ -449,9 +450,11 @@ async fn chat_credentials_page(
     .fetch_one(&state.pool)
     .await
     .unwrap_or(false);
+    let uname = nav_username(&principal);
     ChatCredentialsPage {
         i18n,
-        nav_username: nav_username(&principal),
+        nav_username: uname.clone(),
+        username: uname,
         chatmail_addr,
         chatmail_domain,
         suspended,
