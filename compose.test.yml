@@ -1,0 +1,48 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Test-server overlay for Noombat.
+#
+# Builds all images from source (no released GHCR images), but
+# configures the stack closer to production than compose.yml alone:
+#   - JWT authentication enabled (requires NOOMBAT_JWT_SECRET in .env).
+#   - Infrastructure ports (PostgreSQL, Redis, Meilisearch) not exposed
+#     to the host.
+#   - RUST_LOG forwarded to the container.
+#   - Restart policies on all services.
+#
+# Chatmail ports (25, 465, 993) remain exposed as defined in the
+# base compose.yml. Remove or override them if they are not needed.
+#
+# Usage:
+#   cp .env.test .env            # or merge into an existing .env
+#   docker compose -f compose.yml -f compose.test.yml up --build -d
+#   # or:
+#   podman-compose -f compose.yml -f compose.test.yml up --build -d
+
+services:
+  noombat:
+    restart: unless-stopped
+    environment:
+      NOOMBAT_JWT_SECRET: ${NOOMBAT_JWT_SECRET}
+      NOOMBAT_OPEN_REGISTRATIONS: ${NOOMBAT_OPEN_REGISTRATIONS:-true}
+      NOOMBAT_ACCESS_TTL_SECS: ${NOOMBAT_ACCESS_TTL_SECS:-900}
+      NOOMBAT_REFRESH_TTL_SECS: ${NOOMBAT_REFRESH_TTL_SECS:-2592000}
+      RUST_LOG: ${RUST_LOG:-info}
+      # Admin token intentionally omitted; JWT-only auth.
+
+  db:
+    restart: unless-stopped
+    # Do not expose PostgreSQL to the host network.
+    ports: []
+
+  redis:
+    restart: unless-stopped
+    ports: []
+
+  meilisearch:
+    restart: unless-stopped
+    ports: []
+
+  chatmail:
+    restart: unless-stopped
