@@ -96,14 +96,14 @@ function extractMath(source: string): {
 
   // Display math first ($$ is greedy over $).
   let processed = source.replace(DISPLAY_MATH_RE, (_m, tex: string) => {
-    const id = `\x00MATH${counter++}\x00`;
+    const id = `\uE000MATH${counter++}\uE000`;
     fragments.set(id, renderKatex(tex.trim(), true));
     return id;
   });
 
   // Inline math.
   processed = processed.replace(INLINE_MATH_RE, (_m, tex: string) => {
-    const id = `\x00MATH${counter++}\x00`;
+    const id = `\uE000MATH${counter++}\uE000`;
     fragments.set(id, renderKatex(tex.trim(), false));
     return id;
   });
