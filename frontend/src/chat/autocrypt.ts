@@ -65,7 +65,9 @@ function canonicalise(addr: string): string {
  * Returns `null` if the header is missing the `keydata` attribute or if the
  * base64 decoding fails.
  */
-export function parseAutocryptHeader(headerValue: string): AutocryptHeader | null {
+export function parseAutocryptHeader(
+  headerValue: string,
+): AutocryptHeader | null {
   let addr: string | null = null;
   let keydataB64: string | null = null;
   let preferEncrypt: PreferEncrypt = "nopreference";

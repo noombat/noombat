@@ -20,11 +20,11 @@ if (mount) {
   const initial = mount.dataset.initialValue ?? "";
   const name = mount.dataset.name ?? "content_md";
   const placeholder = mount.dataset.placeholder;
-  const rows = mount.dataset.rows ? parseInt(mount.dataset.rows, 10) : undefined;
+  const rows = mount.dataset.rows
+    ? parseInt(mount.dataset.rows, 10)
+    : undefined;
   const locale =
-    mount.dataset.locale ??
-    document.documentElement.lang ??
-    "en-US";
+    mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
 
   render(
     () => (

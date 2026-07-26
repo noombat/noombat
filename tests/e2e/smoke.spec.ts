@@ -55,14 +55,14 @@ test.describe("WebFinger", () => {
 
   test("returns 404 for unknown user", async ({ request }) => {
     const res = await request.get(
-      "/.well-known/webfinger?resource=acct:nobody@localhost"
+      "/.well-known/webfinger?resource=acct:nobody@localhost",
     );
     expect(res.status()).toBe(404);
   });
 
   test("returns JRD for a known user", async ({ request }) => {
     const res = await request.get(
-      "/.well-known/webfinger?resource=acct:testuser@localhost"
+      "/.well-known/webfinger?resource=acct:testuser@localhost",
     );
     expect(res.ok()).toBeTruthy();
     const body = await res.json();
@@ -142,7 +142,9 @@ test.describe("Actor: HTML profile", () => {
 
   test("includes rel=alternate link for AP discovery", async ({ page }) => {
     await page.goto("/users/testuser");
-    const link = page.locator('link[rel="alternate"][type="application/activity+json"]');
+    const link = page.locator(
+      'link[rel="alternate"][type="application/activity+json"]',
+    );
     await expect(link).toBeAttached();
   });
 });

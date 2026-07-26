@@ -36,7 +36,9 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
  * Wait for any in-flight HTMX requests to complete. Falls back to a
  * short delay if HTMX is not present on the page.
  */
-async function waitForHtmx(page: import("@playwright/test").Page): Promise<void> {
+async function waitForHtmx(
+  page: import("@playwright/test").Page,
+): Promise<void> {
   try {
     await page.waitForFunction(
       () => {
@@ -98,7 +100,10 @@ test.describe("Accessibility: unauthenticated pages", () => {
 
 test.describe("Accessibility: authenticated pages", () => {
   // Skip the entire group if no admin token is available.
-  test.skip(() => ADMIN_TOKEN === "", "ADMIN_TOKEN not set; skipping authenticated-page accessibility tests");
+  test.skip(
+    () => ADMIN_TOKEN === "",
+    "ADMIN_TOKEN not set; skipping authenticated-page accessibility tests",
+  );
 
   test.use({
     extraHTTPHeaders: {
@@ -219,7 +224,10 @@ test.describe("Accessibility: authenticated pages", () => {
 // 3. ADMIN PAGES
 
 test.describe("Accessibility: admin pages", () => {
-  test.skip(() => ADMIN_TOKEN === "", "ADMIN_TOKEN not set; skipping admin-page accessibility tests");
+  test.skip(
+    () => ADMIN_TOKEN === "",
+    "ADMIN_TOKEN not set; skipping admin-page accessibility tests",
+  );
 
   test.use({
     extraHTTPHeaders: {

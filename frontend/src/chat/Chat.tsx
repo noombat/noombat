@@ -22,16 +22,15 @@ import {
   Show,
   type JSX,
 } from "solid-js";
+import { encryptMessage, decryptMessage, decryptAndVerify } from "./crypto";
+import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
 import {
-  encryptMessage,
-  decryptMessage,
-  decryptAndVerify,
-} from "./crypto";
-import {
-  PeerStateTable,
-  parseAutocryptHeader,
-} from "./autocrypt";
-import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
+  decryptBlob,
+  encryptBlob,
+  fetchBlob,
+  storeBlob,
+  type CredentialBlob,
+} from "./blob";
 import { deriveBlobKey } from "../auth";
 
 // ..... Base64 helpers .....
@@ -86,7 +85,8 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     contacts: "Contacts",
     connecting: "Connecting\u2026",
     disconnected: "Disconnected. Reconnecting\u2026",
-    notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
+    notProvisioned:
+      "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
@@ -100,7 +100,8 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     contacts: "Contacts",
     connecting: "Connecting\u2026",
     disconnected: "Disconnected. Reconnecting\u2026",
-    notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
+    notProvisioned:
+      "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
@@ -114,9 +115,11 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     contacts: "Contatos",
     connecting: "Conectando\u2026",
     disconnected: "Desconectado. Reconectando\u2026",
-    notProvisioned: "Para enviar mensagens criptografadas, defina uma senha para sua conta Noombat.",
+    notProvisioned:
+      "Para enviar mensagens criptografadas, defina uma senha para sua conta Noombat.",
     setupChat: "Configurar chat",
-    enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
+    enterPassword:
+      "Digite sua senha Noombat para desbloquear o chat criptografado.",
     unlock: "Desbloquear",
   },
 };
@@ -229,7 +232,9 @@ export default function Chat(props: ChatProps): JSX.Element {
       setNeedsUnlock(false);
       setUnlockPassword("");
       connect();
-      syncTimer = setInterval(() => { void syncPeerState(); }, SYNC_INTERVAL_MS);
+      syncTimer = setInterval(() => {
+        void syncPeerState();
+      }, SYNC_INTERVAL_MS);
       document.addEventListener("visibilitychange", handleVisibilityChange);
     } else {
       setStatus("Incorrect password.");
@@ -247,10 +252,12 @@ export default function Chat(props: ChatProps): JSX.Element {
 
     ws.onopen = () => {
       // Send the Auth handshake with the Chatmail password.
-      ws?.send(JSON.stringify({
-        type: "auth",
-        password: credentials!.chatmailPassword,
-      }));
+      ws?.send(
+        JSON.stringify({
+          type: "auth",
+          password: credentials!.chatmailPassword,
+        }),
+      );
     };
 
     ws.onmessage = (event) => {
@@ -329,11 +336,16 @@ export default function Chat(props: ChatProps): JSX.Element {
     try {
       if (privateKeyBytes) {
         // Look up the sender's public key for signature verification.
-        const senderKey = peerState?.getPublicKey(sender.trim().toLowerCase()) ?? null;
+        const senderKey =
+          peerState?.getPublicKey(sender.trim().toLowerCase()) ?? null;
 
         if (senderKey && senderKey.length > 0) {
           // Decrypt and verify signature against known sender key.
-          const result = await decryptAndVerify(privateKeyBytes, senderKey, ciphertext);
+          const result = await decryptAndVerify(
+            privateKeyBytes,
+            senderKey,
+            ciphertext,
+          );
           body = result.plaintext;
           signatureVerified = result.signatureVerified;
         } else {
@@ -429,11 +441,16 @@ export default function Chat(props: ChatProps): JSX.Element {
     let cipherBytes: Uint8Array;
 
     // Look up the recipient's public key from peer state.
-    const recipientKey = peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
+    const recipientKey =
+      peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
 
     try {
       if (recipientKey && recipientKey.length > 0 && privateKeyBytes) {
-        cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
+        cipherBytes = await encryptMessage(
+          recipientKey,
+          privateKeyBytes,
+          plainBytes,
+        );
       } else {
         // No recipient key available; send plaintext (Chatmail
         // filtermail will reject this, so the user needs to
@@ -572,159 +589,172 @@ export default function Chat(props: ChatProps): JSX.Element {
 
       {/* Main chat interface. */}
       <Show when={!needsProvisioning() && !needsUnlock()}>
-      {/* Status bar */}
-      <Show when={status()}>
-        <div class="noombat-chat__status" role="status">
-          {status()}
-        </div>
-      </Show>
-
-      <div class="noombat-chat__layout">
-        {/* Contact list (drawer on mobile, sidebar on desktop) */}
-        <aside
-          class={`noombat-chat__contacts ${showContacts() ? "noombat-chat__contacts--open" : ""}`}
-          aria-label={strings().contacts}
-        >
-          <h2 class="text-sm font-semibold text-muted px-3 py-2">
-            {strings().contacts}
-          </h2>
-          <Show
-            when={contacts().length > 0}
-            fallback={<p class="px-3 text-sm text-muted">{strings().empty}</p>}
-          >
-            <ul class="space-y-1">
-              <For each={contacts()}>
-                {(addr) => (
-                  <li>
-                    <button
-                      type="button"
-                      class={`w-full text-left px-3 py-2 text-sm hover:bg-surface rounded ${
-                        recipient() === addr ? "bg-surface font-semibold" : ""
-                      }`}
-                      onClick={() => {
-                        setRecipient(addr);
-                        setShowContacts(false);
-                      }}
-                    >
-                      {addr}
-                    </button>
-                  </li>
-                )}
-              </For>
-            </ul>
-          </Show>
-        </aside>
-
-        {/* Conversation */}
-        <section
-          class="noombat-chat__conversation"
-          aria-label={strings().heading}
-        >
-          {/* Mobile: toggle contact list */}
-          <div class="noombat-chat__topbar">
-            <button
-              type="button"
-              class="noombat-chat__drawer-toggle"
-              onClick={() => setShowContacts((v) => !v)}
-              aria-expanded={showContacts()}
-              aria-controls="chat-contacts"
-            >
-              ☰
-            </button>
-            <span class="text-sm font-semibold truncate">
-              {recipient() || strings().heading}
-            </span>
+        {/* Status bar */}
+        <Show when={status()}>
+          <div class="noombat-chat__status" role="status">
+            {status()}
           </div>
+        </Show>
 
-          {/* Message list */}
-          <div class="noombat-chat__messages" role="log" aria-live="polite">
+        <div class="noombat-chat__layout">
+          {/* Contact list (drawer on mobile, sidebar on desktop) */}
+          <aside
+            class={`noombat-chat__contacts ${showContacts() ? "noombat-chat__contacts--open" : ""}`}
+            aria-label={strings().contacts}
+          >
+            <h2 class="text-sm font-semibold text-muted px-3 py-2">
+              {strings().contacts}
+            </h2>
             <Show
-              when={filteredMessages().length > 0}
+              when={contacts().length > 0}
               fallback={
-                <p class="text-center text-muted text-sm py-8">
-                  {strings().empty}
-                </p>
+                <p class="px-3 text-sm text-muted">{strings().empty}</p>
               }
             >
-              <For each={filteredMessages()}>
-                {(msg) => (
-                  <div
-                    class={`noombat-chat__bubble ${msg.outgoing ? "noombat-chat__bubble--outgoing" : ""}`}
-                  >
-                    <p class="text-sm">{msg.body}</p>
-                    <div class="flex items-center gap-2 mt-1">
-                      <time class="text-xs text-muted">
-                        {formatTime(msg.timestamp)}
-                      </time>
-                      {/* Signature / encryption trust indicator */}
-                      <Show when={!msg.outgoing}>
-                        <Show when={msg.signatureVerified === true}>
-                          <span class="text-xs text-green-600" title="Signature verified">
-                            &#x2713; verified
-                          </span>
-                        </Show>
-                        <Show when={msg.signatureVerified === false}>
-                          <span class="text-xs text-amber-600" title="Signature verification failed">
-                            &#x26A0; signature failed
-                          </span>
-                        </Show>
-                        <Show when={msg.signatureVerified === null}>
-                          <span class="text-xs text-gray-400" title="Encrypted (unverified key)">
-                            &#x1F512;
-                          </span>
-                        </Show>
-                      </Show>
-                      <Show when={!msg.outgoing}>
-                        <button
-                          type="button"
-                          class="text-xs text-muted hover:text-red-600"
-                          onClick={() => reportMessage(msg)}
-                        >
-                          {strings().report}
-                        </button>
-                      </Show>
-                    </div>
-                  </div>
-                )}
-              </For>
+              <ul class="space-y-1">
+                <For each={contacts()}>
+                  {(addr) => (
+                    <li>
+                      <button
+                        type="button"
+                        class={`w-full text-left px-3 py-2 text-sm hover:bg-surface rounded ${
+                          recipient() === addr ? "bg-surface font-semibold" : ""
+                        }`}
+                        onClick={() => {
+                          setRecipient(addr);
+                          setShowContacts(false);
+                        }}
+                      >
+                        {addr}
+                      </button>
+                    </li>
+                  )}
+                </For>
+              </ul>
             </Show>
-          </div>
+          </aside>
 
-          {/* Compose */}
-          <div class="noombat-chat__compose">
-            <input
-              type="text"
-              class="noombat-chat__recipient"
-              placeholder="recipient@chat.example.com"
-              value={recipient()}
-              onInput={(e) => setRecipient(e.currentTarget.value)}
-            />
-            <div class="noombat-chat__input-row">
-              <input
-                type="text"
-                class="noombat-chat__input"
-                placeholder={strings().placeholder}
-                value={draft()}
-                onInput={(e) => setDraft(e.currentTarget.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
-                    e.preventDefault();
-                    void sendMessage();
-                  }
-                }}
-              />
+          {/* Conversation */}
+          <section
+            class="noombat-chat__conversation"
+            aria-label={strings().heading}
+          >
+            {/* Mobile: toggle contact list */}
+            <div class="noombat-chat__topbar">
               <button
                 type="button"
-                class="noombat-chat__send"
-                disabled={!connected() || !draft().trim() || !recipient().trim()}
-                onClick={() => void sendMessage()}
+                class="noombat-chat__drawer-toggle"
+                onClick={() => setShowContacts((v) => !v)}
+                aria-expanded={showContacts()}
+                aria-controls="chat-contacts"
               >
-                {strings().send}
+                ☰
               </button>
+              <span class="text-sm font-semibold truncate">
+                {recipient() || strings().heading}
+              </span>
             </div>
-          </div>
-        </section>
-      </div>
+
+            {/* Message list */}
+            <div class="noombat-chat__messages" role="log" aria-live="polite">
+              <Show
+                when={filteredMessages().length > 0}
+                fallback={
+                  <p class="text-center text-muted text-sm py-8">
+                    {strings().empty}
+                  </p>
+                }
+              >
+                <For each={filteredMessages()}>
+                  {(msg) => (
+                    <div
+                      class={`noombat-chat__bubble ${msg.outgoing ? "noombat-chat__bubble--outgoing" : ""}`}
+                    >
+                      <p class="text-sm">{msg.body}</p>
+                      <div class="flex items-center gap-2 mt-1">
+                        <time class="text-xs text-muted">
+                          {formatTime(msg.timestamp)}
+                        </time>
+                        {/* Signature / encryption trust indicator */}
+                        <Show when={!msg.outgoing}>
+                          <Show when={msg.signatureVerified === true}>
+                            <span
+                              class="text-xs text-green-600"
+                              title="Signature verified"
+                            >
+                              &#x2713; verified
+                            </span>
+                          </Show>
+                          <Show when={msg.signatureVerified === false}>
+                            <span
+                              class="text-xs text-amber-600"
+                              title="Signature verification failed"
+                            >
+                              &#x26A0; signature failed
+                            </span>
+                          </Show>
+                          <Show when={msg.signatureVerified === null}>
+                            <span
+                              class="text-xs text-gray-400"
+                              title="Encrypted (unverified key)"
+                            >
+                              &#x1F512;
+                            </span>
+                          </Show>
+                        </Show>
+                        <Show when={!msg.outgoing}>
+                          <button
+                            type="button"
+                            class="text-xs text-muted hover:text-red-600"
+                            onClick={() => reportMessage(msg)}
+                          >
+                            {strings().report}
+                          </button>
+                        </Show>
+                      </div>
+                    </div>
+                  )}
+                </For>
+              </Show>
+            </div>
+
+            {/* Compose */}
+            <div class="noombat-chat__compose">
+              <input
+                type="text"
+                class="noombat-chat__recipient"
+                placeholder="recipient@chat.example.com"
+                value={recipient()}
+                onInput={(e) => setRecipient(e.currentTarget.value)}
+              />
+              <div class="noombat-chat__input-row">
+                <input
+                  type="text"
+                  class="noombat-chat__input"
+                  placeholder={strings().placeholder}
+                  value={draft()}
+                  onInput={(e) => setDraft(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" && !e.shiftKey) {
+                      e.preventDefault();
+                      void sendMessage();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  class="noombat-chat__send"
+                  disabled={
+                    !connected() || !draft().trim() || !recipient().trim()
+                  }
+                  onClick={() => void sendMessage()}
+                >
+                  {strings().send}
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
       </Show>
     </div>
   );

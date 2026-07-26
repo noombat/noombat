@@ -126,10 +126,13 @@ export async function deriveBothKeys(
   const authKey = bufToHex(authBits);
 
   const blobBits = await hkdfExpand(masterKey, "noombat-chat-crypto");
-  const blobKey = await crypto.subtle.importKey("raw", blobBits, "AES-GCM", false, [
-    "encrypt",
-    "decrypt",
-  ]);
+  const blobKey = await crypto.subtle.importKey(
+    "raw",
+    blobBits,
+    "AES-GCM",
+    false,
+    ["encrypt", "decrypt"],
+  );
 
   return { authKey, blobKey };
 }
@@ -152,23 +155,35 @@ function setupLoginForm(): void {
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    const usernameInput = document.getElementById("login-username") as HTMLInputElement;
-    const passwordInput = document.getElementById("login-password") as HTMLInputElement;
-    const authKeyInput = document.getElementById("login-auth-key") as HTMLInputElement;
+    const usernameInput = document.getElementById(
+      "login-username",
+    ) as HTMLInputElement;
+    const passwordInput = document.getElementById(
+      "login-password",
+    ) as HTMLInputElement;
+    const authKeyInput = document.getElementById(
+      "login-auth-key",
+    ) as HTMLInputElement;
 
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
 
     if (!username || !password) return;
 
-    const authKey = await deriveAuthKey(password, username, getInstanceDomain());
+    const authKey = await deriveAuthKey(
+      password,
+      username,
+      getInstanceDomain(),
+    );
     authKeyInput.value = authKey;
 
     // Clear the raw password from the DOM before submission.
     passwordInput.value = "";
 
     // Submit as JSON to the API endpoint.
-    const totpInput = document.getElementById("login-totp") as HTMLInputElement | null;
+    const totpInput = document.getElementById(
+      "login-totp",
+    ) as HTMLInputElement | null;
     const body: Record<string, string> = {
       username,
       auth_key: authKey,
@@ -212,28 +227,48 @@ function setupLoginForm(): void {
  * derive the auth key, and submit.
  */
 function setupRegisterForm(): void {
-  const form = document.getElementById("register-form") as HTMLFormElement | null;
+  const form = document.getElementById(
+    "register-form",
+  ) as HTMLFormElement | null;
   if (!form) return;
 
   form.addEventListener("submit", async (e) => {
     e.preventDefault();
 
-    const usernameInput = document.getElementById("reg-username") as HTMLInputElement;
-    const passwordInput = document.getElementById("reg-password") as HTMLInputElement;
-    const confirmInput = document.getElementById("reg-password-confirm") as HTMLInputElement;
-    const displayNameInput = document.getElementById("reg-display-name") as HTMLInputElement;
-    const authKeyInput = document.getElementById("reg-auth-key") as HTMLInputElement;
+    const usernameInput = document.getElementById(
+      "reg-username",
+    ) as HTMLInputElement;
+    const passwordInput = document.getElementById(
+      "reg-password",
+    ) as HTMLInputElement;
+    const confirmInput = document.getElementById(
+      "reg-password-confirm",
+    ) as HTMLInputElement;
+    const displayNameInput = document.getElementById(
+      "reg-display-name",
+    ) as HTMLInputElement;
+    const authKeyInput = document.getElementById(
+      "reg-auth-key",
+    ) as HTMLInputElement;
 
     const username = usernameInput.value.trim();
     const password = passwordInput.value;
     const confirm = confirmInput.value;
 
     if (password !== confirm) {
-      showError(form, document.documentElement.dataset.passwordMismatch || "Passwords do not match.");
+      showError(
+        form,
+        document.documentElement.dataset.passwordMismatch ||
+          "Passwords do not match.",
+      );
       return;
     }
 
-    const authKey = await deriveAuthKey(password, username, getInstanceDomain());
+    const authKey = await deriveAuthKey(
+      password,
+      username,
+      getInstanceDomain(),
+    );
     authKeyInput.value = authKey;
 
     passwordInput.value = "";
@@ -276,7 +311,8 @@ function showError(form: HTMLFormElement, message: string): void {
   if (!alert) {
     alert = document.createElement("div");
     alert.setAttribute("role", "alert");
-    alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
+    alert.className =
+      "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
     form.prepend(alert);
   }
   alert.textContent = message;

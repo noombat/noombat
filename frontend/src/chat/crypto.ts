@@ -90,7 +90,9 @@ export async function decryptMessage(
   privateKeyBytes: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<Uint8Array> {
-  const privateKey = await openpgp.readPrivateKey({ binaryKey: privateKeyBytes });
+  const privateKey = await openpgp.readPrivateKey({
+    binaryKey: privateKeyBytes,
+  });
   const message = await openpgp.readMessage({ binaryMessage: ciphertext });
 
   const { data } = await openpgp.decrypt({
@@ -130,7 +132,9 @@ export async function decryptAndVerify(
   senderKeyBytes: Uint8Array,
   ciphertext: Uint8Array,
 ): Promise<DecryptAndVerifyResult> {
-  const privateKey = await openpgp.readPrivateKey({ binaryKey: privateKeyBytes });
+  const privateKey = await openpgp.readPrivateKey({
+    binaryKey: privateKeyBytes,
+  });
   const senderKey = await openpgp.readKey({ binaryKey: senderKeyBytes });
   const message = await openpgp.readMessage({ binaryMessage: ciphertext });
 
