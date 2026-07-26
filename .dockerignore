@@ -1,0 +1,29 @@
+# Rust build output (built inside the container).
+target/
+
+# Frontend build output (built inside the container by the
+# frontend stage; host-side artifacts must not leak into the
+# image and shadow the production build).
+frontend/dist/
+frontend/node_modules/
+
+# Version control and editor files.
+.git/
+.gitignore
+*.swp
+*.swo
+.DS_Store
+
+# Environment files (may contain secrets).
+.env
+.env.test
+
+# CI and documentation (not needed at runtime).
+.github/
+docs/
+tests/
+*.md
+!README.md
+
+# SQLx offline cache.
+.sqlx/

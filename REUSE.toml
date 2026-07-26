@@ -29,6 +29,7 @@ path = [
     ".env.example",
     ".env.test",
     ".gitignore",
+    ".dockerignore",
     # Database migrations.
     "migrations/**",
     # Typst CV templates.
