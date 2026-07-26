@@ -32,6 +32,7 @@ CREATE TABLE actors (
     orcid                        TEXT,
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
     headline                     TEXT,
+    location                     TEXT, -- free-text location (e.g. "Berlin, Germany")
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),

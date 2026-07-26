@@ -248,6 +248,7 @@ async fn get_actor(
         username: actor.username.clone(),
         display_name,
         headline: actor.headline.clone().unwrap_or_default(),
+        location: actor.location.clone().unwrap_or_default(),
         summary_html: actor.summary_html.clone().unwrap_or_default(),
         domain: state.domain.clone(),
         indexable: actor.actor_privacy.indexable,
@@ -636,6 +637,7 @@ async fn post_outbox(
 struct PatchActorBody {
     display_name: Option<String>,
     headline: Option<String>,
+    location: Option<String>,
     summary_md: Option<String>,
 }
 
@@ -658,6 +660,7 @@ async fn patch_actor(
     let params = noombat_identity::repo::UpdateActor {
         display_name: body.display_name.map(Some),
         headline: body.headline.map(Some),
+        location: body.location.map(Some),
         summary_md: body.summary_md.map(Some),
         summary_html: summary_html.map(Some),
         avatar_url: None,
@@ -796,6 +799,7 @@ struct ProfilePage {
     username: String,
     display_name: String,
     headline: String,
+    location: String,
     summary_html: String,
     domain: String,
     /// When `false`, emit `<meta name="robots" content="noindex">`.

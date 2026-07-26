@@ -68,6 +68,8 @@ pub struct Actor {
     pub display_name: Option<String>,
     /// Professional headline (e.g. "Senior Rust Engineer at Acme Corp").
     pub headline: Option<String>,
+    /// Free-text location (e.g. "Berlin, Germany").
+    pub location: Option<String>,
     pub avatar_url: Option<String>,
     pub header_url: Option<String>,
     /// (Markdown and KaTeX) source for the profile summary.

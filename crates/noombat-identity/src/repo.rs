@@ -30,6 +30,7 @@ struct ActorRow {
     username: String,
     display_name: Option<String>,
     headline: Option<String>,
+    location: Option<String>,
     avatar_url: Option<String>,
     header_url: Option<String>,
     summary_md: Option<String>,
@@ -64,6 +65,7 @@ impl ActorRow {
             username: self.username,
             display_name: self.display_name,
             headline: self.headline,
+            location: self.location,
             avatar_url: self.avatar_url,
             header_url: self.header_url,
             summary_md: self.summary_md,
@@ -144,6 +146,7 @@ where
         username: row.username,
         display_name: row.display_name,
         headline: None,
+        location: None,
         avatar_url: None,
         header_url: None,
         summary_md: None,
@@ -172,7 +175,7 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               headline, avatar_url, header_url, summary_md, summary_html,
+               headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
@@ -194,7 +197,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               headline, avatar_url, header_url, summary_md, summary_html,
+               headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
@@ -549,6 +552,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
 pub struct UpdateActor {
     pub display_name: Option<Option<String>>,
     pub headline: Option<Option<String>>,
+    pub location: Option<Option<String>>,
     pub summary_md: Option<Option<String>>,
     pub summary_html: Option<Option<String>>,
     pub avatar_url: Option<Option<String>>,
@@ -577,6 +581,10 @@ pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -
         Some(inner) => inner.as_deref(),
         None => current.headline.as_deref(),
     };
+    let location = match &params.location {
+        Some(inner) => inner.as_deref(),
+        None => current.location.as_deref(),
+    };
     let summary_md = match &params.summary_md {
         Some(inner) => inner.as_deref(),
         None => current.summary_md.as_deref(),
@@ -598,15 +606,17 @@ pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -
         r#"UPDATE actors SET
                display_name = $2,
                headline = $3,
-               summary_md = $4,
-               summary_html = $5,
-               avatar_url = $6,
-               header_url = $7
+               location = $4,
+               summary_md = $5,
+               summary_html = $6,
+               avatar_url = $7,
+               header_url = $8
            WHERE id = $1 AND is_local = TRUE"#,
     )
     .bind(actor_id)
     .bind(display_name)
     .bind(headline)
+    .bind(location)
     .bind(summary_md)
     .bind(summary_html)
     .bind(avatar_url)
@@ -622,7 +632,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
-               headline, avatar_url, header_url, summary_md, summary_html,
+               headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
@@ -767,6 +777,7 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         r#"UPDATE actors SET
                display_name = NULL,
                headline = NULL,
+               location = NULL,
                avatar_url = NULL,
                header_url = NULL,
                summary_md = NULL,

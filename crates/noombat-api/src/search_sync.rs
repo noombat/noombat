@@ -69,12 +69,7 @@ pub fn index_profile(
         "education_institutions": data.education_institutions,
         "education_fields": data.education_fields,
         "publication_titles": data.publication_titles,
-        // TODO: the `actors` table has no dedicated `location` column.
-        // `headline` is used as a best-effort placeholder; it may contain
-        // geographic tokens (e.g. "Senior Rust Engineer at Acme Corp, Berlin")
-        // but is semantically a professional tagline, not a location. Replace
-        // with a dedicated column when the schema is extended.
-        "location": actor.headline,
+        "location": actor.location,
         "orcid": actor.orcid,
         "actor_type": format!("{:?}", actor.actor_type),
         "username": actor.username,

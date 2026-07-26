@@ -27,6 +27,14 @@
             </div>
 
             <div>
+                <label for="location" class="block text-sm mb-1">{{ i18n.t("edit_location") }}</label>
+                <input id="location" name="location" type="text"
+                       value="{{ location }}"
+                       placeholder="Berlin, Germany"
+                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+            </div>
+
+            <div>
                 <label for="summary" class="block text-sm mb-1">{{ i18n.t("edit_summary") }}</label>
                 <div id="editor-mount"
                      data-name="summary_md"

@@ -468,6 +468,7 @@ mod tests {
             username: "alice".into(),
             display_name: Some("Alice".into()),
             headline: None,
+            location: None,
             avatar_url: None,
             header_url: None,
             summary_md: None,

@@ -251,6 +251,7 @@ mod tests {
             username: String::new(),
             display_name: None,
             headline: None,
+            location: None,
             avatar_url: None,
             header_url: None,
             summary_md: None,

@@ -109,6 +109,7 @@ struct EditProfilePage {
     username: String,
     display_name: String,
     headline: String,
+    location: String,
     summary_md: String,
     avatar_url: String,
 }
@@ -482,28 +483,31 @@ async fn edit_profile_page(
         return Redirect::temporary("/auth/login").into_response();
     };
     let uname = nav_username(&principal);
-    let row =
-        sqlx::query_as::<
-            _,
-            (
-                Option<String>,
-                Option<String>,
-                Option<String>,
-                Option<String>,
-            ),
-        >("SELECT display_name, headline, summary_md, avatar_url FROM actors WHERE id = $1")
-        .bind(actor_id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or_default();
+    let row = sqlx::query_as::<
+        _,
+        (
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT display_name, headline, location, summary_md, avatar_url FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or_default();
     EditProfilePage {
         i18n,
         nav_username: uname.clone(),
         username: uname,
         display_name: row.0.unwrap_or_default(),
         headline: row.1.unwrap_or_default(),
-        summary_md: row.2.unwrap_or_default(),
-        avatar_url: row.3.unwrap_or_default(),
+        location: row.2.unwrap_or_default(),
+        summary_md: row.3.unwrap_or_default(),
+        avatar_url: row.4.unwrap_or_default(),
     }
     .into_response()
 }

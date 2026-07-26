@@ -19,6 +19,9 @@
             {% if !headline.is_empty() %}
             <p class="text-base text-muted mt-1">{{ headline }}</p>
             {% endif %}
+            {% if !location.is_empty() %}
+            <p class="text-sm text-muted mt-1">📍 {{ location }}</p>
+            {% endif %}
             <p class="text-muted text-sm"
                aria-label="{{ i18n.t("aria_fediverse_handle") }}">
                 @{{ username }}@{{ domain }}
