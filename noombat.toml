@@ -34,6 +34,12 @@ admin_token = "noombat"
 chatmail_domain = "chat.localhost"
 chatmail_available = true
 
+# Chat WebSocket idle timeout in seconds (default: 900 = 15 min).
+# When the WebSocket session is idle for longer than this duration,
+# the server closes the connection and clears the Chatmail password
+# from memory.
+chat_idle_timeout_secs = 900
+
 # Chatmail admin sidecar REST API URL (internal-only).
 # Required for suspension/unsuspension orchestration and
 # chat moderation enforcement.

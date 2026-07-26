@@ -89,7 +89,15 @@ pub struct RelayConfig {
     pub smtp_host: String,
     /// Chatmail SMTP port (default: 465, SMTPS).
     pub smtp_port: u16,
+    /// Idle timeout in seconds. When the WebSocket session is idle
+    /// (no inbound client messages) for longer than this duration,
+    /// the server closes the WebSocket, discards the Chatmail
+    /// password from memory, and terminates the IMAP session.
+    pub idle_timeout_secs: u64,
 }
+
+/// Default idle timeout: 900 seconds (15 minutes).
+pub const DEFAULT_IDLE_TIMEOUT_SECS: u64 = 900;
 
 impl RelayConfig {
     /// Construct a relay configuration from a Chatmail domain.
@@ -99,7 +107,48 @@ impl RelayConfig {
             imap_port: 993,
             smtp_host: chatmail_domain.to_owned(),
             smtp_port: 465,
+            idle_timeout_secs: DEFAULT_IDLE_TIMEOUT_SECS,
         }
+    }
+}
+
+/// Track the last-activity timestamp for idle timeout enforcement.
+///
+/// The WebSocket relay handler must call `touch()` on every inbound
+/// client message and check `is_expired()` periodically (e.g. on a
+/// tokio interval tick). When `is_expired()` returns `true`, the
+/// handler must close the WebSocket, clear the Chatmail password
+/// from memory, and optionally call the `noombat-chatmail-admin`
+/// sidecar's `kick` endpoint to terminate the IMAP session.
+#[derive(Debug)]
+pub struct IdleTimer {
+    last_activity: std::time::Instant,
+    timeout: std::time::Duration,
+}
+
+impl IdleTimer {
+    /// Create a new idle timer with the given timeout.
+    pub fn new(timeout_secs: u64) -> Self {
+        Self {
+            last_activity: std::time::Instant::now(),
+            timeout: std::time::Duration::from_secs(timeout_secs),
+        }
+    }
+
+    /// Record activity (call on every inbound client message).
+    pub fn touch(&mut self) {
+        self.last_activity = std::time::Instant::now();
+    }
+
+    /// Check whether the idle timeout has elapsed.
+    pub fn is_expired(&self) -> bool {
+        self.last_activity.elapsed() >= self.timeout
+    }
+
+    /// Return the remaining duration before timeout, for use with
+    /// `tokio::time::sleep_until`.
+    pub fn remaining(&self) -> std::time::Duration {
+        self.timeout.saturating_sub(self.last_activity.elapsed())
     }
 }
 
