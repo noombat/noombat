@@ -259,10 +259,6 @@ jobs:
           pnpm install
           pnpm build
 
-      - name: Build WASM chat module
-        working-directory: frontend
-        run: pnpm build:wasm
-
       - name: Upload release binary
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:

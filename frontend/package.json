@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "build:wasm": "wasm-pack build --target web --out-dir ../../frontend/src/chat/wasm ../crates/noombat-wasm",
     "preview": "vite preview",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit"
@@ -16,6 +15,7 @@
     "htmx.org": "^2.0.0",
     "katex": "^0.16.22",
     "markdown-it": "^14.1.0",
+    "openpgp": "^6.0.0",
     "solid-js": "^1.9.0"
   },
   "devDependencies": {

@@ -5,6 +5,4 @@
 .DS_Store
 node_modules/
 frontend/dist/
-frontend/src/chat/wasm/
-!frontend/src/chat/wasm/noombat_wasm.d.ts
 .sqlx/

@@ -11,8 +11,6 @@ members = [
     "crates/noombat-events",
     "crates/noombat-chat",
     "crates/noombat-chatmail-admin",
-    "crates/noombat-autocrypt",
-    "crates/noombat-wasm",
     "crates/noombat-api",
     "crates/noombat-server",
 ]
@@ -34,7 +32,6 @@ noombat-jobs = { path = "crates/noombat-jobs", version = "0.1.0" }
 noombat-groups = { path = "crates/noombat-groups", version = "0.1.0" }
 noombat-events = { path = "crates/noombat-events", version = "0.1.0" }
 noombat-chat = { path = "crates/noombat-chat", version = "0.1.0" }
-noombat-autocrypt = { path = "crates/noombat-autocrypt", version = "0.1.0" }
 noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 
 # HTTP framework.
@@ -112,9 +109,6 @@ urlencoding = "2"
 # Temporary files (CV generation).
 tempfile = "3"
 
-# OpenPGP (rPGP, compiled to WASM for browser-side encryption).
-pgp = { version = "0.20", default-features = false, features = ["wasm"] }
-
 # Constant-time comparison (admin token verification).
 subtle = "2"
 
@@ -173,7 +167,3 @@ opt-level = 2
 
 [profile.dev.package.num-bigint-dig]
 opt-level = 3
-
-# Optimise the WASM bridge crate for size in release builds.
-[profile.release.package.noombat-wasm]
-opt-level = "s"

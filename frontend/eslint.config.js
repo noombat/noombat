@@ -9,7 +9,7 @@ import solid from "eslint-plugin-solid/configs/typescript";
 
 export default tseslint.config(
   // Global ignores.
-  { ignores: ["src/chat/wasm/**", "dist/**"] },
+  { ignores: ["dist/**"] },
 
   // Base: ESLint recommended rules.
   js.configs.recommended,
