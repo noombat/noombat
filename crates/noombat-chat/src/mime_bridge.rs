@@ -4,8 +4,8 @@
 //!
 //! The `noombat-chat` proxy handles all MIME framing server-side
 //! using `mailparse` (parsing) and `lettre` (construction). The
-//! browser-side WASM module processes only parsed header data and
-//! ciphertext, never raw MIME.
+//! browser-side crypto module processes only parsed header data
+//! and ciphertext, never raw MIME.
 
 use noombat_core::error::{NoombatError, Result};
 

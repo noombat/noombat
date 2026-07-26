@@ -3,10 +3,6 @@
 # Runs TypeScript type checking and ESLint linting on changes to
 # frontend source, configuration, or this workflow file. Complements
 # ci.yml (Rust-focused) and ci-e2e.yml (browser integration tests).
-#
-# Does not build the WASM module: type checking uses the committed
-# .d.ts declarations. The WASM binary is built and tested in
-# ci-e2e.yml and container-build.yml.
 
 name: CI (Frontend)
 

@@ -10,10 +10,6 @@
 #   - Podman with `podman-compose` or Docker with Docker Compose
 #   - sqlx-cli: `cargo install sqlx-cli --no-default-features --features rustls,postgres`
 #
-# Optional (for encrypted chat WASM module):
-#   - wasm-pack: `cargo install wasm-pack`
-#   - wasm32-unknown-unknown target: `rustup target add wasm32-unknown-unknown`
-#
 # Usage:
 #   chmod +x scripts/dev-setup.sh
 #   ./scripts/dev-setup.sh
@@ -58,16 +54,6 @@ command -v sqlx >/dev/null 2>&1 || {
     info "Installing sqlx-cli..."
     cargo install sqlx-cli --no-default-features --features rustls,postgres
 }
-
-# Check optional WASM prerequisites.
-HAS_WASM_PACK=false
-if command -v wasm-pack >/dev/null 2>&1; then
-    HAS_WASM_PACK=true
-else
-    warn "wasm-pack not found; WASM chat module will be skipped."
-    warn "  Install with: cargo install wasm-pack"
-    warn "  Add target:   rustup target add wasm32-unknown-unknown"
-fi
 
 # ..... ENVIRONMENT FILE .....
 
@@ -134,14 +120,6 @@ fi
 info "Installing frontend dependencies..."
 (cd frontend && pnpm install)
 
-if [ "$HAS_WASM_PACK" = true ]; then
-    info "Building WASM chat module..."
-    (cd frontend && pnpm build:wasm)
-else
-    warn "Skipping WASM build (wasm-pack not installed)."
-    warn "The chat island will fall back to plaintext pass-through."
-fi
-
 info "Building frontend assets..."
 (cd frontend && pnpm build)
 
@@ -158,6 +136,3 @@ cargo test --workspace
 # ..... DONE .....
 
 info "Setup complete. Start the server with:  cargo run --bin noombat"
-if [ "$HAS_WASM_PACK" = false ]; then
-    warn "Note: encrypted chat is unavailable until wasm-pack is installed and the WASM module is built."
-fi

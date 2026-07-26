@@ -7,7 +7,7 @@ Development and maintenance scripts for the Noombat workspace.
 | Script              | Purpose                     | When to use                                                |
 |---------------------|-----------------------------|------------------------------------------------------------|
 | `dev-setup.sh`      | First-time onboarding       | Once, after cloning the repository                         |
-| `build.sh`          | Full build pipeline         | After modifying Rust, frontend, or WASM source             |
+| `build.sh`          | Full build pipeline         | After modifying Rust or frontend source                    |
 | `clean.sh`          | Remove all build artifacts  | Before a clean rebuild or to reclaim disk space            |
 | `test.sh`           | Run all verification checks | Before committing or pushing                               |
 | `smoke-test.sh`     | Black-box HTTP tests        | After starting the server, to verify it responds correctly |
@@ -16,7 +16,7 @@ Development and maintenance scripts for the Noombat workspace.
 ## `dev-setup.sh`
 
 One-command developer onboarding.
-Checks prerequisites, starts infrastructure services (PostgreSQL, Redis, Meilisearch) via Compose, creates the database, runs migrations, installs frontend dependencies, builds the WASM chat module (if `wasm-pack` is available), builds frontend assets, compiles the Rust workspace, and runs the test suite.
+Checks prerequisites, starts infrastructure services (PostgreSQL, Redis, Meilisearch) via Compose, creates the database, runs migrations, installs frontend dependencies, builds frontend assets, compiles the Rust workspace, and runs the test suite.
 
 ```sh
 ./scripts/dev-setup.sh
@@ -27,12 +27,11 @@ Subsequent builds use `build.sh` instead.
 
 ## `build.sh`
 
-Compiles the entire workspace: frontend dependencies, WASM module, frontend assets (Vite), and the Rust server binary.
+Compiles the entire workspace: frontend dependencies, frontend assets (Vite), and the Rust server binary.
 
 ```sh
 ./scripts/build.sh            # debug build
 ./scripts/build.sh --release  # release build
-./scripts/build.sh --no-wasm  # skip the WASM step
 ```
 
 Does not start infrastructure or run migrations.
@@ -40,7 +39,7 @@ Assumes `dev-setup.sh` has been run at least once (or the equivalent manual step
 
 ## `clean.sh`
 
-Removes all build artifacts: `target/` (Cargo), `frontend/node_modules/`, `frontend/dist/` (Vite), the WASM build output (preserving the committed `noombat_wasm.d.ts` declaration file), and `.sqlx/` (offline query cache).
+Removes all build artifacts: `target/` (Cargo), `frontend/node_modules/`, `frontend/dist/` (Vite), and `.sqlx/` (offline query cache).
 
 ```sh
 ./scripts/clean.sh

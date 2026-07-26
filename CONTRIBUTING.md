@@ -8,12 +8,6 @@ This document describes the development environment, conventions, and workflows.
 ### Prerequisites
 
 Install the tools listed in the [README](README.md#prerequisites).
-For the full development workflow (including the WASM chat module), also install:
-
-```sh
-cargo install wasm-pack
-rustup target add wasm32-unknown-unknown
-```
 
 ### First-time setup
 
@@ -33,16 +27,13 @@ sqlx migrate run --source migrations/
 # Build frontend assets.
 cd frontend && pnpm install && pnpm build && cd ..
 
-# (Optional) Build the WASM chat module.
-cd frontend && pnpm build:wasm && cd ..
-
 # Run the server.
 cargo run --bin noombat
 ```
 
 ## Crate Architecture
 
-The workspace comprises fourteen crates.
+The workspace comprises twelve crates.
 The dependency graph flows downward; no upward or circular dependencies exist.
 
 ```
@@ -59,9 +50,6 @@ noombat-server                 (binary entry point)
               └── noombat-core (domain types, error types, traits)
 
 noombat-chatmail-admin         (Chatmail relay admin sidecar daemon, independent binary)
-
-noombat-wasm                   (WASM bridge, compiled separately via wasm-pack)
-  └── noombat-autocrypt        (Autocrypt Level 1 state machine, no_std)
 ```
 
 ## Code Conventions
@@ -76,7 +64,6 @@ Third-party crates that use `unsafe` internally are acceptable when well-audited
 
 Each crate should declare only the workspace dependencies it actually uses.
 The `subtle` crate (constant-time comparison) is consumed only by `noombat-api` (admin token verification in `auth.rs` and `middleware.rs`); it must not be added to other crates without a concrete use site.
-The `pgp` crate (rPGP) is consumed only by `noombat-wasm`; the `noombat-autocrypt` crate uses `Vec<u8>` for key material to preserve its `#![no_std]` constraint.
 
 ### Authorisation
 
@@ -130,7 +117,7 @@ Do not store raw Markdown in the `*_html` column.
 ### Commit messages
 
 Follow the [Conventional Commits](https://www.conventionalcommits.org/) specification.
-Common scopes: `identity`, `chat`, `autocrypt`, `wasm`, `api`, `frontend`, `federation`.
+Common scopes: `identity`, `chat`, `autocrypt`, `api`, `frontend`, `federation`.
 
 ## Frontend
 
@@ -150,22 +137,10 @@ Discrete interactive components (the Markdown editor, the chat interface) are co
 | `editor` | `src/editor/index.tsx` | `assets/editor.js` | Markdown + KaTeX live-preview editor.                   |
 | `chat`   | `src/chat/index.tsx`   | `assets/chat.js`   | Real-time encrypted chat island.                        |
 
-### WASM module
+### Encryption and Autocrypt
 
-The chat island loads the `noombat-wasm` WebAssembly module at runtime via a dynamic `import()` in `crypto.ts`.
-If the module is not present (the `wasm-pack` build step has not been run), the island falls back to a plaintext pass-through.
-The `noombat-wasm` crate uses the `pgp` crate (rPGP) with the `wasm` feature for real OpenPGP encryption, decryption, and key generation.
-The `noombat-autocrypt` crate (`no_std`) uses `Vec<u8>` for key material; type conversion to/from rPGP's `SignedPublicKey`/`SignedSecretKey` occurs at the `noombat-wasm` boundary.
-The TypeScript declaration file `wasm/noombat_wasm.d.ts` allows type-checking to succeed without the build artifact.
-
-Build the module:
-
-```sh
-cd frontend
-pnpm build:wasm
-```
-
-Rebuild after modifying `crates/noombat-wasm/` or `crates/noombat-autocrypt/`.
+The chat island uses [OpenPGP.js](https://openpgpjs.org/) (v6) for all cryptographic operations (key generation, encryption, decryption, signature verification) and a purpose-built TypeScript Autocrypt Level 1 state machine (`autocrypt.ts`) for peer key management.
+The `openpgp` npm package is a standard `pnpm install` dependency.
 
 ## Testing
 

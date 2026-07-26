@@ -37,11 +37,6 @@ and exchange end-to-end encrypted direct messages via an integrated Chatmail rel
 - pnpm ≥ 9
 - Podman with `podman-compose` or Docker with Docker Compose
 
-Optional (required only for the encrypted chat WASM module):
-
-- wasm-pack (`cargo install wasm-pack`)
-- The `wasm32-unknown-unknown` Rust target (`rustup target add wasm32-unknown-unknown`)
-
 ## Quick Start
 
 ```sh
@@ -76,25 +71,6 @@ cargo run --bin noombat
 
 The server listens on `http://localhost:8443` by default.
 
-### Building the WASM chat module (optional)
-
-The encrypted chat interface uses a WebAssembly module compiled from the `noombat-wasm` crate.
-This step is optional: if the WASM module is not present, the chat island falls back to plaintext pass-through.
-
-```sh
-# Install the prerequisites (once).
-cargo install wasm-pack
-rustup target add wasm32-unknown-unknown
-
-# Build the WASM module.
-cd frontend
-pnpm build:wasm
-cd ..
-```
-
-The build output is placed in `frontend/src/chat/wasm/` (gitignored).
-Rebuild after modifying `crates/noombat-wasm/` or `crates/noombat-autocrypt/`.
-
 ## Project Structure
 
 ```
@@ -109,16 +85,14 @@ noombat/
 │   ├── noombat-jobs/             # Job listing CRUD, search, and matching.
 │   ├── noombat-groups/           # Group actor logic, membership, and redistribution.
 │   ├── noombat-events/           # Event CRUD, RSVP, and calendar feeds.
-│   ├── noombat-autocrypt/        # Autocrypt Level 1 state machine (no_std, WASM-compatible).
 │   ├── noombat-chat/             # IMAP/SMTP ciphertext relay for Chatmail, provisioning, moderation.
 │   ├── noombat-chatmail-admin/   # Chatmail relay admin sidecar daemon (independent binary).
-│   ├── noombat-wasm/             # WASM bridge: (Autocrypt state and rPGP stubs) compiled via wasm-pack.
 │   ├── noombat-api/              # Axum routes, Askama templates, session cookies, middleware, i18n.
 │   └── noombat-server/           # Binary entry point, configuration, and migration runner.
 ├── frontend/                     # SolidJS islands, HTMX assets, and auth scripts (pnpm).
 │   └── src/
 │       ├── auth.ts               # Client-side split key derivation and token refresh.
-│       ├── chat/                 # SolidJS chat island, WASM crypto loader, credential blob lifecycle.
+│       ├── chat/                 # SolidJS chat island, OpenPGP.js crypto, Autocrypt state machine, credential blob.
 │       ├── editor/               # SolidJS (Markdown and KaTeX) editor island.
 │       └── htmx.ts               # HTMX bundled entry point.
 ├── migrations/                   # SQL migrations (sqlx).
@@ -298,22 +272,6 @@ pnpm dev
 
 # Production build (outputs to frontend/dist/).
 pnpm build
-```
-
-### WASM module
-
-```sh
-# Build the chat crypto WASM module.
-cd frontend
-pnpm build:wasm
-
-# This runs:
-#   wasm-pack build --target web \
-#     --out-dir ../../frontend/src/chat/wasm \
-#     crates/noombat-wasm
-#
-# Output: frontend/src/chat/wasm/ (gitignored).
-# Rebuild after modifying crates/noombat-wasm/ or crates/noombat-autocrypt/.
 ```
 
 ### Chat interoperability tests
