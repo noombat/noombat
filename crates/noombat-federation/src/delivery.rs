@@ -154,6 +154,9 @@ pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
 /// delivery cycle) rather than inside the signing closure (which
 /// would re-parse on every invocation). The Ed25519 private key is
 /// decoded from Base64 for integrity proof attachment.
+///
+/// Private key columns are decrypted via the process-global envelope
+/// key before use.
 async fn fetch_signing_credentials(
     pool: &PgPool,
     actor_id: Uuid,
@@ -166,11 +169,14 @@ async fn fetch_signing_credentials(
     .await
     .map_err(noombat_core::error::NoombatError::from)?;
 
-    let private_key_pem = row.1.ok_or_else(|| {
+    let sealed_pem = row.1.ok_or_else(|| {
         noombat_core::error::NoombatError::Internal(
             "delivery actor has no private key (remote actor in delivery queue?)".into(),
         )
     })?;
+
+    // Decrypt the RSA private key from the database.
+    let private_key_pem = noombat_core::envelope::open_auto(&sealed_pem)?;
 
     let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
         noombat_core::error::NoombatError::Internal(format!(
@@ -179,19 +185,22 @@ async fn fetch_signing_credentials(
         ))
     })?;
 
-    // Decode the Ed25519 private key (Base64 to 32 bytes) if available.
+    // Decrypt and decode the Ed25519 private key (Base64 to 32 bytes) if available.
     let ed25519_private_key = match row.2 {
-        Some(ref b64) => match crate::integrity_proof::decode_private_key_base64(b64) {
-            Ok(key_bytes) => Some(key_bytes),
-            Err(e) => {
-                warn!(
-                    actor = %row.0,
-                    "failed to decode Ed25519 private key: {e}; \
-                     integrity proofs will not be attached"
-                );
-                None
+        Some(ref sealed_b64) => {
+            let b64 = noombat_core::envelope::open_auto(sealed_b64)?;
+            match crate::integrity_proof::decode_private_key_base64(&b64) {
+                Ok(key_bytes) => Some(key_bytes),
+                Err(e) => {
+                    warn!(
+                        actor = %row.0,
+                        "failed to decode Ed25519 private key: {e}; \
+                         integrity proofs will not be attached"
+                    );
+                    None
+                }
             }
-        },
+        }
         None => None,
     };
 

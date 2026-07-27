@@ -3,6 +3,7 @@
 //! Actor repository: CRUD operations against the `actors` table.
 
 use noombat_core::actor::{Actor, ActorStatus, ActorType, InstanceRole, NewActor};
+use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::privacy::ActorPrivacy;
 use sqlx::{FromRow, PgPool};
@@ -55,8 +56,16 @@ struct ActorRow {
 
 impl ActorRow {
     /// Convert the database row into the domain [`Actor`] type.
+    ///
+    /// Private key fields are decrypted via the process-global
+    /// envelope key (see [`envelope::open_auto_field`]).
     fn into_actor(self) -> Result<Actor> {
         let actor_privacy: ActorPrivacy = serde_json::from_value(self.actor_privacy)?;
+
+        // Decrypt private key columns. When the KEK is not set
+        // (development mode) the values pass through unchanged.
+        let private_key_pem = envelope::open_auto_field(self.private_key_pem)?;
+        let ed25519_private_key = envelope::open_auto_field(self.ed25519_private_key)?;
 
         Ok(Actor {
             id: self.id,
@@ -71,9 +80,9 @@ impl ActorRow {
             summary_md: self.summary_md,
             summary_html: self.summary_html,
             public_key_pem: self.public_key_pem,
-            private_key_pem: self.private_key_pem,
+            private_key_pem,
             ed25519_public_key: self.ed25519_public_key,
-            ed25519_private_key: self.ed25519_private_key,
+            ed25519_private_key,
             domain: self.domain,
             is_local: self.is_local,
             inbox_url: self.inbox_url,
@@ -115,6 +124,10 @@ where
     let privacy = ActorPrivacy::default();
     let privacy_json = serde_json::to_value(&privacy)?;
 
+    // Encrypt private key columns before writing to the database.
+    let sealed_rsa = envelope::seal_auto(&params.private_key_pem)?;
+    let sealed_ed25519 = envelope::seal_auto(&params.ed25519_private_key)?;
+
     let row = sqlx::query_as::<_, InsertedActorRow>(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, domain,
@@ -132,13 +145,15 @@ where
     .bind(&params.display_name)
     .bind(&params.domain)
     .bind(&params.public_key_pem)
-    .bind(&params.private_key_pem)
+    .bind(&sealed_rsa)
     .bind(&params.ed25519_public_key)
-    .bind(&params.ed25519_private_key)
+    .bind(&sealed_ed25519)
     .bind(&privacy_json)
     .fetch_one(executor)
     .await?;
 
+    // Return the actor with plaintext keys in memory (the database
+    // stores the encrypted form).
     Ok(Actor {
         id: row.id,
         actor_type: params.actor_type,

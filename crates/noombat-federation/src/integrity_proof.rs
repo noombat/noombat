@@ -472,7 +472,7 @@ impl noombat_core::extension::FederationSignature for EddsaJcs2022Signer {
                 .await
                 .map_err(NoombatError::from)?;
 
-        let (ap_id, ed25519_private) = match row {
+        let (ap_id, sealed_ed25519) = match row {
             Some((ap_id, Some(key))) => (ap_id, key),
             _ => {
                 debug!(
@@ -482,6 +482,9 @@ impl noombat_core::extension::FederationSignature for EddsaJcs2022Signer {
                 return Ok(());
             }
         };
+
+        // Decrypt the Ed25519 private key from the database.
+        let ed25519_private = noombat_core::envelope::open_auto(&sealed_ed25519)?;
 
         let private_key_bytes = decode_private_key_base64(&ed25519_private)?;
         let verification_method = format!("{ap_id}#ed25519-key");

@@ -92,7 +92,7 @@ pub async fn signed_get(
     .await
     .map_err(NoombatError::from)?;
 
-    let (ap_id, private_key_pem) = match row {
+    let (ap_id, sealed_pem) = match row {
         Some((ap_id, Some(pem))) => (ap_id, pem),
         _ => {
             // No signing key available; fall back to unsigned fetch.
@@ -103,6 +103,9 @@ pub async fn signed_get(
             return unsigned_get(http_client, url).await;
         }
     };
+
+    // Decrypt the private key from the database.
+    let private_key_pem = noombat_core::envelope::open_auto(&sealed_pem)?;
 
     let key_id = format!("{ap_id}#main-key");
 

@@ -6,6 +6,7 @@
 //! rendering as a QR code. Verification checks the submitted code
 //! against the stored secret with a +/- 1 time step tolerance.
 
+use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use serde::Serialize;
 use sqlx::PgPool;
@@ -53,6 +54,9 @@ pub async fn enrol_totp(
     let totp = build_totp(&secret_base32, username, issuer)?;
     let otpauth_uri = totp.get_url();
 
+    // Encrypt the secret before writing to the database.
+    let sealed_secret = envelope::seal_auto(&secret_base32)?;
+
     // Upsert: replace any prior unverified secret.
     sqlx::query(
         r#"INSERT INTO totp_secrets (actor_id, secret, verified)
@@ -61,7 +65,7 @@ pub async fn enrol_totp(
            DO UPDATE SET secret = $2, verified = FALSE, created_at = now()"#,
     )
     .bind(actor_id)
-    .bind(&secret_base32)
+    .bind(&sealed_secret)
     .execute(pool)
     .await?;
 
@@ -84,7 +88,10 @@ pub async fn verify_totp(pool: &PgPool, actor_id: Uuid, code: &str) -> Result<()
     .await?
     .ok_or(NoombatError::Forbidden)?;
 
-    let (secret_base32, verified) = row;
+    let (sealed_secret, verified) = row;
+
+    // Decrypt the secret from the database.
+    let secret_base32 = envelope::open_auto(&sealed_secret)?;
 
     // Build the TOTP with a placeholder account name (not needed for
     // code validation).

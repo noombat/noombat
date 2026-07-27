@@ -13,6 +13,7 @@
 //!    local Noombat account.
 
 use noombat_core::actor::{ActorType, NewActor};
+use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -131,7 +132,7 @@ async fn get_or_register_client(
     {
         return Ok(OAuthClient {
             client_id: row.0,
-            client_secret: row.1,
+            client_secret: envelope::open_auto(&row.1)?,
             redirect_uri: row.2,
         });
     }
@@ -163,7 +164,8 @@ async fn get_or_register_client(
         NoombatError::Federation(format!("malformed app registration response: {e}"))
     })?;
 
-    // Cache the client credentials.
+    // Cache the client credentials (encrypt the secret at rest).
+    let sealed_secret = envelope::seal_auto(&app.client_secret)?;
     sqlx::query(
         r#"INSERT INTO oauth_clients (instance_domain, client_id, client_secret, redirect_uri)
            VALUES ($1, $2, $3, $4)
@@ -172,7 +174,7 @@ async fn get_or_register_client(
     )
     .bind(instance_domain)
     .bind(&app.client_id)
-    .bind(&app.client_secret)
+    .bind(&sealed_secret)
     .bind(&app.redirect_uri)
     .execute(pool)
     .await?;
@@ -267,6 +269,8 @@ pub async fn handle_callback(
     .await?
     .ok_or_else(|| NoombatError::Internal("OAuth client not found after state validation".into()))?;
 
+    let decrypted_secret = envelope::open_auto(&client.1)?;
+
     // Exchange the code for an access token.
     let token_resp = http_client
         .post(format!("{instance_base}/oauth/token"))
@@ -274,7 +278,7 @@ pub async fn handle_callback(
             ("grant_type", "authorization_code"),
             ("code", code),
             ("client_id", &client.0),
-            ("client_secret", &client.1),
+            ("client_secret", &decrypted_secret),
             ("redirect_uri", &client.2),
             ("scope", "read:accounts"),
         ])
