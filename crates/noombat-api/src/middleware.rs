@@ -17,7 +17,6 @@ use axum::http::{Request, header::AUTHORIZATION, header::COOKIE};
 use axum::middleware::Next;
 use axum::response::Response;
 use sqlx::PgPool;
-use subtle::ConstantTimeEq;
 use tracing::debug;
 
 use crate::state::AppState;
@@ -161,9 +160,8 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
 
     // Fallback: development-only admin bearer token.
     let expected = state.admin_token.as_deref()?;
-    // Constant-time comparison to prevent timing side-channel attacks.
-    if token.len() != expected.len() || token.as_bytes().ct_eq(expected.as_bytes()).unwrap_u8() != 1
-    {
+    // HMAC-SHA256 comparison eliminates both timing and length oracles.
+    if !crate::auth::constant_time_token_eq(token, expected) {
         return None;
     }
 

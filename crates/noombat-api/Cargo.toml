@@ -38,3 +38,4 @@ urlencoding = { workspace = true }
 zip = { workspace = true }
 ammonia = { workspace = true }
 governor = { workspace = true }
+hmac = { workspace = true }

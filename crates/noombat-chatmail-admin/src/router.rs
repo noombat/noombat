@@ -107,20 +107,34 @@ pub fn handle_request(request: Request, state: &Arc<AppState>) {
 
 /// Verify the `Authorization: Bearer <secret>` header.
 ///
-/// Comparison is constant-time via the `subtle` crate's
-/// [`ConstantTimeEq`] implementation to prevent timing side-channel
-/// attacks.
+/// Comparison uses HMAC-SHA256 digests to produce fixed-length
+/// (32-byte) outputs before the constant-time comparison, eliminating
+/// both timing and length oracle attacks.
 fn authenticate(request: &Request, expected: &str) -> bool {
+    use hmac::{Hmac, Mac};
+    use sha2::Sha256;
     use subtle::ConstantTimeEq;
+
+    type HmacSha256 = Hmac<Sha256>;
+
+    /// Fixed domain-separation tag (not secret).
+    const HMAC_TAG: &[u8] = b"noombat-chatmail-admin-verify";
 
     for header in request.headers() {
         if header.field.equiv("Authorization")
             && let Some(token) = header.value.as_str().strip_prefix("Bearer ")
         {
-            if token.len() != expected.len() {
-                return false;
-            }
-            return token.as_bytes().ct_eq(expected.as_bytes()).into();
+            let mut mac_a = HmacSha256::new_from_slice(token.as_bytes())
+                .expect("HMAC-SHA256 accepts any key length");
+            mac_a.update(HMAC_TAG);
+            let digest_a = mac_a.finalize().into_bytes();
+
+            let mut mac_b = HmacSha256::new_from_slice(expected.as_bytes())
+                .expect("HMAC-SHA256 accepts any key length");
+            mac_b.update(HMAC_TAG);
+            let digest_b = mac_b.finalize().into_bytes();
+
+            return digest_a.ct_eq(&digest_b).into();
         }
     }
     false
