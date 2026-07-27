@@ -2491,6 +2491,7 @@ dependencies = [
  "base64",
  "chrono",
  "governor",
+ "hmac 0.12.1",
  "http-signature-normalization",
  "noombat-ap",
  "noombat-chat",
@@ -2547,10 +2548,12 @@ name = "noombat-chatmail-admin"
 version = "0.1.0"
 dependencies = [
  "base64",
+ "hmac 0.12.1",
  "mailparse",
  "rand 0.8.6",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "subtle",
  "tiny_http",
  "tracing",
