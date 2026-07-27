@@ -1,0 +1,31 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Development override for Noombat.
+#
+# Usage:
+#   podman compose -f compose.yml -f compose.dev.yml up -d
+#
+# This file adds:
+# - Host port mappings for PostgreSQL, Redis, and Meilisearch,
+#   enabling direct access from the developer's machine (e.g. via
+#   psql, redis-cli, or the Meilisearch dashboard).
+# - Meilisearch in development mode (detailed errors, relaxed
+#   security defaults).
+#
+# Do NOT apply this override to internet-facing deployments.
+
+services:
+  db:
+    ports:
+      - "5432:5432"
+
+  redis:
+    ports:
+      - "6379:6379"
+
+  meilisearch:
+    ports:
+      - "7700:7700"
+    environment:
+      MEILI_ENV: development

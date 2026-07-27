@@ -16,8 +16,9 @@ git clone https://github.com/noombat/noombat.git
 cd noombat
 cp .env.example .env          # adjust values as needed
 
-# Start infrastructure services.
-docker compose up -d db redis meilisearch chatmail
+# Start infrastructure services (dev override exposes host ports
+# for psql/redis-cli and sets Meilisearch to development mode).
+docker compose -f compose.yml -f compose.dev.yml up -d db redis meilisearch chatmail
 
 # Install sqlx-cli and run migrations.
 cargo install sqlx-cli --no-default-features --features rustls,postgres

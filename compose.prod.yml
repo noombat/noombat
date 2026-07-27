@@ -10,7 +10,6 @@
 # - A Caddy reverse proxy with automatic TLS via Let's Encrypt.
 # - Resource limits on all services.
 # - Restart policies for resilience.
-# - Production Meilisearch configuration.
 # - Named volumes for all persistent data.
 # - Log rotation via max-size / max-file.
 
@@ -55,7 +54,6 @@ services:
 
   db:
     restart: unless-stopped
-    ports: [] # No external access in production.
     deploy:
       resources:
         limits:
@@ -69,7 +67,6 @@ services:
 
   redis:
     restart: unless-stopped
-    ports: []
     deploy:
       resources:
         limits:
@@ -78,9 +75,6 @@ services:
 
   meilisearch:
     restart: unless-stopped
-    ports: []
-    environment:
-      MEILI_ENV: production
     deploy:
       resources:
         limits:

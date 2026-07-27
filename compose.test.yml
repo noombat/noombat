@@ -6,8 +6,6 @@
 # Builds all images from source (no released GHCR images), but
 # configures the stack closer to production than compose.yml alone:
 #   - JWT authentication enabled (requires NOOMBAT_JWT_SECRET in .env).
-#   - Infrastructure ports (PostgreSQL, Redis, Meilisearch) not exposed
-#     to the host.
 #   - RUST_LOG forwarded to the container.
 #   - Restart policies on all services.
 #
@@ -33,16 +31,12 @@ services:
 
   db:
     restart: unless-stopped
-    # Do not expose PostgreSQL to the host network.
-    ports: []
 
   redis:
     restart: unless-stopped
-    ports: []
 
   meilisearch:
     restart: unless-stopped
-    ports: []
 
   chatmail:
     restart: unless-stopped

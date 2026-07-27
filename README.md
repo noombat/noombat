@@ -47,10 +47,12 @@ cd noombat
 # Copy the example environment file and adjust values.
 cp .env.example .env
 
-# Start the infrastructure services (or: podman-compose up -d db redis meilisearch).
+# Start the infrastructure services (or: podman-compose ... up -d db redis meilisearch).
+# The dev override exposes host ports for psql, redis-cli, and the Meilisearch dashboard,
+# and sets Meilisearch to development mode.
 # Note: encrypted chat requires the chatmail service (see the Deployment section).
 # For development without chat, the three services below are sufficient.
-docker compose up -d db redis meilisearch
+docker compose -f compose.yml -f compose.dev.yml up -d db redis meilisearch
 
 # Install sqlx-cli for migration management.
 cargo install sqlx-cli --no-default-features --features rustls,postgres
