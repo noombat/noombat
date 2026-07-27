@@ -75,6 +75,9 @@ struct ChatPage {
     ws_url: String,
     chatmail_addr: String,
     username: String,
+    /// True when the actor's chat has been suspended by a moderator
+    /// and requires reprovisioning.
+    chat_suspended: bool,
 }
 
 #[derive(Template, WebTemplate)]
@@ -391,14 +394,15 @@ async fn chat_page(
     let Some(actor_id) = actor_uuid(&principal) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let chatmail_addr =
-        sqlx::query_scalar::<_, Option<String>>("SELECT chatmail_addr FROM actors WHERE id = $1")
-            .bind(actor_id)
-            .fetch_one(&state.pool)
-            .await
-            .ok()
-            .flatten()
-            .unwrap_or_default();
+    let (chatmail_addr, chat_suspended): (Option<String>, bool) =
+        sqlx::query_as::<_, (Option<String>, bool)>(
+            "SELECT chatmail_addr, chat_requires_reprovisioning FROM actors WHERE id = $1",
+        )
+        .bind(actor_id)
+        .fetch_one(&state.pool)
+        .await
+        .unwrap_or((None, false));
+    let chatmail_addr = chatmail_addr.unwrap_or_default();
     let ws_url = format!("wss://{}/api/v1/chat/ws", state.domain);
     let username = nav_username(&principal);
     ChatPage {
@@ -407,6 +411,7 @@ async fn chat_page(
         ws_url,
         chatmail_addr,
         username,
+        chat_suspended,
     }
     .into_response()
 }
