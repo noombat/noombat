@@ -191,7 +191,14 @@ async fn verify_and_process_inbound(
     // `(created)` and `(expires)` pseudo-headers) and legacy `rsa-sha256`
     // signatures (with `date`), providing forward compatibility with
     // implementations that adopt newer drafts.
-    let config = SigConfig::default();
+    //
+    // `.require_header("digest")` ensures that the signature's
+    // `headers` parameter includes `digest`, binding the body digest
+    // to the signature. Without this, a man-in-the-middle could
+    // replace both the body and the `Digest` header while the
+    // signature (covering only request-target, host, date) remains
+    // valid.
+    let config = SigConfig::default().require_header("digest");
 
     // Collect HTTP headers into the `BTreeMap<String, String>` that the
     // library expects.
