@@ -24,6 +24,12 @@ pub struct AccessClaims {
     pub username: String,
     /// Instance role at token-issuance time.
     pub role: String,
+    /// Audience: the instance domain that issued this token.
+    ///
+    /// Binds the token to a specific instance, preventing cross-
+    /// instance token reuse when two instances share the same
+    /// `jwt_secret` (misconfiguration defence).
+    pub aud: String,
     /// Issued-at (Unix timestamp).
     pub iat: i64,
     /// Expiration (Unix timestamp).
@@ -46,6 +52,8 @@ pub struct SessionTokens {
 pub struct SessionConfig {
     /// JWT signing secret (HS256). Must be at least 32 bytes.
     pub jwt_secret: String,
+    /// Instance domain, used as the `aud` (audience) claim.
+    pub domain: String,
     /// Access-token lifetime in seconds (default: 900 = 15 min).
     pub access_ttl_secs: i64,
     /// Refresh-token lifetime in seconds (default: 2_592_000 = 30 days).
@@ -56,6 +64,7 @@ impl Default for SessionConfig {
     fn default() -> Self {
         Self {
             jwt_secret: String::new(),
+            domain: "localhost".to_owned(),
             access_ttl_secs: 900,
             refresh_ttl_secs: 2_592_000,
         }
@@ -86,6 +95,7 @@ pub async fn create_session(
         sub: actor_id.to_string(),
         username: username.to_owned(),
         role: role_str.to_owned(),
+        aud: config.domain.clone(),
         iat: now.timestamp(),
         exp: access_exp.timestamp(),
     };
@@ -122,9 +132,13 @@ pub async fn create_session(
 }
 
 /// Decode and validate an access token, returning the claims.
+///
+/// Validates the `aud` claim against the configured instance domain,
+/// rejecting tokens issued for a different instance.
 pub fn verify_access_token(token: &str, config: &SessionConfig) -> Result<AccessClaims> {
     let mut validation = Validation::default();
-    validation.set_required_spec_claims(&["sub", "exp", "iat"]);
+    validation.set_required_spec_claims(&["sub", "exp", "iat", "aud"]);
+    validation.set_audience(&[&config.domain]);
 
     let data = decode::<AccessClaims>(
         token,
@@ -195,6 +209,7 @@ mod tests {
     fn test_config() -> SessionConfig {
         SessionConfig {
             jwt_secret: "test-secret-at-least-32-bytes-long!!".to_owned(),
+            domain: "test.noombat.social".to_owned(),
             access_ttl_secs: 60,
             refresh_ttl_secs: 3600,
         }
@@ -208,6 +223,7 @@ mod tests {
             sub: Uuid::new_v4().to_string(),
             username: "alice".to_owned(),
             role: "user".to_owned(),
+            aud: "test.noombat.social".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
         };
@@ -222,6 +238,7 @@ mod tests {
         let decoded = verify_access_token(&token, &config).unwrap();
         assert_eq!(decoded.username, "alice");
         assert_eq!(decoded.sub, claims.sub);
+        assert_eq!(decoded.aud, "test.noombat.social");
     }
 
     #[test]
@@ -232,6 +249,7 @@ mod tests {
             sub: Uuid::new_v4().to_string(),
             username: "alice".to_owned(),
             role: "user".to_owned(),
+            aud: "test.noombat.social".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
         };
@@ -244,6 +262,32 @@ mod tests {
         .unwrap();
 
         assert!(verify_access_token(&token, &config).is_err());
+    }
+
+    #[test]
+    fn wrong_audience_rejects() {
+        let config = test_config();
+        let now = Utc::now();
+        let claims = AccessClaims {
+            sub: Uuid::new_v4().to_string(),
+            username: "alice".to_owned(),
+            role: "user".to_owned(),
+            aud: "other-instance.example".to_owned(),
+            iat: now.timestamp(),
+            exp: (now + TimeDelta::seconds(60)).timestamp(),
+        };
+
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+        )
+        .unwrap();
+
+        assert!(
+            verify_access_token(&token, &config).is_err(),
+            "token with wrong audience must be rejected"
+        );
     }
 
     #[test]

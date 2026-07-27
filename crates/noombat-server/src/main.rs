@@ -342,6 +342,7 @@ async fn main() -> anyhow::Result<()> {
         info!("JWT session authentication enabled");
         noombat_identity::session::SessionConfig {
             jwt_secret: secret.clone(),
+            domain: config.domain.clone(),
             access_ttl_secs: config.access_ttl_secs,
             refresh_ttl_secs: config.refresh_ttl_secs,
         }
