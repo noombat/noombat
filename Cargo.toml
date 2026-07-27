@@ -112,6 +112,12 @@ tempfile = "3"
 # Constant-time comparison (admin token verification).
 subtle = "2"
 
+# Envelope encryption (AES-256-GCM) for secrets at rest.
+aes-gcm = "0.10"
+
+# Scrub key material from memory on drop.
+zeroize = { version = "1", features = ["derive"] }
+
 # Password hashing (Argon2id for auth_key_hash).
 argon2 = "0.5"
 
