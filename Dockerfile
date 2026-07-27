@@ -47,7 +47,8 @@ FROM debian:bookworm-slim
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+    rm -rf /var/lib/apt/lists/* && \
+    useradd --system --no-create-home noombat
 
 COPY --from=typst /bin/typst /usr/local/bin/typst
 COPY --from=builder /build/target/release/noombat /usr/local/bin/noombat
@@ -56,6 +57,8 @@ COPY --from=builder /build/templates /opt/noombat/templates
 COPY --from=frontend /build/frontend/dist /opt/noombat/frontend/dist
 
 WORKDIR /opt/noombat
+
+USER noombat
 EXPOSE 8443
 
 ENTRYPOINT ["noombat"]
