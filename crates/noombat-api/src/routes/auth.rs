@@ -13,7 +13,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use noombat_core::error::NoombatError;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::middleware::Principal;
@@ -33,6 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/orcid", get(orcid_init))
         .route("/api/v1/auth/orcid/callback", get(orcid_callback))
         .route("/api/v1/auth/password", post(set_password))
+        .route("/api/v1/me/provision_chat", post(provision_chat))
         .route(
             "/api/v1/me/chatmail_cred",
             get(get_chatmail_cred).put(put_chatmail_cred),
@@ -479,6 +480,76 @@ async fn set_password(
     .await?;
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ..... Chatmail provisioning .....
+
+#[derive(Serialize)]
+struct ProvisionChatResponse {
+    chatmail_addr: String,
+    chatmail_password: String,
+}
+
+/// `POST /api/v1/me/provision_chat`
+///
+/// Provision a Chatmail account for the authenticated user. This
+/// creates the Chatmail account via IMAP first-login and stores
+/// the address on the actor record.
+///
+/// The response includes the Chatmail address and password. The
+/// browser is responsible for generating an OpenPGP key pair,
+/// building the credential blob, encrypting it with the blob key
+/// (derived from the user's password), and storing it via
+/// `PUT /api/v1/me/chatmail_cred`.
+///
+/// Returns 400 if chat is already provisioned.
+/// Returns 503 if Chatmail is not configured on this instance.
+async fn provision_chat(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+) -> Result<Json<ProvisionChatResponse>, ApiError> {
+    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = principal
+        .actor_id()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let username = principal
+        .username
+        .as_deref()
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    // Check that chat is not already provisioned.
+    let existing: Option<Option<String>> =
+        sqlx::query_scalar("SELECT chatmail_addr FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_optional(&state.pool)
+            .await?;
+
+    if let Some(Some(_)) = existing {
+        return Err(ApiError(NoombatError::BadRequest(
+            "chat already provisioned".into(),
+        )));
+    }
+
+    let chatmail_domain = state.chatmail_domain.as_deref().ok_or_else(|| {
+        ApiError(NoombatError::ServiceUnavailable(
+            "chatmail not configured on this instance".into(),
+        ))
+    })?;
+
+    let provisioned =
+        noombat_chat::provision::provision_chatmail_account(chatmail_domain, username).await?;
+
+    // Store the Chatmail address on the actor record.
+    sqlx::query("UPDATE actors SET chatmail_addr = $1 WHERE id = $2")
+        .bind(&provisioned.address)
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await?;
+
+    Ok(Json(ProvisionChatResponse {
+        chatmail_addr: provisioned.address,
+        chatmail_password: provisioned.password,
+    }))
 }
 
 // ..... Chatmail credential blob .....

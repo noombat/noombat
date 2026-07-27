@@ -224,9 +224,15 @@ function setupRegisterForm(): void {
       return;
     }
 
-    const authKey = await deriveAuthKey(password, username, getInstanceDomain());
+    // Derive both the auth key and the blob encryption key from a
+    // single PBKDF2 pass so we have the blob key available for
+    // chat provisioning without paying the 600k-iteration cost
+    // twice.
+    const { authKey, blobKey } = await deriveBothKeys(password, username, getInstanceDomain());
     authKeyInput.value = authKey;
 
+    // Clear the raw password from the DOM (the local `password`
+    // variable still holds the value for the provisioning step).
     passwordInput.value = "";
     confirmInput.value = "";
 
@@ -250,6 +256,15 @@ function setupRegisterForm(): void {
         const data = await resp.json();
         sessionStorage.setItem("noombat_access_token", data.access_token);
         sessionStorage.setItem("noombat_refresh_token", data.refresh_token);
+
+        // Provision the Chatmail account and generate the
+        // credential blob. This is best-effort: if it fails
+        // (Chatmail not configured, network error), the user
+        // can provision later via the chat settings page.
+        await provisionChat(blobKey).catch(() => {
+          // Non-fatal: account is created, chat is deferred.
+        });
+
         window.location.href = "/";
       } else {
         const data = await resp.json().catch(() => ({}));
@@ -259,6 +274,64 @@ function setupRegisterForm(): void {
       showError(form, "Network error. Please try again.");
     }
   });
+}
+
+/**
+ * Provision the Chatmail account, generate an OpenPGP key pair,
+ * and store the encrypted credential blob.
+ *
+ * Called after successful registration. Requires the blob
+ * encryption key (derived from the user's password) and a valid
+ * session token in sessionStorage.
+ */
+async function provisionChat(blobKey: CryptoKey): Promise<void> {
+  const accessToken = sessionStorage.getItem("noombat_access_token");
+  if (!accessToken) return;
+
+  // 1. Ask the server to provision the Chatmail account.
+  const provResp = await fetch("/api/v1/me/provision_chat", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+
+  if (!provResp.ok) return;
+
+  const { chatmail_addr, chatmail_password } = (await provResp.json()) as {
+    chatmail_addr: string;
+    chatmail_password: string;
+  };
+
+  // 2. Generate an OpenPGP key pair for the Chatmail address.
+  const { generateKeyPair } = await import("./chat/crypto");
+  const keyPair = await generateKeyPair(chatmail_addr);
+
+  // 3. Build and encrypt the credential blob.
+  const { encryptBlob, storeBlob } = await import("./chat/blob");
+
+  const publicKeyB64 = uint8ToBase64(keyPair.publicKey);
+  const privateKeyB64 = uint8ToBase64(keyPair.privateKey);
+
+  const blob = {
+    chatmailPassword: chatmail_password,
+    publicKeyB64,
+    privateKeyB64,
+    peerStateJson: null,
+  };
+
+  const encrypted = await encryptBlob(blobKey, blob);
+
+  // 4. Store the encrypted blob on the server.
+  await storeBlob(encrypted);
+}
+
+/** Encode a Uint8Array to a base64 string (chunked to avoid stack overflow). */
+function uint8ToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000;
+  const parts: string[] = [];
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
+  }
+  return btoa(parts.join(""));
 }
 
 /** Display an error message above the form. */

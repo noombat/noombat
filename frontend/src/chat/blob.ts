@@ -25,8 +25,9 @@ export interface CredentialBlob {
   privateKeyB64: string;
   /** The OpenPGP public key bytes (base64-encoded). */
   publicKeyB64: string;
-  /** The serialised Autocrypt peer state table (JSON string). */
-  peerStateJson: string;
+  /** The serialised Autocrypt peer state table (JSON string, or
+   *  `null` for a freshly provisioned account with no peer state). */
+  peerStateJson: string | null;
 }
 
 /**
