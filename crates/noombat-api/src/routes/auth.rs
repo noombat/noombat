@@ -593,6 +593,11 @@ async fn get_chatmail_cred(
 ///
 /// Stores the encrypted credential blob (raw bytes from the request
 /// body). Maximum size: 64 KiB.
+///
+/// **Note on envelope encryption:** This column is *not* envelope-
+/// encrypted at the server layer because the blob is already
+/// encrypted client-side with the user's password-derived blob key
+/// before transmission. The server stores opaque ciphertext.
 async fn put_chatmail_cred(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
