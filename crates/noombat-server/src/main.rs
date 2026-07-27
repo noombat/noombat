@@ -202,6 +202,11 @@ async fn main() -> anyhow::Result<()> {
     info!("database migrations applied");
 
     // HTTP client for federation delivery.
+    //
+    // NOTE: `discover_instance` in `noombat_identity::oauth_mastodon`
+    // builds a separate pinned client for SSRF protection and
+    // replicates the `user_agent` and `timeout` settings below. If
+    // these defaults change, update that function to match.
     let http_client = reqwest::Client::builder()
         .user_agent(format!("Noombat/{}", env!("CARGO_PKG_VERSION")))
         .timeout(Duration::from_secs(30))

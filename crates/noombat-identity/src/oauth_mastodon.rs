@@ -88,14 +88,53 @@ pub fn parse_mastodon_handle(handle: &str) -> Result<(String, String)> {
 /// Discover the Mastodon instance URL via WebFinger.
 ///
 /// Returns the instance base URL (e.g. `https://mastodon.social`).
-async fn discover_instance(http_client: &reqwest::Client, domain: &str) -> Result<String> {
-    // Attempt HTTPS first; Mastodon instances universally use HTTPS.
-    let base = format!("https://{domain}");
+///
+/// The domain is resolved to IP addresses via [`tokio::net::lookup_host`]
+/// and each address is checked against private, loopback, and link-local
+/// ranges before issuing an HTTP request. This prevents SSRF attacks
+/// where a user-controlled domain resolves to an internal network address.
+async fn discover_instance(domain: &str) -> Result<String> {
+    // Resolve the domain to IP addresses and reject private ranges
+    // to prevent SSRF.
+    let addr_str = format!("{domain}:443");
+    let addrs: Vec<std::net::SocketAddr> = tokio::net::lookup_host(&addr_str)
+        .await
+        .map_err(|e| NoombatError::Federation(format!("DNS resolution failed for {domain}: {e}")))?
+        .collect();
 
-    // Verify the instance is reachable by fetching its nodeinfo or
-    // simply confirming the WebFinger endpoint responds.
+    if addrs.is_empty() {
+        return Err(NoombatError::Federation(format!(
+            "DNS resolution returned no addresses for {domain}"
+        )));
+    }
+
+    for addr in &addrs {
+        if is_private_ip(addr.ip()) {
+            return Err(NoombatError::BadRequest(format!(
+                "domain {domain} resolves to a private/reserved IP address"
+            )));
+        }
+    }
+
+    // Pin the validated address to a purpose-built client so that a
+    // DNS rebinding attack between resolution and connection cannot
+    // redirect to an internal address.
+    //
+    // `reqwest::RequestBuilder` does not support per-request DNS
+    // overrides, so a new `Client` is constructed. The user-agent
+    // and timeout are replicated from the shared client constructed
+    // in `main.rs`. If those defaults change, this block must be
+    // updated to match.
+    let resolved_addr = addrs[0];
+    let pinned_client = reqwest::Client::builder()
+        .user_agent(format!("Noombat/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(30))
+        .resolve(domain, resolved_addr)
+        .build()
+        .map_err(|e| NoombatError::Internal(format!("failed to build pinned HTTP client: {e}")))?;
+    let base = format!("https://{domain}");
     let webfinger_url = format!("{base}/.well-known/webfinger?resource=acct:test@{domain}");
-    let resp = http_client
+    let resp = pinned_client
         .get(&webfinger_url)
         .send()
         .await
@@ -109,6 +148,36 @@ async fn discover_instance(http_client: &reqwest::Client, domain: &str) -> Resul
     }
 
     Ok(base)
+}
+
+/// Returns `true` if `ip` falls within a private, loopback,
+/// link-local, or other reserved range that should not be reached
+/// via user-initiated HTTP requests.
+fn is_private_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_private_v4(v4),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()               // ::1
+                || v6.is_unspecified()      // ::
+                || (v6.segments()[0] & 0xfe00) == 0xfc00  // fc00::/7 (ULA)
+                || (v6.segments()[0] & 0xffc0) == 0xfe80  // fe80::/10 (link-local)
+                // IPv4-mapped IPv6 (::ffff:a.b.c.d): check the
+                // embedded v4 address with the same rules.
+                || v6.to_ipv4_mapped().is_some_and(is_private_v4)
+        }
+    }
+}
+
+/// IPv4 reserved-range check, shared between the IPv4 and
+/// IPv4-mapped-IPv6 branches of [`is_private_ip`].
+fn is_private_v4(v4: std::net::Ipv4Addr) -> bool {
+    v4.is_loopback()               // 127.0.0.0/8
+        || v4.is_private()         // 10/8, 172.16/12, 192.168/16
+        || v4.is_link_local()      // 169.254/16
+        || v4.is_broadcast()       // 255.255.255.255
+        || v4.is_unspecified()     // 0.0.0.0
+        || v4.is_documentation()   // 192.0.2/24, 198.51.100/24, 203.0.113/24
+        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64) // 100.64/10 (CGN)
 }
 
 // ..... Client registration .....
@@ -202,7 +271,7 @@ pub async fn build_authorise_url(
     our_domain: &str,
 ) -> Result<(String, String)> {
     let (_user, instance_domain) = parse_mastodon_handle(handle)?;
-    let instance_base = discover_instance(http_client, &instance_domain).await?;
+    let instance_base = discover_instance(&instance_domain).await?;
     let client = get_or_register_client(
         pool,
         http_client,
@@ -457,5 +526,116 @@ mod tests {
     fn derive_username_numeric_start() {
         let u = derive_username("123test", "example.org");
         assert!(u.starts_with("m_123test"));
+    }
+
+    // ..... is_private_ip / is_private_v4 .....
+
+    use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+
+    #[test]
+    fn rejects_ipv4_loopback() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn rejects_ipv4_private() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(10, 0, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(172, 16, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 1))));
+    }
+
+    #[test]
+    fn rejects_ipv4_link_local() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(169, 254, 1, 1))));
+    }
+
+    #[test]
+    fn rejects_ipv4_documentation() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(192, 0, 2, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(198, 51, 100, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1))));
+    }
+
+    #[test]
+    fn rejects_ipv4_cgn() {
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(100, 64, 0, 1))));
+        assert!(is_private_ip(IpAddr::V4(Ipv4Addr::new(100, 127, 255, 254))));
+        // 100.128.0.1 is outside 100.64/10.
+        assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(100, 128, 0, 1))));
+    }
+
+    #[test]
+    fn accepts_public_ipv4() {
+        assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(8, 8, 8, 8))));
+        assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(1, 1, 1, 1))));
+        assert!(!is_private_ip(IpAddr::V4(Ipv4Addr::new(93, 184, 215, 14))));
+    }
+
+    #[test]
+    fn rejects_ipv6_loopback() {
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::LOCALHOST)));
+    }
+
+    #[test]
+    fn rejects_ipv6_ula() {
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfc00, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfd12, 0x3456, 0, 0, 0, 0, 0, 1
+        ))));
+    }
+
+    #[test]
+    fn rejects_ipv6_link_local() {
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfe80, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        // fe80:0001::1 is within fe80::/10.
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfe80, 1, 0, 0, 0, 0, 0, 1
+        ))));
+        // febf::1 is the last address in fe80::/10.
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfebf, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        // fec0::1 is outside fe80::/10.
+        assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfec0, 0, 0, 0, 0, 0, 0, 1
+        ))));
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_ipv6_loopback() {
+        // ::ffff:127.0.0.1
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x7f00, 0x0001
+        ))));
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_ipv6_documentation() {
+        // ::ffff:192.0.2.1
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0xc000, 0x0201
+        ))));
+    }
+
+    #[test]
+    fn rejects_ipv4_mapped_ipv6_cgn() {
+        // ::ffff:100.64.0.1
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0, 0, 0, 0, 0, 0xffff, 0x6440, 0x0001
+        ))));
+    }
+
+    #[test]
+    fn accepts_public_ipv6() {
+        assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2001, 0xdb8, 0, 0, 0, 0, 0, 1
+        ))));
+        assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111
+        ))));
     }
 }
