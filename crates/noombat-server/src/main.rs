@@ -104,6 +104,12 @@ struct Config {
     /// Relay verification policy: `verify`, `verify-or-fetch`, or
     /// `trust-relay`. `None` when relay support is not activated.
     relay_verification_policy: Option<String>,
+    /// Whether signed-fetch failures (missing key or signing error)
+    /// silently fall back to unsigned HTTP GET. `false` by default
+    /// (recommended for production). Set to `true` only when
+    /// federating with implementations that reject signed fetches.
+    #[serde(default)]
+    allow_unsigned_fetch: bool,
     /// Hex-encoded 256-bit key-encryption key (KEK) for envelope
     /// encryption of secrets at rest. 64 hex characters (32 bytes).
     /// Required in production; if unset, secrets are stored as
@@ -212,6 +218,13 @@ async fn main() -> anyhow::Result<()> {
         .timeout(Duration::from_secs(30))
         .build()
         .expect("failed to build HTTP client");
+
+    // Set the process-global unsigned-fetch policy before any
+    // federation activity is processed.
+    noombat_federation::signed_fetch::set_allow_unsigned_fetch(config.allow_unsigned_fetch);
+    if config.allow_unsigned_fetch {
+        info!("unsigned-fetch fallback enabled (not recommended for production)");
+    }
 
     // Spawn the delivery-queue background worker.
     //
@@ -406,6 +419,7 @@ async fn main() -> anyhow::Result<()> {
         envelope_key,
         fallback_rate_limiter,
         fallback_fed_rate_limiter,
+        allow_unsigned_fetch: config.allow_unsigned_fetch,
     };
     let app = noombat_api::build_router(state);
 

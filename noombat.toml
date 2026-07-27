@@ -59,6 +59,11 @@ integrity_proofs_enabled = true
 # Required in production. Generate with: openssl rand -hex 32
 # kek = "change-this-to-64-hex-characters-from-openssl-rand"
 
+# Whether signed-fetch failures (missing key or signing error)
+# silently fall back to unsigned HTTP GET. `false` by default
+# (recommended for production).
+# allow_unsigned_fetch = false
+
 # Relay verification policy for inbound relay traffic.
 # Values: "verify", "verify-or-fetch", "trust-relay".
 # Uncomment to activate relay support.

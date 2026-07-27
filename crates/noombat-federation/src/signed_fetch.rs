@@ -9,6 +9,7 @@
 //! helper that attaches an HTTP Signature to outbound GET requests,
 //! using a local actor's RSA private key.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use http_signature_normalization_reqwest::prelude::*;
@@ -16,6 +17,26 @@ use noombat_core::error::{NoombatError, Result};
 use sqlx::PgPool;
 use tracing::warn;
 use uuid::Uuid;
+
+// ..... Process-global unsigned-fetch policy .....
+
+/// Whether `signed_get` falls back to an unsigned GET when the
+/// signing key is unavailable or signing fails. Set once at startup
+/// via [`set_allow_unsigned_fetch`]; defaults to `false`.
+static ALLOW_UNSIGNED_FETCH: OnceLock<bool> = OnceLock::new();
+
+/// Set the process-global unsigned-fetch policy.
+///
+/// Must be called before any federation activity is processed.
+/// Passing `true` enables the unsigned fallback (not recommended
+/// for production).
+pub fn set_allow_unsigned_fetch(allow: bool) {
+    let _ = ALLOW_UNSIGNED_FETCH.set(allow);
+}
+
+fn allow_unsigned_fallback() -> bool {
+    ALLOW_UNSIGNED_FETCH.get().copied().unwrap_or(false)
+}
 
 /// Find any local actor with a private key to use for signed fetches.
 ///
@@ -63,7 +84,11 @@ pub async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
 /// Fetch a remote resource with an HTTP Signature attached.
 ///
 /// Uses the specified local actor's private key to sign the request.
-/// Falls back to an unsigned fetch if the signing key is unavailable.
+///
+/// When the process-global unsigned-fetch policy (set via
+/// [`set_allow_unsigned_fetch`]) is `true`, falls back to an unsigned
+/// GET if the signing key is unavailable or signing fails. When
+/// `false` (the default), these conditions return an error.
 ///
 /// **Note:** The returned [`reqwest::Response`] may carry a non-success
 /// HTTP status. The caller is responsible for checking
@@ -83,6 +108,7 @@ pub async fn signed_get(
     url: &str,
     signing_actor_id: Uuid,
 ) -> Result<reqwest::Response> {
+    let fallback = allow_unsigned_fallback();
     // Look up the signing actor's AP ID and private key.
     let row = sqlx::query_as::<_, (String, Option<String>)>(
         "SELECT ap_id, private_key_pem FROM actors WHERE id = $1",
@@ -95,12 +121,16 @@ pub async fn signed_get(
     let (ap_id, sealed_pem) = match row {
         Some((ap_id, Some(pem))) => (ap_id, pem),
         _ => {
-            // No signing key available; fall back to unsigned fetch.
-            warn!(
-                url,
-                "signed_get: no private key available; falling back to unsigned fetch"
-            );
-            return unsigned_get(http_client, url).await;
+            if fallback {
+                warn!(
+                    url,
+                    "signed_get: no private key available; falling back to unsigned fetch"
+                );
+                return unsigned_get(http_client, url).await;
+            }
+            return Err(NoombatError::Federation(
+                "signed_get: no private key available and unsigned fallback is disabled".into(),
+            ));
         }
     };
 
@@ -127,11 +157,16 @@ pub async fn signed_get(
     let signed_request = match signed_request {
         Ok(r) => r,
         Err(e) => {
-            warn!(
-                url,
-                "signed_get: signing failed ({e}); falling back to unsigned fetch"
-            );
-            return unsigned_get(http_client, url).await;
+            if fallback {
+                warn!(
+                    url,
+                    "signed_get: signing failed ({e}); falling back to unsigned fetch"
+                );
+                return unsigned_get(http_client, url).await;
+            }
+            return Err(NoombatError::Federation(format!(
+                "signed_get: signing failed and unsigned fallback is disabled: {e}"
+            )));
         }
     };
 

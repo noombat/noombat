@@ -68,4 +68,7 @@ pub struct AppState {
     pub fallback_rate_limiter: FallbackRateLimiter,
     /// In-process per-domain federation rate limiter (same purpose).
     pub fallback_fed_rate_limiter: FallbackRateLimiter,
+    /// Whether signed-fetch failures fall back to unsigned GET
+    /// (default `false`).
+    pub allow_unsigned_fetch: bool,
 }
