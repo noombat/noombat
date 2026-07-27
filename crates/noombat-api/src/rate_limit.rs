@@ -39,11 +39,6 @@ use tracing::warn;
 
 use crate::state::AppState;
 
-/// Maximum requests per window (Redis primary).
-const DEFAULT_LIMIT: i64 = 120;
-/// Window size in seconds (Redis primary).
-const DEFAULT_WINDOW_SECS: i64 = 60;
-
 /// Lua script that atomically increments the counter, sets the TTL on
 /// first creation, and returns both the current count and the
 /// remaining TTL.
@@ -71,11 +66,21 @@ pub struct FallbackRateLimiter {
 }
 
 impl FallbackRateLimiter {
-    /// Create a new fallback limiter with the given per-minute quota.
-    pub fn new(requests_per_minute: u32) -> Self {
-        let quota = Quota::per_minute(
-            NonZeroU32::new(requests_per_minute).expect("requests_per_minute must be > 0"),
-        );
+    /// Create a new fallback limiter.
+    ///
+    /// `max_requests` is the ceiling per `window`. Both must be
+    /// greater than zero; this function panics otherwise (callers
+    /// must validate configuration before constructing the limiter).
+    pub fn new(max_requests: u32, window: std::time::Duration) -> Self {
+        assert!(max_requests > 0, "rate limit must be > 0");
+        assert!(!window.is_zero(), "rate limit window must be > 0");
+
+        // Replenishment interval = window / max_requests.
+        let interval = window / max_requests;
+        let quota = Quota::with_period(interval)
+            .expect("rate limit interval must be non-zero")
+            .allow_burst(NonZeroU32::new(max_requests).expect("max_requests already checked > 0"));
+
         Self {
             inner: Arc::new(RateLimiter::keyed(quota)),
         }
@@ -104,6 +109,9 @@ pub async fn rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
+    let limit = state.rate_limit;
+    let window = state.rate_limit_window_secs;
+
     // Extract the remote IP.
     let ip = request
         .extensions()
@@ -119,15 +127,15 @@ pub async fn rate_limit(
             .arg(RATE_LIMIT_LUA)
             .arg(1i64)
             .arg(&key)
-            .arg(DEFAULT_WINDOW_SECS)
+            .arg(window)
             .query_async::<Vec<i64>>(&mut redis)
             .await
         {
             Ok(result) => {
                 let count = result.first().copied().unwrap_or(0);
-                let ttl = result.get(1).copied().unwrap_or(DEFAULT_WINDOW_SECS);
+                let ttl = result.get(1).copied().unwrap_or(window);
 
-                if count > DEFAULT_LIMIT {
+                if count > limit {
                     return (
                         StatusCode::TOO_MANY_REQUESTS,
                         [(RETRY_AFTER, ttl.max(1).to_string())],
@@ -149,7 +157,7 @@ pub async fn rate_limit(
     if !state.fallback_rate_limiter.check(&ip) {
         return (
             StatusCode::TOO_MANY_REQUESTS,
-            [(RETRY_AFTER, DEFAULT_WINDOW_SECS.max(1).to_string())],
+            [(RETRY_AFTER, window.max(1).to_string())],
         )
             .into_response();
     }

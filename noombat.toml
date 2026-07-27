@@ -64,6 +64,15 @@ integrity_proofs_enabled = true
 # (recommended for production).
 # allow_unsigned_fetch = false
 
+# Per-IP rate limit: maximum requests per window (default 120).
+# rate_limit = 120
+# Per-IP rate limit window in seconds (default 60).
+# rate_limit_window_secs = 60
+# Per-domain federation rate limit (default 300).
+# fed_rate_limit = 300
+# Per-domain federation rate limit window in seconds (default 60).
+# fed_rate_limit_window_secs = 60
+
 # Relay verification policy for inbound relay traffic.
 # Values: "verify", "verify-or-fetch", "trust-relay".
 # Uncomment to activate relay support.

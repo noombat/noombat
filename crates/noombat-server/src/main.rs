@@ -110,6 +110,19 @@ struct Config {
     /// federating with implementations that reject signed fetches.
     #[serde(default)]
     allow_unsigned_fetch: bool,
+    /// Per-IP rate limit: maximum requests per window (default 120).
+    #[serde(default = "default_rate_limit")]
+    rate_limit: u32,
+    /// Per-IP rate limit window in seconds (default 60).
+    #[serde(default = "default_rate_window")]
+    rate_limit_window_secs: i64,
+    /// Per-domain federation rate limit: maximum inbound deliveries
+    /// per window (default 300).
+    #[serde(default = "default_fed_rate_limit")]
+    fed_rate_limit: u32,
+    /// Per-domain federation rate limit window in seconds (default 60).
+    #[serde(default = "default_rate_window")]
+    fed_rate_limit_window_secs: i64,
     /// Hex-encoded 256-bit key-encryption key (KEK) for envelope
     /// encryption of secrets at rest. 64 hex characters (32 bytes).
     /// Required in production; if unset, secrets are stored as
@@ -140,6 +153,15 @@ fn default_access_ttl() -> i64 {
 }
 fn default_refresh_ttl() -> i64 {
     2_592_000
+}
+fn default_rate_limit() -> u32 {
+    120
+}
+fn default_fed_rate_limit() -> u32 {
+    300
+}
+fn default_rate_window() -> i64 {
+    60
 }
 
 #[tokio::main]
@@ -381,8 +403,28 @@ async fn main() -> anyhow::Result<()> {
 
     // In-process fallback rate limiters.
     // Activated when Redis is unavailable; prevent fail-open bypass.
-    let fallback_rate_limiter = FallbackRateLimiter::new(120); // 120 req/min per IP
-    let fallback_fed_rate_limiter = FallbackRateLimiter::new(300); // 300 req/min per domain
+    if config.rate_limit == 0 || config.rate_limit_window_secs <= 0 {
+        anyhow::bail!(
+            "rate_limit ({}) and rate_limit_window_secs ({}) must both be > 0",
+            config.rate_limit,
+            config.rate_limit_window_secs
+        );
+    }
+    if config.fed_rate_limit == 0 || config.fed_rate_limit_window_secs <= 0 {
+        anyhow::bail!(
+            "fed_rate_limit ({}) and fed_rate_limit_window_secs ({}) must both be > 0",
+            config.fed_rate_limit,
+            config.fed_rate_limit_window_secs
+        );
+    }
+    let fallback_rate_limiter = FallbackRateLimiter::new(
+        config.rate_limit,
+        Duration::from_secs(config.rate_limit_window_secs as u64),
+    );
+    let fallback_fed_rate_limiter = FallbackRateLimiter::new(
+        config.fed_rate_limit,
+        Duration::from_secs(config.fed_rate_limit_window_secs as u64),
+    );
 
     let state = AppState {
         pool,
@@ -420,6 +462,10 @@ async fn main() -> anyhow::Result<()> {
         envelope_key,
         fallback_rate_limiter,
         fallback_fed_rate_limiter,
+        rate_limit: config.rate_limit as i64,
+        rate_limit_window_secs: config.rate_limit_window_secs,
+        fed_rate_limit: config.fed_rate_limit as i64,
+        fed_rate_limit_window_secs: config.fed_rate_limit_window_secs,
         allow_unsigned_fetch: config.allow_unsigned_fetch,
     };
     let app = noombat_api::build_router(state);

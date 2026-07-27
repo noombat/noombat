@@ -305,8 +305,8 @@ async fn verify_and_process_inbound(
     let mut redis_ok = false;
     if let Some(mut redis) = state.redis.clone() {
         let key = format!("rl:fed:{sending_domain}");
-        let fed_window_secs: i64 = 60;
-        let fed_limit: i64 = 300;
+        let fed_window_secs = state.fed_rate_limit_window_secs;
+        let fed_limit = state.fed_rate_limit;
 
         match redis::cmd("EVAL")
             .arg(

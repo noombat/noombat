@@ -68,6 +68,14 @@ pub struct AppState {
     pub fallback_rate_limiter: FallbackRateLimiter,
     /// In-process per-domain federation rate limiter (same purpose).
     pub fallback_fed_rate_limiter: FallbackRateLimiter,
+    /// Per-IP rate limit ceiling (Redis primary).
+    pub rate_limit: i64,
+    /// Per-IP rate limit window in seconds (Redis primary).
+    pub rate_limit_window_secs: i64,
+    /// Per-domain federation rate limit ceiling (Redis primary).
+    pub fed_rate_limit: i64,
+    /// Per-domain federation rate limit window in seconds (Redis primary).
+    pub fed_rate_limit_window_secs: i64,
     /// Whether signed-fetch failures fall back to unsigned GET
     /// (default `false`).
     pub allow_unsigned_fetch: bool,
