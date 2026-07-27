@@ -15,7 +15,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
-use noombat_chat::relay::{ClientMessage, RelayConfig, ServerMessage};
+use noombat_chat::relay::{ClientMessage, IdleTimer, RelayConfig, ServerMessage};
 use noombat_chat::session;
 use noombat_core::error::NoombatError;
 use tracing::{info, warn};
@@ -128,17 +128,39 @@ async fn handle_ws(
     let _ = send_json(&mut socket, &ServerMessage::Ready).await;
     info!(actor = %actor_id, "IMAP session established");
 
-    // ..... Phase 3: relay loop .....
+    // ..... Phase 3: relay loop with idle timeout .....
+
+    let mut idle_timer = IdleTimer::new(relay_config.idle_timeout_secs);
 
     loop {
-        let msg = match socket.recv().await {
-            Some(Ok(msg)) => msg,
-            Some(Err(e)) => {
-                warn!(actor = %actor_id, error = %e, "WebSocket recv error");
+        let remaining = idle_timer.remaining();
+
+        let msg = tokio::select! {
+            recv = socket.recv() => {
+                match recv {
+                    Some(Ok(msg)) => msg,
+                    Some(Err(e)) => {
+                        warn!(actor = %actor_id, error = %e, "WebSocket recv error");
+                        break;
+                    }
+                    None => break,
+                }
+            }
+            _ = tokio::time::sleep(remaining) => {
+                info!(actor = %actor_id, "idle timeout reached; closing WebSocket");
+                let _ = send_json(
+                    &mut socket,
+                    &ServerMessage::Error {
+                        message: "session timed out due to inactivity".into(),
+                    },
+                )
+                .await;
                 break;
             }
-            None => break,
         };
+
+        // Record activity on every inbound client message.
+        idle_timer.touch();
 
         let text = match msg {
             Message::Text(t) => t,
