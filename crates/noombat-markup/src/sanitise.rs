@@ -31,6 +31,7 @@
 //! sanitiser (it always does), but about which CSS properties are
 //! permitted on specific elements in the sanitised output.
 
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use ammonia::Builder;
@@ -80,6 +81,40 @@ const EXTRA_TAGS: &[&str] = &[
     "input",
 ];
 
+/// CSS properties permitted in `style` attributes on `<span>` when
+/// the non-strict profile is active. These are the properties used
+/// by the KaTeX HTML renderer.
+///
+/// Properties that enable tracking pixels (`background-image`), UI
+/// spoofing (`position`, `z-index`), or content injection (`content`)
+/// are excluded. Even though the deployed CSP (`style-src 'self'`
+/// without `'unsafe-inline'`) independently blocks inline `style`
+/// attributes at the browser level, the sanitiser-level restriction
+/// ensures safety if the CSP is ever relaxed.
+const KATEX_STYLE_PROPERTIES: &[&str] = &[
+    "border-bottom-color",
+    "border-bottom-style",
+    "border-bottom-width",
+    "border-top-width",
+    "bottom",
+    "color",
+    "font-size",
+    "height",
+    "left",
+    "margin-left",
+    "margin-right",
+    "margin-top",
+    "margin-bottom",
+    "max-width",
+    "min-width",
+    "padding-left",
+    "padding-right",
+    "right",
+    "top",
+    "vertical-align",
+    "width",
+];
+
 /// Apply the tag and attribute allowlist shared by both sanitisation
 /// profiles. The only difference between the two profiles is whether
 /// `style` is permitted on `<span>` (controlled by
@@ -89,9 +124,13 @@ fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
 
     // `<span>` attributes: `class` and `aria-hidden` are always
     // allowed; `style` is allowed only in the non-strict profile
-    // (where KaTeX is the sole source of styled spans).
+    // (where KaTeX is the sole source of styled spans), restricted
+    // to the set of CSS properties KaTeX actually uses.
     if allow_span_style {
         builder.add_tag_attributes("span", ["class", "style", "aria-hidden"]);
+
+        let allowed_props: HashSet<&str> = KATEX_STYLE_PROPERTIES.iter().copied().collect();
+        builder.filter_style_properties(allowed_props);
     } else {
         builder.add_tag_attributes("span", ["class", "aria-hidden"]);
     }
@@ -251,10 +290,31 @@ mod tests {
     }
 
     #[test]
-    fn strips_style_from_user_authored_span() {
+    fn strips_tracking_pixel_from_span_style() {
+        // background-image is not in KATEX_STYLE_PROPERTIES and must
+        // be stripped even in the default (non-strict) profile.
         let input = r#"<span style="background-image:url(https://evil.example/t)">track</span>"#;
         let result = clean(input);
-        assert!(result.contains("style="));
+        assert!(
+            !result.contains("background-image"),
+            "background-image must be stripped by CSS property filter: {result}"
+        );
+    }
+
+    #[test]
+    fn allows_katex_style_properties() {
+        // KaTeX-safe properties (height, vertical-align) must survive.
+        let input =
+            r#"<span class="katex" style="height:0.6444em;vertical-align:-0.35em">x</span>"#;
+        let result = clean(input);
+        assert!(
+            result.contains("height"),
+            "height must be allowed: {result}"
+        );
+        assert!(
+            result.contains("vertical-align"),
+            "vertical-align must be allowed: {result}"
+        );
     }
 
     #[test]
