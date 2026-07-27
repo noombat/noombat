@@ -118,6 +118,9 @@ aes-gcm = "0.10"
 # Scrub key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
 
+# In-process rate limiting (fallback when Redis is unavailable).
+governor = { version = "0.10", features = ["dashmap", "std"] }
+
 # Password hashing (Argon2id for auth_key_hash).
 argon2 = "0.5"
 

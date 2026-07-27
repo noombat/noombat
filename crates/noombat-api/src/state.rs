@@ -5,11 +5,14 @@
 use std::sync::Arc;
 
 use noombat_chat::admin_client::ChatmailAdminClient;
+use noombat_core::envelope::EnvelopeKey;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
 use noombat_identity::oauth_orcid::OrcidConfig;
 use noombat_identity::session::SessionConfig;
 use redis::aio::ConnectionManager;
 use sqlx::PgPool;
+
+use crate::rate_limit::FallbackRateLimiter;
 
 /// Application-wide state, injected into Axum handlers via [`axum::extract::State`].
 #[derive(Clone)]
@@ -56,4 +59,13 @@ pub struct AppState {
     pub analytics: Option<Arc<dyn noombat_core::extension::AnalyticsBackend>>,
     /// Relay verification policy in effect for this instance.
     pub relay_verification_policy: Option<String>,
+    /// Envelope-encryption key for secrets at rest (TOTP secrets,
+    /// private keys). `None` in development when `NOOMBAT_KEK` is
+    /// not set.
+    pub envelope_key: Option<Arc<EnvelopeKey>>,
+    /// In-process per-IP rate limiter that activates when Redis is
+    /// unavailable, preventing fail-open bypass.
+    pub fallback_rate_limiter: FallbackRateLimiter,
+    /// In-process per-domain federation rate limiter (same purpose).
+    pub fallback_fed_rate_limiter: FallbackRateLimiter,
 }

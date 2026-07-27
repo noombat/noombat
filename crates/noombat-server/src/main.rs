@@ -18,10 +18,12 @@ use figment::providers::{Env, Format, Toml};
 use serde::Deserialize;
 use sqlx::postgres::PgPoolOptions;
 use tokio::net::TcpListener;
-use tracing::info;
+use tracing::{error, info};
 use tracing_subscriber::EnvFilter;
 
+use noombat_api::rate_limit::FallbackRateLimiter;
 use noombat_api::state::AppState;
+use noombat_core::envelope::EnvelopeKey;
 
 /// Top-level configuration, loaded from `noombat.toml` and environment
 /// variables prefixed with `NOOMBAT_`.
@@ -102,6 +104,11 @@ struct Config {
     /// Relay verification policy: `verify`, `verify-or-fetch`, or
     /// `trust-relay`. `None` when relay support is not activated.
     relay_verification_policy: Option<String>,
+    /// Hex-encoded 256-bit key-encryption key (KEK) for envelope
+    /// encryption of secrets at rest. 64 hex characters (32 bytes).
+    /// Required in production; if unset, secrets are stored as
+    /// plaintext (development mode only).
+    kek: Option<String>,
 }
 
 fn default_host() -> String {
@@ -150,6 +157,33 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to load configuration");
 
     info!(domain = %config.domain, "starting Noombat server");
+
+    // ..... Production guard rails .....
+    //
+    // When the domain is not `localhost`, verify that security-
+    // critical values are not equal to their documented defaults.
+    validate_production_config(&config);
+
+    // ..... Envelope encryption key .....
+    //
+    // Parse the hex-encoded KEK (if configured) and initialise the
+    // process-global envelope key.
+    let envelope_key: Option<Arc<EnvelopeKey>> = match config.kek.as_deref() {
+        Some(hex) => {
+            let key = EnvelopeKey::from_hex(hex)
+                .expect("NOOMBAT_KEK must be 64 hex characters (32 bytes)");
+            info!("envelope encryption enabled (KEK configured)");
+            Some(Arc::new(key))
+        }
+        None => {
+            info!("no NOOMBAT_KEK configured; envelope encryption disabled (dev-only)");
+            None
+        }
+    };
+    // Initialise the process-global key so that `seal_auto` and `open_auto`
+    // work from any crate without explicit key threading. Clone out of
+    // the Arc for the static; the Arc itself is stored in AppState.
+    noombat_core::envelope::init(envelope_key.as_deref().cloned());
 
     // Database connection pool.
     let pool = PgPoolOptions::new()
@@ -326,6 +360,11 @@ async fn main() -> anyhow::Result<()> {
     let trending_pool = pool.clone();
     let trending_cache_for_worker = trending_cache.clone();
 
+    // In-process fallback rate limiters.
+    // Activated when Redis is unavailable; prevent fail-open bypass.
+    let fallback_rate_limiter = FallbackRateLimiter::new(120); // 120 req/min per IP
+    let fallback_fed_rate_limiter = FallbackRateLimiter::new(300); // 300 req/min per domain
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -359,6 +398,9 @@ async fn main() -> anyhow::Result<()> {
         trending_cache: Some(trending_cache),
         analytics: analytics_backend,
         relay_verification_policy: config.relay_verification_policy.clone(),
+        envelope_key,
+        fallback_rate_limiter,
+        fallback_fed_rate_limiter,
     };
     let app = noombat_api::build_router(state);
 
@@ -388,6 +430,113 @@ async fn main() -> anyhow::Result<()> {
 
     info!("server shut down");
     Ok(())
+}
+
+// ..... Production guard rails .....
+
+/// Known-insecure default values that must not reach production.
+const INSECURE_ADMIN_TOKEN: &str = "noombat";
+const INSECURE_DB_CRED: &str = "noombat:noombat";
+const INSECURE_MEILI_KEY: &str = "noombat-dev-key";
+const INSECURE_CHATMAIL_SECRET: &str = "noombat-chatmail-dev-secret";
+
+/// Minimum acceptable length for the JWT signing secret (HS256).
+const MIN_JWT_SECRET_LEN: usize = 32;
+
+/// Validate that security-critical configuration values are not set
+/// to their documented defaults when the domain is not `localhost`.
+///
+/// Emits `error!`-level log messages and aborts the process on
+/// violation.
+fn validate_production_config(config: &Config) {
+    // Development: skip all checks.
+    if config.domain == "localhost" || config.domain.starts_with("localhost:") {
+        return;
+    }
+
+    let mut fatal = false;
+
+    match config.jwt_secret.as_deref() {
+        None => {
+            error!(
+                "NOOMBAT_JWT_SECRET is not set. \
+                 Session-based authentication is disabled; only the \
+                 admin_token bearer is available. This is not safe \
+                 for production."
+            );
+            fatal = true;
+        }
+        Some(s) if s.len() < MIN_JWT_SECRET_LEN => {
+            error!(
+                "NOOMBAT_JWT_SECRET is too short ({len} bytes, \
+                 minimum {MIN_JWT_SECRET_LEN}). Use a secret of at \
+                 least {MIN_JWT_SECRET_LEN} bytes (generate with: \
+                 openssl rand -base64 48).",
+                len = s.len(),
+                MIN_JWT_SECRET_LEN = MIN_JWT_SECRET_LEN
+            );
+            fatal = true;
+        }
+        Some(_) => {}
+    }
+
+    if config.admin_token.as_deref() == Some(INSECURE_ADMIN_TOKEN) {
+        error!(
+            "NOOMBAT_ADMIN_TOKEN is set to the documented default \
+             (\"{token}\"). Change it to a random value or remove \
+             it entirely in production.",
+            token = INSECURE_ADMIN_TOKEN
+        );
+        fatal = true;
+    }
+
+    if config.database_url.contains(INSECURE_DB_CRED) {
+        error!(
+            "DATABASE_URL contains the default credential \
+             \"{cred}\". Use a strong, unique password in production.",
+            cred = INSECURE_DB_CRED
+        );
+        fatal = true;
+    }
+
+    if config.meili_key.as_deref() == Some(INSECURE_MEILI_KEY) {
+        error!(
+            "NOOMBAT_MEILI_KEY is set to the documented default \
+             (\"{key}\"). Set MEILI_MASTER_KEY to a random value.",
+            key = INSECURE_MEILI_KEY
+        );
+        fatal = true;
+    }
+
+    if config.chatmail_admin_secret.as_deref() == Some(INSECURE_CHATMAIL_SECRET) {
+        error!(
+            "NOOMBAT_CHATMAIL_ADMIN_SECRET is set to the documented \
+             default (\"{secret}\"). Set CHATMAIL_ADMIN_SECRET to a \
+             random value.",
+            secret = INSECURE_CHATMAIL_SECRET
+        );
+        fatal = true;
+    }
+
+    if config.kek.is_none() {
+        error!(
+            "NOOMBAT_KEK is not set. TOTP secrets and private keys \
+             will be stored as plaintext. Set a 64-character hex key \
+             (generate with: openssl rand -hex 32)."
+        );
+        fatal = true;
+    }
+
+    if fatal {
+        error!(
+            "aborting: one or more insecure configuration defaults \
+             detected with domain = \"{domain}\". Fix the values \
+             above or set domain = \"localhost\" for local \
+             development.",
+            domain = config.domain
+        );
+        std::process::exit(1);
+    }
 }
 
 /// Wait for SIGINT or SIGTERM for graceful shutdown.

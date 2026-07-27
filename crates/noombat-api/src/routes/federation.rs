@@ -285,19 +285,23 @@ async fn verify_and_process_inbound(
     // sending domain rather than the remote IP (federation traffic is
     // often relayed through proxies). Uses an atomic Lua script to
     // avoid the INCR/EXPIRE race condition.
+    //
+    // When Redis is unavailable the in-process governor-backed fallback
+    // limiter is used, preventing fail-open bypass.
 
+    let sending_domain = actor_uri
+        .strip_prefix("https://")
+        .or_else(|| actor_uri.strip_prefix("http://"))
+        .and_then(|rest| rest.split('/').next())
+        .unwrap_or("unknown");
+
+    let mut redis_ok = false;
     if let Some(mut redis) = state.redis.clone() {
-        let domain = actor_uri
-            .strip_prefix("https://")
-            .or_else(|| actor_uri.strip_prefix("http://"))
-            .and_then(|rest| rest.split('/').next())
-            .unwrap_or("unknown");
-
-        let key = format!("rl:fed:{domain}");
+        let key = format!("rl:fed:{sending_domain}");
         let fed_window_secs: i64 = 60;
         let fed_limit: i64 = 300;
 
-        let result: Vec<i64> = redis::cmd("EVAL")
+        match redis::cmd("EVAL")
             .arg(
                 r"local count = redis.call('INCR', KEYS[1])
                   if count == 1 then
@@ -308,16 +312,33 @@ async fn verify_and_process_inbound(
             .arg(1i64)
             .arg(&key)
             .arg(fed_window_secs)
-            .query_async(&mut redis)
+            .query_async::<Vec<i64>>(&mut redis)
             .await
-            .unwrap_or_default();
-
-        let count = result.first().copied().unwrap_or(0);
-        if count > fed_limit {
-            return Err(
-                NoombatError::ServiceUnavailable("federation rate limit exceeded".into()).into(),
-            );
+        {
+            Ok(result) => {
+                redis_ok = true;
+                let count = result.first().copied().unwrap_or(0);
+                if count > fed_limit {
+                    return Err(NoombatError::ServiceUnavailable(
+                        "federation rate limit exceeded".into(),
+                    )
+                    .into());
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    "Redis EVAL failed for federation rate limit \
+                     (falling back to in-process limiter): {e}"
+                );
+            }
         }
+    }
+
+    // In-process fallback when Redis was absent or failed.
+    if !redis_ok && !state.fallback_fed_rate_limiter.check(sending_domain) {
+        return Err(
+            NoombatError::ServiceUnavailable("federation rate limit exceeded".into()).into(),
+        );
     }
 
     // ..... PARSE AND PROCESS .....
