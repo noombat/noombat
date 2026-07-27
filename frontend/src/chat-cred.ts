@@ -17,6 +17,28 @@ import { fetchBlob, decryptBlob } from "./chat/blob";
 import QRCode from "qrcode";
 
 document.addEventListener("DOMContentLoaded", () => {
+  // ..... Copy-to-clipboard buttons .....
+  //
+  // Attach click handlers to all `.cred-copy` buttons. Each button
+  // carries the value to copy in its `data-value` attribute.
+  // Previously an inline <script>; moved here for CSP compliance
+  // (script-src 'self' without 'unsafe-inline').
+  document.querySelectorAll<HTMLButtonElement>(".cred-copy").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const value = btn.dataset.value;
+      if (value && navigator.clipboard) {
+        navigator.clipboard.writeText(value).then(() => {
+          const orig = btn.textContent;
+          btn.textContent = "\u2713";
+          setTimeout(() => {
+            btn.textContent = orig;
+          }, 1500);
+        });
+      }
+    });
+  });
+
+  // ..... Password reveal and QR code .....
   const dataEl = document.getElementById("cred-data");
   if (!dataEl) return;
 
