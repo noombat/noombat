@@ -7,11 +7,18 @@
 # filtermail + OpenDKIM) alongside the noombat-chatmail-admin sidecar
 # daemon, managed by s6-overlay.
 
+# Base images are pinned by digest as well as by tag.
+# The digest makes the input immutable and is a prerequisite for the
+# reproducibility gate in CI. Dependabot proposes digest bumps for review.
+#
+# Refresh a digest with:
+#   docker buildx imagetools inspect <image>:<tag>
+
 # ..... RUST BUILD .....
 #
 # Builds both the sidecar daemon and the filtermail content filter
 # as release binaries.
-FROM rust:1-bookworm AS rust-builder
+FROM rust:1-bookworm@sha256:77fac8b98f9f46062bb680b6d25d5bcaabfc400143952ebc572e924bcbedc3fa AS rust-builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
@@ -26,7 +33,7 @@ RUN cargo build --release --bin noombat-chatmail-admin --bin noombat-filtermail
 # packages. In production, the upstream Chatmail relay is deployed via
 # Ansible (cmdeploy); for containerisation, we install the required
 # packages directly and overlay the Chatmail-specific configuration.
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 # Install s6-overlay for process supervision.
 ARG S6_OVERLAY_VERSION=3.2.0.2
