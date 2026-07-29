@@ -188,16 +188,30 @@ export default function Chat(props: ChatProps): JSX.Element {
 
   // ..... Blob decryption .....
 
-  /** Attempt to decrypt the credential blob. */
+  /** Attempt to decrypt the credential blob. Returns `true` on
+   *  success; sets `status()` on distinguishable failure modes. */
   async function unlockBlob(password: string): Promise<boolean> {
-    const encryptedBlob = await fetchBlob();
-    if (!encryptedBlob) return false;
+    const result = await fetchBlob();
 
+    if (result.status === "not_provisioned") {
+      setStatus("Chat has not been provisioned.");
+      return false;
+    }
+    if (result.status === "auth_error") {
+      setStatus("Session expired. Please log in again.");
+      return false;
+    }
+    if (result.status === "error") {
+      setStatus(`Server error (HTTP ${result.httpStatus}).`);
+      return false;
+    }
+
+    const encryptedBlob = result.data;
     const domain = window.location.hostname;
 
     try {
       const key = await deriveBlobKey(password, props.username, domain);
-      const blob = await decryptBlob(key, encryptedBlob);
+      const blob = await decryptBlob(key, encryptedBlob, props.chatmailAddr);
       credentials = blob;
       blobKey = key;
 
@@ -228,7 +242,13 @@ export default function Chat(props: ChatProps): JSX.Element {
       }, SYNC_INTERVAL_MS);
       document.addEventListener("visibilitychange", handleVisibilityChange);
     } else {
-      setStatus("Incorrect password.");
+      // unlockBlob sets a specific status message for discriminated
+      // fetch errors (auth_error, not_provisioned, server error).
+      // Only fall back to the generic message if no specific status
+      // was set (i.e. the decryptBlob catch path was taken).
+      if (!status()) {
+        setStatus("Incorrect password.");
+      }
     }
   }
 

@@ -84,9 +84,17 @@ document.addEventListener("DOMContentLoaded", () => {
       try {
         const domain = window.location.hostname;
         const blobKey = await deriveBlobKey(password, username, domain);
-        const encrypted = await fetchBlob();
-        if (!encrypted) {
-          showError(container, "No credential blob found. Chat may not be provisioned.");
+        const result = await fetchBlob();
+        if (result.status !== "ok") {
+          unlockBtn.disabled = false;
+          unlockBtn.textContent = "Unlock";
+          if (result.status === "not_provisioned") {
+            showError(container, "No credential blob found. Chat may not be provisioned.");
+          } else if (result.status === "auth_error") {
+            showError(container, "Session expired. Please log in again.");
+          } else {
+            showError(container, `Server error (HTTP ${result.httpStatus}).`);
+          }
           return;
         }
 

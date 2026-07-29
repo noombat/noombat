@@ -94,17 +94,47 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
 }
 
 /**
+ * Discriminated result type for {@link fetchBlob}.
+ *
+ * - `"ok"`: the blob was retrieved successfully.
+ * - `"not_provisioned"`: HTTP 404; the blob does not exist (chat
+ *   has not been provisioned).
+ * - `"auth_error"`: HTTP 401 or 403; the access token has expired
+ *   or is invalid.
+ * - `"error"`: any other non-success HTTP status.
+ */
+export type FetchBlobResult =
+  | { status: "ok"; data: Uint8Array }
+  | { status: "not_provisioned" }
+  | { status: "auth_error" }
+  | { status: "error"; httpStatus: number };
+
+/**
  * Retrieve the encrypted blob from the server.
  *
- * `GET /api/v1/me/chatmail_cred` returns the raw bytes.
- * Returns `null` if the blob does not exist (HTTP 404).
+ * `GET /api/v1/me/chatmail_cred` returns the raw bytes on success.
+ * The caller receives a discriminated result so that "token expired"
+ * (401/403), "blob absent" (404), and other failures are
+ * distinguishable.
  */
-export async function fetchBlob(): Promise<Uint8Array | null> {
+export async function fetchBlob(): Promise<FetchBlobResult> {
   const token = sessionStorage.getItem("noombat_access_token") ?? "";
   const resp = await fetch("/api/v1/me/chatmail_cred", {
     headers: { Authorization: `Bearer ${token}` },
   });
-  if (!resp.ok) return null;
-  const buf = await resp.arrayBuffer();
-  return new Uint8Array(buf);
+
+  if (resp.ok) {
+    const buf = await resp.arrayBuffer();
+    return { status: "ok", data: new Uint8Array(buf) };
+  }
+
+  if (resp.status === 404) {
+    return { status: "not_provisioned" };
+  }
+
+  if (resp.status === 401 || resp.status === 403) {
+    return { status: "auth_error" };
+  }
+
+  return { status: "error", httpStatus: resp.status };
 }
