@@ -26,6 +26,7 @@ export default defineConfig({
         editor: "src/editor/index.tsx",
         chat: "src/chat/index.tsx",
         "chat-cred": "src/chat-cred.ts",
+        compose: "src/compose.ts",
       },
       output: {
         // CSS assets keep stable names; JS islands get hashed names.
@@ -39,6 +40,7 @@ export default defineConfig({
             chunkInfo.name === "editor" ||
             chunkInfo.name === "chat" ||
             chunkInfo.name === "chat-cred" ||
+            chunkInfo.name === "compose" ||
             chunkInfo.name === "katex"
           ) {
             return "assets/[name].js";

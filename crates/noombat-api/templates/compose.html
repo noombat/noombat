@@ -95,17 +95,5 @@
         </form>
 
         <script type="module" src="/assets/editor.js"></script>
-        <script>
-            // Toggle article-specific fields when the post-type radio
-            // changes. Uses a script block instead of inline `onchange`
-            // handlers for CSP compatibility (no `unsafe-inline`).
-            (function () {
-                var note = document.getElementById('post-type-note');
-                var article = document.getElementById('post-type-article');
-                var fields = document.getElementById('article-fields');
-                if (!note || !article || !fields) return;
-                note.addEventListener('change', function () { fields.hidden = true; });
-                article.addEventListener('change', function () { fields.hidden = false; });
-            })();
-        </script>
+        <script type="module" src="/assets/compose.js"></script>
 {% endblock %}
