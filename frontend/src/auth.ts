@@ -17,6 +17,8 @@
  * The raw password is never transmitted to the server.
  */
 
+import { showFormAlert as showError } from "./ui/alert";
+
 const PBKDF2_ITERATIONS = 600_000;
 const KEY_LENGTH_BYTES = 32;
 
@@ -332,18 +334,6 @@ function uint8ToBase64(bytes: Uint8Array): string {
     parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
   }
   return btoa(parts.join(""));
-}
-
-/** Display an error message above the form. */
-function showError(form: HTMLFormElement, message: string): void {
-  let alert = form.querySelector("[role=alert]") as HTMLElement | null;
-  if (!alert) {
-    alert = document.createElement("div");
-    alert.setAttribute("role", "alert");
-    alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
-    form.prepend(alert);
-  }
-  alert.textContent = message;
 }
 
 // ..... Token refresh .....
