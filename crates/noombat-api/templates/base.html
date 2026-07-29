@@ -2,7 +2,16 @@
 <!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
 
 <!DOCTYPE html>
-<html lang="{{ i18n.lang_attr() }}" dir="ltr">
+<!--
+  Localised client-side strings are carried on the root element as
+  data-* attributes. Scripts read them via `document.documentElement.dataset`,
+  which keeps translated text out of inline <script> bodies and so out of
+  conflict with a `script-src 'self'` Content-Security-Policy.
+-->
+<html lang="{{ i18n.lang_attr() }}" dir="ltr"
+      data-password-mismatch="{{ i18n.t("auth_password_mismatch") }}"
+      data-network-error="{{ i18n.t("error_network") }}"
+      data-upgrade-password-failed="{{ i18n.t("auth_upgrade_password_failed") }}">
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
