@@ -98,7 +98,7 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
 
-        const blob = await decryptBlob(blobKey, encrypted);
+        const blob = await decryptBlob(blobKey, result.data, chatmailAddr);
         const chatmailPassword = blob.chatmailPassword;
 
         // Remove the prompt and display the password.

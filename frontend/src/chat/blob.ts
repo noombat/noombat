@@ -31,16 +31,46 @@ export interface CredentialBlob {
 }
 
 /**
+ * Encode the AAD (Additional Authenticated Data) string as a
+ * Uint8Array.
+ *
+ * The AAD binds the ciphertext to the owner's Chatmail address,
+ * preventing a blob-swapping attack in which a compromised server
+ * substitutes one user's encrypted blob for another's.
+ */
+function encodeAad(chatmailAddr: string): Uint8Array {
+  return new TextEncoder().encode(`noombat-chatmail-cred:${chatmailAddr}`);
+}
+
+/**
  * Encrypt a credential blob with the given AES-GCM key.
  *
  * Returns the raw bytes (`iv || ciphertext || tag`) suitable for
  * storage in the `chatmail_cred` BYTEA column.
+ *
+ * @param blobKey: AES-256-GCM key (derived via split key derivation).
+ * @param blob: The plaintext credential material.
+ * @param chatmailAddr: The owner's Chatmail address, bound as AAD.
  */
-export async function encryptBlob(blobKey: CryptoKey, blob: CredentialBlob): Promise<Uint8Array> {
+export async function encryptBlob(
+  blobKey: CryptoKey,
+  blob: CredentialBlob,
+  chatmailAddr: string,
+): Promise<Uint8Array> {
   const plaintext = new TextEncoder().encode(JSON.stringify(blob));
   const iv = crypto.getRandomValues(new Uint8Array(12));
+  const additionalData = encodeAad(chatmailAddr);
 
-  const ciphertext = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, blobKey, plaintext);
+  // The `as Uint8Array<ArrayBuffer>` assertion is safe: the
+  // Uint8Array produced by `TextEncoder.encode()` is always backed
+  // by an ArrayBuffer, not a SharedArrayBuffer. TypeScript 5.7+
+  // widens Uint8Array to Uint8Array<ArrayBufferLike>, which is not
+  // assignable to the BufferSource union's ArrayBufferView<ArrayBuffer>.
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: "AES-GCM", iv, additionalData: additionalData as Uint8Array<ArrayBuffer> },
+    blobKey,
+    plaintext,
+  );
 
   // Prepend the IV to the ciphertext.
   const result = new Uint8Array(iv.byteLength + ciphertext.byteLength);
@@ -54,15 +84,26 @@ export async function encryptBlob(blobKey: CryptoKey, blob: CredentialBlob): Pro
  *
  * `encrypted` is the raw bytes from the `chatmail_cred` column
  * (`iv || ciphertext || tag`).
+ *
+ * @param blobKey: AES-256-GCM key (derived via split key derivation).
+ * @param encrypted: The raw ciphertext from the server.
+ * @param chatmailAddr: The owner's Chatmail address, bound as AAD
+ *   (must match the value used during encryption).
  */
 export async function decryptBlob(
   blobKey: CryptoKey,
   encrypted: Uint8Array,
+  chatmailAddr: string,
 ): Promise<CredentialBlob> {
   const iv = encrypted.slice(0, 12);
   const ciphertext = encrypted.slice(12);
+  const additionalData = encodeAad(chatmailAddr);
 
-  const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv }, blobKey, ciphertext);
+  const plaintext = await crypto.subtle.decrypt(
+    { name: "AES-GCM", iv, additionalData: additionalData as Uint8Array<ArrayBuffer> },
+    blobKey,
+    ciphertext,
+  );
 
   const json = new TextDecoder().decode(plaintext);
   return JSON.parse(json) as CredentialBlob;

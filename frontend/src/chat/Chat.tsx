@@ -404,7 +404,7 @@ export default function Chat(props: ChatProps): JSX.Element {
         ...credentials,
         peerStateJson,
       };
-      const encrypted = await encryptBlob(blobKey, updatedBlob);
+      const encrypted = await encryptBlob(blobKey, updatedBlob, props.chatmailAddr);
       await storeBlob(encrypted);
     } catch {
       // Best-effort: sync failure is non-fatal.

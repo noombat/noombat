@@ -318,7 +318,7 @@ async function provisionChat(blobKey: CryptoKey): Promise<void> {
     peerStateJson: null,
   };
 
-  const encrypted = await encryptBlob(blobKey, blob);
+  const encrypted = await encryptBlob(blobKey, blob, chatmail_addr);
 
   // 4. Store the encrypted blob on the server.
   await storeBlob(encrypted);
