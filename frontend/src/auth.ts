@@ -17,6 +17,8 @@
  * The raw password is never transmitted to the server.
  */
 
+import { provisionChat } from "./chat/provision";
+import { ACCESS_TOKEN_KEY } from "./chat/session";
 import { showFormAlert as showError } from "./ui/alert";
 
 const PBKDF2_ITERATIONS = 600_000;
@@ -176,7 +178,7 @@ function setupLoginForm(): void {
 
       if (resp.ok) {
         const data = await resp.json();
-        sessionStorage.setItem("noombat_access_token", data.access_token);
+        sessionStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
         sessionStorage.setItem("noombat_refresh_token", data.refresh_token);
         window.location.href = "/";
       } else if (resp.status === 400) {
@@ -256,7 +258,7 @@ function setupRegisterForm(): void {
 
       if (resp.ok || resp.status === 201) {
         const data = await resp.json();
-        sessionStorage.setItem("noombat_access_token", data.access_token);
+        sessionStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
         sessionStorage.setItem("noombat_refresh_token", data.refresh_token);
 
         // Provision the Chatmail account and generate the
@@ -276,64 +278,6 @@ function setupRegisterForm(): void {
       showError(form, "Network error. Please try again.");
     }
   });
-}
-
-/**
- * Provision the Chatmail account, generate an OpenPGP key pair,
- * and store the encrypted credential blob.
- *
- * Called after successful registration. Requires the blob
- * encryption key (derived from the user's password) and a valid
- * session token in sessionStorage.
- */
-async function provisionChat(blobKey: CryptoKey): Promise<void> {
-  const accessToken = sessionStorage.getItem("noombat_access_token");
-  if (!accessToken) return;
-
-  // 1. Ask the server to provision the Chatmail account.
-  const provResp = await fetch("/api/v1/me/provision_chat", {
-    method: "POST",
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
-
-  if (!provResp.ok) return;
-
-  const { chatmail_addr, chatmail_password } = (await provResp.json()) as {
-    chatmail_addr: string;
-    chatmail_password: string;
-  };
-
-  // 2. Generate an OpenPGP key pair for the Chatmail address.
-  const { generateKeyPair } = await import("./chat/crypto");
-  const keyPair = await generateKeyPair(chatmail_addr);
-
-  // 3. Build and encrypt the credential blob.
-  const { encryptBlob, storeBlob } = await import("./chat/blob");
-
-  const publicKeyB64 = uint8ToBase64(keyPair.publicKey);
-  const privateKeyB64 = uint8ToBase64(keyPair.privateKey);
-
-  const blob = {
-    chatmailPassword: chatmail_password,
-    publicKeyB64,
-    privateKeyB64,
-    peerStateJson: null,
-  };
-
-  const encrypted = await encryptBlob(blobKey, blob, chatmail_addr);
-
-  // 4. Store the encrypted blob on the server.
-  await storeBlob(encrypted);
-}
-
-/** Encode a Uint8Array to a base64 string (chunked to avoid stack overflow). */
-function uint8ToBase64(bytes: Uint8Array): string {
-  const CHUNK = 0x8000;
-  const parts: string[] = [];
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-  }
-  return btoa(parts.join(""));
 }
 
 // ..... Token refresh .....
@@ -361,13 +305,13 @@ async function refreshSession(): Promise<boolean> {
 
     if (resp.ok) {
       const data = await resp.json();
-      sessionStorage.setItem("noombat_access_token", data.access_token);
+      sessionStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
       sessionStorage.setItem("noombat_refresh_token", data.refresh_token);
       return true;
     }
 
     // Refresh token is expired or revoked: clear stored tokens.
-    sessionStorage.removeItem("noombat_access_token");
+    sessionStorage.removeItem(ACCESS_TOKEN_KEY);
     sessionStorage.removeItem("noombat_refresh_token");
     return false;
   } catch {
