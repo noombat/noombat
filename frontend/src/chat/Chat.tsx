@@ -172,6 +172,24 @@ export default function Chat(props: ChatProps): JSX.Element {
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let msgCounter = 0;
 
+  // ..... Reconnection backoff .....
+
+  /** Current backoff delay in milliseconds. Doubles on each
+   *  successive failure, capped at MAX_RECONNECT_MS. Reset to
+   *  BASE_RECONNECT_MS on a successful connection. */
+  let reconnectDelay = 0;
+  const BASE_RECONNECT_MS = 1_000;
+  const MAX_RECONNECT_MS = 60_000;
+
+  /** Compute the next backoff delay with +/- 25 % jitter. */
+  function nextReconnectDelay(): number {
+    const base =
+      reconnectDelay === 0 ? BASE_RECONNECT_MS : Math.min(reconnectDelay * 2, MAX_RECONNECT_MS);
+    const jitter = base * (0.75 + Math.random() * 0.5);
+    reconnectDelay = base;
+    return Math.round(jitter);
+  }
+
   // Decrypted credential material (held in memory for the session).
   let credentials: CredentialBlob | null = null;
   let privateKeyBytes: Uint8Array | null = null;
@@ -277,6 +295,8 @@ export default function Chat(props: ChatProps): JSX.Element {
       if (msg.type === "ready") {
         setConnected(true);
         setStatus("");
+        // Reset backoff on successful connection.
+        reconnectDelay = 0;
         // Fetch unseen messages now that the session is established.
         ws?.send(JSON.stringify({ type: "fetch", since_uid: 0 }));
         return;
@@ -299,8 +319,9 @@ export default function Chat(props: ChatProps): JSX.Element {
     ws.onclose = () => {
       setConnected(false);
       setStatus(strings().disconnected);
-      // Reconnect after 3 s.
-      reconnectTimer = setTimeout(connect, 3000);
+      // Reconnect with bounded exponential backoff and jitter.
+      const delay = nextReconnectDelay();
+      reconnectTimer = setTimeout(connect, delay);
     };
 
     ws.onerror = () => {
