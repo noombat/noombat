@@ -266,7 +266,7 @@ jobs:
         working-directory: frontend
         run: |
           corepack enable
-          pnpm install
+          pnpm install --frozen-lockfile
           pnpm build
 
       - name: Upload release binary

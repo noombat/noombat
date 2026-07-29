@@ -121,7 +121,7 @@ jobs:
         working-directory: frontend
         run: |
           corepack enable
-          pnpm install
+          pnpm install --frozen-lockfile
           pnpm build
 
       - name: Seed test actor
@@ -288,7 +288,7 @@ jobs:
         working-directory: frontend
         run: |
           corepack enable
-          pnpm install
+          pnpm install --frozen-lockfile
           pnpm build
 
       - name: Seed test actor

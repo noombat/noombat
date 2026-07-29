@@ -13,7 +13,10 @@ COPY frontend/ frontend/
 COPY crates/noombat-api/templates/ crates/noombat-api/templates/
 
 WORKDIR /build/frontend
-RUN corepack enable && pnpm install && pnpm build
+# `--frozen-lockfile` makes a package.json/pnpm-lock.yaml mismatch
+# fail the build rather than being resolved silently into a
+# dependency set that no lockfile records.
+RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
 
 # ..... RUST BUILD .....
 # The `rust:1-bookworm` tag tracks the latest stable Rust 1.x release,
