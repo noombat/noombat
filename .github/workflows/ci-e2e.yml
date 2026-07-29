@@ -77,6 +77,10 @@ jobs:
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
+      # Effectively disable per-IP rate limiting for the e2e run.
+      # The values mirror the test overlay in compose.test.yml.
+      NOOMBAT_RATE_LIMIT: "10000"
+      NOOMBAT_FED_RATE_LIMIT: "10000"
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
