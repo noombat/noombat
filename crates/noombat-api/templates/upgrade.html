@@ -21,6 +21,7 @@
 
         <form id="upgrade-form"
               aria-label="{{ i18n.t("aria_auth_form") }}"
+              data-username="{{ nav_username }}"
               class="space-y-4 mb-8">
 
             <div>
@@ -50,122 +51,5 @@
 
 {% block style %}
 <script type="module" src="/assets/auth.js"></script>
-<script type="module">
-// Intercept the upgrade form. After setting the password, provision
-// the Chatmail account and store the encrypted credential blob.
-document.addEventListener("DOMContentLoaded", () => {
-  const form = document.getElementById("upgrade-form");
-  if (!form) return;
-
-  form.addEventListener("submit", async (e) => {
-    e.preventDefault();
-
-    const pw = document.getElementById("upgrade-password").value;
-    const confirm = document.getElementById("upgrade-password-confirm").value;
-
-    if (pw !== confirm) {
-      showAlert(form, '{{ i18n.t("auth_password_mismatch") }}');
-      return;
-    }
-
-    // The username is needed for the salt. Read it from the nav bar.
-    const username = "{{ nav_username }}";
-    const domain = window.location.hostname;
-
-    // Derive both the auth key and the blob encryption key from a
-    // single PBKDF2 pass.
-    const enc = new TextEncoder();
-    const salt = enc.encode(username.toLowerCase() + "@" + domain);
-    const keyMaterial = await crypto.subtle.importKey(
-      "raw", enc.encode(pw), "PBKDF2", false, ["deriveBits"]);
-    const masterBits = await crypto.subtle.deriveBits(
-      { name: "PBKDF2", salt, iterations: 600000, hash: "SHA-256" },
-      keyMaterial, 256);
-    const masterKey = await crypto.subtle.importKey(
-      "raw", masterBits, "HKDF", false, ["deriveBits"]);
-
-    // Auth key (hex).
-    const authBits = await crypto.subtle.deriveBits(
-      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0),
-        info: enc.encode("noombat-auth") },
-      masterKey, 256);
-    const authKey = Array.from(new Uint8Array(authBits))
-      .map(b => b.toString(16).padStart(2, "0")).join("");
-
-    // Blob encryption key (AES-GCM CryptoKey).
-    const blobBits = await crypto.subtle.deriveBits(
-      { name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0),
-        info: enc.encode("noombat-chat-crypto") },
-      masterKey, 256);
-    const blobKey = await crypto.subtle.importKey(
-      "raw", blobBits, "AES-GCM", false, ["encrypt", "decrypt"]);
-
-    // Step 1: Set the password.
-    const pwResp = await fetch("/api/v1/auth/password", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ auth_key: authKey }),
-    });
-
-    if (!pwResp.ok && pwResp.status !== 204) {
-      showAlert(form, "Failed to set password. Please try again.");
-      return;
-    }
-
-    // Step 2: Provision the Chatmail account.
-    const provResp = await fetch("/api/v1/me/provision_chat", {
-      method: "POST",
-    });
-
-    if (provResp.ok) {
-      const { chatmail_addr, chatmail_password } = await provResp.json();
-
-      try {
-        // Step 3: Generate an OpenPGP key pair.
-        const { generateKeyPair } = await import("/assets/chat/crypto.js");
-        const keyPair = await generateKeyPair(chatmail_addr);
-
-        // Step 4: Build and encrypt the credential blob.
-        const { encryptBlob, storeBlob } = await import("/assets/chat/blob.js");
-
-        const toBase64 = (bytes) => {
-          const CHUNK = 0x8000;
-          const parts = [];
-          for (let i = 0; i < bytes.length; i += CHUNK) {
-            parts.push(String.fromCharCode(...bytes.subarray(i, i + CHUNK)));
-          }
-          return btoa(parts.join(""));
-        };
-
-        const blob = {
-          chatmailPassword: chatmail_password,
-          publicKeyB64: toBase64(keyPair.publicKey),
-          privateKeyB64: toBase64(keyPair.privateKey),
-          peerStateJson: null,
-        };
-
-        const encrypted = await encryptBlob(blobKey, blob);
-        await storeBlob(encrypted);
-      } catch {
-        // Key generation or blob storage failed. The password and
-        // Chatmail account are provisioned; the blob can be created
-        // later from the chat page.
-      }
-    }
-
-    window.location.href = "/chat";
-  });
-
-  function showAlert(form, message) {
-    let alert = form.querySelector("[role=alert]");
-    if (!alert) {
-      alert = document.createElement("div");
-      alert.setAttribute("role", "alert");
-      alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
-      form.prepend(alert);
-    }
-    alert.textContent = message;
-  }
-});
-</script>
+<script type="module" src="/assets/upgrade.js"></script>
 {% endblock %}

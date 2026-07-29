@@ -343,3 +343,7 @@ privacy_preview: "Visualização do perfil"
 privacy_preview_as_public: "Como visitante público"
 privacy_preview_as_follower: "Como seguidor"
 privacy_preview_as_owner: "Como proprietário"
+
+# Client-side strings surfaced through data-* attributes.
+error_network: "Erro de rede. Tente novamente."
+auth_upgrade_password_failed: "Não foi possível definir a senha. Tente novamente."
