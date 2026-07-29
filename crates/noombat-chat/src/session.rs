@@ -201,12 +201,25 @@ pub async fn send_message(
          Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"{boundary}\"\r\n"
     );
 
-    // Inject the Autocrypt header if provided.
+    // Inject the Autocrypt header if provided, after validation.
+    //
+    // The header is validated to prevent:
+    // 1. An `addr` attribute that does not match the authenticated
+    //    sender (spoofed key exchange).
+    // 2. An excessively large header that could abuse the SMTP
+    //    envelope (e.g. a multi-megabyte keydata payload).
     if let Some(ac_b64) = autocrypt_header_b64
         && let Ok(ac_bytes) = B64.decode(ac_b64)
         && let Ok(ac_str) = String::from_utf8(ac_bytes)
     {
-        headers.push_str(&format!("Autocrypt: {ac_str}\r\n"));
+        if let Some(validated) = validate_autocrypt_header(&ac_str, from_addr) {
+            headers.push_str(&fold_header_value("Autocrypt", validated));
+        } else {
+            warn!(
+                from = %from_addr,
+                "Autocrypt header rejected: addr mismatch, oversized, or malformed"
+            );
+        }
     }
 
     let raw_message = format!(
@@ -248,4 +261,215 @@ pub async fn send_message(
         .map_err(|e| format!("SMTP send failed: {e}"))?;
 
     Ok(())
+}
+
+/// Maximum total byte length of an Autocrypt header value that the
+/// relay will inject into an outgoing SMTP message. A typical
+/// Ed25519/Curve25519 Autocrypt header is approximately 200 bytes;
+/// an RSA-4096 header is approximately 6 KiB. The 16 384-byte
+/// ceiling accommodates any realistic key size with margin.
+const MAX_AUTOCRYPT_HEADER_BYTES: usize = 16_384;
+
+/// Validate an Autocrypt header value before injection into an
+/// SMTP message.
+///
+/// Returns `Some(header)` if:
+/// - the header contains an `addr=` attribute whose value matches
+///   `expected_sender` (case-insensitive);
+/// - the total byte length does not exceed
+///   [`MAX_AUTOCRYPT_HEADER_BYTES`].
+///
+/// Returns `None` otherwise. The validation is intentionally
+/// lightweight, i.e. it verifies the `addr` binding and size, not the
+/// full Autocrypt grammar, because the upstream `autocrypt.ts`
+/// module has already parsed and validated the header client-side.
+fn validate_autocrypt_header<'a>(header: &'a str, expected_sender: &str) -> Option<&'a str> {
+    if header.len() > MAX_AUTOCRYPT_HEADER_BYTES {
+        return None;
+    }
+
+    // Extract the `addr` attribute value from the semicolon-delimited header.
+    //
+    // `split_once('=')` splits at the *first* `=`, which is correct:
+    // attribute names never contain `=`, so everything after the first `=` is the value.
+    // For `keydata=AAAA==` this yields `("keydata", "AAAA==")` with the base64 padding intact.
+    // This function only inspects the `addr` attribute (whose value is an email address that
+    // never contains `=`), but the semantics are safe for all Autocrypt attributes.
+    let addr_value = header.split(';').map(str::trim).find_map(|part| {
+        let (key, value) = part.split_once('=')?;
+        if key.trim().eq_ignore_ascii_case("addr") {
+            Some(value.trim())
+        } else {
+            None
+        }
+    });
+
+    match addr_value {
+        Some(addr) if addr.eq_ignore_ascii_case(expected_sender) => Some(header),
+        _ => None,
+    }
+}
+
+/// Format a header field name and value as a folded RFC 5322 header line.
+///
+/// RFC 5322 §2.1.1 limits each line to 998 characters (excluding
+/// the CRLF). Long values, common for Autocrypt headers whose
+/// `keydata` attribute is a base64-encoded OpenPGP key, are folded
+/// by inserting `\r\n ` (CRLF followed by a single space, "folding
+/// white space" or FWS) at a position that keeps each line within
+/// the limit.
+///
+/// The function folds at 76-character widths (matching the base64
+/// line-wrap convention in RFC 2045 and the existing ciphertext
+/// wrapping in this module). The returned string is terminated by
+/// `\r\n` and is ready for direct concatenation into the header
+/// block.
+fn fold_header_value(name: &str, value: &str) -> String {
+    // Maximum number of value characters per line. The first line
+    // carries the field name, colon, and space (`Name: `), so its
+    // available width is shorter.
+    const LINE_WIDTH: usize = 76;
+
+    let prefix = format!("{name}: ");
+    let first_line_budget = LINE_WIDTH.saturating_sub(prefix.len());
+
+    let mut out = String::with_capacity(prefix.len() + value.len() + value.len() / LINE_WIDTH * 3);
+    out.push_str(&prefix);
+
+    let bytes = value.as_bytes();
+    if bytes.len() <= first_line_budget {
+        // Short enough to fit on one line.
+        out.push_str(value);
+        out.push_str("\r\n");
+        return out;
+    }
+
+    // First line: fill up to first_line_budget.
+    out.push_str(&value[..first_line_budget]);
+    out.push_str("\r\n");
+
+    // Continuation lines: each prefixed with a single space (FWS).
+    let continuation_budget = LINE_WIDTH - 1; // 1 byte for the leading space
+    let mut pos = first_line_budget;
+    while pos < bytes.len() {
+        let end = (pos + continuation_budget).min(bytes.len());
+        out.push(' ');
+        out.push_str(&value[pos..end]);
+        out.push_str("\r\n");
+        pos = end;
+    }
+
+    out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ..... validate_autocrypt_header .....
+
+    #[test]
+    fn valid_header_matching_addr() {
+        let header = "addr=alice@chat.noombat.social; prefer-encrypt=mutual; keydata=AAAA";
+        let result = validate_autocrypt_header(header, "alice@chat.noombat.social");
+        assert_eq!(result, Some(header));
+    }
+
+    #[test]
+    fn valid_header_case_insensitive_addr() {
+        let header = "addr=Alice@Chat.Noombat.Social; keydata=AAAA";
+        let result = validate_autocrypt_header(header, "alice@chat.noombat.social");
+        assert_eq!(result, Some(header));
+    }
+
+    #[test]
+    fn addr_mismatch_returns_none() {
+        let header = "addr=mallory@evil.example; keydata=AAAA";
+        let result = validate_autocrypt_header(header, "alice@chat.noombat.social");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn missing_addr_returns_none() {
+        let header = "prefer-encrypt=mutual; keydata=AAAA";
+        let result = validate_autocrypt_header(header, "alice@chat.noombat.social");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn oversized_header_returns_none() {
+        // Build a header that exceeds MAX_AUTOCRYPT_HEADER_BYTES.
+        let large_keydata = "A".repeat(MAX_AUTOCRYPT_HEADER_BYTES + 1);
+        let header = format!("addr=alice@example.com; keydata={large_keydata}");
+        let result = validate_autocrypt_header(&header, "alice@example.com");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn keydata_with_base64_padding_does_not_break_split() {
+        // The `keydata` value contains `=` characters (base64 padding).
+        // `split_once('=')` must split at the first `=` (between the
+        // attribute name and value), not at the padding.
+        let header = "addr=alice@example.com; keydata=AAAA==";
+        let result = validate_autocrypt_header(header, "alice@example.com");
+        assert_eq!(result, Some(header));
+    }
+
+    #[test]
+    fn empty_header_returns_none() {
+        assert!(validate_autocrypt_header("", "alice@example.com").is_none());
+    }
+
+    // ..... fold_header_value .....
+
+    #[test]
+    fn short_value_not_folded() {
+        let result = fold_header_value("Autocrypt", "addr=a@b.c; keydata=AA");
+        assert_eq!(result, "Autocrypt: addr=a@b.c; keydata=AA\r\n");
+        // No continuation lines.
+        assert_eq!(result.matches("\r\n").count(), 1);
+    }
+
+    #[test]
+    fn long_value_folded_within_limit() {
+        // Generate a value longer than 76 characters.
+        let value = "addr=alice@chat.noombat.social; prefer-encrypt=mutual; keydata=".to_owned()
+            + &"A".repeat(200);
+        let result = fold_header_value("Autocrypt", &value);
+
+        // Every line (excluding the final empty split) must be at most 76
+        // characters (not counting the CRLF itself).
+        for line in result.trim_end_matches("\r\n").split("\r\n") {
+            assert!(
+                line.len() <= 76,
+                "line exceeds 76 characters ({} chars): {:?}",
+                line.len(),
+                line,
+            );
+        }
+
+        // The unfolded value (strip FWS) must reconstruct the original.
+        let unfolded = result
+            .strip_prefix("Autocrypt: ")
+            .unwrap()
+            .replace("\r\n ", "")
+            .replace("\r\n", "");
+        assert_eq!(unfolded, value);
+    }
+
+    #[test]
+    fn folded_continuation_lines_start_with_space() {
+        let value = "A".repeat(200);
+        let result = fold_header_value("X-Test", &value);
+        let lines: Vec<&str> = result.trim_end_matches("\r\n").split("\r\n").collect();
+        // First line starts with field name; continuation lines with a space.
+        assert!(lines[0].starts_with("X-Test: "));
+        for continuation in &lines[1..] {
+            assert!(
+                continuation.starts_with(' '),
+                "continuation line must start with a space: {:?}",
+                continuation,
+            );
+        }
+    }
 }
