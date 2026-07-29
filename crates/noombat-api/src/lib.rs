@@ -26,8 +26,14 @@ use tower_http::trace::TraceLayer;
 use crate::state::AppState;
 
 /// Build the top-level Axum [`Router`] with all routes.
+///
+/// Response security headers are applied outermost, after every
+/// route and after the `/assets` service, so that static assets and
+/// error responses produced by the inner layers carry them as well.
 pub fn build_router(state: AppState) -> Router {
-    Router::new()
+    let domain = state.domain.clone();
+
+    let router = Router::new()
         .merge(routes::federation::router())
         .merge(routes::actors::router())
         .merge(routes::auth::router())
@@ -60,6 +66,7 @@ pub fn build_router(state: AppState) -> Router {
             rate_limit::rate_limit,
         ))
         .layer(CompressionLayer::new())
-        .layer(TraceLayer::new_for_http())
-        .with_state(state)
+        .layer(TraceLayer::new_for_http());
+
+    middleware::security_headers(router, &domain).with_state(state)
 }
