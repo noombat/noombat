@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Axum authentication middleware.
+//! Axum authentication middleware and response security headers.
 //!
 //! Resolves the authenticated principal from the request (JWT session
 //! token, session cookie, or development-only bearer token) and
@@ -10,14 +10,19 @@
 //! enforced by domain methods on model types in
 //! [`noombat_core::authorisation`] (visibility checks, role guards,
 //! block/mute guards) directly in the route handlers.
+//!
+//! This module additionally builds the response security headers
+//! applied to every route; see [`security_headers`].
 
+use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{Request, header::AUTHORIZATION, header::COOKIE};
+use axum::http::{HeaderName, HeaderValue, Request, header, header::AUTHORIZATION, header::COOKIE};
 use axum::middleware::Next;
 use axum::response::Response;
 use sqlx::PgPool;
-use tracing::debug;
+use tower_http::set_header::SetResponseHeaderLayer;
+use tracing::{debug, error};
 
 use crate::state::AppState;
 
@@ -185,6 +190,123 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
     })
 }
 
+// ..... Response security headers .....
+
+/// Content-Security-Policy served when the configured domain cannot
+/// be embedded in a header value.
+///
+/// Identical to the policy built by [`content_security_policy`]
+/// except that `connect-src` omits the WebSocket origin, which would
+/// be the offending component.
+const FALLBACK_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
+                            connect-src 'self'; img-src 'self' data:; font-src 'self'; \
+                            frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
+
+/// Permissions-Policy denying every feature the application does not
+/// use.
+const PERMISSIONS_POLICY: &str = "camera=(), microphone=(), geolocation=(), payment=(), \
+                                  usb=(), magnetometer=(), gyroscope=(), accelerometer=(), \
+                                  interest-cohort=()";
+
+/// Whether the configured domain designates a local, non-TLS deployment.
+///
+/// Mirrors the convention applied by the server's production-security
+/// check, which treats `localhost` and `localhost:PORT` as
+/// development deployments. The loopback addresses are included
+/// because a browser also grants them secure-context status.
+pub fn is_local_domain(domain: &str) -> bool {
+    if domain == "[::1]" || domain.starts_with("[::1]:") {
+        return true;
+    }
+    let host = domain.split(':').next().unwrap_or(domain);
+    host == "localhost" || host == "127.0.0.1"
+}
+
+/// The origin the browser uses for the chat WebSocket.
+///
+/// A development instance is served over plain HTTP, where the
+/// browser rejects a `wss://` connection; a production instance is
+/// served over TLS, where it rejects `ws://`. The value returned here
+/// is pinned in `connect-src` and is also the origin embedded in the
+/// chat page, so the two cannot disagree.
+pub fn websocket_origin(domain: &str) -> String {
+    if is_local_domain(domain) {
+        format!("ws://{domain}")
+    } else {
+        format!("wss://{domain}")
+    }
+}
+
+/// Build the Content-Security-Policy for the configured domain.
+///
+/// `connect-src` names the WebSocket origin explicitly rather than
+/// allowing the scheme wholesale with `wss:`. A scheme-wide source
+/// permits exfiltration to any host over that scheme, which defeats
+/// much of the point of a `default-src 'none'` policy.
+pub fn content_security_policy(domain: &str) -> String {
+    format!(
+        "default-src 'none'; script-src 'self'; style-src 'self'; \
+         connect-src 'self' {origin}; img-src 'self' data:; font-src 'self'; \
+         frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
+        origin = websocket_origin(domain),
+    )
+}
+
+/// Apply the response security headers to `router`.
+///
+/// The headers are emitted by the application rather than by the
+/// reverse proxy so that a deployment without Caddy is protected
+/// identically, and so that exactly one component owns the policy.
+/// `Strict-Transport-Security` is the exception: browsers honour it
+/// only over TLS, so it remains with the TLS terminator.
+///
+/// Each header is set only when absent, leaving a proxy free to
+/// override a value deliberately.
+///
+/// Apply this after every route and after the `/assets` service, so
+/// that static assets and error responses produced by inner layers
+/// carry the headers too.
+pub fn security_headers<S>(router: Router<S>, domain: &str) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
+    let csp = match HeaderValue::from_str(&content_security_policy(domain)) {
+        Ok(value) => value,
+        Err(e) => {
+            error!(
+                error = %e,
+                domain = %domain,
+                "configured domain cannot be embedded in a header value; \
+                 serving a Content-Security-Policy without a WebSocket source, \
+                 which will block chat"
+            );
+            HeaderValue::from_static(FALLBACK_CSP)
+        }
+    };
+
+    router
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::CONTENT_SECURITY_POLICY,
+            csp,
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_CONTENT_TYPE_OPTIONS,
+            HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::X_FRAME_OPTIONS,
+            HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            header::REFERRER_POLICY,
+            HeaderValue::from_static("strict-origin-when-cross-origin"),
+        ))
+        .layer(SetResponseHeaderLayer::if_not_present(
+            HeaderName::from_static("permissions-policy"),
+            HeaderValue::from_static(PERMISSIONS_POLICY),
+        ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +316,95 @@ mod tests {
         // Smoke test: the SQL string is syntactically valid.
         // Full integration tests require a database.
         let _ = is_accepted_follower;
+    }
+
+    // ..... Security headers .....
+
+    #[test]
+    fn local_domains_are_recognised() {
+        assert!(is_local_domain("localhost"));
+        assert!(is_local_domain("localhost:8443"));
+        assert!(is_local_domain("127.0.0.1"));
+        assert!(is_local_domain("127.0.0.1:8443"));
+        assert!(is_local_domain("[::1]"));
+        assert!(is_local_domain("[::1]:8443"));
+    }
+
+    #[test]
+    fn public_domains_are_not_local() {
+        assert!(!is_local_domain("noombat.social"));
+        assert!(!is_local_domain("noombat.social:8443"));
+        // A domain merely containing the substring must not match.
+        assert!(!is_local_domain("localhost.example.com"));
+        assert!(!is_local_domain("notlocalhost"));
+    }
+
+    #[test]
+    fn websocket_origin_follows_the_deployment_scheme() {
+        assert_eq!(websocket_origin("localhost:8443"), "ws://localhost:8443");
+        assert_eq!(websocket_origin("noombat.social"), "wss://noombat.social");
+    }
+
+    #[test]
+    fn csp_pins_the_websocket_host_rather_than_the_scheme() {
+        let csp = content_security_policy("noombat.social");
+
+        let connect_src = csp
+            .split(';')
+            .map(str::trim)
+            .find(|directive| directive.starts_with("connect-src"))
+            .expect("policy declares no connect-src directive");
+
+        // Exactly two sources: the origin itself, and the one host the
+        // chat WebSocket connects to.
+        assert_eq!(connect_src, "connect-src 'self' wss://noombat.social");
+
+        // A scheme source such as `wss:` permits connections to *any*
+        // host over that scheme, which would negate much of a
+        // `default-src 'none'` policy. Checked per source rather than
+        // by substring, because `wss:` is a prefix of the host source
+        // `wss://noombat.social` and a substring test cannot tell the
+        // two apart.
+        for source in connect_src.split_whitespace().skip(1) {
+            assert!(
+                !(source.ends_with(':') && !source.contains("//")),
+                "connect-src names the scheme-wide source {source}"
+            );
+        }
+    }
+
+    #[test]
+    fn csp_denies_by_default_and_omits_unsafe_sources() {
+        let csp = content_security_policy("noombat.social");
+        assert!(csp.starts_with("default-src 'none';"));
+        assert!(csp.contains("script-src 'self';"));
+        assert!(csp.contains("style-src 'self';"));
+        assert!(csp.contains("frame-ancestors 'none';"));
+        assert!(csp.contains("base-uri 'self';"));
+        assert!(csp.contains("form-action 'self'"));
+        assert!(!csp.contains("unsafe-inline"));
+        assert!(!csp.contains("unsafe-eval"));
+    }
+
+    #[test]
+    fn csp_is_a_single_line_valid_header_value() {
+        for domain in ["localhost:8443", "noombat.social"] {
+            let csp = content_security_policy(domain);
+            assert!(!csp.contains('\n'), "{domain}: policy contains a newline");
+            assert!(
+                HeaderValue::from_str(&csp).is_ok(),
+                "{domain}: policy is not a valid header value"
+            );
+        }
+    }
+
+    #[test]
+    fn fallback_constants_are_valid_header_values() {
+        // `HeaderValue::from_static` panics on an invalid value, so
+        // this also guards the fallback path in `security_headers`.
+        assert!(!HeaderValue::from_static(FALLBACK_CSP).is_empty());
+        assert!(!HeaderValue::from_static(PERMISSIONS_POLICY).is_empty());
+        assert!(!FALLBACK_CSP.contains('\n'));
+        assert!(!PERMISSIONS_POLICY.contains('\n'));
     }
 }
