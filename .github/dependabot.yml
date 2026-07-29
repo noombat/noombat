@@ -1,10 +1,11 @@
 # Dependabot configuration: keeps pinned dependencies current.
 #
-# Covers four ecosystems:
+# Covers five ecosystems:
 #   1. github-actions    SHA-pinned action references in workflows.
 #   2. cargo             Rust crate dependencies (Cargo.lock).
 #   3. npm               Frontend assets and Playwright test harness.
 #   4. docker            Base images in Dockerfiles.
+#   5. docker compose    Digest-pinned service images.
 #
 # Minor and patch updates within each ecosystem are grouped into a
 # single pull request to reduce review noise. Major updates are
@@ -103,5 +104,25 @@ updates:
       include: scope
     groups:
       docker-base-images:
+        patterns:
+          - "*"
+
+  # 5. Docker Compose: digest-pinned service images.
+  #    Kept separate from the docker ecosystem, which covers only
+  #    Dockerfiles; the compose service images are pinned by digest
+  #    and would otherwise never be refreshed.
+  - package-ecosystem: docker-compose
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: "deps(compose)"
+      include: scope
+    groups:
+      compose-service-images:
         patterns:
           - "*"
