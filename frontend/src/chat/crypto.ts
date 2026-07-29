@@ -109,9 +109,16 @@ export async function decryptMessage(
 export interface DecryptAndVerifyResult {
   /** The decrypted plaintext string. */
   plaintext: string;
-  /** Whether the embedded signature was verified against the
-   *  sender's public key. */
-  signatureVerified: boolean;
+  /**
+   * Three-state signature verification outcome:
+   *
+   * - `true`: a signature was present and verified successfully
+   *   against the sender's public key.
+   * - `false`: a signature was present but verification failed
+   *   (key mismatch, corrupted signature, or algorithm error).
+   * - `null`: the message carried no signature at all.
+   */
+  signatureVerified: boolean | null;
 }
 
 /**
@@ -121,7 +128,7 @@ export interface DecryptAndVerifyResult {
  * Decryption failure throws. Signature verification failure is
  * **not** an error, i.e. the plaintext is still returned, with
  * `signatureVerified` set to `false`, so the caller can display a
- * warning in the UI.
+ * warning in the UI. An unsigned message returns `null`.
  *
  * @param privateKeyBytes: The recipient's binary Transferable Secret Key.
  * @param senderKeyBytes: The sender's binary Transferable Public Key.
@@ -145,15 +152,18 @@ export async function decryptAndVerify(
     format: "utf8",
   });
 
-  let signatureVerified = false;
+  let signatureVerified: boolean | null = null;
   if (signatures.length > 0) {
     try {
       await signatures[0].verified;
       signatureVerified = true;
     } catch {
-      // Signature verification failed; signatureVerified remains false.
+      // A signature was present but verification failed.
+      signatureVerified = false;
     }
   }
+  // When signatures.length == 0, signatureVerified remains null
+  // (the message was unsigned).
 
   return {
     plaintext: data as string,
