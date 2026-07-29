@@ -29,6 +29,7 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-inline-scripts.sh"
   pull_request:
     branches: [main]
     paths:
@@ -40,6 +41,7 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-inline-scripts.sh"
   workflow_dispatch:
     inputs:
       release:
@@ -100,6 +102,14 @@ jobs:
             echo "::error::$FAIL crate(s) missing #![forbid(unsafe_code)]"
             exit 1
           fi
+
+  csp-templates:
+    name: Template CSP compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: "Reject inline script, inline style, and javascript: URLs"
+        run: scripts/check-inline-scripts.sh
 
   deny:
     name: Cargo Deny
