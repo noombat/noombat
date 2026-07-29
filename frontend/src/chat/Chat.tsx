@@ -416,8 +416,18 @@ export default function Chat(props: ChatProps): JSX.Element {
   let syncTimer: ReturnType<typeof setInterval> | undefined;
   const SYNC_INTERVAL_MS = 30_000;
 
+  /** Guards against concurrent sync invocations from the interval
+   *  timer, the `visibilitychange` handler, and the `onCleanup`
+   *  final flush. */
+  let syncing = false;
+
   async function syncPeerState(): Promise<void> {
     if (!peerState || !blobKey || !credentials) return;
+    // Skip the re-encryption and PUT if nothing changed.
+    if (!peerStateDirty) return;
+    // Prevent overlapping syncs.
+    if (syncing) return;
+    syncing = true;
 
     try {
       const peerStateJson = peerState.toJson();
@@ -427,8 +437,12 @@ export default function Chat(props: ChatProps): JSX.Element {
       };
       const encrypted = await encryptBlob(blobKey, updatedBlob, props.chatmailAddr);
       await storeBlob(encrypted);
+      peerStateDirty = false;
     } catch {
-      // Best-effort: sync failure is non-fatal.
+      // Best-effort: sync failure is non-fatal. The dirty flag
+      // remains set so the next interval retries.
+    } finally {
+      syncing = false;
     }
   }
 
