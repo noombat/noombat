@@ -403,7 +403,13 @@ async fn chat_page(
         .await
         .unwrap_or((None, false));
     let chatmail_addr = chatmail_addr.unwrap_or_default();
-    let ws_url = format!("wss://{}/api/v1/chat/ws", state.domain);
+    // The scheme must match the one pinned in the Content-Security-
+    // Policy `connect-src` directive, and must be plain `ws` for a
+    // development instance served over HTTP.
+    let ws_url = format!(
+        "{}/api/v1/chat/ws",
+        crate::middleware::websocket_origin(&state.domain)
+    );
     let username = nav_username(&principal);
     ChatPage {
         i18n,
