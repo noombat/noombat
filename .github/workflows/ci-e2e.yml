@@ -158,6 +158,15 @@ jobs:
           corepack enable
           pnpm install --frozen-lockfile
 
+      # Run the security-header and CSP suite first and on its own.
+      # It is the cheapest of the specs and the one whose failure has
+      # the most specific cause, so reporting it separately keeps a
+      # header or policy regression from being buried in the full
+      # cross-browser matrix below (which also runs it).
+      - name: Run security header and CSP tests (Firefox)
+        working-directory: tests/e2e
+        run: pnpm exec playwright test security-headers.spec.ts --project=firefox
+
       - name: Run Playwright tests (Firefox)
         working-directory: tests/e2e
         run: pnpm exec playwright test --project=firefox
