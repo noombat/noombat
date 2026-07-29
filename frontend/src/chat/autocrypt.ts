@@ -58,12 +58,24 @@ function canonicalise(addr: string): string {
 
 // ..... Autocrypt header parser .....
 
+/** The set of attribute names defined by Autocrypt Level 1. */
+const KNOWN_ATTRIBUTES = new Set(["addr", "prefer-encrypt", "keydata"]);
+
 /**
  * Parse a raw Autocrypt header value string (e.g. `addr=alice@example.com;
  * prefer-encrypt=mutual; keydata=<base64>`) and return the parsed components.
  *
- * Returns `null` if the header is missing the `keydata` attribute or if the
- * base64 decoding fails.
+ * Returns `null` if:
+ * - the header is missing the `keydata` attribute,
+ * - the base64 decoding fails, or
+ * - the header contains a **critical** unknown attribute (an
+ *   attribute whose name does not begin with an underscore),
+ *   per Autocrypt Level 1 §2.1: "If an attribute name does not
+ *   begin with an underscore, it is critical. If an implementation
+ *   does not understand a critical attribute, the entire header
+ *   MUST be treated as invalid."
+ *
+ * Non-critical (underscore-prefixed) unknown attributes are ignored.
  */
 export function parseAutocryptHeader(headerValue: string): AutocryptHeader | null {
   let addr: string | null = null;
@@ -90,7 +102,16 @@ export function parseAutocryptHeader(headerValue: string): AutocryptHeader | nul
       case "keydata":
         keydataB64 = value;
         break;
-      // Ignore unknown attributes per the specification.
+      default:
+        // Autocrypt Level 1 §2.1: attributes whose name does NOT
+        // begin with an underscore are "critical". If unrecognised,
+        // the entire header must be treated as invalid.
+        // Underscore-prefixed attributes are non-critical and may
+        // be safely ignored.
+        if (!key.startsWith("_") && !KNOWN_ATTRIBUTES.has(key)) {
+          return null;
+        }
+        break;
     }
   }
 
