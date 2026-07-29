@@ -17,6 +17,8 @@
  * (AES-GCM output from Web Crypto; the tag is appended automatically).
  */
 
+import { authHeaders } from "./session";
+
 /** The plaintext contents of the credential blob. */
 export interface CredentialBlob {
   /** The Chatmail IMAP/SMTP password. */
@@ -117,7 +119,6 @@ export async function decryptBlob(
  * `PUT /api/v1/me/chatmail_cred` with the raw bytes as the body.
  */
 export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
-  const token = sessionStorage.getItem("noombat_access_token") ?? "";
   // The `as ArrayBuffer` assertion is safe: the Uint8Array produced
   // by Web Crypto (AES-GCM) is always backed by an ArrayBuffer, not
   // a SharedArrayBuffer. TypeScript 5.7+ models Uint8Array as
@@ -125,10 +126,7 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
   // due to the SharedArrayBuffer half of the union.
   const resp = await fetch("/api/v1/me/chatmail_cred", {
     method: "PUT",
-    headers: {
-      "Content-Type": "application/octet-stream",
-      Authorization: `Bearer ${token}`,
-    },
+    headers: authHeaders({ "Content-Type": "application/octet-stream" }),
     body: new Blob([encrypted.buffer as ArrayBuffer]),
   });
   return resp.ok;
@@ -159,9 +157,8 @@ export type FetchBlobResult =
  * distinguishable.
  */
 export async function fetchBlob(): Promise<FetchBlobResult> {
-  const token = sessionStorage.getItem("noombat_access_token") ?? "";
   const resp = await fetch("/api/v1/me/chatmail_cred", {
-    headers: { Authorization: `Bearer ${token}` },
+    headers: authHeaders(),
   });
 
   if (resp.ok) {
