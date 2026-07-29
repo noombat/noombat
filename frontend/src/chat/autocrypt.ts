@@ -151,8 +151,13 @@ export class PeerStateTable {
   }
 
   /** Apply the Autocrypt Level 1 update algorithm on receipt of an
-   *  incoming message. */
-  update(msg: IncomingMessage): void {
+   *  incoming message.
+   *
+   *  @returns: `true` if key material or the prefer-encrypt
+   *    preference was mutated (i.e. the caller should mark peer
+   *    state as dirty for persistence). Timestamp-only updates
+   *    return `false`. */
+  update(msg: IncomingMessage): boolean {
     const addr = canonicalise(msg.from);
 
     // If no Autocrypt header is present, update only lastSeen.
@@ -161,7 +166,7 @@ export class PeerStateTable {
       if (entry && msg.effectiveDate > entry.lastSeen) {
         entry.lastSeen = msg.effectiveDate;
       }
-      return;
+      return false;
     }
 
     const header = msg.autocryptHeader;
@@ -172,10 +177,11 @@ export class PeerStateTable {
       if (entry && msg.effectiveDate > entry.lastSeen) {
         entry.lastSeen = msg.effectiveDate;
       }
-      return;
+      return false;
     }
 
     let entry = this.peers.get(addr);
+    let created = false;
     if (!entry) {
       entry = {
         lastSeen: 0,
@@ -186,6 +192,7 @@ export class PeerStateTable {
         gossipTimestamp: null,
       };
       this.peers.set(addr, entry);
+      created = true;
     }
 
     // Update timestamps and key only if the message is newer.
@@ -193,15 +200,22 @@ export class PeerStateTable {
       entry.lastSeen = msg.effectiveDate;
     }
 
+    let keyMutated = false;
     if (msg.effectiveDate > entry.lastSeenAutocrypt) {
       entry.lastSeenAutocrypt = msg.effectiveDate;
       entry.publicKey = Array.from(header.publicKey);
       entry.preferEncrypt = header.preferEncrypt;
+      keyMutated = true;
     }
+
+    return created || keyMutated;
   }
 
-  /** Apply a gossip header update (from Autocrypt-Gossip). */
-  updateGossip(addr: string, key: Uint8Array, timestamp: number): void {
+  /** Apply a gossip header update (from Autocrypt-Gossip).
+   *
+   *  @returns: `true` if the gossip key was mutated (i.e. the
+   *    caller should mark peer state as dirty for persistence). */
+  updateGossip(addr: string, key: Uint8Array, timestamp: number): boolean {
     const canonical = canonicalise(addr);
     let entry = this.peers.get(canonical);
     if (!entry) {
@@ -220,7 +234,10 @@ export class PeerStateTable {
     if (dominated) {
       entry.gossipKey = Array.from(key);
       entry.gossipTimestamp = timestamp;
+      return true;
     }
+
+    return false;
   }
 
   /** Retrieve the peer state for the given address. */

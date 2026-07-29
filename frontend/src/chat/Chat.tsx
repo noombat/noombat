@@ -179,6 +179,13 @@ export default function Chat(props: ChatProps): JSX.Element {
   let peerState: PeerStateTable | null = null;
   let blobKey: CryptoKey | null = null;
 
+  // ..... Dirty flag for peer state synchronisation .....
+
+  /** Set to `true` whenever the PeerStateTable is mutated; cleared
+   *  after a successful sync. Prevents unnecessary re-encryption
+   *  and PUT requests when peer state has not changed. */
+  let peerStateDirty = false;
+
   // ..... Blob decryption .....
 
   /** Attempt to decrypt the credential blob. */
@@ -296,11 +303,14 @@ export default function Chat(props: ChatProps): JSX.Element {
         const parsed = parseAutocryptHeader(headerStr);
         if (parsed) {
           const ts = msg.timestamp ?? Math.floor(Date.now() / 1000);
-          peerState.update({
+          const mutated = peerState.update({
             from: sender,
             effectiveDate: ts,
             autocryptHeader: parsed,
           });
+          if (mutated) {
+            peerStateDirty = true;
+          }
         }
       } catch {
         // Best-effort: peer state update failure is non-fatal.
