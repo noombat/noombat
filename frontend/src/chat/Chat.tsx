@@ -470,19 +470,20 @@ export default function Chat(props: ChatProps): JSX.Element {
     // Look up the recipient's public key from peer state.
     const recipientKey = peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
 
+    if (!recipientKey || recipientKey.length === 0 || !privateKeyBytes) {
+      // No recipient key available. Refuse to transmit plaintext:
+      // the Chatmail filtermail daemon would reject it regardless,
+      // and the relay should never see unencrypted message bodies.
+      setStatus(
+        "Cannot send: no encryption key for this recipient. " +
+          "Ask them to send you a message first so keys can be exchanged.",
+      );
+      return;
+    }
+
     try {
-      if (recipientKey && recipientKey.length > 0 && privateKeyBytes) {
-        cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
-      } else {
-        // No recipient key available; send plaintext (Chatmail
-        // filtermail will reject this, so the user needs to
-        // have exchanged keys first via an Autocrypt-bearing
-        // message).
-        cipherBytes = plainBytes;
-      }
+      cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
     } catch (err) {
-      // Encryption failed: do not fall through to plaintext.
-      // Display an error and abort the send.
       const detail = err instanceof Error ? err.message : String(err);
       setStatus(`Encryption failed: ${detail}`);
       return;
@@ -521,6 +522,11 @@ export default function Chat(props: ChatProps): JSX.Element {
     ]);
 
     setDraft("");
+    // Clear any transient error (e.g. a prior "no key" message)
+    // now that a send has succeeded.
+    if (status()) {
+      setStatus("");
+    }
   }
 
   function reportMessage(msg: ChatMessage): void {
