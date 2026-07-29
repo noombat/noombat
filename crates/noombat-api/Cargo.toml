@@ -39,3 +39,8 @@ zip = { workspace = true }
 ammonia = { workspace = true }
 governor = { workspace = true }
 hmac = { workspace = true }
+
+[dev-dependencies]
+# `ServiceExt::oneshot` drives the assembled Router in integration
+# tests without binding a socket.
+tower = { version = "0.5", features = ["util"] }
