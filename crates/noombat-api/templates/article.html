@@ -45,7 +45,7 @@
                 <p class="font-semibold mb-2">{{ i18n.t("article_toc_heading") }}</p>
                 <ul class="space-y-1 list-none pl-0">
                     {% for h in headings %}
-                    <li style="padding-left: {{ h.depth.saturating_sub(1) }}em">
+                    <li class="toc-depth-{{ h.depth.saturating_sub(1) }}">
                         <a href="#{{ h.slug }}"
                            class="text-accent no-underline hover:underline">
                             {{ h.text }}

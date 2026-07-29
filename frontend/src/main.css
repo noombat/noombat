@@ -83,3 +83,30 @@
 .htmx-request .htmx-indicator {
   display: inline-block;
 }
+
+/* ..... Article table of contents .....
+ *
+ * Heading depth is expressed as a class rather than a `style`
+ * attribute. Inline styles are blocked by a `style-src 'self'`
+ * policy that omits `'unsafe-inline'`, which flattened the
+ * indentation whenever the policy was enforced. Depths correspond to
+ * heading levels one to six, so indices zero to five suffice.
+ */
+.toc-depth-0 {
+  padding-left: 0;
+}
+.toc-depth-1 {
+  padding-left: 1em;
+}
+.toc-depth-2 {
+  padding-left: 2em;
+}
+.toc-depth-3 {
+  padding-left: 3em;
+}
+.toc-depth-4 {
+  padding-left: 4em;
+}
+.toc-depth-5 {
+  padding-left: 5em;
+}
