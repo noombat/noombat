@@ -30,6 +30,7 @@ path = [
     ".env.test",
     ".gitignore",
     ".dockerignore",
+    ".nvmrc",
     # Database migrations.
     "migrations/**",
     # Typst CV templates.
