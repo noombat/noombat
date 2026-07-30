@@ -15,7 +15,13 @@
  */
 
 import { createSignal, onCleanup, onMount, For, Show, type JSX } from "solid-js";
-import { encryptMessage, decryptMessage, decryptAndVerify } from "./crypto";
+import {
+  encryptMessage,
+  decryptMessage,
+  decryptAndVerify,
+  keyFingerprint,
+  formatFingerprint,
+} from "./crypto";
 import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
 import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
 import { deriveBlobKey } from "../auth";
@@ -60,6 +66,15 @@ interface ChatStrings {
   setupChat: string;
   enterPassword: string;
   unlock: string;
+  keyChanged: (address: string, date: string) => string;
+  verifyDetails: string;
+  yourFingerprint: string;
+  peerFingerprint: string;
+  fingerprintHint: string;
+  copy: string;
+  copied: string;
+  noPeerKey: string;
+  close: string;
 }
 
 const TRANSLATIONS: Record<string, ChatStrings> = {
@@ -76,6 +91,17 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
+    keyChanged: (address, date) =>
+      `The encryption key for ${address} changed on ${date}. Verify the new fingerprint out of band if this is unexpected.`,
+    verifyDetails: "Verify keys",
+    yourFingerprint: "Your fingerprint",
+    peerFingerprint: "Their fingerprint",
+    fingerprintHint:
+      "Compare these over a channel this server does not control, such as in person or by telephone. Matching fingerprints mean no one has substituted a key.",
+    copy: "Copy",
+    copied: "Copied",
+    noPeerKey: "No key has been received for this contact yet.",
+    close: "Close",
   },
   "en-AU": {
     heading: "Messages",
@@ -90,6 +116,17 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     setupChat: "Set up chat",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
+    keyChanged: (address, date) =>
+      `The encryption key for ${address} changed on ${date}. Verify the new fingerprint out of band if this is unexpected.`,
+    verifyDetails: "Verify keys",
+    yourFingerprint: "Your fingerprint",
+    peerFingerprint: "Their fingerprint",
+    fingerprintHint:
+      "Compare these over a channel this server does not control, such as in person or by telephone. Matching fingerprints mean no one has substituted a key.",
+    copy: "Copy",
+    copied: "Copied",
+    noPeerKey: "No key has been received for this contact yet.",
+    close: "Close",
   },
   "pt-BR": {
     heading: "Mensagens",
@@ -105,6 +142,17 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     setupChat: "Configurar chat",
     enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
     unlock: "Desbloquear",
+    keyChanged: (address, date) =>
+      `A chave de criptografia de ${address} mudou em ${date}. Verifique a nova impressão digital por outro meio se isso for inesperado.`,
+    verifyDetails: "Verificar chaves",
+    yourFingerprint: "Sua impressão digital",
+    peerFingerprint: "Impressão digital do contato",
+    fingerprintHint:
+      "Compare estes valores por um canal que este servidor não controla, como pessoalmente ou por telefone. Impressões digitais iguais significam que ninguém substituiu uma chave.",
+    copy: "Copiar",
+    copied: "Copiado",
+    noPeerKey: "Nenhuma chave foi recebida deste contato ainda.",
+    close: "Fechar",
   },
 };
 
@@ -129,6 +177,9 @@ interface ChatMessage {
    *  sender's known public key. `null` if no sender key was
    *  available or the message was not signed. */
   signatureVerified: boolean | null;
+  /** A locally generated notice rather than a received message.
+   *  Rendered as an inline warning and never reportable. */
+  system?: true;
 }
 
 /** A message from the relay server. */
@@ -167,6 +218,10 @@ export default function Chat(props: ChatProps): JSX.Element {
   const [status, setStatus] = createSignal<string>("");
   const [needsUnlock, setNeedsUnlock] = createSignal(false);
   const [unlockPassword, setUnlockPassword] = createSignal("");
+  const [showVerify, setShowVerify] = createSignal(false);
+  const [ownFingerprint, setOwnFingerprint] = createSignal("");
+  const [peerFingerprint, setPeerFingerprint] = createSignal("");
+  const [copied, setCopied] = createSignal("");
 
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
@@ -241,6 +296,12 @@ export default function Chat(props: ChatProps): JSX.Element {
       peerState = blob.peerStateJson
         ? PeerStateTable.fromJson(blob.peerStateJson)
         : new PeerStateTable();
+
+      // Derive the user's own fingerprint once, for out-of-band
+      // comparison by a peer.
+      void keyFingerprint(publicKeyBytes)
+        .then((fp) => setOwnFingerprint(formatFingerprint(fp)))
+        .catch(() => setOwnFingerprint(""));
 
       return true;
     } catch {
@@ -352,6 +413,17 @@ export default function Chat(props: ChatProps): JSX.Element {
           if (mutated) {
             peerStateDirty = true;
           }
+          if (keyChanged) {
+            // An already-known key was replaced. This is what an
+            // operator substituting its own key looks like from the
+            // client, so it is surfaced in the conversation rather
+            // than absorbed silently.
+            appendKeyChangeNotice(sender, ts);
+            // The cached fingerprint now describes the old key.
+            if (recipient() === sender) {
+              void refreshPeerFingerprint();
+            }
+          }
         }
       } catch {
         // Best-effort: peer state update failure is non-fatal.
@@ -409,6 +481,57 @@ export default function Chat(props: ChatProps): JSX.Element {
     if (msg.uid) {
       ws?.send(JSON.stringify({ type: "ack", uid: msg.uid }));
     }
+  }
+
+  // ..... Key verification .....
+
+  /** Insert a system notice into the conversation with `address`. */
+  function appendKeyChangeNotice(address: string, timestamp: number): void {
+    const date = new Date(timestamp * 1000).toLocaleDateString(props.locale);
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: `sys-${++msgCounter}`,
+        uid: 0,
+        from: address,
+        to: props.chatmailAddr,
+        body: strings().keyChanged(address, date),
+        timestamp,
+        outgoing: false,
+        signatureVerified: null,
+        system: true,
+      },
+    ]);
+  }
+
+  /** Recompute the fingerprint shown for the selected contact. */
+  async function refreshPeerFingerprint(): Promise<void> {
+    const addr = recipient().trim().toLowerCase();
+    const key = addr ? (peerState?.getPublicKey(addr) ?? null) : null;
+    if (!key || key.length === 0) {
+      setPeerFingerprint("");
+      return;
+    }
+    try {
+      setPeerFingerprint(formatFingerprint(await keyFingerprint(key)));
+    } catch {
+      setPeerFingerprint("");
+    }
+  }
+
+  /** Open the verification panel, refreshing the peer fingerprint. */
+  function openVerify(): void {
+    void refreshPeerFingerprint();
+    setShowVerify(true);
+  }
+
+  /** Copy `value` to the clipboard and acknowledge briefly. */
+  function copyFingerprint(label: string, value: string): void {
+    if (!value || !navigator.clipboard) return;
+    void navigator.clipboard.writeText(value).then(() => {
+      setCopied(label);
+      setTimeout(() => setCopied(""), 1500);
+    });
   }
 
   // ..... Peer state synchronisation .....
@@ -659,6 +782,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                         onClick={() => {
                           setRecipient(addr);
                           setShowContacts(false);
+                          if (showVerify()) void refreshPeerFingerprint();
                         }}
                       >
                         {addr}
@@ -684,7 +808,70 @@ export default function Chat(props: ChatProps): JSX.Element {
                 ☰
               </button>
               <span class="text-sm font-semibold truncate">{recipient() || strings().heading}</span>
+              <span class="flex-1"></span>
+              <button
+                type="button"
+                class="noombat-chat__verify-toggle"
+                onClick={() => (showVerify() ? setShowVerify(false) : openVerify())}
+                aria-expanded={showVerify()}
+                aria-controls="chat-verify-panel"
+              >
+                {strings().verifyDetails}
+              </button>
             </div>
+
+            {/* Fingerprint comparison panel.
+
+                Until SecureJoin is implemented, comparing fingerprints
+                over a channel the server does not control is the only
+                way a user can detect a substituted key. */}
+            <Show when={showVerify()}>
+              <section
+                id="chat-verify-panel"
+                class="noombat-chat__verify"
+                aria-label={strings().verifyDetails}
+              >
+                <p class="noombat-chat__verify-hint">{strings().fingerprintHint}</p>
+
+                <div class="noombat-chat__verify-row">
+                  <span class="noombat-chat__verify-label">{strings().yourFingerprint}</span>
+                  <code class="noombat-chat__fingerprint">{ownFingerprint()}</code>
+                  <button
+                    type="button"
+                    class="noombat-chat__verify-copy"
+                    disabled={!ownFingerprint()}
+                    onClick={() => copyFingerprint("own", ownFingerprint())}
+                  >
+                    {copied() === "own" ? strings().copied : strings().copy}
+                  </button>
+                </div>
+
+                <div class="noombat-chat__verify-row">
+                  <span class="noombat-chat__verify-label">{strings().peerFingerprint}</span>
+                  <Show
+                    when={peerFingerprint()}
+                    fallback={<span class="text-xs text-muted">{strings().noPeerKey}</span>}
+                  >
+                    <code class="noombat-chat__fingerprint">{peerFingerprint()}</code>
+                    <button
+                      type="button"
+                      class="noombat-chat__verify-copy"
+                      onClick={() => copyFingerprint("peer", peerFingerprint())}
+                    >
+                      {copied() === "peer" ? strings().copied : strings().copy}
+                    </button>
+                  </Show>
+                </div>
+
+                <button
+                  type="button"
+                  class="noombat-chat__verify-close"
+                  onClick={() => setShowVerify(false)}
+                >
+                  {strings().close}
+                </button>
+              </section>
+            </Show>
 
             {/* Message list */}
             <div class="noombat-chat__messages" role="log" aria-live="polite">
@@ -694,44 +881,56 @@ export default function Chat(props: ChatProps): JSX.Element {
               >
                 <For each={filteredMessages()}>
                   {(msg) => (
-                    <div
-                      class={`noombat-chat__bubble ${msg.outgoing ? "noombat-chat__bubble--outgoing" : ""}`}
+                    <Show
+                      when={!msg.system}
+                      fallback={
+                        <p class="noombat-chat__notice" role="status">
+                          {msg.body}
+                        </p>
+                      }
                     >
-                      <p class="text-sm">{msg.body}</p>
-                      <div class="flex items-center gap-2 mt-1">
-                        <time class="text-xs text-muted">{formatTime(msg.timestamp)}</time>
-                        {/* Signature / encryption trust indicator */}
-                        <Show when={!msg.outgoing}>
-                          <Show when={msg.signatureVerified === true}>
-                            <span class="text-xs text-green-600" title="Signature verified">
-                              &#x2713; verified
-                            </span>
+                      <div
+                        class={`noombat-chat__bubble ${msg.outgoing ? "noombat-chat__bubble--outgoing" : ""}`}
+                      >
+                        <p class="text-sm">{msg.body}</p>
+                        <div class="flex items-center gap-2 mt-1">
+                          <time class="text-xs text-muted">{formatTime(msg.timestamp)}</time>
+                          {/* Signature / encryption trust indicator */}
+                          <Show when={!msg.outgoing}>
+                            <Show when={msg.signatureVerified === true}>
+                              <span class="text-xs text-green-600" title="Signature verified">
+                                &#x2713; verified
+                              </span>
+                            </Show>
+                            <Show when={msg.signatureVerified === false}>
+                              <span
+                                class="text-xs text-amber-600"
+                                title="Signature verification failed"
+                              >
+                                &#x26A0; signature failed
+                              </span>
+                            </Show>
+                            <Show when={msg.signatureVerified === null}>
+                              <span
+                                class="text-xs text-gray-400"
+                                title="Encrypted (unverified key)"
+                              >
+                                &#x1F512;
+                              </span>
+                            </Show>
                           </Show>
-                          <Show when={msg.signatureVerified === false}>
-                            <span
-                              class="text-xs text-amber-600"
-                              title="Signature verification failed"
+                          <Show when={!msg.outgoing}>
+                            <button
+                              type="button"
+                              class="text-xs text-muted hover:text-red-600"
+                              onClick={() => reportMessage(msg)}
                             >
-                              &#x26A0; signature failed
-                            </span>
+                              {strings().report}
+                            </button>
                           </Show>
-                          <Show when={msg.signatureVerified === null}>
-                            <span class="text-xs text-gray-400" title="Encrypted (unverified key)">
-                              &#x1F512;
-                            </span>
-                          </Show>
-                        </Show>
-                        <Show when={!msg.outgoing}>
-                          <button
-                            type="button"
-                            class="text-xs text-muted hover:text-red-600"
-                            onClick={() => reportMessage(msg)}
-                          >
-                            {strings().report}
-                          </button>
-                        </Show>
+                        </div>
                       </div>
-                    </div>
+                    </Show>
                   )}
                 </For>
               </Show>
@@ -744,7 +943,10 @@ export default function Chat(props: ChatProps): JSX.Element {
                 class="noombat-chat__recipient"
                 placeholder="recipient@chat.example.com"
                 value={recipient()}
-                onInput={(e) => setRecipient(e.currentTarget.value)}
+                onInput={(e) => {
+                  setRecipient(e.currentTarget.value);
+                  if (showVerify()) void refreshPeerFingerprint();
+                }}
               />
               <div class="noombat-chat__input-row">
                 <input

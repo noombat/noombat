@@ -174,3 +174,91 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ..... Key verification ..... */
+
+.noombat-chat__verify-toggle {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  border-radius: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.noombat-chat__verify-toggle:hover {
+  color: var(--color-fg);
+}
+
+.noombat-chat__verify {
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.noombat-chat__verify-hint {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  margin: 0;
+}
+
+.noombat-chat__verify-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.noombat-chat__verify-label {
+  font-size: 0.75rem;
+  color: var(--color-muted);
+  min-width: 9rem;
+}
+
+/* A fingerprint is compared character by character, so it is set in a
+   monospaced face and must never be truncated or reflowed mid-group. */
+.noombat-chat__fingerprint {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  letter-spacing: 0.02em;
+  word-break: break-word;
+  color: var(--color-fg);
+}
+
+.noombat-chat__verify-copy,
+.noombat-chat__verify-close {
+  border: 1px solid var(--color-border);
+  background: transparent;
+  color: var(--color-muted);
+  border-radius: 0.375rem;
+  padding: 0.125rem 0.5rem;
+  font-size: 0.75rem;
+  cursor: pointer;
+}
+
+.noombat-chat__verify-copy:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.noombat-chat__verify-close {
+  align-self: flex-start;
+}
+
+/* A key-replacement notice. Deliberately not styled as a message
+   bubble: it is a statement about the conversation, not part of it. */
+.noombat-chat__notice {
+  margin: 0.5rem auto;
+  max-width: 32rem;
+  border: 1px solid #f59e0b;
+  border-radius: 0.375rem;
+  background: rgba(245, 158, 11, 0.12);
+  color: var(--color-fg);
+  padding: 0.5rem 0.75rem;
+  font-size: 0.75rem;
+  text-align: center;
+}
