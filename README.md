@@ -15,6 +15,15 @@ The project implements the ActivityPub protocol and is built primarily in Rust.
 - **Project website:** <https://noombat.org> (To be developed and deployed)
 - **Flagship instance:** <https://noombat.social> (To be developed and deployed)
 
+## Security
+
+Chat is end-to-end encrypted, but the web client executes JavaScript the instance operator serves, which bounds what that encryption can promise:
+confidentiality against a passive server holds, integrity against an active one does not.
+[`SECURITY.md`](SECURITY.md) states the threat model, the vulnerability reporting process, and the three available responses, including using Delta Chat against the same account to remove the operator from the code-supply path.
+
+Releases publish a Sigstore-signed manifest of every served asset;
+[`docs/verifying-builds.md`](docs/verifying-builds.md) explains how to check an instance against it.
+
 ## Goals
 
 The project's main (ambitious?) goals are to interoperate with the broader Fediverse while enabling users to:
