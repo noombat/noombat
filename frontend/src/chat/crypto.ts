@@ -112,10 +112,10 @@ export interface DecryptAndVerifyResult {
   /**
    * Three-state signature verification outcome:
    *
-   * - `true`: a signature was present and verified successfully
-   *   against the sender's public key.
-   * - `false`: a signature was present but verification failed
-   *   (key mismatch, corrupted signature, or algorithm error).
+   * - `true`: at least one signature verified successfully against
+   *   the sender's public key.
+   * - `false`: one or more signatures were present and none of them
+   *   verified (key mismatch, corrupted signature, or algorithm error).
    * - `null`: the message carried no signature at all.
    */
   signatureVerified: boolean | null;
@@ -152,17 +152,30 @@ export async function decryptAndVerify(
     format: "utf8",
   });
 
+  // Iterate over every signature rather than inspecting only the
+  // first. A message may carry several, and OpenPGP.js returns them
+  // in packet order, not in order of relevance.
   let signatureVerified: boolean | null = null;
   if (signatures.length > 0) {
-    try {
-      await signatures[0].verified;
-      signatureVerified = true;
-    } catch {
-      // A signature was present but verification failed.
-      signatureVerified = false;
-    }
+    // Every signature is settled, rather than stopping at the first
+    // success. OpenPGP.js creates each `verified` promise eagerly
+    // during decryption, so a promise left unawaited after an early
+    // exit rejects with no handler attached, which surfaces as an
+    // unhandled rejection. Mapping each outcome to a boolean attaches
+    // a handler to all of them.
+    const outcomes = await Promise.all(
+      signatures.map((signature) =>
+        // `verified` resolves to `true` or rejects; see the
+        // OpenPGP.js VerificationResult contract.
+        signature.verified.then(
+          () => true,
+          () => false,
+        ),
+      ),
+    );
+    signatureVerified = outcomes.some((verified) => verified);
   }
-  // When signatures.length == 0, signatureVerified remains null
+  // When signatures.length === 0, signatureVerified remains null
   // (the message was unsigned).
 
   return {
