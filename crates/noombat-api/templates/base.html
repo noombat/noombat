@@ -15,6 +15,16 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <!--
+      HTMX injects a <style> element for its request-indicator classes
+      during initialisation. A `style-src 'self'` policy without
+      'unsafe-inline' blocks it, which raised a securitypolicyviolation
+      on every page load. Disabling the injection here rather than in
+      htmx.ts is necessary: htmx reads this meta element while
+      initialising, before a deferred module script could set the option.
+      The equivalent rules live in frontend/src/main.css.
+    -->
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
     <title>{% block title %}Noombat{% endblock %}</title>
     {% block head %}{% endblock %}
     <link rel="stylesheet" href="/assets/main.css">
