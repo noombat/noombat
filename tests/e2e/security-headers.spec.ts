@@ -28,14 +28,7 @@ import { test, expect, type Page } from "@playwright/test";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
 
 /** Pages that must carry the full header set. */
-const PAGES = [
-  "/",
-  "/auth/login",
-  "/auth/register",
-  "/chat",
-  "/settings/chat",
-  "/compose",
-];
+const PAGES = ["/", "/auth/login", "/auth/register", "/chat", "/settings/chat", "/compose"];
 
 /** Headers required on every response, with their exact values. */
 const EXACT_HEADERS: Record<string, string> = {
@@ -71,10 +64,7 @@ test.describe("Security headers", () => {
       }
 
       expect(headers["content-security-policy"], `${path}: CSP`).toBeDefined();
-      expect(
-        headers["permissions-policy"],
-        `${path}: Permissions-Policy`,
-      ).toBeDefined();
+      expect(headers["permissions-policy"], `${path}: Permissions-Policy`).toBeDefined();
     });
   }
 
@@ -101,9 +91,7 @@ test.describe("Security headers", () => {
 // ..... Policy content .....
 
 test.describe("Content-Security-Policy", () => {
-  test("denies by default and permits no unsafe source", async ({
-    request,
-  }) => {
+  test("denies by default and permits no unsafe source", async ({ request }) => {
     const res = await request.get("/auth/login", { maxRedirects: 0 });
     const csp = res.headers()["content-security-policy"];
 
@@ -119,9 +107,7 @@ test.describe("Content-Security-Policy", () => {
     expect(csp).not.toContain("unsafe-eval");
   });
 
-  test("pins the WebSocket host rather than the scheme", async ({
-    request,
-  }) => {
+  test("pins the WebSocket host rather than the scheme", async ({ request }) => {
     const res = await request.get("/auth/login", { maxRedirects: 0 });
     const csp = res.headers()["content-security-policy"];
 
@@ -137,9 +123,7 @@ test.describe("Content-Security-Policy", () => {
     // application have both started emitting one, which is the drift
     // the single-emitter decision exists to prevent.
     const res = await request.get("/auth/login", { maxRedirects: 0 });
-    const raw = res
-      .headersArray()
-      .filter((h) => h.name.toLowerCase() === "content-security-policy");
+    const raw = res.headersArray().filter((h) => h.name.toLowerCase() === "content-security-policy");
 
     expect(raw).toHaveLength(1);
   });
@@ -176,9 +160,7 @@ async function collectViolations(page: Page): Promise<string[]> {
 
 test.describe("Policy compliance", () => {
   for (const path of PAGES) {
-    test(`${path} loads with no policy violation and no inline script`, async ({
-      page,
-    }) => {
+    test(`${path} loads with no policy violation and no inline script`, async ({ page }) => {
       const violations = await collectViolations(page);
 
       await page.goto(path, { waitUntil: "networkidle" });
@@ -192,11 +174,10 @@ test.describe("Policy compliance", () => {
 
       // Inline handlers and inline styles are blocked by the same
       // policy and fail just as silently.
-      const inlineHandlers = await page.evaluate(
-        () =>
-          Array.from(document.querySelectorAll("*")).filter((el) =>
-            Array.from(el.attributes).some((a) => a.name.startsWith("on")),
-          ).length,
+      const inlineHandlers = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("*")).filter((el) =>
+          Array.from(el.attributes).some((a) => a.name.startsWith("on")),
+        ).length,
       );
       expect(inlineHandlers, `${path}: inline event handlers`).toBe(0);
 
@@ -218,5 +199,50 @@ test.describe("Policy compliance", () => {
     await page.waitForTimeout(2000);
 
     expect(violations).toEqual([]);
+  });
+});
+
+// ..... Asset provenance .....
+
+test.describe("Asset provenance", () => {
+  test("every script a page loads is named in the served manifest", async ({ page, request }) => {
+    // The manifest is a set of hashes for files that exist. On its own
+    // it constrains nothing about which files a page loads, so an
+    // instance could add a same-origin script absent from the manifest
+    // and every manifest entry would still verify. `script-src 'self'`
+    // permits it. This closes that gap by checking the complement:
+    // nothing outside the manifest is loaded.
+    const res = await request.get("/.well-known/noombat/assets.json");
+    test.skip(!res.ok(), "this deployment serves no asset manifest");
+
+    const manifest = (await res.json()) as { assets?: Record<string, string> };
+    const known = new Set(Object.keys(manifest.assets ?? {}));
+    expect(known.size, "manifest lists no assets").toBeGreaterThan(0);
+
+    for (const path of PAGES) {
+      await page.goto(path, { waitUntil: "networkidle" });
+      const origin = new URL(page.url()).origin;
+
+      const sources = await page.evaluate(() =>
+        Array.from(document.querySelectorAll("script[src]")).map(
+          (el) => (el as HTMLScriptElement).src,
+        ),
+      );
+
+      for (const src of sources) {
+        const url = new URL(src);
+        expect(url.origin, `${path}: ${src} is not same-origin`).toBe(origin);
+        expect(
+          url.pathname.startsWith("/assets/"),
+          `${path}: ${url.pathname} is served from outside /assets/`,
+        ).toBe(true);
+
+        const relative = url.pathname.slice("/assets/".length);
+        expect(
+          known.has(relative),
+          `${path}: ${url.pathname} is not named in the asset manifest`,
+        ).toBe(true);
+      }
+    }
   });
 });
