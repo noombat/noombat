@@ -1,0 +1,249 @@
+# Release: build both images, attest to their contents, sign, publish.
+#
+# Noombat performs its cryptography in the browser, using JavaScript
+# the instance operator serves. An operator who wishes to read a user's
+# messages need not break any cipher: they can serve one modified script
+# to one user on one page load and exfiltrate the decrypted plaintext or
+# the private key.
+#
+# Signing does not prevent substitution. It makes substitution
+# detectable, by giving a user or a third-party monitor hashes to
+# compare against. What is and is not detectable is set out in
+# SECURITY.md; the limits are real and are stated there rather than
+# implied away here.
+#
+# Three properties this workflow is arranged to hold:
+#
+#   1. One build. The manifests are extracted from the images that are
+#      pushed, so the bytes attested to are the bytes an operator runs.
+#      Two independent builds would agree only by reproducibility.
+#   2. Signing precedes publication. A signing failure must not leave a
+#      published image with no attestation and `latest` already moved.
+#      The reverse, i.e. a signature for an image whose push failed, is
+#      a harmless retry.
+#   3. Whole images, not just assets. The server binary renders every
+#      HTML document and therefore decides which assets a page loads;
+#      attesting the assets while leaving the loader unattested is a
+#      partial guarantee.
+
+name: Release
+
+on:
+  push:
+    tags:
+      # Version tags only.
+      - "v[0-9]+.[0-9]+.[0-9]+"
+      - "v[0-9]+.[0-9]+.[0-9]+-*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Attest, sign, and publish
+    runs-on: ubuntu-latest
+    permissions:
+      # Keyless signing: the OIDC token is what Fulcio exchanges for a
+      # short-lived certificate.
+      id-token: write
+      # Attaching artefacts to the release.
+      contents: write
+      # Pushing images to ghcr.io.
+      packages: write
+    defaults:
+      run:
+        shell: bash
+    env:
+      SERVER_IMAGE: noombat-server:release
+      CHATMAIL_IMAGE: noombat-chatmail:release
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # `git describe` needs tags to label the manifests.
+          fetch-depth: 0
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify the frontend build is reproducible
+        # Attesting to a build that cannot be reproduced attests to one
+        # machine rather than to the source, so this gates the
+        # signature rather than merely reporting alongside it.
+        run: scripts/check-reproducible.sh
+
+      - name: Build both images
+        env:
+          NOOMBAT_VERSION: ${{ github.ref_name }}
+          NOOMBAT_COMMIT: ${{ github.sha }}
+        run: |
+          scripts/build-image.sh Dockerfile "$SERVER_IMAGE"
+          scripts/build-image.sh Dockerfile.chatmail "$CHATMAIL_IMAGE"
+
+      - name: Extract the served asset manifest
+        # `docker create` rather than `docker run`: the file is copied
+        # out without executing anything in the image.
+        run: |
+          cid=$(docker create "$SERVER_IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp \
+            "$cid:/opt/noombat/frontend/dist/assets-manifest.json" \
+            assets-manifest.json
+          cat assets-manifest.json
+
+      - name: Generate the image content manifests
+        env:
+          NOOMBAT_VERSION: ${{ github.ref_name }}
+          NOOMBAT_COMMIT: ${{ github.sha }}
+        run: |
+          scripts/image-manifest.sh "$SERVER_IMAGE" \
+            /opt/noombat /usr/local/bin > server-image-manifest.json
+          scripts/image-manifest.sh "$CHATMAIL_IMAGE" \
+            /usr/local/bin /etc/postfix /etc/dovecot /entrypoint.sh \
+            > chatmail-image-manifest.json
+
+          for m in server-image-manifest.json chatmail-image-manifest.json; do
+            echo "$m: $(jq '.files | length' "$m") files, $(jq '.packages | length' "$m") packages"
+          done
+
+      - name: Verify the manifests name this release
+        # An unlabelled or empty manifest names no release, so there is
+        # nothing for a monitor to compare it against.
+        run: |
+          for m in assets-manifest.json server-image-manifest.json chatmail-image-manifest.json; do
+            if ! jq -e \
+                --arg v "${{ github.ref_name }}" --arg c "${{ github.sha }}" \
+                '.version == $v and .commit == $c' "$m" > /dev/null; then
+              echo "::error::$m does not name this release"
+              jq 'del(.files, .assets, .packages)' "$m"
+              exit 1
+            fi
+          done
+
+          jq -e '(.assets | length) > 0' assets-manifest.json > /dev/null \
+            || { echo "::error::asset manifest lists no assets"; exit 1; }
+          for m in server-image-manifest.json chatmail-image-manifest.json; do
+            jq -e '(.files | length) > 0 and (.packages | length) > 0' "$m" > /dev/null \
+              || { echo "::error::$m lists no files or no packages"; exit 1; }
+          done
+
+      - name: Confirm a host build reproduces the image build
+        # docs/verifying-builds.md asks readers to rebuild with pnpm and
+        # diff against the signed manifest. Now that the signed
+        # manifest comes from the image, that instruction holds only
+        # while the two builds agree, so the agreement is asserted
+        # rather than assumed. The determinism gate above left a
+        # host-built frontend/dist in place.
+        run: |
+          scripts/asset-manifest.sh > host-manifest.json
+          if ! diff -u \
+              <(jq -S '.assets' assets-manifest.json) \
+              <(jq -S '.assets' host-manifest.json); then
+            echo "::error::image and host builds disagree; the rebuild procedure in docs/verifying-builds.md would report a false mismatch on an honest instance"
+            exit 1
+          fi
+          echo "Image and host builds agree on every asset hash."
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign the manifests
+        # Before the push, deliberately. A signing failure after
+        # publication would leave operators pulling unattested code with
+        # `latest` already moved, and nothing to signal it.
+        #
+        # Keyless: --yes accepts the transparency-log notice
+        # non-interactively. cosign v3 requires --bundle for sign-blob;
+        # the bundle carries the signature, the certificate, and the
+        # Rekor inclusion proof together.
+        run: |
+          for m in assets-manifest.json server-image-manifest.json chatmail-image-manifest.json; do
+            cosign sign-blob --yes --bundle "${m%.json}.sigstore.json" "$m"
+          done
+
+      - name: Verify the signatures before publishing
+        # A signature that does not verify is worse than none, because
+        # it invites false confidence. Checked here with the same
+        # command docs/verifying-builds.md gives readers.
+        run: |
+          for m in assets-manifest.json server-image-manifest.json chatmail-image-manifest.json; do
+            cosign verify-blob \
+              --bundle "${m%.json}.sigstore.json" \
+              --certificate-identity \
+                "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@${GITHUB_REF}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$m"
+          done
+
+      - name: Log in to GitHub Container Registry
+        # Only a tag push publishes. A manual run is a dry run that
+        # builds, attests, and signs but pushes nothing, because
+        # github.ref_name is a branch name there and must not become an
+        # image tag or move `latest`.
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push both images
+        # Last of the publishing steps that can fail closed: every gate
+        # has passed and every manifest is signed and verified.
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          push_one() {
+            local local_tag="$1" name="$2"
+            local repo="ghcr.io/${GITHUB_REPOSITORY}/${name}"
+            docker tag "$local_tag" "${repo}:${GITHUB_REF_NAME}"
+            docker tag "$local_tag" "${repo}:latest"
+            docker push "${repo}:${GITHUB_REF_NAME}"
+            docker push "${repo}:latest"
+            local digest
+            digest=$(docker image inspect --format '{{index .RepoDigests 0}}' \
+              "${repo}:${GITHUB_REF_NAME}")
+            {
+              echo "- \`${repo}:${GITHUB_REF_NAME}\`"
+              echo "  - Digest: \`${digest}\`"
+            } >> "$GITHUB_STEP_SUMMARY"
+          }
+
+          echo "### Published images" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          push_one "$SERVER_IMAGE" noombat-server
+          push_one "$CHATMAIL_IMAGE" noombat-chatmail
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "The signed manifests were extracted from these images." \
+            >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach the manifests and bundles to the release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          files: |
+            assets-manifest.json
+            assets-manifest.sigstore.json
+            server-image-manifest.json
+            server-image-manifest.sigstore.json
+            chatmail-image-manifest.json
+            chatmail-image-manifest.sigstore.json
+          fail_on_unmatched_files: true
+
+      - name: Upload the manifests as workflow artefacts
+        # The only output of a dry run, where no release exists to
+        # attach to.
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-manifests
+          path: |
+            assets-manifest.json
+            assets-manifest.sigstore.json
+            server-image-manifest.json
+            server-image-manifest.sigstore.json
+            chatmail-image-manifest.json
+            chatmail-image-manifest.sigstore.json
+          retention-days: 90
