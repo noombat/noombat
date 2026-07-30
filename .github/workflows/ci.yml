@@ -13,7 +13,7 @@
 # Related workflows:
 #   ci-reuse.yml            REUSE licence compliance (unconditional).
 #   ci-e2e.yml              Playwright end-to-end and federation interop tests.
-#   container-build.yml     Server and chatmail container image builds.
+#   verify.yml              Server and chatmail container image builds.
 
 name: CI
 

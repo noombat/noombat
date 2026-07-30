@@ -1,0 +1,107 @@
+# Build-only verification. Nothing is pushed to any registry.
+#
+# Both images are built with scripts/build-image.sh, the same entry
+# point release.yml uses, so this job verifies the invocation that
+# actually ships rather than a second copy of it that can drift.
+#
+# Related workflows:
+#   release.yml      Builds, attests, signs, and publishes on a version tag.
+#   ci.yml           Rust checks.
+#   ci-frontend.yml  Frontend checks.
+
+name: Container build verification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify.yml"
+      - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
+      - "compose.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "templates/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/verify.yml"
+      - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
+      - "compose.yml"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "rust-toolchain.toml"
+      - "crates/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "templates/**"
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build both images
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # scripts/build-image.sh derives a version label from tags.
+          fetch-depth: 0
+
+      - name: Build the server image
+        run: scripts/build-image.sh Dockerfile noombat-server:verify
+
+      - name: Build the chatmail image
+        run: scripts/build-image.sh Dockerfile.chatmail noombat-chatmail:verify
+
+      - name: Check the served asset manifest is labelled
+        # A manifest reporting "unknown" names no release, so nothing
+        # can be compared against it; such an image is not releasable.
+        run: |
+          manifest=$(docker run --rm --entrypoint cat noombat-server:verify \
+            /opt/noombat/frontend/dist/assets-manifest.json)
+          echo "$manifest" | head -4
+          case "$manifest" in
+            *'"version": "unknown"'*|*'"commit": "unknown"'*)
+              echo "::error::asset manifest is unlabelled; build args did not reach the frontend stage"
+              exit 1 ;;
+          esac
+          test "$(echo "$manifest" | grep -c '\": \"')" -gt 3 \
+            || { echo "::error::asset manifest lists no assets"; exit 1; }
+
+      - name: Generate the image content manifests
+        # Exercises scripts/image-manifest.sh on both images, so a
+        # release is not the first time it runs.
+        run: |
+          scripts/image-manifest.sh noombat-server:verify \
+            /opt/noombat /usr/local/bin > server-image-manifest.json
+          scripts/image-manifest.sh noombat-chatmail:verify \
+            /usr/local/bin /etc/postfix /etc/dovecot /entrypoint.sh \
+            > chatmail-image-manifest.json
+
+          for m in server-image-manifest.json chatmail-image-manifest.json; do
+            jq -e '(.files | length) > 0 and (.packages | length) > 0' "$m" > /dev/null \
+              || { echo "::error::$m is empty"; jq . "$m"; exit 1; }
+            echo "$m: $(jq '.files | length' "$m") files, $(jq '.packages | length' "$m") packages"
+          done
+
+      - name: Upload the manifests for inspection
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-manifests
+          path: |
+            server-image-manifest.json
+            chatmail-image-manifest.json
+          retention-days: 14
