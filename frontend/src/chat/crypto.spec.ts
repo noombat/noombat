@@ -65,6 +65,52 @@ async function encryptSignedBy(
   })) as Uint8Array;
 }
 
+// ..... Fingerprints .....
+
+describe("keyFingerprint", () => {
+  it("returns the key's fingerprint in upper case", async () => {
+    const fingerprint = await keyFingerprint(alice.publicKey);
+    const key = await openpgp.readKey({ binaryKey: alice.publicKey });
+
+    expect(fingerprint).toBe(key.getFingerprint().toUpperCase());
+    expect(fingerprint).toMatch(/^[0-9A-F]+$/);
+  });
+
+  it("distinguishes different keys", async () => {
+    const a = await keyFingerprint(alice.publicKey);
+    const b = await keyFingerprint(bob.publicKey);
+
+    expect(a).not.toBe(b);
+  });
+
+  it("agrees between a secret key and its public half", async () => {
+    // A user compares the fingerprint shown for their own key
+    // against what a peer sees; the two must coincide.
+    expect(await keyFingerprint(alice.privateKey)).toBe(await keyFingerprint(alice.publicKey));
+  });
+});
+
+describe("formatFingerprint", () => {
+  it("groups characters in fours", () => {
+    expect(formatFingerprint("0123456789ABCDEF")).toBe("0123 4567 89AB CDEF");
+  });
+
+  it("leaves a short trailing group intact", () => {
+    expect(formatFingerprint("0123456789")).toBe("0123 4567 89");
+  });
+
+  it("returns an empty string unchanged", () => {
+    expect(formatFingerprint("")).toBe("");
+  });
+
+  it("preserves every character of a real fingerprint", async () => {
+    const fingerprint = await keyFingerprint(alice.publicKey);
+    const formatted = formatFingerprint(fingerprint);
+
+    expect(formatted.replace(/ /g, "")).toBe(fingerprint);
+  });
+});
+
 // ..... Signature verification .....
 
 describe("decryptAndVerify", () => {

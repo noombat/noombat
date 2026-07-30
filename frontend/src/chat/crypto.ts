@@ -43,6 +43,35 @@ export async function generateKeyPair(email: string): Promise<KeyPair> {
   };
 }
 
+// ..... Key fingerprints .....
+
+/**
+ * Compute the fingerprint of a binary Transferable Public Key.
+ *
+ * The fingerprint is the only value a user can compare out of band
+ * to establish that the key held for a peer is the key that peer
+ * actually holds. Until SecureJoin is implemented, this comparison
+ * is the sole defence against an operator substituting its own key
+ * during Autocrypt header exchange.
+ *
+ * Returned in upper case; see {@link formatFingerprint} for display.
+ */
+export async function keyFingerprint(keyBytes: Uint8Array): Promise<string> {
+  const key = await openpgp.readKey({ binaryKey: keyBytes });
+  return key.getFingerprint().toUpperCase();
+}
+
+/**
+ * Group a fingerprint into blocks of four characters.
+ *
+ * Reading a 40-character hexadecimal string aloud, or comparing two
+ * of them by eye, is error-prone; grouping is the conventional
+ * mitigation and is what other OpenPGP interfaces present.
+ */
+export function formatFingerprint(fingerprint: string): string {
+  return (fingerprint.match(/.{1,4}/g) ?? []).join(" ");
+}
+
 // ..... Message encryption .....
 
 /**
