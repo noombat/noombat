@@ -37,8 +37,33 @@ FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bb
 
 # Install s6-overlay for process supervision.
 ARG S6_OVERLAY_VERSION=3.2.0.2
+
+# SHA-256 of the two release archives, each cross-checked against the
+# .sha256 file upstream publishes beside it.
+#
+# `ADD` fetches over HTTPS but verifies nothing, so a substituted or
+# tampered release asset would have been unpacked as root without
+# complaint. A version tag is not an integrity check: GitHub release
+# assets are mutable in principle, and TLS authenticates the host, not
+# the artefact.
+#
+# Verification is a separate `RUN` using sha256sum from coreutils, which
+# bookworm-slim already provides.
+#
+# To refresh after a version bump:
+#   curl -fsSL <url>.sha256
+ARG S6_NOARCH_SHA256=6dbcde158a3e78b9bb141d7bcb5ccb421e563523babbe2c64470e76f4fd02dae
+ARG S6_X86_64_SHA256=59289456ab1761e277bd456a95e737c06b03ede99158beb24f12b165a904f478
+
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-noarch.tar.xz /tmp
 ADD https://github.com/just-containers/s6-overlay/releases/download/v${S6_OVERLAY_VERSION}/s6-overlay-x86_64.tar.xz /tmp
+
+# Verify before extraction, never after: a mismatched archive must not
+# be unpacked as root. --strict fails on a malformed checklist as well
+# as on a mismatch, so a typo in an ARG cannot silently pass.
+RUN printf '%s  /tmp/s6-overlay-noarch.tar.xz\n%s  /tmp/s6-overlay-x86_64.tar.xz\n' \
+        "$S6_NOARCH_SHA256" "$S6_X86_64_SHA256" \
+    | sha256sum --check --strict -
 
 # Install all system packages in a single layer.
 # xz-utils is required to extract the s6-overlay .tar.xz archives and is
