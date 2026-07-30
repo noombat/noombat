@@ -265,6 +265,34 @@ export class PeerStateTable {
    *  direct keys: substituting a gossiped key is as effective an
    *  attack as substituting a directly advertised one.
    *
+   *  **This method has no caller, deliberately.** Gossip belongs with
+   *  group messaging and cannot be made sound before it. Six preconditions
+   *  must hold, and three of them presuppose group support:
+   *
+   *  1. The signature must verify against a key already established
+   *     directly. Autocrypt signatures establish continuity, not
+   *     identity, so this only excludes strangers, not the operator.
+   *  2. The payload must be framed as MIME out of band. Any in-band
+   *     test is spoofable by the sender, who is the party being
+   *     constrained, and Noombat sends bare strings rather than MIME.
+   *  3. The gossiped address must be a confirmed co-recipient of the
+   *     message. This is the legitimacy condition for gossip in
+   *     Autocrypt Level 1 §4.1, and it is unverifiable here: incoming
+   *     messages carry no recipient set.
+   *  4. Gossip provenance must be visible wherever a fingerprint is,
+   *     so a user comparing out of band knows the key came via a third
+   *     party.
+   *  5. A gossiped key must never raise the encryption recommendation
+   *     to `encrypt`.
+   *  6. Peer entries must be capped. Peer state lives inside the
+   *     encrypted blob, so unbounded growth is a denial of service
+   *     against the user's own credentials.
+   *
+   *  Note also that `getPublicKey` returns the direct key only, so a
+   *  stored gossip key is never used for encryption. Adding a fallback
+   *  would turn an inert record into a live encryption key, and an
+   *  injected one into a confidentiality breach.
+   *
    *  @returns: see {@link UpdateResult}. */
   updateGossip(addr: string, key: Uint8Array, timestamp: number): UpdateResult {
     const canonical = canonicalise(addr);

@@ -148,6 +148,10 @@ describe("PeerStateTable.update", () => {
 
 // ..... Gossip key updates .....
 
+// These are specification tests, not regression tests: `updateGossip`
+// has no caller. It pins the Autocrypt Level 1 semantics for whenever
+// group messaging lands, and the method's own documentation lists the
+// six preconditions that must hold before anything may call it.
 describe("PeerStateTable.updateGossip", () => {
   it("reports first gossip acquisition as a mutation but not a change", () => {
     const table = new PeerStateTable();
