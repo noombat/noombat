@@ -23,4 +23,5 @@ pub mod pages;
 pub mod posts;
 pub mod profile_sections;
 pub mod search;
+pub mod wellknown;
 pub mod ws_chat;
