@@ -228,12 +228,27 @@ pub fn is_local_domain(domain: &str) -> bool {
 /// browser rejects a `wss://` connection; a production instance is
 /// served over TLS, where it rejects `ws://`. The value returned here
 /// is pinned in `connect-src` and is also the origin embedded in the
-/// chat page, so the two cannot disagree.
-pub fn websocket_origin(domain: &str) -> String {
-    if is_local_domain(domain) {
+/// chat page, so the two cannot disagree with each other.
+///
+/// Both must also agree with the origin the browser actually used. A
+/// host source in a Content-Security-Policy that names no port matches
+/// only the scheme's default, so `ws://localhost` permits port 80
+/// alone: a development instance on 8443 had its WebSocket blocked by
+/// its own policy, and the URL on the page named the wrong port too.
+pub fn websocket_origin(domain: &str, public_port: u16) -> String {
+    if !is_local_domain(domain) {
+        // Behind a TLS terminator on 443, where the default port is
+        // correct and naming it would only add noise.
+        return format!("wss://{domain}");
+    }
+
+    // A local deployment is reached directly on its listening port. A
+    // port already in the domain wins: an operator who wrote
+    // `localhost:9000` meant it.
+    if domain.contains(':') {
         format!("ws://{domain}")
     } else {
-        format!("wss://{domain}")
+        format!("ws://{domain}:{public_port}")
     }
 }
 
@@ -243,12 +258,12 @@ pub fn websocket_origin(domain: &str) -> String {
 /// allowing the scheme wholesale with `wss:`. A scheme-wide source
 /// permits exfiltration to any host over that scheme, which defeats
 /// much of the point of a `default-src 'none'` policy.
-pub fn content_security_policy(domain: &str) -> String {
+pub fn content_security_policy(domain: &str, public_port: u16) -> String {
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self'; \
          connect-src 'self' {origin}; img-src 'self' data:; font-src 'self'; \
          frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-        origin = websocket_origin(domain),
+        origin = websocket_origin(domain, public_port),
     )
 }
 
@@ -266,11 +281,11 @@ pub fn content_security_policy(domain: &str) -> String {
 /// Apply this after every route and after the `/assets` service, so
 /// that static assets and error responses produced by inner layers
 /// carry the headers too.
-pub fn security_headers<S>(router: Router<S>, domain: &str) -> Router<S>
+pub fn security_headers<S>(router: Router<S>, domain: &str, public_port: u16) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let csp = match HeaderValue::from_str(&content_security_policy(domain)) {
+    let csp = match HeaderValue::from_str(&content_security_policy(domain, public_port)) {
         Ok(value) => value,
         Err(e) => {
             error!(
@@ -341,13 +356,24 @@ mod tests {
 
     #[test]
     fn websocket_origin_follows_the_deployment_scheme() {
-        assert_eq!(websocket_origin("localhost:8443"), "ws://localhost:8443");
-        assert_eq!(websocket_origin("noombat.social"), "wss://noombat.social");
+        // A local domain gains the listening port, because a host
+        // source naming no port matches only the scheme default.
+        assert_eq!(websocket_origin("localhost", 8443), "ws://localhost:8443");
+        // A port already present is respected rather than doubled.
+        assert_eq!(
+            websocket_origin("localhost:9000", 8443),
+            "ws://localhost:9000"
+        );
+        // Production is behind a terminator on 443.
+        assert_eq!(
+            websocket_origin("noombat.social", 8443),
+            "wss://noombat.social"
+        );
     }
 
     #[test]
     fn csp_pins_the_websocket_host_rather_than_the_scheme() {
-        let csp = content_security_policy("noombat.social");
+        let csp = content_security_policy("noombat.social", 8443);
 
         let connect_src = csp
             .split(';')
@@ -375,7 +401,7 @@ mod tests {
 
     #[test]
     fn csp_denies_by_default_and_omits_unsafe_sources() {
-        let csp = content_security_policy("noombat.social");
+        let csp = content_security_policy("noombat.social", 8443);
         assert!(csp.starts_with("default-src 'none';"));
         assert!(csp.contains("script-src 'self';"));
         assert!(csp.contains("style-src 'self';"));
@@ -388,8 +414,8 @@ mod tests {
 
     #[test]
     fn csp_is_a_single_line_valid_header_value() {
-        for domain in ["localhost:8443", "noombat.social"] {
-            let csp = content_security_policy(domain);
+        for domain in ["localhost", "localhost:8443", "noombat.social"] {
+            let csp = content_security_policy(domain, 8443);
             assert!(!csp.contains('\n'), "{domain}: policy contains a newline");
             assert!(
                 HeaderValue::from_str(&csp).is_ok(),

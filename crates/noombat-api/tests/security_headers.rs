@@ -36,6 +36,9 @@ use tower::ServiceExt;
 /// The instance domain used for production-shaped assertions.
 const DOMAIN: &str = "noombat.example";
 
+/// Listening port, as a local deployment's browser-facing origin.
+const PUBLIC_PORT: u16 = 8443;
+
 /// Build an `AppState` with every optional subsystem disabled.
 fn test_state(domain: &str) -> AppState {
     AppState {
@@ -44,6 +47,7 @@ fn test_state(domain: &str) -> AppState {
         pool: PgPool::connect_lazy("postgres://noombat:noombat@localhost/noombat")
             .expect("lazy pool construction cannot fail for a well-formed URL"),
         domain: domain.to_owned(),
+        public_port: PUBLIC_PORT,
         http_client: reqwest::Client::new(),
         open_registrations: true,
         admin_token: None,
@@ -203,7 +207,7 @@ async fn policy_uses_plain_websockets_for_a_local_domain() {
     // A development instance is served over HTTP, where the browser
     // refuses a `wss://` connection. The served page derives its
     // WebSocket URL from the same function, so the two cannot drift.
-    let response = get("localhost:8443", "/auth/login").await;
+    let response = get("localhost", "/auth/login").await;
     let csp = response
         .headers()
         .get("content-security-policy")
@@ -211,8 +215,10 @@ async fn policy_uses_plain_websockets_for_a_local_domain() {
         .to_str()
         .expect("CSP is not valid UTF-8");
 
+    // The port comes from the listener, not from `domain`, which is the
+    // federation authority and carries none.
     assert!(
-        csp.contains("connect-src 'self' ws://localhost:8443"),
+        csp.contains(&format!("connect-src 'self' ws://localhost:{PUBLIC_PORT}")),
         "CSP does not name the local WebSocket origin: {csp}"
     );
 }

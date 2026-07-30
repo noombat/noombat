@@ -408,7 +408,7 @@ async fn chat_page(
     // development instance served over HTTP.
     let ws_url = format!(
         "{}/api/v1/chat/ws",
-        crate::middleware::websocket_origin(&state.domain)
+        crate::middleware::websocket_origin(&state.domain, state.public_port)
     );
     let username = nav_username(&principal);
     ChatPage {

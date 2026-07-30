@@ -19,6 +19,12 @@ use crate::rate_limit::FallbackRateLimiter;
 pub struct AppState {
     pub pool: PgPool,
     pub domain: String,
+    /// Port the browser connects to.
+    /// Consumed only by [`crate::middleware::websocket_origin`], which
+    /// appends it for a local domain carrying no port of its own. A
+    /// production deployment sits behind a TLS terminator on 443, so the
+    /// value is ignored there.
+    pub public_port: u16,
     pub http_client: reqwest::Client,
     pub open_registrations: bool,
     /// Development-only bearer token for C2S outbox POST!

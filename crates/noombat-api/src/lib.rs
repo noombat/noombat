@@ -32,6 +32,7 @@ use crate::state::AppState;
 /// error responses produced by the inner layers carry them as well.
 pub fn build_router(state: AppState) -> Router {
     let domain = state.domain.clone();
+    let public_port = state.public_port;
 
     let router = Router::new()
         .merge(routes::federation::router())
@@ -69,5 +70,5 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
-    middleware::security_headers(router, &domain).with_state(state)
+    middleware::security_headers(router, &domain, public_port).with_state(state)
 }

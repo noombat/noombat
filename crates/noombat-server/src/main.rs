@@ -429,6 +429,7 @@ async fn main() -> anyhow::Result<()> {
     let state = AppState {
         pool,
         domain: config.domain.clone(),
+        public_port: config.port,
         http_client,
         open_registrations: config.open_registrations,
         admin_token: config.admin_token.clone(),
