@@ -127,8 +127,10 @@ jobs:
           jq -e '(.assets | length) > 0' assets-manifest.json > /dev/null \
             || { echo "::error::asset manifest lists no assets"; exit 1; }
           for m in server-image-manifest.json chatmail-image-manifest.json; do
-            jq -e '(.files | length) > 0 and (.packages | length) > 0' "$m" > /dev/null \
-              || { echo "::error::$m lists no files or no packages"; exit 1; }
+            jq -e '(.files | length) > 0' "$m" > /dev/null \
+              || { echo "::error::$m lists no files"; exit 1; }
+            jq -e '(.packages | length) > 0' "$m" > /dev/null \
+              || { echo "::error::$m lists no packages"; exit 1; }
           done
 
       - name: Confirm a host build reproduces the image build

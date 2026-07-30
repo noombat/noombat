@@ -92,9 +92,21 @@ jobs:
             > chatmail-image-manifest.json
 
           for m in server-image-manifest.json chatmail-image-manifest.json; do
-            jq -e '(.files | length) > 0 and (.packages | length) > 0' "$m" > /dev/null \
-              || { echo "::error::$m is empty"; jq . "$m"; exit 1; }
-            echo "$m: $(jq '.files | length' "$m") files, $(jq '.packages | length' "$m") packages"
+            files=$(jq '.files | length' "$m")
+            packages=$(jq '.packages | length' "$m")
+            echo "$m: $files files, $packages packages"
+
+            # Reported separately, and without dumping the manifest: an
+            # empty section means the collection step failed, and which
+            # one it was points straight at the cause.
+            if [ "$files" -eq 0 ]; then
+              echo "::error::$m lists no files; the find/sha256sum pass produced nothing"
+              exit 1
+            fi
+            if [ "$packages" -eq 0 ]; then
+              echo "::error::$m lists no packages; the dpkg-query pass produced nothing"
+              exit 1
+            fi
           done
 
       - name: Upload the manifests for inspection
