@@ -42,21 +42,34 @@ if [ -z "$COMMIT" ]; then
 fi
 
 # Collected inside the container: one `sha256sum  path` line per file
-# under each root that exists, then a blank line, then one
-# `package version` line per installed package. Sorted under LC_ALL=C
-# so the output does not depend on the locale of the host.
-INNER='
-for root in '"$*"'; do
-    [ -e "$root" ] || continue
-    find "$root" -type f -print 2>/dev/null
-done | LC_ALL=C sort | while IFS= read -r f; do
-    sha256sum "$f"
-done
-echo "---PACKAGES---"
-dpkg-query -W -f="${Package} ${Version}\n" 2>/dev/null | LC_ALL=C sort
-'
+# under each root that exists, then a separator, then one
+# `package<TAB>version` line per installed package. Sorted under
+# LC_ALL=C so the output does not depend on the locale of the host.
+#
+# The roots are passed as positional arguments rather than interpolated
+# into the script text, so a path containing whitespace survives and
+# nothing in the script body is subject to expansion by this shell.
+#
+# `dpkg-query -W` is used without `-f`. Its default output is already
+# `${Package}\t${Version}`, and a format string cannot be written here
+# without care: the container's `sh -c` expands `${Package}` itself, and
+# because both names are unset there it silently produced a format of
+# two spaces, one blank line per package, and an empty package list.
+# Avoiding `$` in the script body removes the whole class of error.
+COLLECTED=$(docker run --rm --entrypoint /bin/sh "$IMAGE" -c '
+    for root in "$@"; do
+        [ -e "$root" ] || continue
+        find "$root" -type f -print 2>/dev/null
+    done | LC_ALL=C sort | while IFS= read -r f; do
+        sha256sum "$f"
+    done
 
-COLLECTED=$(docker run --rm --entrypoint /bin/sh "$IMAGE" -c "$INNER")
+    echo "---PACKAGES---"
+
+    # Failure is tolerated but not hidden: an image without dpkg yields
+    # no packages, and the caller gates on the list being non-empty.
+    dpkg-query -W | LC_ALL=C sort || true
+' sh "$@")
 
 FILES=$(printf '%s\n' "$COLLECTED" | sed -n '1,/^---PACKAGES---$/p' | sed '$d')
 PACKAGES=$(printf '%s\n' "$COLLECTED" | sed -n '/^---PACKAGES---$/,$p' | sed '1d')
