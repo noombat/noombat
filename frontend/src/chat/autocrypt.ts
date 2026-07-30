@@ -28,6 +28,15 @@ export interface PeerState {
   gossipKey: number[] | null;
   /** Timestamp of the most recent gossip header. */
   gossipTimestamp: number | null;
+  /** Effective date (Unix seconds) of the message that most recently
+   *  *replaced* an already-known key for this peer, or `null` if no
+   *  replacement has been observed.
+   *
+   *  Held inside the encrypted credential blob, so the event
+   *  survives a session and synchronises across the user's devices.
+   *  First acquisition of a key is not a replacement and does not
+   *  set this field. */
+  lastKeyChangeAt: number | null;
 }
 
 export interface AutocryptHeader {
@@ -143,6 +152,48 @@ export function parseAutocryptHeader(headerValue: string): AutocryptHeader | nul
 
 // ..... Peer state table .....
 
+/**
+ * Outcome of applying an incoming message to the peer state table.
+ */
+export interface UpdateResult {
+  /** Whether any persisted field changed, so that the caller marks
+   *  peer state dirty. Timestamp-only advances count: they alter the
+   *  encryption recommendation. */
+  mutated: boolean;
+  /** Whether an already-known key for this peer was replaced by
+   *  different key material.
+   *
+   *  This is the event an operator-in-the-middle attack produces: the
+   *  server strips the peer's Autocrypt header and substitutes its
+   *  own key, and the client silently adopts it. Surfacing the
+   *  replacement is what lets a user notice. First acquisition of a
+   *  key is not a replacement and does not set this flag, since there
+   *  is no prior value to contradict. */
+  keyChanged: boolean;
+}
+
+/** Byte-wise equality of two key encodings. */
+function keyBytesEqual(a: readonly number[], b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
+/** Construct a peer entry with no key material. */
+function emptyPeerState(): PeerState {
+  return {
+    lastSeen: 0,
+    lastSeenAutocrypt: 0,
+    publicKey: [],
+    preferEncrypt: "nopreference",
+    gossipKey: null,
+    gossipTimestamp: null,
+    lastKeyChangeAt: null,
+  };
+}
+
 export class PeerStateTable {
   private peers: Map<string, PeerState>;
 
@@ -153,44 +204,30 @@ export class PeerStateTable {
   /** Apply the Autocrypt Level 1 update algorithm on receipt of an
    *  incoming message.
    *
-   *  @returns: `true` if key material or the prefer-encrypt
-   *    preference was mutated (i.e. the caller should mark peer
-   *    state as dirty for persistence). Timestamp-only updates
-   *    return `false`. */
-  update(msg: IncomingMessage): boolean {
+   *  @returns: see {@link UpdateResult}. */
+  update(msg: IncomingMessage): UpdateResult {
     const addr = canonicalise(msg.from);
 
-    // If no Autocrypt header is present, update only lastSeen.
-    if (!msg.autocryptHeader) {
-      const entry = this.peers.get(addr);
-      if (entry && msg.effectiveDate > entry.lastSeen) {
-        entry.lastSeen = msg.effectiveDate;
-      }
-      return false;
-    }
-
+    // If no Autocrypt header is present, or the addr attribute does
+    // not match the sender, update only lastSeen. A mismatched addr
+    // makes the whole header inapplicable to this peer.
     const header = msg.autocryptHeader;
-
-    // Ignore the header if the addr attribute does not match the sender.
-    if (canonicalise(header.addr) !== addr) {
+    if (!header || canonicalise(header.addr) !== addr) {
       const entry = this.peers.get(addr);
+      let mutated = false;
       if (entry && msg.effectiveDate > entry.lastSeen) {
         entry.lastSeen = msg.effectiveDate;
+        // lastSeen advancing past lastSeenAutocrypt downgrades the
+        // recommendation to "discourage", so it must be persisted.
+        mutated = true;
       }
-      return false;
+      return { mutated, keyChanged: false };
     }
 
     let entry = this.peers.get(addr);
     let created = false;
     if (!entry) {
-      entry = {
-        lastSeen: 0,
-        lastSeenAutocrypt: 0,
-        publicKey: [],
-        preferEncrypt: "nopreference",
-        gossipKey: null,
-        gossipTimestamp: null,
-      };
+      entry = emptyPeerState();
       this.peers.set(addr, entry);
       created = true;
     }
@@ -201,43 +238,57 @@ export class PeerStateTable {
     }
 
     let keyMutated = false;
+    let keyChanged = false;
     if (msg.effectiveDate > entry.lastSeenAutocrypt) {
+      // A replacement only exists if key material was already held.
+      // An empty publicKey means this is first acquisition, which is
+      // not a change to report.
+      const hadKey = entry.publicKey.length > 0;
+      keyChanged = hadKey && !keyBytesEqual(entry.publicKey, header.publicKey);
+
       entry.lastSeenAutocrypt = msg.effectiveDate;
       entry.publicKey = Array.from(header.publicKey);
       entry.preferEncrypt = header.preferEncrypt;
       keyMutated = true;
+
+      if (keyChanged) {
+        entry.lastKeyChangeAt = msg.effectiveDate;
+      }
     }
 
-    return created || keyMutated;
+    return { mutated: created || keyMutated, keyChanged };
   }
 
   /** Apply a gossip header update (from Autocrypt-Gossip).
    *
-   *  @returns: `true` if the gossip key was mutated (i.e. the
-   *    caller should mark peer state as dirty for persistence). */
-  updateGossip(addr: string, key: Uint8Array, timestamp: number): boolean {
+   *  Gossip keys are replaced under the same reporting rule as
+   *  direct keys: substituting a gossiped key is as effective an
+   *  attack as substituting a directly advertised one.
+   *
+   *  @returns: see {@link UpdateResult}. */
+  updateGossip(addr: string, key: Uint8Array, timestamp: number): UpdateResult {
     const canonical = canonicalise(addr);
     let entry = this.peers.get(canonical);
     if (!entry) {
-      entry = {
-        lastSeen: 0,
-        lastSeenAutocrypt: 0,
-        publicKey: [],
-        preferEncrypt: "nopreference",
-        gossipKey: null,
-        gossipTimestamp: null,
-      };
+      entry = emptyPeerState();
       this.peers.set(canonical, entry);
     }
 
     const dominated = entry.gossipTimestamp === null || timestamp > entry.gossipTimestamp;
-    if (dominated) {
-      entry.gossipKey = Array.from(key);
-      entry.gossipTimestamp = timestamp;
-      return true;
+    if (!dominated) {
+      return { mutated: false, keyChanged: false };
     }
 
-    return false;
+    const hadKey = entry.gossipKey !== null && entry.gossipKey.length > 0;
+    const keyChanged = hadKey && !keyBytesEqual(entry.gossipKey!, key);
+
+    entry.gossipKey = Array.from(key);
+    entry.gossipTimestamp = timestamp;
+    if (keyChanged) {
+      entry.lastKeyChangeAt = timestamp;
+    }
+
+    return { mutated: true, keyChanged };
   }
 
   /** Retrieve the peer state for the given address. */
@@ -261,12 +312,20 @@ export class PeerStateTable {
     return JSON.stringify(obj);
   }
 
-  /** Deserialise a table from a JSON string. */
+  /** Deserialise a table from a JSON string.
+   *
+   *  Entries written before `lastKeyChangeAt` existed lack the field;
+   *  it is normalised to `null` so that later reads do not observe
+   *  `undefined`. */
   static fromJson(json: string): PeerStateTable {
     const table = new PeerStateTable();
-    const obj = JSON.parse(json) as Record<string, PeerState>;
+    const obj = JSON.parse(json) as Record<string, Partial<PeerState>>;
     for (const [k, v] of Object.entries(obj)) {
-      table.peers.set(k, v);
+      table.peers.set(k, {
+        ...emptyPeerState(),
+        ...v,
+        lastKeyChangeAt: v.lastKeyChangeAt ?? null,
+      });
     }
     return table;
   }

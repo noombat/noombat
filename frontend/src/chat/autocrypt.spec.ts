@@ -60,3 +60,169 @@ describe("parseAutocryptHeader", () => {
   });
 });
 
+// ..... Direct key updates .....
+
+describe("PeerStateTable.update", () => {
+  it("reports first acquisition as a mutation but not a key change", () => {
+    const table = new PeerStateTable();
+    const result = table.update(message(KEY_A, 1000));
+
+    expect(result.mutated).toBe(true);
+    // There is no prior value to contradict, so nothing is reportable.
+    expect(result.keyChanged).toBe(false);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBeNull();
+  });
+
+  it("reports replacement of a known key by different key material", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+
+    const result = table.update(message(KEY_B, 2000));
+
+    expect(result.mutated).toBe(true);
+    expect(result.keyChanged).toBe(true);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBe(2000);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_B));
+  });
+
+  it("does not report a repeated key as a change", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+
+    // Distinct array, identical bytes: comparison must be by value.
+    const result = table.update(message(KEY_A_COPY, 2000));
+
+    // The timestamp advanced, so the state is still dirty.
+    expect(result.mutated).toBe(true);
+    expect(result.keyChanged).toBe(false);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBeNull();
+  });
+
+  it("ignores an older message and leaves the key intact", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 2000));
+
+    const result = table.update(message(KEY_B, 1000));
+
+    expect(result.keyChanged).toBe(false);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+  });
+
+  it("ignores a header whose addr does not match the sender", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+
+    const result = table.update({
+      from: ALICE,
+      effectiveDate: 2000,
+      autocryptHeader: header(KEY_B, "mallory@chat.example.com"),
+    });
+
+    expect(result.keyChanged).toBe(false);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+  });
+
+  it("advances lastSeen for a message with no header, marking state dirty", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+
+    const result = table.update({ from: ALICE, effectiveDate: 2000, autocryptHeader: null });
+
+    // lastSeen overtaking lastSeenAutocrypt downgrades the
+    // recommendation to "discourage", so it must be persisted.
+    expect(result.mutated).toBe(true);
+    expect(result.keyChanged).toBe(false);
+    expect(table.get(ALICE)!.lastSeen).toBe(2000);
+  });
+
+  it("canonicalises the address before matching", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000, ALICE));
+
+    const result = table.update(message(KEY_B, 2000, `  ${ALICE.toUpperCase()}  `));
+
+    expect(result.keyChanged).toBe(true);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBe(2000);
+  });
+});
+
+// ..... Gossip key updates .....
+
+describe("PeerStateTable.updateGossip", () => {
+  it("reports first gossip acquisition as a mutation but not a change", () => {
+    const table = new PeerStateTable();
+    const result = table.updateGossip(ALICE, KEY_A, 1000);
+
+    expect(result.mutated).toBe(true);
+    expect(result.keyChanged).toBe(false);
+  });
+
+  it("reports replacement of a gossiped key", () => {
+    const table = new PeerStateTable();
+    table.updateGossip(ALICE, KEY_A, 1000);
+
+    const result = table.updateGossip(ALICE, KEY_B, 2000);
+
+    expect(result.mutated).toBe(true);
+    expect(result.keyChanged).toBe(true);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBe(2000);
+  });
+
+  it("respects gossip timestamp precedence", () => {
+    const table = new PeerStateTable();
+    table.updateGossip(ALICE, KEY_A, 2000);
+
+    const result = table.updateGossip(ALICE, KEY_B, 1000);
+
+    expect(result.mutated).toBe(false);
+    expect(result.keyChanged).toBe(false);
+    expect(table.get(ALICE)!.gossipKey).toEqual(Array.from(KEY_A));
+  });
+
+  it("keeps gossip key material separate from the direct key", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+    table.updateGossip(ALICE, KEY_B, 1000);
+
+    // getPublicKey returns the directly advertised key; a gossiped
+    // key is weaker evidence and must not displace it.
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+    expect(table.get(ALICE)!.gossipKey).toEqual(Array.from(KEY_B));
+  });
+});
+
+// ..... Serialisation .....
+
+describe("PeerStateTable serialisation", () => {
+  it("round-trips lastKeyChangeAt through the credential blob", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+    table.update(message(KEY_B, 2000));
+
+    const restored = PeerStateTable.fromJson(table.toJson());
+
+    expect(restored.get(ALICE)!.lastKeyChangeAt).toBe(2000);
+    expect(Array.from(restored.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_B));
+  });
+
+  it("normalises state written before lastKeyChangeAt existed", () => {
+    // A blob stored by an earlier release lacks the field entirely.
+    const legacy = JSON.stringify({
+      [ALICE]: {
+        lastSeen: 1000,
+        lastSeenAutocrypt: 1000,
+        publicKey: Array.from(KEY_A),
+        preferEncrypt: "mutual",
+        gossipKey: null,
+        gossipTimestamp: null,
+      },
+    });
+
+    const restored = PeerStateTable.fromJson(legacy);
+
+    expect(restored.get(ALICE)!.lastKeyChangeAt).toBeNull();
+    // A subsequent replacement is still detected against the
+    // restored key.
+    expect(restored.update(message(KEY_B, 2000)).keyChanged).toBe(true);
+  });
+});

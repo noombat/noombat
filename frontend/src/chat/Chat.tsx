@@ -344,7 +344,7 @@ export default function Chat(props: ChatProps): JSX.Element {
         const parsed = parseAutocryptHeader(headerStr);
         if (parsed) {
           const ts = msg.timestamp ?? Math.floor(Date.now() / 1000);
-          const mutated = peerState.update({
+          const { mutated, keyChanged } = peerState.update({
             from: sender,
             effectiveDate: ts,
             autocryptHeader: parsed,
