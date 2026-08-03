@@ -24,7 +24,7 @@
 // `extraHTTPHeaders`. In CI, this token is provided by the test
 // harness. When unavailable, authenticated-page tests are skipped.
 
-import { test, expectNoViolations } from "./axe-fixture";
+import { test, expect, expectNoViolations } from "./axe-fixture";
 
 // ..... Configuration .....
 
@@ -263,5 +263,75 @@ test.describe("Accessibility: admin pages", () => {
     await page.goto("/admin/federation");
     const results = await axeScan();
     expectNoViolations(results);
+  });
+});
+
+// ..... Live region announcements .....
+//
+// A live region announces reliably only when it is already present
+// and exposed and its content then mutates.
+//
+// These assertions cover one persistent region in base.html,
+// updated out of band by the feed handler.
+
+test.describe("Assistive-technology status region", () => {
+  const PAGES = ["/", "/auth/login", "/auth/register"];
+
+  for (const path of PAGES) {
+    test(`${path} carries a persistent status region`, async ({ page }) => {
+      await page.goto(path, { waitUntil: "networkidle" });
+
+      const region = page.locator("#a11y-status");
+      await expect(region).toHaveCount(1);
+      await expect(region).toHaveRole("status");
+
+      // `sr-only` hides the region visually by clipping it, not with
+      // `display: none` or `visibility: hidden`, either of which would
+      // remove it from the accessibility tree and defeat the purpose.
+      const hiding = await region.evaluate((el) => {
+        const s = getComputedStyle(el);
+        return { display: s.display, visibility: s.visibility };
+      });
+      expect(hiding.display, `${path}: region is display:none`).not.toBe(
+        "none",
+      );
+      expect(
+        hiding.visibility,
+        `${path}: region is visibility:hidden`,
+      ).not.toBe("hidden");
+    });
+  }
+
+  test("the feed announces its result into the region", async ({ page }) => {
+    // The region starts empty and is filled by an out-of-band swap when
+    // the feed partial arrives. Either outcome is a valid announcement:
+    // a post count, or the end-of-feed message when there are none.
+    await page.goto("/", { waitUntil: "networkidle" });
+
+    const region = page.locator("#a11y-status");
+    await expect(region).not.toBeEmpty();
+  });
+
+  test("no hidden element claims to be a live region", async ({ page }) => {
+    // A region removed from the accessibility tree cannot announce, so
+    // marking one live is at best inert and at worst misleading to a
+    // reviewer.
+    await page.goto("/", { waitUntil: "networkidle" });
+
+    const offenders = await page.evaluate(() =>
+      Array.from(
+        document.querySelectorAll("[aria-live], [role=status], [role=alert]"),
+      )
+        .filter((el) => {
+          const s = getComputedStyle(el);
+          return s.display === "none" || s.visibility === "hidden";
+        })
+        .map((el) => el.tagName.toLowerCase() + (el.id ? `#${el.id}` : "")),
+    );
+
+    expect(
+      offenders,
+      "live regions hidden from the accessibility tree",
+    ).toEqual([]);
   });
 });

@@ -231,10 +231,20 @@ async fn feed_partial(
 
     let has_next = posts.len() as i64 >= PAGE_SIZE;
 
+    let status_announcement = if posts.is_empty() {
+        i18n.t("feed_loaded_none")
+    } else {
+        i18n.tf(
+            "feed_loaded_announcement",
+            &[("count", &posts.len().to_string())],
+        )
+    };
+
     FeedPartial {
         permalink_label: i18n.t("feed_permalink"),
         loading_more_label: i18n.t("feed_loading_more"),
         read_more_label: i18n.t("feed_read_more"),
+        status_announcement,
         posts,
         has_next,
         next_page: query.page + 1,
@@ -293,6 +303,14 @@ struct FeedPartial {
     posts: Vec<FeedPost>,
     has_next: bool,
     next_page: u32,
+    /// Text swapped out of band into the `#a11y-status` live region in
+    /// `base.html`, so assistive technology learns that items arrived.
+    ///
+    /// Phrased to avoid number agreement, which `I18n::tf` cannot handle:
+    /// "Posts loaded: 1" reads correctly where "Loaded 1 posts" would
+    /// not. An empty page announces the end of the feed instead of a
+    /// count of zero.
+    status_announcement: String,
     permalink_label: String,
     loading_more_label: String,
     read_more_label: String,

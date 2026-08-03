@@ -33,6 +33,26 @@
 </head>
 <body class="bg-bg text-fg font-sans leading-relaxed">
     <a class="skip-link" href="#main-content">{{ i18n.t("skip_to_content") }}</a>
+
+    <!--
+      Announcement region for assistive technology.
+      
+      A live region only announces reliably when it is already present and
+      exposed and its text content then changes. Marking a hidden
+      indicator aria-live does not work: `display: none` removes the
+      element from the accessibility tree, so revealing it inserts a
+      region that was never being observed, and screen readers handle
+      that inconsistently. This region is therefore always present, never
+      hidden from assistive technology, and empty until something updates
+      its text.
+      
+      Updated by out-of-band swap; see feed_page.html. `role="status"`
+      implies aria-live="polite" and aria-atomic="true".
+      
+      Kept outside <main> so a content swap cannot replace it: replacing
+      the node would reintroduce the very problem it solves.
+    -->
+    <div id="a11y-status" class="sr-only" role="status"></div>
     <nav aria-label="{{ i18n.t("aria_nav_main") }}"
          class="border-b border-border px-4 py-3 flex items-center gap-4">
         <a href="/"

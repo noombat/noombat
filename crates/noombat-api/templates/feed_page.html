@@ -1,3 +1,17 @@
+{#
+  Announce the result to assistive technology.
+
+  `hx-swap-oob="innerHTML"` replaces the *contents* of #a11y-status
+  rather than the element itself. An outerHTML swap, which is what
+  hx-swap-oob="true" performs, would substitute the node and so destroy
+  the live region the announcement depends on.
+
+  Completion is announced rather than the start of the request. A
+  keyboard user needs to know that items arrived and roughly how many;
+  "loading" is filler, and announcing it on every scroll-triggered fetch
+  would be noise. The visual indicator already covers sighted users.
+#}
+<span id="a11y-status" hx-swap-oob="innerHTML">{{ status_announcement }}</span>
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
 
@@ -53,7 +67,7 @@
      hx-trigger="revealed"
      hx-swap="outerHTML"
      class="py-4">
-    <span class="htmx-indicator text-muted text-sm" aria-live="polite">
+    <span class="htmx-indicator text-muted text-sm">
         {{ loading_more_label }}
     </span>
 </div>

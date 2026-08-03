@@ -347,3 +347,7 @@ privacy_preview_as_owner: "As owner"
 # Client-side strings surfaced through data-* attributes.
 error_network: "Network error. Please try again."
 auth_upgrade_password_failed: "Failed to set the password. Please try again."
+
+# Announced to assistive technology after a feed swap.
+feed_loaded_announcement: "Posts loaded: %{count}"
+feed_loaded_none: "No more posts."

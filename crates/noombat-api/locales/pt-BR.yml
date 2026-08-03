@@ -347,3 +347,7 @@ privacy_preview_as_owner: "Como proprietário"
 # Client-side strings surfaced through data-* attributes.
 error_network: "Erro de rede. Tente novamente."
 auth_upgrade_password_failed: "Não foi possível definir a senha. Tente novamente."
+
+# Announced to assistive technology after a feed swap.
+feed_loaded_announcement: "Publicações carregadas: %{count}"
+feed_loaded_none: "Não há mais publicações."
