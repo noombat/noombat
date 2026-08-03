@@ -31,7 +31,7 @@ services:
         condition: service_started
 
   db:
-    image: docker.io/library/postgres:16-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    image: docker.io/library/postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
     environment:
       POSTGRES_USER: noombat
       POSTGRES_PASSWORD: noombat
@@ -46,12 +46,12 @@ services:
       start_period: 10s
 
   redis:
-    image: docker.io/library/redis:7-alpine@sha256:e7723ff73d963f5cc6d9c4643ea3d989527a402a319239054e9472a7fb9219a2
+    image: docker.io/library/redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
     volumes:
       - redis-data:/data
 
   meilisearch:
-    image: docker.io/getmeili/meilisearch:v1.12@sha256:c9fac23131cca4db95173d41cc50fd5639121ee381795528fdd7522d7978a7b8
+    image: docker.io/getmeili/meilisearch:v1.51@sha256:a9eb29ee09ab4943db3b4c68620bd6f3382e6b2b0ac4431c0e607b48dbcd4c14
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
       # Default to production mode. Override to "development" via
