@@ -83,8 +83,15 @@
  * crates/noombat-api/templates/base.html, because the <style> element it
  * appends violates `style-src 'self'`.
  *
- * The compound selector matches an element that is both the indicator
- * and the request target.
+ * The compound selector matches an element that is both the indicator and
+ * the request target, which is what `hx-indicator` produces:
+ * addRequestIndicatorClasses() adds `htmx-request` to the resolved
+ * targets themselves. Without it, `#feed-loading` in feed.html would
+ * never appear.
+ *
+ * `display: revert` restores the user-agent default for whatever element
+ * the class lands on, i.e. `inline` for a span, `block` for a div, rather
+ * than dictating a box type these rules have no business choosing.
  */
 
 .htmx-indicator {
@@ -93,7 +100,7 @@
 
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator {
-  display: inline-block;
+  display: revert;
 }
 
 /* ..... Article table of contents .....
