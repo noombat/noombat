@@ -92,15 +92,36 @@
  * `display: revert` restores the user-agent default for whatever element
  * the class lands on, i.e. `inline` for a span, `block` for a div, rather
  * than dictating a box type these rules have no business choosing.
+ *
+ * The delay suppresses the indicator for fast requests rather than
+ * softening its appearance. A request finishing inside the delay never
+ * reveals it at all, because removing `htmx-request` cancels a transition
+ * still in its delay phase, so there is no flash to soften. Per MDN,
+ * `display` flips to the visible value at 0% of the transition
+ * *duration*, which begins after the *delay*; a non-zero duration is
+ * required for any transition to occur, hence 1ms. The delay lives on the
+ * shown rule because transition properties are taken from the state being
+ * transitioned *to*; the base rule keeps 0s so hiding is immediate.
+ *
+ * Longhands rather than the shorthand: a `transition` shorthand declared
+ * after `transition-behavior` silently overrules it.
+ *
+ * Browsers without `allow-discrete` ignore the delay and reveal the
+ * indicator immediately, which is the previous behaviour.
  */
 
 .htmx-indicator {
   display: none;
+  transition-property: display;
+  transition-duration: 1ms;
+  transition-behavior: allow-discrete;
+  transition-delay: 0s;
 }
 
 .htmx-request .htmx-indicator,
 .htmx-request.htmx-indicator {
   display: revert;
+  transition-delay: 200ms;
 }
 
 /* ..... Article table of contents .....
