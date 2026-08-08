@@ -40,7 +40,7 @@ use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::delivery;
-use crate::inbox::resolve_remote_actor;
+use crate::inbox::resolve_actor;
 
 // ..... Outbound: local actor initiates migration .....
 
@@ -230,7 +230,7 @@ pub async fn handle_inbound_move(
     }
 
     // Resolve the source actor locally.
-    let source_actor = resolve_remote_actor(pool, http_client, source_uri).await?;
+    let source_actor = resolve_actor(pool, http_client, source_uri).await?;
 
     // Record the move on the cached remote actor.
     sqlx::query("UPDATE actors SET moved_to = $1 WHERE id = $2")
@@ -251,7 +251,7 @@ pub async fn handle_inbound_move(
     .await?;
 
     // Resolve the target actor so that we have its inbox.
-    let target_actor = resolve_remote_actor(pool, http_client, target_uri).await?;
+    let target_actor = resolve_actor(pool, http_client, target_uri).await?;
     let target_inbox = target_actor
         .inbox_url
         .clone()

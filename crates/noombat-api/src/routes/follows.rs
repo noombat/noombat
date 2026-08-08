@@ -60,7 +60,7 @@ async fn initiate_follow(
         noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     // Resolve (and cache) the remote actor.
-    let remote_actor = noombat_federation::inbox::resolve_remote_actor(
+    let remote_actor = noombat_federation::inbox::resolve_actor(
         &state.pool,
         &state.http_client,
         &body.target_ap_id,

@@ -147,7 +147,7 @@ pub async fn handle_inbound_flag(
     }
 
     // Resolve the remote reporter as an actor (for the reporter_id).
-    let reporter = crate::inbox::resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let reporter = crate::inbox::resolve_actor(pool, http_client, &activity.actor).await?;
 
     // Extract a reason from the content (best-effort parse).
     let (reason, comment) = parse_flag_content(content.unwrap_or("other"));

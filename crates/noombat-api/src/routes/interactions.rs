@@ -54,7 +54,7 @@ async fn create_block(
         noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
     // Resolve the target actor (may be remote).
-    let target = noombat_federation::inbox::resolve_remote_actor(
+    let target = noombat_federation::inbox::resolve_actor(
         &state.pool,
         &state.http_client,
         &body.target_ap_id,
@@ -196,7 +196,7 @@ async fn create_mute(
     let local_actor =
         noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
-    let target = noombat_federation::inbox::resolve_remote_actor(
+    let target = noombat_federation::inbox::resolve_actor(
         &state.pool,
         &state.http_client,
         &body.target_ap_id,

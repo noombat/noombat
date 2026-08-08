@@ -77,17 +77,17 @@ pub async fn process_activity(
     }
 }
 
-// ..... REMOTE ACTOR RESOLUTION .....
+// ..... ACTOR RESOLUTION .....
 
 /// Fetch and persist an actor's ActivityPub profile.
 ///
 /// Checks the local database cache first. On cache miss, fetches the
 /// profile over HTTP and upserts it into the `actors` table.
 ///
-/// **Despite the name, this can return a LOCAL actor.** The cache lookup
-/// is [`repo::find_by_ap_id`], which does not filter on `is_local`, so
-/// passing a local actor's URI yields that local row. Several callers
-/// depend on this: blocking or muting a local user
+/// **Resolves local actors as well as remote ones**, deliberately. The
+/// cache lookup is [`repo::find_by_ap_id`], which does not filter on
+/// `is_local`, so passing a local actor's URI yields that local row.
+/// Several callers depend on this: blocking or muting a local user
 /// (`noombat-api::routes::interactions`) and an inbound `Move` whose
 /// target is an account on this instance (`move_actor`) both resolve a
 /// local URI through here legitimately.
@@ -95,7 +95,11 @@ pub async fn process_activity(
 /// Callers for which a local actor would be nonsense — anything treating
 /// the result as a counterparty on another instance — must use
 /// [`resolve_inbound_signer`] instead.
-pub async fn resolve_remote_actor(
+///
+/// This was called `resolve_remote_actor` until the name was found to be
+/// actively misleading: it had been read as a promise that the result is
+/// remote, which it never was.
+pub async fn resolve_actor(
     pool: &PgPool,
     http_client: &reqwest::Client,
     actor_uri: &str,
@@ -163,7 +167,7 @@ pub async fn resolve_remote_actor(
 
 /// Resolve the actor whose key signed an inbound request.
 ///
-/// Identical to [`resolve_remote_actor`] except that a local actor is
+/// Identical to [`resolve_actor`] except that a local actor is
 /// refused. This instance never sends signed requests to its own inbox,
 /// so a signer URI that resolves to a local row is always illegitimate —
 /// it means a peer named one of our actors as the signer.
@@ -177,13 +181,13 @@ pub async fn resolve_remote_actor(
 /// # Errors
 ///
 /// Returns [`NoombatError::Forbidden`] when `actor_uri` resolves to a
-/// local actor; otherwise propagates [`resolve_remote_actor`].
+/// local actor; otherwise propagates [`resolve_actor`].
 pub async fn resolve_inbound_signer(
     pool: &PgPool,
     http_client: &reqwest::Client,
     actor_uri: &str,
 ) -> Result<Actor> {
-    let actor = resolve_remote_actor(pool, http_client, actor_uri).await?;
+    let actor = resolve_actor(pool, http_client, actor_uri).await?;
 
     if actor.is_local {
         warn!(
@@ -279,7 +283,7 @@ fn verify_fetched_actor_id(doc_id: &str, final_url: &Url, requested_uri: &str) -
 /// served from.
 ///
 /// This function is the single conversion point used by both
-/// [`resolve_remote_actor`] and `handle_update_actor`, ensuring
+/// [`resolve_actor`] and `handle_update_actor`, ensuring
 /// that the field mapping — and now the `id` check — remains
 /// consistent.
 ///
@@ -392,7 +396,7 @@ async fn handle_follow(
 
     // Resolve the remote follower and the local target concurrently.
     let (remote_actor, local_actor) = tokio::try_join!(
-        resolve_remote_actor(pool, http_client, &activity.actor),
+        resolve_actor(pool, http_client, &activity.actor),
         repo::find_local_by_username(pool, target_username),
     )?;
 
@@ -484,7 +488,7 @@ async fn handle_undo(
             let target_username = extract_local_username(target_uri)
                 .ok_or_else(|| NoombatError::BadRequest("cannot parse target actor URI".into()))?;
 
-            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
             let local_actor = repo::find_local_by_username(pool, target_username).await?;
 
             // Delete by relationship IDs (the unique constraint) and,
@@ -521,7 +525,7 @@ async fn handle_undo(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| NoombatError::BadRequest("Undo Like: missing id".into()))?;
 
-            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
             sqlx::query("DELETE FROM likes WHERE ap_id = $1 AND actor_id = $2")
                 .bind(inner_ap_id)
                 .bind(remote_actor.id)
@@ -536,7 +540,7 @@ async fn handle_undo(
                 .and_then(|v| v.as_str())
                 .ok_or_else(|| NoombatError::BadRequest("Undo Announce: missing id".into()))?;
 
-            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
             sqlx::query("DELETE FROM boosts WHERE ap_id = $1 AND actor_id = $2")
                 .bind(inner_ap_id)
                 .bind(remote_actor.id)
@@ -557,7 +561,7 @@ async fn handle_undo(
             let target_username = extract_local_username(target_uri)
                 .ok_or_else(|| NoombatError::BadRequest("cannot parse target actor URI".into()))?;
 
-            let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+            let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
             let local_actor = repo::find_local_by_username(pool, target_username).await?;
 
             sqlx::query("DELETE FROM blocks WHERE actor_id = $1 AND target_id = $2")
@@ -638,7 +642,7 @@ async fn handle_create(
     let featured_image_url = extract_image_url(object);
 
     // Resolve the remote author.
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     // Derive visibility from the activity's to/cc addressing.
     //
@@ -879,7 +883,7 @@ async fn handle_update_actor(
         return Ok(());
     }
 
-    // Taken before `json()` consumes the response; see `resolve_remote_actor`.
+    // Taken before `json()` consumes the response; see `resolve_actor`.
     let final_url = response.url().clone();
 
     let ap_actor: ApActor = response
@@ -946,7 +950,7 @@ async fn handle_update_post(
     }
 
     // Resolve the remote author (may already be cached).
-    let _remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let _remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -1068,7 +1072,7 @@ async fn handle_accept(
         .ok_or_else(|| NoombatError::BadRequest("cannot parse follower URI".into()))?;
 
     let local_actor = repo::find_local_by_username(pool, follower_username).await?;
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     repo::accept_follow(pool, local_actor.id, remote_actor.id).await?;
     info!(
@@ -1110,7 +1114,7 @@ async fn handle_reject(
         .ok_or_else(|| NoombatError::BadRequest("cannot parse follower URI".into()))?;
 
     let local_actor = repo::find_local_by_username(pool, follower_username).await?;
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     // Delete the pending follow: local_actor follows remote_actor.
     repo::delete_follow(pool, local_actor.id, remote_actor.id).await?;
@@ -1139,7 +1143,7 @@ async fn handle_announce(
 
     info!(actor = %activity.actor, object = %object_uri, "received Announce");
 
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     // Look up the boosted post locally; if absent, fetch it from the
     // remote instance so that boosts of non-local content are visible
@@ -1284,7 +1288,7 @@ async fn fetch_and_persist_remote_post(
     let in_reply_to = extract_in_reply_to(&object);
 
     // Resolve the author (creates a remote actor record if needed).
-    let author = resolve_remote_actor(pool, http_client, author_uri).await?;
+    let author = resolve_actor(pool, http_client, author_uri).await?;
 
     let remote_post = repo::RemotePost {
         actor_id: author.id,
@@ -1355,7 +1359,7 @@ async fn handle_like(
 
     info!(actor = %activity.actor, object = %object_uri, "received Like");
 
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
     let post_id = sqlx::query_scalar::<_, uuid::Uuid>(r#"SELECT id FROM posts WHERE ap_id = $1"#)
         .bind(object_uri)
@@ -1406,7 +1410,7 @@ async fn handle_block(
 
     info!(actor = %activity.actor, target = %target_uri, "received Block");
 
-    let remote_actor = resolve_remote_actor(pool, http_client, &activity.actor).await?;
+    let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
     let local_actor = repo::find_local_by_username(pool, target_username).await?;
 
     // Persist the block (idempotent).
@@ -2082,7 +2086,7 @@ mod tests {
     // ..... INBOUND SIGNER RESOLUTION .....
     //
     // These hit the database. A cached actor short-circuits
-    // `resolve_remote_actor` before any HTTP, so the client below is
+    // `resolve_actor` before any HTTP, so the client below is
     // never actually used and no network stub is needed.
 
     async fn insert_actor(pool: &PgPool, ap_id: &str, is_local: bool) {
