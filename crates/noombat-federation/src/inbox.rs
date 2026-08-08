@@ -8,6 +8,7 @@ use noombat_ap::object::ApActor;
 use noombat_core::actor::Actor;
 use noombat_core::error::{NoombatError, Result};
 use noombat_identity::repo;
+use reqwest::Url;
 use serde_json::json;
 use sqlx::PgPool;
 use tracing::{info, warn};
@@ -15,11 +16,40 @@ use tracing::{info, warn};
 use crate::delivery;
 
 /// Dispatch an inbound activity to the appropriate handler.
+///
+/// `verified_actor` is the identity whose key actually signed the request —
+/// the HTTP Signature `keyId` with its fragment stripped, as derived by the
+/// caller. Every handler below attributes its effect to `activity.actor`
+/// alone, so without this binding the signature proves only that *some*
+/// fetchable actor signed the bytes, not that it is the actor the activity
+/// claims to come from.
+///
+/// # Errors
+///
+/// Returns [`NoombatError::Forbidden`] when `verified_actor` does not equal
+/// `activity.actor`.
 pub async fn process_activity(
     pool: &PgPool,
     http_client: &reqwest::Client,
+    verified_actor: &str,
     activity: Activity,
 ) -> Result<()> {
+    // ..... SIGNER-TO-ACTOR BINDING .....
+    //
+    // This must precede every other statement: the handlers below trust
+    // `activity.actor` completely, and `find_by_ap_id` does not filter on
+    // `is_local`, so an unbound activity can attribute an effect to a local
+    // actor as readily as to a third-party remote one.
+    if verified_actor != activity.actor {
+        warn!(
+            verified_actor,
+            claimed_actor = %activity.actor,
+            activity_type = %activity.activity_type,
+            "rejecting activity whose actor does not match the signing key"
+        );
+        return Err(NoombatError::Forbidden);
+    }
+
     let activity_type = activity.activity_type.as_str();
     info!(
         actor = %activity.actor,
@@ -105,24 +135,125 @@ pub async fn resolve_remote_actor(
         )));
     }
 
+    // `Response::json` consumes the response, so the URL the document was
+    // actually served from — after any redirects — has to be taken now.
+    let final_url = response.url().clone();
+
     let ap_actor: ApActor = response
         .json()
         .await
         .map_err(|e| NoombatError::Federation(format!("invalid actor JSON: {e}")))?;
 
-    let domain = extract_domain(actor_uri).unwrap_or_default();
-    let remote = ap_actor_to_remote(&ap_actor, domain);
+    let remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri)?;
 
     repo::upsert_remote_actor(pool, &remote).await
 }
 
+/// Normalise an actor URI for comparison.
+///
+/// [`Url`] parsing already lowercases the scheme and host and drops a
+/// default port, so `HTTPS://Example.COM:443/users/alice` and
+/// `https://example.com/users/alice` converge here. On top of that a
+/// single trailing slash is trimmed from the path, so `/users/alice`
+/// and `/users/alice/` compare equal, and the fragment is dropped
+/// (fragments are never sent to the origin).
+///
+/// Percent-encoding is deliberately NOT decoded. `/users/%61lice` is a
+/// different path from `/users/alice` as far as the origin server is
+/// concerned; treating them as equal would let a document claim an id
+/// it was not actually served from.
+fn normalise_actor_uri(url: &Url) -> String {
+    let mut url = url.clone();
+    url.set_fragment(None);
+    let trimmed = url.path().trim_end_matches('/').to_owned();
+    url.set_path(&trimmed);
+    url.to_string()
+}
+
+/// Whether two URLs share a scheme, host and effective port.
+fn same_origin(a: &Url, b: &Url) -> bool {
+    a.scheme() == b.scheme()
+        && a.host_str() == b.host_str()
+        && a.port_or_known_default() == b.port_or_known_default()
+}
+
+/// Check that a fetched actor document is entitled to the `id` it claims.
+///
+/// Two conditions must hold, and they guard different attacks:
+///
+/// 1. **Same origin.** `reqwest` follows up to ten redirects by default,
+///    so the document may have arrived from somewhere other than the URI
+///    requested. A cross-origin redirect is refused outright: without
+///    this, `good.example` could 302 to `evil.example` and have the
+///    result persisted under `evil.example`'s id, while the caller (and,
+///    for inbound activities, the HTTP Signature) believed it was talking
+///    to `good.example`.
+/// 2. **Id matches the URL it came from.** Otherwise a remote server can
+///    return a document claiming `id` of a LOCAL actor, and
+///    `upsert_remote_actor`'s `ON CONFLICT (ap_id)` overwrites that
+///    actor's published signing key from an unauthenticated request.
+///
+/// Same-origin redirects (a trailing-slash canonicalisation, say) are
+/// permitted, and the document's `id` is then compared against the URL
+/// actually served, not the one requested.
+///
+/// # Errors
+///
+/// Returns [`NoombatError::Federation`] when either condition fails, or
+/// when the requested URI or the document's `id` will not parse.
+fn verify_fetched_actor_id(doc_id: &str, final_url: &Url, requested_uri: &str) -> Result<()> {
+    let requested = Url::parse(requested_uri).map_err(|e| {
+        NoombatError::Federation(format!("actor URI {requested_uri} is not a valid URL: {e}"))
+    })?;
+
+    if !same_origin(final_url, &requested) {
+        return Err(NoombatError::Federation(format!(
+            "actor fetch for {requested_uri} redirected across origins to {final_url}; refusing"
+        )));
+    }
+
+    let claimed = Url::parse(doc_id).map_err(|e| {
+        NoombatError::Federation(format!(
+            "actor document id {doc_id} is not a valid URL: {e}"
+        ))
+    })?;
+
+    if normalise_actor_uri(&claimed) != normalise_actor_uri(final_url) {
+        return Err(NoombatError::Federation(format!(
+            "actor document claims id {doc_id} but was served from {final_url}; refusing"
+        )));
+    }
+
+    Ok(())
+}
+
 /// Convert a fetched [`ApActor`] into a [`repo::RemoteActor`] for
-/// persistence.
+/// persistence, rejecting documents that claim an `id` they were not
+/// served from.
 ///
 /// This function is the single conversion point used by both
 /// [`resolve_remote_actor`] and `handle_update_actor`, ensuring
-/// that the field mapping remains consistent.
-fn ap_actor_to_remote(ap_actor: &ApActor, domain: String) -> repo::RemoteActor {
+/// that the field mapping — and now the `id` check — remains
+/// consistent.
+///
+/// `final_url` must be the URL the document was actually served from
+/// (`Response::url()`, i.e. after redirects), not the one requested;
+/// `requested_uri` is the original, and is used for the same-origin
+/// check. `domain` is derived from `final_url` so that it can never
+/// disagree with the persisted `ap_id`.
+///
+/// # Errors
+///
+/// Propagates [`verify_fetched_actor_id`].
+fn ap_actor_to_remote(
+    ap_actor: &ApActor,
+    final_url: &Url,
+    requested_uri: &str,
+) -> Result<repo::RemoteActor> {
+    verify_fetched_actor_id(&ap_actor.id, final_url, requested_uri)?;
+
+    let domain = extract_domain(final_url.as_str()).unwrap_or_default();
+
     let shared_inbox_url = ap_actor
         .endpoints
         .as_ref()
@@ -144,7 +275,7 @@ fn ap_actor_to_remote(ap_actor: &ApActor, domain: String) -> repo::RemoteActor {
         })
     });
 
-    repo::RemoteActor {
+    Ok(repo::RemoteActor {
         ap_id: ap_actor.id.clone(),
         username: ap_actor.preferred_username.clone(),
         domain,
@@ -160,7 +291,7 @@ fn ap_actor_to_remote(ap_actor: &ApActor, domain: String) -> repo::RemoteActor {
         inbox_url: ap_actor.inbox.clone(),
         shared_inbox_url,
         ed25519_public_key,
-    }
+    })
 }
 
 /// Extract the domain from a URI (e.g. `https://noombat.social/users/alice` to `noombat.social`).
@@ -675,7 +806,13 @@ async fn handle_update_actor(
     // To force a fresh HTTP fetch, we must bypass the local cache.
     // Rather than deleting the row (which would cascade-delete all
     // dependent data, e.g. follows, posts, likes), we fetch directly and
-    // let upsert_remote_actor's ON CONFLICT clause update in place.
+    // let upsert_remote_actor's ON CONFLICT clause update in place —
+    // unless the conflicting row is local, which it refuses.
+    //
+    // Bypassing the cache is what makes this the more dangerous of the
+    // two conversion call sites: the fetched document goes straight to
+    // persistence. `ap_actor_to_remote` checking the document's `id`
+    // against the URL it was served from is what makes the bypass safe.
     //
     // Use a signed fetch so that instances requiring authenticated
     // requests (e.g. GotoSocial with
@@ -695,13 +832,29 @@ async fn handle_update_actor(
         return Ok(());
     }
 
+    // Taken before `json()` consumes the response; see `resolve_remote_actor`.
+    let final_url = response.url().clone();
+
     let ap_actor: ApActor = response
         .json()
         .await
         .map_err(|e| NoombatError::Federation(format!("invalid actor JSON on re-fetch: {e}")))?;
 
-    let domain = extract_domain(&activity.actor).unwrap_or_default();
-    let remote = ap_actor_to_remote(&ap_actor, domain);
+    // This handler treats every soft failure as "ignore and accept the
+    // delivery" (see the non-2xx branch above): propagating an error here
+    // would turn an inbound Update into a non-2xx inbox response and make
+    // the sending instance retry a request that can never succeed.
+    let remote = match ap_actor_to_remote(&ap_actor, &final_url, &activity.actor) {
+        Ok(remote) => remote,
+        Err(e) => {
+            warn!(
+                actor = %activity.actor,
+                error = %e,
+                "actor document failed id validation on Update; ignoring"
+            );
+            return Ok(());
+        }
+    };
 
     repo::upsert_remote_actor(pool, &remote).await?;
     info!(actor = %activity.actor, "remote actor profile refreshed via Update");
@@ -1707,5 +1860,175 @@ mod tests {
     fn in_reply_to_absent() {
         let obj = serde_json::json!({ "type": "Note", "content": "hello" });
         assert_eq!(extract_in_reply_to(&obj), None);
+    }
+
+    // ..... SIGNER-TO-ACTOR BINDING .....
+    //
+    // These two exercise `process_activity`'s guard without a database. Both
+    // use an unrecognised activity type, which falls through to the `other`
+    // arm and returns `Ok(())` without issuing a query, so the pool below is
+    // never connected and the outcome depends only on the guard.
+
+    fn unconnected_pool() -> PgPool {
+        PgPool::connect_lazy("postgres://noombat:noombat@localhost/noombat")
+            .expect("connect_lazy parses the URL without connecting")
+    }
+
+    fn activity_from(actor: &str) -> Activity {
+        serde_json::from_value(serde_json::json!({
+            "id": "https://remote.example/activities/1",
+            "type": "ZzzUnsupported",
+            "actor": actor,
+            "object": {}
+        }))
+        .expect("test activity deserialises")
+    }
+
+    #[tokio::test]
+    async fn process_activity_rejects_actor_mismatch() {
+        let pool = unconnected_pool();
+        let client = reqwest::Client::new();
+
+        // The key at `attacker.example` signed the request, but the activity
+        // claims to come from a local actor.
+        let result = process_activity(
+            &pool,
+            &client,
+            "https://attacker.example/users/mallory",
+            activity_from("https://noombat.social/users/admin"),
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "expected Forbidden for a signer/actor mismatch, got {result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn process_activity_accepts_matching_actor() {
+        let pool = unconnected_pool();
+        let client = reqwest::Client::new();
+
+        // `verified_actor` is the keyId with its fragment stripped by the
+        // caller (see noombat-api::routes::federation), so a legitimate
+        // `...#main-key` signature matches the bare actor URI here.
+        let result = process_activity(
+            &pool,
+            &client,
+            "https://remote.example/users/alice",
+            activity_from("https://remote.example/users/alice"),
+        )
+        .await;
+
+        assert!(
+            result.is_ok(),
+            "a matching signer must not be rejected, got {result:?}"
+        );
+    }
+
+    // ..... ACTOR DOCUMENT ID VALIDATION .....
+
+    fn url(s: &str) -> Url {
+        Url::parse(s).expect("test URL parses")
+    }
+
+    #[test]
+    fn normalise_trims_one_trailing_slash() {
+        assert_eq!(
+            normalise_actor_uri(&url("https://remote.example/users/alice/")),
+            normalise_actor_uri(&url("https://remote.example/users/alice"))
+        );
+    }
+
+    #[test]
+    fn normalise_folds_case_and_default_port() {
+        assert_eq!(
+            normalise_actor_uri(&url("https://Remote.EXAMPLE:443/users/alice")),
+            normalise_actor_uri(&url("https://remote.example/users/alice"))
+        );
+    }
+
+    #[test]
+    fn normalise_keeps_non_default_port_distinct() {
+        assert_ne!(
+            normalise_actor_uri(&url("https://remote.example:8443/users/alice")),
+            normalise_actor_uri(&url("https://remote.example/users/alice"))
+        );
+    }
+
+    #[test]
+    fn normalise_does_not_decode_percent_escapes() {
+        // `%61` is `a`. Decoding it here would let a document claim an id
+        // it was not served from.
+        assert_ne!(
+            normalise_actor_uri(&url("https://remote.example/users/%61lice")),
+            normalise_actor_uri(&url("https://remote.example/users/alice"))
+        );
+    }
+
+    #[test]
+    fn actor_id_accepts_exact_match() {
+        assert!(
+            verify_fetched_actor_id(
+                "https://remote.example/users/alice",
+                &url("https://remote.example/users/alice"),
+                "https://remote.example/users/alice",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn actor_id_accepts_same_origin_redirect() {
+        // A trailing-slash canonicalisation on the origin's own host is
+        // legitimate; the id is then checked against the FINAL url.
+        assert!(
+            verify_fetched_actor_id(
+                "https://remote.example/users/alice/",
+                &url("https://remote.example/users/alice/"),
+                "https://remote.example/users/alice",
+            )
+            .is_ok()
+        );
+    }
+
+    #[test]
+    fn actor_id_rejects_cross_origin_redirect() {
+        let result = verify_fetched_actor_id(
+            "https://evil.example/actor",
+            &url("https://evil.example/actor"),
+            "https://good.example/users/alice",
+        );
+        assert!(
+            matches!(result, Err(NoombatError::Federation(_))),
+            "cross-origin redirect must be refused, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn actor_id_rejects_claiming_a_local_actor() {
+        // The attack the guard exists for: a remote server returns a
+        // document claiming a LOCAL actor's id, so that the upsert's
+        // ON CONFLICT overwrites that actor's published signing key.
+        let result = verify_fetched_actor_id(
+            "https://noombat.social/users/admin",
+            &url("https://remote.example/users/mallory"),
+            "https://remote.example/users/mallory",
+        );
+        assert!(
+            matches!(result, Err(NoombatError::Federation(_))),
+            "a document claiming another origin's id must be refused, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn actor_id_rejects_unparseable_document_id() {
+        let result = verify_fetched_actor_id(
+            "not a url",
+            &url("https://remote.example/users/alice"),
+            "https://remote.example/users/alice",
+        );
+        assert!(matches!(result, Err(NoombatError::Federation(_))));
     }
 }

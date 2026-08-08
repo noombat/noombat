@@ -367,8 +367,22 @@ pub struct RemoteActor {
 
 /// Insert or update a remote actor in the `actors` table.
 ///
-/// On conflict (same `ap_id`), updates the public key and display name
-/// to reflect the latest data from the remote instance.
+/// On conflict (same `ap_id`) the six remote-owned columns are refreshed
+/// from the remote instance: `public_key_pem`, `display_name`,
+/// `summary_html`, `inbox_url`, `shared_inbox_url` and
+/// `ed25519_public_key`.
+///
+/// **A conflicting LOCAL row is never modified.** The `ON CONFLICT`
+/// clause is guarded by `WHERE actors.is_local = FALSE`, so a remote
+/// document claiming a local actor's `ap_id` cannot overwrite that
+/// actor's published signing key.
+///
+/// # Errors
+///
+/// Returns [`NoombatError::Forbidden`] when the `ap_id` belongs to a
+/// local actor. Postgres skips a guarded `DO UPDATE` silently rather
+/// than erroring, so this is the only signal a caller gets that the
+/// write did not happen — see the comment on the check itself.
 pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Actor> {
     let id = Uuid::new_v4();
     let privacy = ActorPrivacy::default();
@@ -386,7 +400,8 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
                summary_html = EXCLUDED.summary_html,
                inbox_url = EXCLUDED.inbox_url,
                shared_inbox_url = EXCLUDED.shared_inbox_url,
-               ed25519_public_key = EXCLUDED.ed25519_public_key"#,
+               ed25519_public_key = EXCLUDED.ed25519_public_key
+           WHERE actors.is_local = FALSE"#,
     )
     .bind(id)
     .bind(&remote.actor_type)
@@ -404,9 +419,28 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .await?;
 
     // Fetch the persisted row (may be the existing row on conflict).
-    find_by_ap_id(pool, &remote.ap_id).await?.ok_or_else(|| {
+    let actor = find_by_ap_id(pool, &remote.ap_id).await?.ok_or_else(|| {
         NoombatError::Internal("upsert_remote_actor: row not found after insert".into())
-    })
+    })?;
+
+    // The `WHERE actors.is_local = FALSE` above fails SILENTLY: Postgres
+    // raises nothing when a DO UPDATE's WHERE is false, it just skips the
+    // row (`rows_affected() == 0`). `find_by_ap_id` has no `is_local`
+    // filter, so without this check the read-back would hand the caller
+    // the LOCAL actor as though it were the remote one — turning a
+    // key-overwrite bug into a confused deputy, with handlers attributing
+    // remote activity to a local user. The SQL guard protects the row;
+    // this guard protects the caller.
+    if actor.is_local {
+        tracing::warn!(
+            ap_id = %remote.ap_id,
+            "refusing to return a local actor from a remote upsert; \
+             a remote document claimed a local actor's ap_id"
+        );
+        return Err(NoombatError::Forbidden);
+    }
+
+    Ok(actor)
 }
 
 // ..... FOLLOWS .....

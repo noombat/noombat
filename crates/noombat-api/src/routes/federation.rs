@@ -364,7 +364,7 @@ async fn verify_and_process_inbound(
         .into());
     }
 
-    inbox::process_activity(&state.pool, &state.http_client, activity).await?;
+    inbox::process_activity(&state.pool, &state.http_client, actor_uri, activity).await?;
     Ok(StatusCode::ACCEPTED)
 }
 
