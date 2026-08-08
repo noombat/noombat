@@ -3,7 +3,7 @@
 
 {% extends "base.html" %}
 
-{% block title %}{{ article_title }} — {{ i18n.t("nav_brand") }}{% endblock %}
+{% block title %}{{ article_title }} - {{ i18n.t("nav_brand") }}{% endblock %}
 
 {% block head %}
     <link rel="canonical" href="{{ canonical_url }}">
@@ -57,6 +57,13 @@
             {% endif %}
 
             <section class="prose leading-relaxed">
+                {# `|safe` is sound because `content_html` is a sanitised
+                   projection, never peer bytes. It is cleaned at
+                   ingestion by
+                   `noombat_federation::inbox::sanitise_remote_html` for
+                   remote Articles, by `noombat_markup::render` for local
+                   ones, and re-derived for pre-guard rows by
+                   `noombat_federation::backfill`. #}
                 {{ content_html|safe }}
             </section>
         </article>

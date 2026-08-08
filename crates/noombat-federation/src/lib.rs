@@ -5,6 +5,7 @@
 //! ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo,
 //! and HTTP Signature verification.
 
+pub mod backfill;
 pub mod crosspost;
 pub mod delete;
 pub mod delivery;

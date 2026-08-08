@@ -156,7 +156,16 @@ async fn get_post(
         // Heading `id` attributes are already present in content_html
         // (injected at render time by the outbox handler via
         // MarkupOptions::inject_heading_ids).
-        let headings = noombat_markup::extract_headings(&row.content_md);
+        //
+        // Remote posts without a Markdown source yield no headings, and
+        // so no table of contents. That is a correction, not a
+        // regression: this used to run over a copy of the *HTML*, which
+        // produced entries whose `#slug` anchors matched nothing.
+        let headings = row
+            .content_md
+            .as_deref()
+            .map(noombat_markup::extract_headings)
+            .unwrap_or_default();
         let content_html = row.content_html;
 
         let aria_article_label = i18n.tf("aria_article_by", &[("title", &article_title)]);
@@ -205,7 +214,10 @@ struct PostRow {
     post_type: String,
     title: Option<String>,
     featured_image_url: Option<String>,
-    content_md: String,
+    /// `None` for remote posts whose author sent no Markdown source.
+    /// Nullable rather than holding a copy of `content_html` in that
+    /// case, which would put HTML in a column named for Markdown.
+    content_md: Option<String>,
     content_html: String,
     visibility: String,
     ap_object: serde_json::Value,

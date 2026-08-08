@@ -68,6 +68,12 @@
         </header>
         <section aria-label="{{ i18n.t("aria_about") }}"
                  class="leading-relaxed mb-8">
+            {# `|safe` is sound because `summary_html` is a sanitised
+               projection: a remote peer's `summary` is cleaned by
+               `noombat_federation::inbox::sanitise_remote_html` before it
+               is persisted. Unlike posts, `actors` keeps no verbatim copy
+               of the document, so `noombat_federation::backfill` re-cleans
+               this column in place rather than re-deriving it. #}
             {{ summary_html|safe }}
         </section>
 
@@ -77,7 +83,7 @@
             {% for exp in experiences %}
             <article class="mb-4 border-b border-border pb-4">
                 <h3 class="font-semibold">{{ exp.title }}</h3>
-                <p class="text-muted text-sm">{{ exp.company }} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} – {{ end }}{% else %} – {{ i18n.t("profile_present") }}{% endif %}</p>
+                <p class="text-muted text-sm">{{ exp.company }} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
                 {% if let Some(html) = exp.description_html %}
                 <div class="mt-2 leading-relaxed">{{ html|safe }}</div>
                 {% endif %}
@@ -92,7 +98,7 @@
             {% for edu in educations %}
             <article class="mb-4 border-b border-border pb-4">
                 <h3 class="font-semibold">{{ edu.institution }}</h3>
-                <p class="text-muted text-sm">{% if let Some(degree) = edu.degree %}{{ degree }}{% endif %}{% if let Some(field) = edu.field_of_study %} · {{ field }}{% endif %} · {{ edu.start_date }}{% if let Some(end) = edu.end_date %} – {{ end }}{% else %} – {{ i18n.t("profile_present") }}{% endif %}</p>
+                <p class="text-muted text-sm">{% if let Some(degree) = edu.degree %}{{ degree }}{% endif %}{% if let Some(field) = edu.field_of_study %} · {{ field }}{% endif %} · {{ edu.start_date }}{% if let Some(end) = edu.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
             </article>
             {% endfor %}
         </section>

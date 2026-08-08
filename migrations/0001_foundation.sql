@@ -3,6 +3,33 @@
 
 -- Foundation schema for Noombat.
 
+-- Stored HTML is a derived, versioned projection of the wire record.
+--
+-- Remote HTML arriving over ActivityPub is passed through
+-- `noombat_markup::sanitise::clean_strict` at ingestion and never persisted
+-- verbatim, because it is rendered with Askama's `|safe`.
+--
+-- `sanitiser_version` records which policy produced a stored value.
+-- Sanitising is not a one-off: when the allowlist changes, or a bypass is
+-- found, the fix is to re-derive every row whose version is behind
+-- `noombat_markup::sanitise::STRICT_VERSION`. Storing the version turns that
+-- from a hand-written script into a routine, resumable, idempotent operation
+-- (`noombat_federation::backfill`, which sweeps on every boot). Raising the
+-- constant and deploying is therefore the whole operator procedure.
+--
+-- Version 0 means "not produced by the ingestion sanitiser". That is true of
+-- every locally authored row, permanently: local HTML comes from
+-- `noombat_markup::render` under the lenient profile, and re-cleaning it
+-- strictly would strip the `style` attributes KaTeX emits. The backfill
+-- scopes itself to remote rows by joining `actors` on `is_local = FALSE`, so
+-- the partial indexes below settle at the local row count rather than
+-- draining to empty.
+--
+-- `posts.ap_object` is deliberately excluded. It is the wire record: the
+-- bytes the peer sent, which FEP-8b32 Object Integrity Proofs are computed
+-- over. Rewriting it would destroy the ability to verify, or to re-verify, a
+-- proof. Sanitisation belongs to the projection, not to the record.
+
 -- ..... ACTORS .....
 
 CREATE TABLE actors (
@@ -15,6 +42,7 @@ CREATE TABLE actors (
     header_url                   TEXT,
     summary_md                   TEXT,
     summary_html                 TEXT,
+    sanitiser_version            SMALLINT NOT NULL DEFAULT 0, -- policy that produced summary_html; 0 = not the ingestion sanitiser
     public_key_pem               TEXT NOT NULL,
     private_key_pem              TEXT,
     ed25519_public_key           TEXT, -- multibase-encoded Ed25519 public key; NOT NULL for local actors (generated at creation); nullable for remote actors
@@ -45,6 +73,11 @@ CREATE INDEX idx_actors_domain ON actors (domain);
 CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
 CREATE INDEX idx_actors_orcid ON actors (orcid) WHERE orcid IS NOT NULL;
 CREATE INDEX idx_actors_chatmail ON actors (chatmail_addr) WHERE chatmail_addr IS NOT NULL;
+
+-- The backfill's work list. Partial because the rows behind the current
+-- policy are the minority; see the note at the head of this file for why it
+-- does not drain to empty.
+CREATE INDEX idx_actors_sanitiser_version ON actors (sanitiser_version) WHERE sanitiser_version = 0;
 
 -- Actor aliases: URIs that this actor has declared as prior identities.
 -- Required by the Move protocol: the target actor must list the source
@@ -235,8 +268,9 @@ CREATE TABLE posts (
     post_type                TEXT NOT NULL DEFAULT 'note' CHECK (post_type IN ('note', 'article')),
     title                    TEXT,
     featured_image_url       TEXT,
-    content_md               TEXT NOT NULL,
+    content_md               TEXT, -- NULL for a remote post whose author sent no `source`; a local post always has one
     content_html             TEXT NOT NULL,
+    sanitiser_version        SMALLINT NOT NULL DEFAULT 0, -- policy that produced content_html; 0 = not the ingestion sanitiser
     in_reply_to              TEXT,
     canonical_uri            TEXT,
     visibility               TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
@@ -247,6 +281,7 @@ CREATE TABLE posts (
 
 CREATE INDEX idx_posts_actor ON posts (actor_id, created_at DESC);
 CREATE INDEX idx_posts_canonical ON posts (canonical_uri) WHERE canonical_uri IS NOT NULL;
+CREATE INDEX idx_posts_sanitiser_version ON posts (sanitiser_version) WHERE sanitiser_version = 0;
 
 -- ..... MEDIA ATTACHMENTS .....
 

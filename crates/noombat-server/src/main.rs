@@ -229,6 +229,24 @@ async fn main() -> anyhow::Result<()> {
 
     info!("database migrations applied");
 
+    // Re-derive any stored remote HTML left behind by an older
+    // sanitiser policy.
+    //
+    // Spawned rather than awaited: on an instance with a large federated
+    // corpus the first sweep after a policy bump has real work to do,
+    // and blocking the listener on it would turn a deploy into an
+    // outage. Every subsequent boot finds an empty work list and costs
+    // two indexed queries.
+    //
+    // This is the operator procedure for tightening the allowlist:
+    // raise `noombat_markup::sanitise::STRICT_VERSION` and deploy.
+    {
+        let pool = pool.clone();
+        tokio::spawn(async move {
+            noombat_federation::backfill::run(&pool).await;
+        });
+    }
+
     // HTTP client for federation delivery.
     //
     // NOTE: `discover_instance` in `noombat_identity::oauth_mastodon`

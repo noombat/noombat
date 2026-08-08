@@ -352,7 +352,13 @@ pub struct RemoteActor {
     pub username: String,
     pub domain: String,
     pub display_name: Option<String>,
+    /// Sanitised profile summary. The peer's `summary` is raw HTML and is
+    /// rendered with `|safe`, so it goes through
+    /// `noombat_markup::sanitise::clean_strict` at ingestion like post
+    /// content does.
     pub summary_html: Option<String>,
+    /// The sanitiser policy version that produced `summary_html`.
+    pub sanitiser_version: i16,
     pub public_key_pem: String,
     pub actor_type: String,
     pub inbox_url: String,
@@ -382,7 +388,7 @@ pub struct RemoteActor {
 /// Returns [`NoombatError::Forbidden`] when the `ap_id` belongs to a
 /// local actor. Postgres skips a guarded `DO UPDATE` silently rather
 /// than erroring, so this is the only signal a caller gets that the
-/// write did not happen — see the comment on the check itself.
+/// write did not happen (see the comment on the check itself).
 pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Actor> {
     let id = Uuid::new_v4();
     let privacy = ActorPrivacy::default();
@@ -391,13 +397,14 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     sqlx::query(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
-                domain, public_key_pem, inbox_url, shared_inbox_url,
-                ed25519_public_key, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE, $12)
+                sanitiser_version, domain, public_key_pem, inbox_url,
+                shared_inbox_url, ed25519_public_key, is_local, actor_privacy)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
                display_name = EXCLUDED.display_name,
                summary_html = EXCLUDED.summary_html,
+               sanitiser_version = EXCLUDED.sanitiser_version,
                inbox_url = EXCLUDED.inbox_url,
                shared_inbox_url = EXCLUDED.shared_inbox_url,
                ed25519_public_key = EXCLUDED.ed25519_public_key
@@ -409,6 +416,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(&remote.username)
     .bind(&remote.display_name)
     .bind(&remote.summary_html)
+    .bind(remote.sanitiser_version)
     .bind(&remote.domain)
     .bind(&remote.public_key_pem)
     .bind(&remote.inbox_url)
@@ -427,7 +435,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     // raises nothing when a DO UPDATE's WHERE is false, it just skips the
     // row (`rows_affected() == 0`). `find_by_ap_id` has no `is_local`
     // filter, so without this check the read-back would hand the caller
-    // the LOCAL actor as though it were the remote one — turning a
+    // the LOCAL actor as though it were the remote one, i.e. turning a
     // key-overwrite bug into a confused deputy, with handlers attributing
     // remote activity to a local user. The SQL guard protects the row;
     // this guard protects the caller.
@@ -546,14 +554,25 @@ pub struct RemotePost {
     /// Primarily relevant for Articles.
     pub featured_image_url: Option<String>,
     /// Original Markdown source from the Mastodon-convention `source`
-    /// property (when available), otherwise a copy of `content_html`.
-    pub content_md: String,
+    /// property. `None` when the peer sent none. It previously held a
+    /// copy of `content_html`, i.e. HTML in a column named for Markdown.
+    pub content_md: Option<String>,
+    /// Sanitised HTML. Produced only by
+    /// `noombat_federation::inbox::extract_remote_content`, never taken
+    /// raw from the peer's document.
     pub content_html: String,
+    /// The sanitiser policy version that produced `content_html`, so the
+    /// value can be re-derived when the policy changes.
+    pub sanitiser_version: i16,
     /// The AP URI of the post this is a reply to (`inReplyTo`).
     /// `None` for top-level posts.
     pub in_reply_to: Option<String>,
     /// Visibility derived from the activity's `to`/`cc` addressing.
     pub visibility: String,
+    /// The peer's document, stored **verbatim**. This is the wire record:
+    /// FEP-8b32 proofs are computed over these bytes, so it must never be
+    /// sanitised or rewritten. `content_html` is the sanitised projection
+    /// of it.
     pub ap_object: serde_json::Value,
 }
 
@@ -568,8 +587,9 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
     let row = sqlx::query_scalar::<_, Uuid>(
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, title, featured_image_url,
-                content_md, content_html, in_reply_to, visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                content_md, content_html, sanitiser_version,
+                in_reply_to, visibility, ap_object)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            ON CONFLICT (ap_id) DO NOTHING
            RETURNING id"#,
     )
@@ -581,6 +601,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
     .bind(&post.featured_image_url)
     .bind(&post.content_md)
     .bind(&post.content_html)
+    .bind(post.sanitiser_version)
     .bind(&post.in_reply_to)
     .bind(&post.visibility)
     .bind(&post.ap_object)
@@ -1145,6 +1166,7 @@ mod tests {
             domain: "remote.example".to_owned(),
             display_name: Some("Not The Admin".to_owned()),
             summary_html: None,
+            sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
             public_key_pem: key_pem.to_owned(),
             actor_type: "individual".to_owned(),
             inbox_url: "https://remote.example/inbox".to_owned(),
@@ -1184,6 +1206,103 @@ mod tests {
 
         assert!(!actor.is_local);
         assert_eq!(stored_key(&pool, ap_id).await, "NEW-KEY");
+    }
+
+    // ..... REMOTE POST PERSISTENCE .....
+    //
+    // These exist because the workspace uses sqlx's *runtime* query API,
+    // not the compile-time macros: a `$n` placeholder that disagrees with
+    // the `.bind()` sequence compiles cleanly, and fails (or silently
+    // writes a value into the wrong column) only when executed. Nothing
+    // but a live database catches that.
+
+    async fn remote_post_fixture(pool: &PgPool, actor_id: Uuid, md: Option<&str>) -> RemotePost {
+        let _ = pool;
+        RemotePost {
+            actor_id,
+            ap_id: "https://remote.example/posts/1".to_owned(),
+            post_type: "note".to_owned(),
+            title: None,
+            featured_image_url: None,
+            content_md: md.map(str::to_owned),
+            content_html: "<p>safe</p>".to_owned(),
+            sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
+            in_reply_to: None,
+            visibility: "public".to_owned(),
+            ap_object: serde_json::json!({ "content": "<p>safe</p><script>x</script>" }),
+        }
+    }
+
+    async fn actor_id_of(pool: &PgPool, ap_id: &str) -> Uuid {
+        sqlx::query_scalar::<_, Uuid>("SELECT id FROM actors WHERE ap_id = $1")
+            .bind(ap_id)
+            .fetch_one(pool)
+            .await
+            .expect("actor row present")
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_remote_post_writes_every_column_to_its_own_slot(pool: PgPool) {
+        let ap_id = "https://remote.example/users/alice";
+        insert_actor(&pool, ap_id, "KEY", false).await;
+        let actor_id = actor_id_of(&pool, ap_id).await;
+
+        let post = remote_post_fixture(&pool, actor_id, None).await;
+        let id = create_remote_post(&pool, &post)
+            .await
+            .expect("insert succeeds")
+            .expect("a new row");
+
+        let (md, html, ver, title): (Option<String>, String, i16, Option<String>) = sqlx::query_as(
+            "SELECT content_md, content_html, sanitiser_version, title \
+                            FROM posts WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("row readable");
+
+        assert_eq!(
+            md, None,
+            "no Markdown source means NULL, not a copy of the HTML"
+        );
+        assert_eq!(html, "<p>safe</p>");
+        assert_eq!(
+            ver,
+            noombat_markup::sanitise::STRICT_VERSION,
+            "sanitiser_version must land in its own column, not shift into a neighbour"
+        );
+        assert_eq!(title, None, "title must not receive the sanitiser version");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_remote_post_keeps_the_wire_record_unsanitised(pool: PgPool) {
+        // `ap_object` is the bytes FEP-8b32 proofs are computed over. It
+        // must survive verbatim even though `content_html` is scrubbed.
+        let ap_id = "https://remote.example/users/alice";
+        insert_actor(&pool, ap_id, "KEY", false).await;
+        let actor_id = actor_id_of(&pool, ap_id).await;
+
+        let post = remote_post_fixture(&pool, actor_id, Some("*md*")).await;
+        let id = create_remote_post(&pool, &post)
+            .await
+            .expect("insert succeeds")
+            .expect("a new row");
+
+        let stored: serde_json::Value =
+            sqlx::query_scalar("SELECT ap_object FROM posts WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .expect("row readable");
+
+        assert_eq!(
+            stored["content"].as_str(),
+            Some("<p>safe</p><script>x</script>"),
+            "ap_object must be stored verbatim, script tag and all"
+        );
     }
 
     #[ignore = "requires a database; run with --include-ignored"]

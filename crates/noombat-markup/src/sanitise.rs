@@ -176,13 +176,35 @@ pub fn clean(html: &str) -> String {
 }
 
 /// Strict sanitisation profile for content rendered with
-/// `strict_sanitisation`.
+/// `strict_sanitisation`, and the ingestion profile for all federated
+/// HTML.
 ///
 /// Identical to [`clean`] except that `style` is **not** permitted on
 /// `<span>`, preventing CSS-based attacks from user-authored HTML.
+///
+/// Remote content is sanitised with this profile rather than [`clean`]
+/// because a peer's `content` is user-authored raw HTML by definition,
+/// i.e. exactly the case [`clean`]'s `style` allowance is unsafe for.
 pub fn clean_strict(html: &str) -> String {
     SANITISER_STRICT.clean(html).to_string()
 }
+
+/// Version of the [`clean_strict`] policy that produced a stored value.
+///
+/// Sanitised HTML persisted in the database is a *derived projection* of
+/// the wire record, not the record itself, so it has to be re-derivable.
+/// Rows carry the version that produced them (`posts.sanitiser_version`,
+/// `actors.sanitiser_version`); when this constant is raised, every row
+/// behind it is stale and the backfill re-derives it.
+///
+/// **Raise this whenever the strict allowlist changes in a way that
+/// alters output**, e.g. a tag or attribute removed, a URL scheme
+/// disallowed, an `ammonia` upgrade that tightens defaults. Raising it
+/// unnecessarily costs one backfill pass; failing to raise it leaves
+/// hostile markup live in rows nobody will revisit.
+///
+/// Version 0 is reserved for rows written before the column existed.
+pub const STRICT_VERSION: i16 = 1;
 
 /// Strip all HTML tags, returning plain text.
 ///

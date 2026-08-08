@@ -17,9 +17,9 @@ use crate::delivery;
 
 /// Dispatch an inbound activity to the appropriate handler.
 ///
-/// `verified_actor` is the identity whose key actually signed the request —
-/// the HTTP Signature `keyId` with its fragment stripped, as derived by the
-/// caller. Every handler below attributes its effect to `activity.actor`
+/// `verified_actor` is the identity whose key actually signed the request,
+/// i.e. the HTTP Signature `keyId` with its fragment stripped, as derived by
+/// the caller. Every handler below attributes its effect to `activity.actor`
 /// alone, so without this binding the signature proves only that *some*
 /// fetchable actor signed the bytes, not that it is the actor the activity
 /// claims to come from.
@@ -92,8 +92,8 @@ pub async fn process_activity(
 /// target is an account on this instance (`move_actor`) both resolve a
 /// local URI through here legitimately.
 ///
-/// Callers for which a local actor would be nonsense — anything treating
-/// the result as a counterparty on another instance — must use
+/// Callers for which a local actor would be nonsense (anything treating
+/// the result as a counterparty on another instance) must use
 /// [`resolve_inbound_signer`] instead.
 ///
 /// This was called `resolve_remote_actor` until the name was found to be
@@ -152,7 +152,7 @@ pub async fn resolve_actor(
     }
 
     // `Response::json` consumes the response, so the URL the document was
-    // actually served from — after any redirects — has to be taken now.
+    // actually served from (after any redirects) has to be taken now.
     let final_url = response.url().clone();
 
     let ap_actor: ApActor = response
@@ -169,7 +169,7 @@ pub async fn resolve_actor(
 ///
 /// Identical to [`resolve_actor`] except that a local actor is
 /// refused. This instance never sends signed requests to its own inbox,
-/// so a signer URI that resolves to a local row is always illegitimate —
+/// so a signer URI that resolves to a local row is always illegitimate:
 /// it means a peer named one of our actors as the signer.
 ///
 /// That is not currently reachable as a forgery: the signature would
@@ -284,7 +284,7 @@ fn verify_fetched_actor_id(doc_id: &str, final_url: &Url, requested_uri: &str) -
 ///
 /// This function is the single conversion point used by both
 /// [`resolve_actor`] and `handle_update_actor`, ensuring
-/// that the field mapping — and now the `id` check — remains
+/// that the field mapping (and now the `id` check) remains
 /// consistent.
 ///
 /// `final_url` must be the URL the document was actually served from
@@ -331,7 +331,13 @@ fn ap_actor_to_remote(
         username: ap_actor.preferred_username.clone(),
         domain,
         display_name: ap_actor.name.clone(),
-        summary_html: ap_actor.summary.clone(),
+        // The fourth remote-HTML sink, and the one the three post paths
+        // do not cover: a peer's `summary` is raw HTML, rendered with
+        // `|safe` on the profile page. Sanitised and bounded here, via
+        // `sanitise_remote_html`, which `crate::backfill` also calls so
+        // that stored rows are re-derived by the same rule.
+        summary_html: ap_actor.summary.as_deref().map(sanitise_remote_html),
+        sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
         public_key_pem: ap_actor.public_key.public_key_pem.clone(),
         actor_type: match ap_actor.actor_type.as_str() {
             "Person" => "individual".to_owned(),
@@ -343,6 +349,121 @@ fn ap_actor_to_remote(
         shared_inbox_url,
         ed25519_public_key,
     })
+}
+
+/// The renderable content of a remote object, sanitised.
+///
+/// Constructed only by [`extract_remote_content`], and its fields are
+/// only ever produced by passing peer input through
+/// [`noombat_markup::sanitise::clean_strict`]. That is the point: three
+/// ingestion paths used to repeat the extraction inline, and a fourth
+/// added later would have had to remember to sanitise. Here it cannot
+/// be forgotten, because there is no other way to obtain the values.
+pub(crate) struct RemoteContent {
+    /// Sanitised HTML, safe to render with Askama's `|safe`.
+    pub content_html: String,
+    /// The peer's Markdown source from the Mastodon-convention `source`
+    /// property, when it declared `text/markdown`.
+    ///
+    /// `None` when the peer sent no Markdown. It previously fell back to
+    /// a copy of `content_html`, i.e. it stored HTML in a column named
+    /// for Markdown, which is why unsanitised input reached two columns
+    /// from one binding. `None` says what is actually true.
+    pub content_md: Option<String>,
+    /// The [`noombat_markup::sanitise::STRICT_VERSION`] that produced
+    /// `content_html`, persisted so the value can be re-derived when the
+    /// policy changes.
+    pub sanitiser_version: i16,
+}
+
+/// Upper bound on a single peer-supplied string before sanitisation.
+///
+/// Generous, because Noombat federates long-form Articles and not just
+/// Notes, but bounded, because `content` arrives from an unauthenticated
+/// stranger and every byte of it is sanitised, indexed into Meilisearch
+/// and rendered into other people's feeds. Without a cap the only limit
+/// is the HTTP body limit, and one `Create` can force megabytes of
+/// `ammonia` parsing per delivery.
+///
+/// Truncation happens *before* sanitisation, so a cut that lands inside a
+/// tag cannot produce broken markup: `ammonia` reparses what is left and
+/// closes whatever the cut opened.
+pub(crate) const MAX_REMOTE_HTML_BYTES: usize = 512 * 1024;
+
+/// Truncate at the last UTF-8 character boundary at or before `max`.
+///
+/// `String` is not indexable at arbitrary byte offsets, so slicing on a
+/// raw length would panic on multi-byte input, which is trivially
+/// attacker-reachable by padding a document with non-ASCII text.
+fn truncate_on_char_boundary(s: &str, max: usize) -> &str {
+    if s.len() <= max {
+        return s;
+    }
+    let mut end = max;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    &s[..end]
+}
+
+/// Bound and sanitise one piece of peer-supplied HTML.
+///
+/// The whole of the ingestion policy in one place:
+/// [`extract_remote_content`] applies it to `content`,
+/// [`ap_actor_to_remote`] to an actor `summary`, and [`crate::backfill`]
+/// to rows already in the table. Sanitising is not a property any of
+/// those sites can choose to skip, because none of them has the raw
+/// string in hand any other way.
+///
+/// Actor summaries matter here in a way post content does not: `actors`
+/// has no column holding the document verbatim. Unlike
+/// `posts.ap_object`, there is no wire record to re-derive a summary
+/// from. The stored `summary_html` *is* the only copy, so the backfill
+/// re-cleans it in place and must apply exactly this rule to do so.
+pub(crate) fn sanitise_remote_html(html: &str) -> String {
+    noombat_markup::sanitise::clean_strict(truncate_on_char_boundary(html, MAX_REMOTE_HTML_BYTES))
+}
+
+/// Extract and sanitise the renderable content of a remote object.
+///
+/// This is the single point at which peer-supplied HTML becomes storable.
+/// Every federated ingestion path goes through it, and so does
+/// [`crate::backfill`] when it re-derives already-stored rows. The
+/// re-derivation has to agree with ingestion byte for byte, which it can
+/// only guarantee by calling the same function.
+///
+/// The peer's original bytes are not discarded: they remain in
+/// `posts.ap_object`, which is stored verbatim precisely so that FEP-8b32
+/// proofs stay verifiable. What is sanitised here is the *projection*
+/// that gets rendered.
+pub(crate) fn extract_remote_content(object: &serde_json::Value) -> RemoteContent {
+    let raw_html = object
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+
+    // The Mastodon-convention `source` property, when it declares
+    // Markdown. Not sanitised: it is Markdown, not HTML, and nothing
+    // renders it as HTML. If that ever changes it must be rendered
+    // through `noombat_markup::render`, which sanitises its own output.
+    // Capped all the same, since it is peer-supplied and persisted.
+    let content_md = object
+        .get("source")
+        .and_then(|src| {
+            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
+            if media == "text/markdown" {
+                src.get("content").and_then(|v| v.as_str())
+            } else {
+                None
+            }
+        })
+        .map(|md| truncate_on_char_boundary(md, MAX_REMOTE_HTML_BYTES).to_owned());
+
+    RemoteContent {
+        content_html: sanitise_remote_html(raw_html),
+        content_md,
+        sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
+    }
 }
 
 /// Extract the domain from a URI (e.g. `https://noombat.social/users/alice` to `noombat.social`).
@@ -599,22 +720,7 @@ async fn handle_create(
         .and_then(|v| v.as_str())
         .ok_or_else(|| NoombatError::BadRequest("Create object missing id".into()))?;
 
-    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
-
-    // Extract the Mastodon-convention `source` property when available.
-    // If the source carries `text/markdown`, store it in `content_md`;
-    // otherwise fall back to `content_html` (the previous behaviour).
-    let content_md = object
-        .get("source")
-        .and_then(|src| {
-            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
-            if media == "text/markdown" {
-                src.get("content").and_then(|v| v.as_str())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(content_html);
+    let content = extract_remote_content(object);
 
     let post_type = match object_type {
         "Note" => "note",
@@ -684,8 +790,9 @@ async fn handle_create(
         post_type: post_type.to_owned(),
         title,
         featured_image_url,
-        content_md: content_md.to_owned(),
-        content_html: content_html.to_owned(),
+        content_md: content.content_md,
+        content_html: content.content_html,
+        sanitiser_version: content.sanitiser_version,
         in_reply_to,
         visibility,
         ap_object: activity.object.clone(),
@@ -857,7 +964,7 @@ async fn handle_update_actor(
     // To force a fresh HTTP fetch, we must bypass the local cache.
     // Rather than deleting the row (which would cascade-delete all
     // dependent data, e.g. follows, posts, likes), we fetch directly and
-    // let upsert_remote_actor's ON CONFLICT clause update in place —
+    // let upsert_remote_actor's ON CONFLICT clause update in place,
     // unless the conflicting row is local, which it refuses.
     //
     // Bypassing the cache is what makes this the more dangerous of the
@@ -952,19 +1059,7 @@ async fn handle_update_post(
     // Resolve the remote author (may already be cached).
     let _remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
-    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
-
-    let content_md = object
-        .get("source")
-        .and_then(|src| {
-            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
-            if media == "text/markdown" {
-                src.get("content").and_then(|v| v.as_str())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(content_html);
+    let content = extract_remote_content(object);
 
     let title = object.get("name").and_then(|v| v.as_str());
 
@@ -982,16 +1077,18 @@ async fn handle_update_post(
         r#"UPDATE posts
            SET content_md = $2,
                content_html = $3,
-               title = $4,
-               featured_image_url = $5,
-               visibility = $6,
-               in_reply_to = $7,
-               ap_object = $8
+               sanitiser_version = $4,
+               title = $5,
+               featured_image_url = $6,
+               visibility = $7,
+               in_reply_to = $8,
+               ap_object = $9
            WHERE ap_id = $1"#,
     )
     .bind(ap_id)
-    .bind(content_md)
-    .bind(content_html)
+    .bind(&content.content_md)
+    .bind(&content.content_html)
+    .bind(content.sanitiser_version)
     .bind(title)
     .bind(&featured_image_url)
     .bind(&visibility)
@@ -1246,19 +1343,7 @@ async fn fetch_and_persist_remote_post(
         })
         .ok_or_else(|| NoombatError::Federation("fetched object missing attributedTo".into()))?;
 
-    let content_html = object.get("content").and_then(|v| v.as_str()).unwrap_or("");
-
-    let content_md = object
-        .get("source")
-        .and_then(|src| {
-            let media = src.get("mediaType").and_then(|v| v.as_str()).unwrap_or("");
-            if media == "text/markdown" {
-                src.get("content").and_then(|v| v.as_str())
-            } else {
-                None
-            }
-        })
-        .unwrap_or(content_html);
+    let content = extract_remote_content(&object);
 
     let title = object
         .get("name")
@@ -1296,8 +1381,9 @@ async fn fetch_and_persist_remote_post(
         post_type: post_type.to_owned(),
         title,
         featured_image_url,
-        content_md: content_md.to_owned(),
-        content_html: content_html.to_owned(),
+        content_md: content.content_md,
+        content_html: content.content_html,
+        sanitiser_version: content.sanitiser_version,
         in_reply_to,
         visibility,
         ap_object: object.clone(),
@@ -1447,7 +1533,7 @@ async fn handle_block(
 ///
 /// | `to` contains Public | `cc` contains Public | Result       |
 /// |----------------------|----------------------|--------------|
-/// | yes                  | —                    | `"public"`   |
+/// | yes                  | n/a                  | `"public"`   |
 /// | no                   | yes                  | `"unlisted"` |
 /// | no                   | no                   | `"followers"`|
 ///
@@ -2083,6 +2169,126 @@ mod tests {
         assert!(matches!(result, Err(NoombatError::Federation(_))));
     }
 
+    // ..... REMOTE CONTENT SANITISATION .....
+
+    #[test]
+    fn remote_content_strips_script_tags() {
+        let obj = serde_json::json!({
+            "content": "<p>hi</p><script>alert(1)</script>"
+        });
+        let c = extract_remote_content(&obj);
+        assert!(
+            !c.content_html.contains("<script"),
+            "got {}",
+            c.content_html
+        );
+        assert!(c.content_html.contains("<p>hi</p>"));
+    }
+
+    #[test]
+    fn remote_content_strips_event_handlers_and_js_urls() {
+        let obj = serde_json::json!({
+            "content": "<img src=x onerror=\"alert(1)\"><a href=\"javascript:alert(1)\">x</a>"
+        });
+        let c = extract_remote_content(&obj);
+        assert!(
+            !c.content_html.contains("onerror"),
+            "got {}",
+            c.content_html
+        );
+        assert!(
+            !c.content_html.contains("javascript:"),
+            "got {}",
+            c.content_html
+        );
+    }
+
+    #[test]
+    fn remote_content_records_the_sanitiser_version() {
+        let c = extract_remote_content(&serde_json::json!({ "content": "<p>x</p>" }));
+        assert_eq!(
+            c.sanitiser_version,
+            noombat_markup::sanitise::STRICT_VERSION
+        );
+        assert_ne!(
+            c.sanitiser_version, 0,
+            "0 is reserved for un-backfilled rows"
+        );
+    }
+
+    #[test]
+    fn remote_content_keeps_a_declared_markdown_source() {
+        let obj = serde_json::json!({
+            "content": "<p>rendered</p>",
+            "source": { "mediaType": "text/markdown", "content": "*rendered*" }
+        });
+        let c = extract_remote_content(&obj);
+        assert_eq!(c.content_md.as_deref(), Some("*rendered*"));
+    }
+
+    #[test]
+    fn remote_content_has_no_markdown_when_the_peer_sent_none() {
+        // The old code copied content_html here, putting HTML in a column
+        // named for Markdown, which is how one unsanitised binding
+        // reached two columns.
+        let c = extract_remote_content(&serde_json::json!({ "content": "<p>x</p>" }));
+        assert_eq!(c.content_md, None);
+    }
+
+    #[test]
+    fn remote_content_ignores_a_non_markdown_source() {
+        let obj = serde_json::json!({
+            "content": "<p>x</p>",
+            "source": { "mediaType": "text/html", "content": "<p>x</p>" }
+        });
+        assert_eq!(extract_remote_content(&obj).content_md, None);
+    }
+
+    #[test]
+    fn remote_content_caps_an_oversized_document() {
+        let huge = format!("<p>{}</p>", "a".repeat(MAX_REMOTE_HTML_BYTES * 2));
+        let c = extract_remote_content(&serde_json::json!({ "content": huge }));
+        assert!(
+            c.content_html.len() <= MAX_REMOTE_HTML_BYTES + 64,
+            "cap not applied: {} bytes",
+            c.content_html.len()
+        );
+        // Truncation happens before sanitisation, so ammonia closes the
+        // paragraph the cut left open rather than emitting torn markup.
+        assert!(c.content_html.ends_with("</p>"), "markup left unbalanced");
+    }
+
+    #[test]
+    fn remote_content_caps_the_markdown_source_too() {
+        let huge = "b".repeat(MAX_REMOTE_HTML_BYTES * 2);
+        let obj = serde_json::json!({
+            "content": "<p>x</p>",
+            "source": { "mediaType": "text/markdown", "content": huge }
+        });
+        let c = extract_remote_content(&obj);
+        assert_eq!(c.content_md.map(|s| s.len()), Some(MAX_REMOTE_HTML_BYTES));
+    }
+
+    #[test]
+    fn truncation_does_not_split_a_multibyte_character() {
+        // Slicing on a raw byte length would panic here, and the input
+        // needed to trigger it is just a document padded with non-ASCII.
+        let padded = "é".repeat(MAX_REMOTE_HTML_BYTES);
+        let cut = truncate_on_char_boundary(&padded, MAX_REMOTE_HTML_BYTES);
+        assert!(cut.len() <= MAX_REMOTE_HTML_BYTES);
+        assert!(padded.starts_with(cut), "truncation must be a prefix");
+        // Round-trips as valid UTF-8 by construction: `&str` cannot hold
+        // a split code point, so reaching this line is the assertion.
+        assert!(cut.chars().all(|c| c == 'é'));
+    }
+
+    #[test]
+    fn remote_content_tolerates_a_missing_content_field() {
+        let c = extract_remote_content(&serde_json::json!({ "type": "Note" }));
+        assert_eq!(c.content_html, "");
+        assert_eq!(c.content_md, None);
+    }
+
     // ..... INBOUND SIGNER RESOLUTION .....
     //
     // These hit the database. A cached actor short-circuits
@@ -2100,6 +2306,147 @@ mod tests {
         .execute(pool)
         .await
         .expect("actor fixture inserted");
+    }
+
+    /// The acceptance criterion for P0-4: deliver the attack payload
+    /// down the real `Create` path and read the row back.
+    ///
+    /// The unit tests above cover `extract_remote_content` in isolation,
+    /// but isolation is exactly what was wrong before: the sanitiser
+    /// existed and was tested, and the federation path simply did not
+    /// call it. Only an end-to-end delivery proves the wiring.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_note_persists_no_hostile_markup(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        insert_actor(&pool, actor_uri, false).await;
+
+        let hostile = "<img src=x onerror=alert(1)>\
+                       <script>alert(1)</script>\
+                       <style>body{display:none}</style>\
+                       <p>legitimate</p>";
+
+        let activity: Activity = serde_json::from_value(serde_json::json!({
+            "id": "https://remote.example/activities/1",
+            "type": "Create",
+            "actor": actor_uri,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "object": {
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": actor_uri,
+                "content": hostile
+            }
+        }))
+        .expect("activity deserialises");
+
+        process_activity(&pool, &reqwest::Client::new(), actor_uri, activity)
+            .await
+            .expect("create processes");
+
+        let (html, md, ver): (String, Option<String>, i16) = sqlx::query_as(
+            "SELECT content_html, content_md, sanitiser_version FROM posts WHERE ap_id = $1",
+        )
+        .bind(post_uri)
+        .fetch_one(&pool)
+        .await
+        .expect("post persisted");
+
+        for banned in ["<script", "onerror", "<style"] {
+            assert!(
+                !html.contains(banned),
+                "{banned} survived ingestion: {html}"
+            );
+        }
+        assert!(html.contains("legitimate"), "real content lost: {html}");
+        assert_eq!(md, None, "no source means NULL, not a copy of the HTML");
+        assert_eq!(ver, noombat_markup::sanitise::STRICT_VERSION);
+
+        // The wire record keeps the payload: FEP-8b32 proofs are
+        // computed over these bytes, so sanitising them would destroy
+        // the ability to verify the object later.
+        let wire: serde_json::Value =
+            sqlx::query_scalar("SELECT ap_object FROM posts WHERE ap_id = $1")
+                .bind(post_uri)
+                .fetch_one(&pool)
+                .await
+                .expect("post readable");
+        assert_eq!(
+            wire["content"].as_str(),
+            Some(hostile),
+            "ap_object must survive verbatim"
+        );
+    }
+
+    /// The `Update` path writes with an inline `UPDATE ... SET` whose
+    /// `$n` placeholders must line up with its `.bind()` sequence. The
+    /// workspace uses sqlx's runtime API, so a mismatch compiles cleanly
+    /// and only misbehaves when executed. This is the test that sees it.
+    /// A cached actor makes `resolve_actor` short-circuit, so no HTTP.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn update_post_sanitises_and_lands_columns_correctly(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        insert_actor(&pool, actor_uri, false).await;
+
+        let actor_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM actors WHERE ap_id = $1")
+            .bind(actor_uri)
+            .fetch_one(&pool)
+            .await
+            .expect("actor present");
+
+        sqlx::query(
+            r#"INSERT INTO posts (actor_id, ap_id, post_type, content_md, content_html,
+                                  visibility, ap_object)
+               VALUES ($1, $2, 'note', NULL, '<p>old</p>', 'public', '{}'::jsonb)"#,
+        )
+        .bind(actor_id)
+        .bind(post_uri)
+        .execute(&pool)
+        .await
+        .expect("post fixture inserted");
+
+        let activity: Activity = serde_json::from_value(serde_json::json!({
+            "id": "https://remote.example/activities/1",
+            "type": "Update",
+            "actor": actor_uri,
+            "object": {
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": actor_uri,
+                "content": "<p>new</p><script>alert(1)</script>"
+            }
+        }))
+        .expect("activity deserialises");
+
+        process_activity(&pool, &reqwest::Client::new(), actor_uri, activity)
+            .await
+            .expect("update processes");
+
+        let (html, ver, title): (String, i16, Option<String>) = sqlx::query_as(
+            "SELECT content_html, sanitiser_version, title FROM posts WHERE ap_id = $1",
+        )
+        .bind(post_uri)
+        .fetch_one(&pool)
+        .await
+        .expect("post readable");
+
+        assert!(
+            !html.contains("<script"),
+            "edit must be sanitised, got {html}"
+        );
+        assert!(
+            html.contains("<p>new</p>"),
+            "edit must be applied, got {html}"
+        );
+        assert_eq!(
+            ver,
+            noombat_markup::sanitise::STRICT_VERSION,
+            "sanitiser_version must land in its own column"
+        );
+        assert_eq!(title, None, "title must not receive a shifted value");
     }
 
     #[ignore = "requires a database; run with --include-ignored"]

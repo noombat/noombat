@@ -52,6 +52,12 @@
     </footer>
     {% else %}
     <!-- Note: inline content. -->
+    {# `|safe` is sound because `content_html` is a sanitised projection,
+       never peer bytes: remote rows are cleaned at ingestion by
+       `noombat_federation::inbox::sanitise_remote_html`, local rows by
+       `noombat_markup::render`. Rows written before that guard existed
+       are re-derived by `noombat_federation::backfill`. Do not source
+       this field from anywhere else. #}
     <div class="leading-relaxed">{{ post.content_html|safe }}</div>
     <footer class="mt-2">
         <a href="/users/{{ post.author }}/posts/{{ post.post_id }}"

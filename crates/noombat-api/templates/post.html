@@ -3,7 +3,7 @@
 
 {% extends "base.html" %}
 
-{% block title %}{{ page_title }} — {{ i18n.t("nav_brand") }}{% endblock %}
+{% block title %}{{ page_title }} - {{ i18n.t("nav_brand") }}{% endblock %}
 
 {% block content %}
         <article aria-label="{{ aria_post_label }}">
@@ -17,6 +17,12 @@
                     {{ created_at }}
                 </time>
             </header>
+            {# `|safe` is sound because `content_html` is a sanitised
+               projection, never peer bytes. It is cleaned at ingestion by
+               `noombat_federation::inbox::sanitise_remote_html` for
+               remote posts, by `noombat_markup::render` for local ones,
+               and re-derived for pre-guard rows by
+               `noombat_federation::backfill`. #}
             <div class="leading-relaxed">{{ content_html|safe }}</div>
             <footer class="mt-3 flex gap-3 text-xs text-muted">
                 <button type="button"
