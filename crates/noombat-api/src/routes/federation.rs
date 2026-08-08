@@ -252,7 +252,7 @@ async fn verify_and_process_inbound(
     }
 
     let remote_actor =
-        inbox::resolve_remote_actor(&state.pool, &state.http_client, actor_uri).await?;
+        inbox::resolve_inbound_signer(&state.pool, &state.http_client, actor_uri).await?;
 
     // Perform the cryptographic verification.
     //

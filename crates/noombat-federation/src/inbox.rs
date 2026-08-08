@@ -79,10 +79,22 @@ pub async fn process_activity(
 
 // ..... REMOTE ACTOR RESOLUTION .....
 
-/// Fetch and persist a remote actor's ActivityPub profile.
+/// Fetch and persist an actor's ActivityPub profile.
 ///
 /// Checks the local database cache first. On cache miss, fetches the
 /// profile over HTTP and upserts it into the `actors` table.
+///
+/// **Despite the name, this can return a LOCAL actor.** The cache lookup
+/// is [`repo::find_by_ap_id`], which does not filter on `is_local`, so
+/// passing a local actor's URI yields that local row. Several callers
+/// depend on this: blocking or muting a local user
+/// (`noombat-api::routes::interactions`) and an inbound `Move` whose
+/// target is an account on this instance (`move_actor`) both resolve a
+/// local URI through here legitimately.
+///
+/// Callers for which a local actor would be nonsense — anything treating
+/// the result as a counterparty on another instance — must use
+/// [`resolve_inbound_signer`] instead.
 pub async fn resolve_remote_actor(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -147,6 +159,41 @@ pub async fn resolve_remote_actor(
     let remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri)?;
 
     repo::upsert_remote_actor(pool, &remote).await
+}
+
+/// Resolve the actor whose key signed an inbound request.
+///
+/// Identical to [`resolve_remote_actor`] except that a local actor is
+/// refused. This instance never sends signed requests to its own inbox,
+/// so a signer URI that resolves to a local row is always illegitimate —
+/// it means a peer named one of our actors as the signer.
+///
+/// That is not currently reachable as a forgery: the signature would
+/// still have to verify against the local actor's published key, which
+/// an attacker does not hold, and `process_activity` separately requires
+/// `activity.actor` to equal the verified signer. This guard exists so
+/// that neither of those has to stay true for the property to hold.
+///
+/// # Errors
+///
+/// Returns [`NoombatError::Forbidden`] when `actor_uri` resolves to a
+/// local actor; otherwise propagates [`resolve_remote_actor`].
+pub async fn resolve_inbound_signer(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    actor_uri: &str,
+) -> Result<Actor> {
+    let actor = resolve_remote_actor(pool, http_client, actor_uri).await?;
+
+    if actor.is_local {
+        warn!(
+            actor_uri,
+            "refusing an inbound request whose signer resolves to a local actor"
+        );
+        return Err(NoombatError::Forbidden);
+    }
+
+    Ok(actor)
 }
 
 /// Normalise an actor URI for comparison.
@@ -2030,5 +2077,54 @@ mod tests {
             "https://remote.example/users/alice",
         );
         assert!(matches!(result, Err(NoombatError::Federation(_))));
+    }
+
+    // ..... INBOUND SIGNER RESOLUTION .....
+    //
+    // These hit the database. A cached actor short-circuits
+    // `resolve_remote_actor` before any HTTP, so the client below is
+    // never actually used and no network stub is needed.
+
+    async fn insert_actor(pool: &PgPool, ap_id: &str, is_local: bool) {
+        sqlx::query(
+            r#"INSERT INTO actors
+                   (actor_type, ap_id, username, domain, public_key_pem, is_local)
+               VALUES ('individual', $1, 'someone', 'example.test', 'KEY', $2)"#,
+        )
+        .bind(ap_id)
+        .bind(is_local)
+        .execute(pool)
+        .await
+        .expect("actor fixture inserted");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn inbound_signer_refuses_a_local_actor(pool: PgPool) {
+        let ap_id = "https://noombat.social/users/admin";
+        insert_actor(&pool, ap_id, true).await;
+
+        let result = resolve_inbound_signer(&pool, &reqwest::Client::new(), ap_id).await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "a signer resolving to a local actor must be refused, got {:?}",
+            result.map(|a| a.ap_id)
+        );
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn inbound_signer_accepts_a_remote_actor(pool: PgPool) {
+        // The guard must not break the path it sits on.
+        let ap_id = "https://remote.example/users/alice";
+        insert_actor(&pool, ap_id, false).await;
+
+        let actor = resolve_inbound_signer(&pool, &reqwest::Client::new(), ap_id)
+            .await
+            .expect("a genuine remote signer must resolve");
+
+        assert_eq!(actor.ap_id, ap_id);
+        assert!(!actor.is_local);
     }
 }
