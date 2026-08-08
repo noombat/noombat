@@ -162,6 +162,8 @@ jobs:
             target
           key: cargo-test-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-test-
+      # No database here, so the `#[ignore]`d `#[sqlx::test]` tests are
+      # skipped. The `integration` job below runs them.
       - run: cargo test --workspace
 
   msrv:
@@ -237,7 +239,10 @@ jobs:
             --locked --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source migrations
-      - run: cargo test --workspace
+      # `--include-ignored` picks up the `#[sqlx::test]` tests that the
+      # DB-less `test` job skips. Without it they would never run
+      # anywhere, and would rot unnoticed.
+      - run: cargo test --workspace -- --include-ignored
 
   # ..... ON-DEMAND RELEASE BUILD .....
 

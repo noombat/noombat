@@ -1090,3 +1090,113 @@ pub async fn list_following_ap_ids(
 
     Ok(ids)
 }
+
+// ..... TESTS .....
+//
+// These require a live PostgreSQL and are therefore `#[ignore]`d: the
+// `test` CI job (`.github/workflows/ci.yml`) and `scripts/test.sh` both
+// run `cargo test --workspace` with no database, and must stay green.
+// The `integration` job runs them via `--include-ignored`, so they are
+// executed on every push and cannot rot unnoticed.
+//
+// `#[sqlx::test]` provisions a fresh database per test and applies the
+// migrations, so each one starts from an empty schema. `migrations` is
+// given explicitly because migrations/ lives at the workspace root, not
+// in this crate.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LOCAL_AP_ID: &str = "https://noombat.social/users/admin";
+    const LOCAL_KEY: &str = "-----BEGIN PUBLIC KEY-----LOCAL-----END PUBLIC KEY-----";
+    const ATTACKER_KEY: &str = "-----BEGIN PUBLIC KEY-----ATTACKER-----END PUBLIC KEY-----";
+
+    /// Insert an actor row directly. `create_actor` is deliberately not
+    /// used: it seals the private key columns through `envelope`, which
+    /// would make these tests depend on encryption being configured.
+    async fn insert_actor(pool: &PgPool, ap_id: &str, key_pem: &str, is_local: bool) {
+        sqlx::query(
+            r#"INSERT INTO actors
+                   (id, actor_type, ap_id, username, domain, public_key_pem, is_local)
+               VALUES ($1, 'individual', $2, 'admin', 'noombat.social', $3, $4)"#,
+        )
+        .bind(Uuid::new_v4())
+        .bind(ap_id)
+        .bind(key_pem)
+        .bind(is_local)
+        .execute(pool)
+        .await
+        .expect("actor fixture inserted");
+    }
+
+    async fn stored_key(pool: &PgPool, ap_id: &str) -> String {
+        sqlx::query_scalar::<_, String>("SELECT public_key_pem FROM actors WHERE ap_id = $1")
+            .bind(ap_id)
+            .fetch_one(pool)
+            .await
+            .expect("actor row present")
+    }
+
+    fn remote_claiming(ap_id: &str, key_pem: &str) -> RemoteActor {
+        RemoteActor {
+            ap_id: ap_id.to_owned(),
+            username: "admin".to_owned(),
+            domain: "remote.example".to_owned(),
+            display_name: Some("Not The Admin".to_owned()),
+            summary_html: None,
+            public_key_pem: key_pem.to_owned(),
+            actor_type: "individual".to_owned(),
+            inbox_url: "https://remote.example/inbox".to_owned(),
+            shared_inbox_url: None,
+            ed25519_public_key: None,
+        }
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn upsert_remote_actor_refuses_to_overwrite_a_local_actor(pool: PgPool) {
+        insert_actor(&pool, LOCAL_AP_ID, LOCAL_KEY, true).await;
+
+        let result = upsert_remote_actor(&pool, &remote_claiming(LOCAL_AP_ID, ATTACKER_KEY)).await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "a remote document claiming a local ap_id must be refused, got {result:?}"
+        );
+        assert_eq!(
+            stored_key(&pool, LOCAL_AP_ID).await,
+            LOCAL_KEY,
+            "the local actor's published signing key must be untouched"
+        );
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn upsert_remote_actor_still_updates_a_remote_actor(pool: PgPool) {
+        // The guard must not break the legitimate path it sits on.
+        let ap_id = "https://remote.example/users/alice";
+        insert_actor(&pool, ap_id, "OLD-KEY", false).await;
+
+        let actor = upsert_remote_actor(&pool, &remote_claiming(ap_id, "NEW-KEY"))
+            .await
+            .expect("a genuine remote actor update must succeed");
+
+        assert!(!actor.is_local);
+        assert_eq!(stored_key(&pool, ap_id).await, "NEW-KEY");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn upsert_remote_actor_inserts_an_unseen_actor(pool: PgPool) {
+        let ap_id = "https://remote.example/users/bob";
+
+        let actor = upsert_remote_actor(&pool, &remote_claiming(ap_id, "BOB-KEY"))
+            .await
+            .expect("first sighting of a remote actor must insert");
+
+        assert_eq!(actor.ap_id, ap_id);
+        assert!(!actor.is_local);
+        assert_eq!(stored_key(&pool, ap_id).await, "BOB-KEY");
+    }
+}

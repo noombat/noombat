@@ -44,6 +44,10 @@ step "Running clippy (cargo clippy)"
 run cargo clippy --workspace -- -D warnings
 
 step "Running tests (cargo test)"
+# Database-backed tests are #[ignore]d so this stays runnable without a
+# PostgreSQL instance. To run them too, start a database, point
+# DATABASE_URL at it, apply migrations, then:
+#     cargo test --workspace -- --include-ignored
 run cargo test --workspace
 
 # ..... Frontend .....
