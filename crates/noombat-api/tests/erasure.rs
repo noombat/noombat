@@ -16,20 +16,75 @@
 //! only checked `actor_status`, and would be a data-protection failure
 //! dressed as a pass.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use noombat_core::error::Result;
 use noombat_core::extension::SearchBackend;
+use serde_json::Value;
 use sqlx::PgPool;
 use uuid::Uuid;
 
 const DOMAIN: &str = "noombat.example";
 const GRACE_DAYS: i32 = 30;
 
-/// No search backend: the index removal is spawned and asserted
-/// elsewhere (`privacy_settings.rs` covers the recording-fake pattern).
-/// What is under test here is the database effect.
+/// No search backend, for the tests about the database effect.
 fn no_search() -> Option<Arc<dyn SearchBackend>> {
     None
+}
+
+/// Records every index call, so the withdrawal of search documents can
+/// be asserted. With `search: None` those calls are silent no-ops and
+/// any assertion about them would pass against a handler that made
+/// none.
+#[derive(Default)]
+struct RecordingSearch {
+    calls: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl SearchBackend for RecordingSearch {
+    async fn upsert(&self, index: &str, id: &str, _document: Value) -> Result<()> {
+        self.calls
+            .lock()
+            .expect("not poisoned")
+            .push(format!("upsert {index} {id}"));
+        Ok(())
+    }
+
+    async fn delete(&self, index: &str, id: &str) -> Result<()> {
+        self.calls
+            .lock()
+            .expect("not poisoned")
+            .push(format!("delete {index} {id}"));
+        Ok(())
+    }
+
+    async fn search(
+        &self,
+        _index: &str,
+        _query: &str,
+        _filters: Option<&str>,
+        _limit: usize,
+        _offset: usize,
+    ) -> Result<Vec<Value>> {
+        Ok(Vec::new())
+    }
+}
+
+/// Give the actor a public post and return its `ap_id`, which is the
+/// key `index_post` uses as the search document id.
+async fn insert_post(pool: &PgPool, actor_id: Uuid, username: &str) -> String {
+    let ap_id = format!("https://{DOMAIN}/users/{username}/posts/{}", Uuid::new_v4());
+    sqlx::query(
+        "INSERT INTO posts (actor_id, ap_id, content_html, visibility, ap_object) \
+         VALUES ($1, $2, '<p>something they wrote</p>', 'public', '{}'::jsonb)",
+    )
+    .bind(actor_id)
+    .bind(&ap_id)
+    .execute(pool)
+    .await
+    .expect("post fixture inserted");
+    ap_id
 }
 
 /// Insert a local actor, optionally with a deletion requested `days`
@@ -164,4 +219,39 @@ async fn a_zero_grace_period_erases_on_the_next_sweep(pool: PgPool) {
 
     assert_eq!(erased, 1);
     assert_eq!(display_name(&pool, actor_id).await, None);
+}
+
+/// Erasure withdraws the posts from the search index, not just the rows.
+///
+/// `tombstone_actor` deletes the post rows, so nothing afterwards knows
+/// which documents to remove; the identifiers have to be taken first.
+/// Skip that and the database is clean while the full text of
+/// everything the user wrote stays searchable by its contents, which is
+/// the failure this is here to prevent.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
+    let actor_id = insert_actor(&pool, "author", Some(GRACE_DAYS + 1)).await;
+    let first = insert_post(&pool, actor_id, "author").await;
+    let second = insert_post(&pool, actor_id, "author").await;
+
+    let search = Arc::new(RecordingSearch::default());
+    let backend: Option<Arc<dyn SearchBackend>> = Some(search.clone());
+
+    noombat_api::erasure::sweep(&pool, &backend, GRACE_DAYS).await;
+
+    // The removals are spawned, so let the tasks run.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let calls = search.calls.lock().expect("not poisoned").clone();
+    for ap_id in [&first, &second] {
+        assert!(
+            calls.contains(&format!("delete posts {ap_id}")),
+            "post {ap_id} was left in the index; calls were {calls:?}"
+        );
+    }
+    assert!(
+        calls.contains(&format!("delete profiles {actor_id}")),
+        "the profile document should go too; calls were {calls:?}"
+    );
 }

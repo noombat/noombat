@@ -46,6 +46,17 @@ pub async fn erase_actor(
         .await
         .unwrap_or_default();
 
+    // Likewise, and for the same reason: tombstoning deletes the post
+    // rows, and afterwards there is nothing left to say which documents
+    // to withdraw. Keyed by `ap_id` rather than the primary key,
+    // because that is what `index_post` uses as the document id.
+    let indexed_posts: Vec<String> =
+        sqlx::query_scalar("SELECT ap_id FROM posts WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
     let pre_tombstone = noombat_identity::repo::tombstone_actor(pool, actor_id).await?;
 
     // The request has been fulfilled, so retire it. `tombstone_actor`
@@ -66,6 +77,21 @@ pub async fn erase_actor(
     noombat_federation::delete::broadcast_delete(pool, &pre_tombstone, &inboxes).await;
 
     crate::search_sync::remove_from_index(search, "profiles", &actor_id.to_string());
+
+    // The rows are gone from the database by now, but the search
+    // documents outlive them and are full text: leaving them is an
+    // erasure that leaves the writing searchable by its contents.
+    //
+    // COUPLED TO `index_post`: this withdraws under whatever key that
+    // function inserts under, which is `ap_id` today. Meilisearch
+    // rejects a URL as a document id, verified against the pinned
+    // v1.12 image, so nothing is currently indexed and these removals
+    // are inert. When `index_post` is fixed to key on the post's UUID,
+    // this must move with it in the same commit, or erasure will
+    // quietly stop withdrawing documents that by then really exist.
+    for ap_id in &indexed_posts {
+        crate::search_sync::remove_from_index(search, "posts", ap_id);
+    }
 
     Ok(pre_tombstone)
 }
