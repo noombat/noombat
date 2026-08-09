@@ -316,47 +316,17 @@ async fn verify_and_process_inbound(
         .and_then(|rest| rest.split('/').next())
         .unwrap_or("unknown");
 
-    let mut redis_ok = false;
-    if let Some(mut redis) = state.redis.clone() {
-        let key = format!("rl:fed:{sending_domain}");
-        let fed_window_secs = state.fed_rate_limit_window_secs;
-        let fed_limit = state.fed_rate_limit;
+    // `503` rather than the middleware's `429`, which is why this maps
+    // the decision itself instead of taking the response.
+    let decision = crate::rate_limit::check_key(
+        state,
+        &format!("rl:fed:{sending_domain}"),
+        state.fed_rate_limit,
+        state.fed_rate_limit_window_secs,
+    )
+    .await;
 
-        match redis::cmd("EVAL")
-            .arg(
-                r"local count = redis.call('INCR', KEYS[1])
-                  if count == 1 then
-                      redis.call('EXPIRE', KEYS[1], ARGV[1])
-                  end
-                  return count",
-            )
-            .arg(1i64)
-            .arg(&key)
-            .arg(fed_window_secs)
-            .query_async::<Vec<i64>>(&mut redis)
-            .await
-        {
-            Ok(result) => {
-                redis_ok = true;
-                let count = result.first().copied().unwrap_or(0);
-                if count > fed_limit {
-                    return Err(NoombatError::ServiceUnavailable(
-                        "federation rate limit exceeded".into(),
-                    )
-                    .into());
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    "Redis EVAL failed for federation rate limit \
-                     (falling back to in-process limiter): {e}"
-                );
-            }
-        }
-    }
-
-    // In-process fallback when Redis was absent or failed.
-    if !redis_ok && !state.fallback_fed_rate_limiter.check(sending_domain) {
+    if decision != crate::rate_limit::Decision::Allowed {
         return Err(
             NoombatError::ServiceUnavailable("federation rate limit exceeded".into()).into(),
         );

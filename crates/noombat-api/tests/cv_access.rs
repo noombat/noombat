@@ -21,8 +21,6 @@
 //! `generate_cv_pdf`, which shells out to the `typst` CLI, and typst is
 //! not installed on the CI runners.
 
-use std::time::Duration;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use noombat_api::build_router;
@@ -63,8 +61,7 @@ fn test_state(pool: PgPool) -> AppState {
         analytics: None,
         relay_verification_policy: None,
         envelope_key: None,
-        fallback_rate_limiter: FallbackRateLimiter::new(100_000, Duration::from_secs(60)),
-        fallback_fed_rate_limiter: FallbackRateLimiter::new(100_000, Duration::from_secs(60)),
+        fallback_rate_limiter: FallbackRateLimiter::new(),
         rate_limit: 100_000,
         rate_limit_window_secs: 60,
         fed_rate_limit: 100_000,

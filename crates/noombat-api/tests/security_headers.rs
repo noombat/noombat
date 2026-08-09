@@ -20,8 +20,6 @@
 //! `redis` is `None`. The pool is therefore constructed lazily and
 //! never connects.
 
-use std::time::Duration;
-
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use noombat_api::build_router;
@@ -66,8 +64,7 @@ fn test_state(domain: &str) -> AppState {
         relay_verification_policy: None,
         envelope_key: None,
         // High ceilings: rate limiting is not what these tests probe.
-        fallback_rate_limiter: FallbackRateLimiter::new(100_000, Duration::from_secs(60)),
-        fallback_fed_rate_limiter: FallbackRateLimiter::new(100_000, Duration::from_secs(60)),
+        fallback_rate_limiter: FallbackRateLimiter::new(),
         rate_limit: 100_000,
         rate_limit_window_secs: 60,
         fed_rate_limit: 100_000,

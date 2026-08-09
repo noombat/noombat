@@ -1,8 +1,20 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Per-IP fixed-window rate-limit middleware backed by Redis, with an
-//! in-process `governor`-based fallback that activates when Redis is
-//! unavailable.
+//! Fixed-window rate limiting backed by Redis, with an in-process
+//! `governor`-based fallback.
+//!
+//! [`check_key`] is the one entry point. Callers name their own key,
+//! ceiling and window, so the same counting serves the instance-wide
+//! per-IP limit, the per-domain federation limit, and per-route limits
+//! such as CV downloads, without each rebuilding it. It returns a
+//! [`Decision`] rather than a response, because the callers disagree
+//! about what a refusal looks like: the middleware answers `429`, the
+//! federation inbox answers `503`.
+//!
+//! Keys are prefixed by call site (`rl:`, `rl:fed:`, `cv:`). That is
+//! load-bearing rather than cosmetic: two call sites sharing a quota
+//! share a governor limiter, and the prefix is what keeps their buckets
+//! apart.
 //!
 //! The primary limiter uses an atomic Lua script (`INCR` + conditional
 //! `EXPIRE` + `TTL`) on Redis. When Redis is not configured or a
@@ -16,17 +28,26 @@
 //! fallback uses the GCRA (Generic Cell Rate Algorithm), a leaky-bucket
 //! variant. GCRA smooths traffic evenly, whereas a fixed-window counter
 //! resets at window boundaries. The two are not behaviorally identical,
-//! but both enforce the configured requests-per-minute ceiling, which
-//! is the objective of the fallback.
+//! but both enforce the configured ceiling, which is the objective of
+//! the fallback.
 //!
-//! The `governor` `DashMap`-backed keyed state store grows by one
-//! entry per unique key (IP address or domain). Entries are never
-//! evicted. Under a DDoS with many spoofed source IPs this could
-//! consume significant memory; however, the fallback is active only
-//! during Redis outages, bounding the exposure window.
+//! The fallback is not only an outage path. `NOOMBAT_REDIS_URL` is
+//! optional, so on an instance that never configures Redis the governor
+//! is the only limiter there is, permanently. That is why it honours
+//! each caller's ceiling instead of applying one instance-wide quota to
+//! everything: on such a deployment, a route's limit would otherwise
+//! never be the limit.
+//!
+//! The `governor` `DashMap`-backed keyed state store grows by one entry
+//! per unique key (IP address, domain, or account). Entries are never
+//! evicted. Under a flood from many spoofed source IPs this could
+//! consume significant memory, and on a Redis-less instance there is no
+//! outage window bounding it.
 
+use std::collections::HashMap;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -53,50 +74,85 @@ const RATE_LIMIT_LUA: &str = r"
     return {count, ttl}
 ";
 
-/// In-process keyed rate limiter (governor-backed).
+/// In-process keyed rate limiter (governor-backed), one limiter per
+/// quota.
 ///
-/// Wraps `DefaultKeyedRateLimiter<String>` in an [`Arc`] because the
-/// inner [`RateLimiter`] uses atomic state and is not [`Clone`];
-/// `Arc` allows it to be shared across the cloneable [`AppState`].
+/// `governor` fixes a limiter's quota when it is constructed, so a
+/// single limiter cannot answer for two different ceilings. Callers
+/// pass their own `limit` and `window` and this keeps one governor
+/// limiter per distinct pair, created on first use.
 ///
-/// Used as a fallback when Redis is unconfigured or unreachable.
-#[derive(Clone)]
+/// The outer map is keyed by the *quota*, which comes from
+/// configuration and compile-time constants and never from a request,
+/// so its size is the number of call sites. That is deliberate. The
+/// inner per-key stores already grow without eviction (see the module
+/// note), so an outer map keyed on anything request-derived would turn
+/// that from a bounded cost into an exhaustion vector.
+///
+/// The `Arc` is what lets this be shared across the cloneable
+/// [`AppState`]: the inner [`RateLimiter`] holds atomic state and is
+/// not [`Clone`].
+#[derive(Clone, Default)]
 pub struct FallbackRateLimiter {
-    inner: Arc<DefaultKeyedRateLimiter<String>>,
+    by_quota: Arc<RwLock<HashMap<QuotaKey, Arc<DefaultKeyedRateLimiter<String>>>>>,
 }
 
+/// A ceiling and a window in seconds, identifying one governor limiter.
+type QuotaKey = (u32, u64);
+
 impl FallbackRateLimiter {
-    /// Create a new fallback limiter.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Check `key` against a ceiling of `limit` per `window`.
     ///
-    /// `max_requests` is the ceiling per `window`. Both must be
-    /// greater than zero; this function panics otherwise (callers
-    /// must validate configuration before constructing the limiter).
-    pub fn new(max_requests: u32, window: std::time::Duration) -> Self {
-        assert!(max_requests > 0, "rate limit must be > 0");
-        assert!(!window.is_zero(), "rate limit window must be > 0");
-
-        // Replenishment interval = window / max_requests.
-        let interval = window / max_requests;
-        let quota = Quota::with_period(interval)
-            .expect("rate limit interval must be non-zero")
-            .allow_burst(NonZeroU32::new(max_requests).expect("max_requests already checked > 0"));
-
-        Self {
-            inner: Arc::new(RateLimiter::keyed(quota)),
+    /// `true` allows the request. A quota `governor` cannot represent,
+    /// meaning a zero limit or a zero window, denies rather than
+    /// panicking: it is a misconfiguration, and this module fails
+    /// closed. A poisoned lock denies for the same reason.
+    ///
+    /// Note: `governor`'s `check_key` requires `&String`, so an
+    /// allocation from `&str` is unavoidable with the current API. The
+    /// cost is bounded and occurs only when the fallback is active.
+    pub fn check(&self, key: &str, limit: u32, window: Duration) -> bool {
+        match self.limiter_for(limit, window) {
+            Some(limiter) => limiter.check_key(&key.to_owned()).is_ok(),
+            None => false,
         }
     }
 
-    /// Check whether `key` is within the rate limit.
-    ///
-    /// Returns `true` if the request is allowed, `false` if it should
-    /// be rejected.
-    ///
-    /// Note: `governor`'s `check_key` requires `&String`, so an
-    /// allocation from `&str` is unavoidable with the current API.
-    /// The cost is bounded (IP strings are at most ~45 bytes for
-    /// IPv6) and occurs only when the fallback is active.
-    pub fn check(&self, key: &str) -> bool {
-        self.inner.check_key(&key.to_owned()).is_ok()
+    /// The limiter for this quota, creating it if this is its first use.
+    fn limiter_for(
+        &self,
+        limit: u32,
+        window: Duration,
+    ) -> Option<Arc<DefaultKeyedRateLimiter<String>>> {
+        let quota_key = (limit, window.as_secs());
+
+        // The common path once each call site has been seen once. The
+        // guard is dropped before the governor check so no request
+        // holds the lock while being counted.
+        if let Ok(map) = self.by_quota.read()
+            && let Some(limiter) = map.get(&quota_key)
+        {
+            return Some(Arc::clone(limiter));
+        }
+
+        let quota = Self::quota(limit, window)?;
+        let mut map = self.by_quota.write().ok()?;
+        Some(Arc::clone(
+            map.entry(quota_key)
+                .or_insert_with(|| Arc::new(RateLimiter::keyed(quota))),
+        ))
+    }
+
+    /// `limit` requests per `window`, or `None` if that is not a quota.
+    fn quota(limit: u32, window: Duration) -> Option<Quota> {
+        let burst = NonZeroU32::new(limit)?;
+        // Replenishment interval = window / limit.
+        let interval = window.checked_div(limit)?;
+        Some(Quota::with_period(interval)?.allow_burst(burst))
     }
 }
 
@@ -163,7 +219,16 @@ pub async fn check_key(state: &AppState, key: &str, limit: i64, window: i64) -> 
         }
     }
 
-    if state.fallback_rate_limiter.check(key) {
+    // A ceiling or window that will not fit the fallback's types is a
+    // misconfiguration rather than traffic, so it denies.
+    let (Ok(limit), Ok(window_secs)) = (u32::try_from(limit), u64::try_from(window)) else {
+        return Decision::Limited { retry_after: 1 };
+    };
+
+    if state
+        .fallback_rate_limiter
+        .check(key, limit, Duration::from_secs(window_secs))
+    {
         Decision::Allowed
     } else {
         Decision::Limited {
@@ -237,23 +302,67 @@ mod tests {
         }
     }
 
+    const MINUTE: Duration = Duration::from_secs(60);
+
     /// Keys are independent buckets.
     ///
     /// This is what makes per-account keying worth anything: one
     /// requester exhausting their budget must not spend anyone else's.
     #[test]
     fn the_fallback_limiter_counts_per_key() {
-        let limiter = FallbackRateLimiter::new(2, Duration::from_secs(60));
+        let limiter = FallbackRateLimiter::new();
 
-        assert!(limiter.check("cv:acct:alice"));
-        assert!(limiter.check("cv:acct:alice"));
+        assert!(limiter.check("cv:acct:alice", 2, MINUTE));
+        assert!(limiter.check("cv:acct:alice", 2, MINUTE));
         assert!(
-            !limiter.check("cv:acct:alice"),
+            !limiter.check("cv:acct:alice", 2, MINUTE),
             "the third request is over a ceiling of two"
         );
         assert!(
-            limiter.check("cv:acct:bob"),
+            limiter.check("cv:acct:bob", 2, MINUTE),
             "a separate key has its own budget"
         );
+    }
+
+    /// Each quota gets its own limiter.
+    ///
+    /// The point of the registry. Before it, one instance-wide quota
+    /// answered for every caller, so a route asking for 20 per hour got
+    /// whatever the per-IP limiter had been built with. On an instance
+    /// with no Redis configured that was not a degraded mode, it was the
+    /// only behaviour there was.
+    #[test]
+    fn each_quota_is_enforced_separately() {
+        let limiter = FallbackRateLimiter::new();
+
+        // Exhaust a tight ceiling.
+        assert!(limiter.check("k", 1, MINUTE));
+        assert!(!limiter.check("k", 1, MINUTE));
+
+        // The same key under a different quota is a different bucket,
+        // and the generous ceiling is honoured rather than the tight one.
+        for i in 0..10 {
+            assert!(
+                limiter.check("k", 50, MINUTE),
+                "request {i} under a ceiling of fifty"
+            );
+        }
+
+        // And the tight one is still exhausted.
+        assert!(!limiter.check("k", 1, MINUTE));
+    }
+
+    /// A quota governor cannot represent denies rather than panicking.
+    ///
+    /// Configuration is validated at startup, so this is unreachable
+    /// from `noombat.toml`. It is reachable from a caller passing a
+    /// constant, which is the case that would otherwise take the process
+    /// down at run time rather than at boot.
+    #[test]
+    fn an_impossible_quota_denies() {
+        let limiter = FallbackRateLimiter::new();
+
+        assert!(!limiter.check("k", 0, MINUTE), "a ceiling of zero");
+        assert!(!limiter.check("k", 10, Duration::ZERO), "a zero window");
     }
 }

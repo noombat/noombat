@@ -454,14 +454,11 @@ async fn main() -> anyhow::Result<()> {
             config.fed_rate_limit_window_secs
         );
     }
-    let fallback_rate_limiter = FallbackRateLimiter::new(
-        config.rate_limit,
-        Duration::from_secs(config.rate_limit_window_secs as u64),
-    );
-    let fallback_fed_rate_limiter = FallbackRateLimiter::new(
-        config.fed_rate_limit,
-        Duration::from_secs(config.fed_rate_limit_window_secs as u64),
-    );
+    // One limiter for every call site. It holds a governor limiter per
+    // distinct quota, so the ceilings validated above still apply
+    // separately; they travel with each call rather than being baked in
+    // here.
+    let fallback_rate_limiter = FallbackRateLimiter::new();
 
     let state = AppState {
         pool,
@@ -499,7 +496,6 @@ async fn main() -> anyhow::Result<()> {
         relay_verification_policy: config.relay_verification_policy.clone(),
         envelope_key,
         fallback_rate_limiter,
-        fallback_fed_rate_limiter,
         rate_limit: config.rate_limit as i64,
         rate_limit_window_secs: config.rate_limit_window_secs,
         fed_rate_limit: config.fed_rate_limit as i64,

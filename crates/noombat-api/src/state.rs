@@ -69,11 +69,11 @@ pub struct AppState {
     /// private keys). `None` in development when `NOOMBAT_KEK` is
     /// not set.
     pub envelope_key: Option<Arc<EnvelopeKey>>,
-    /// In-process per-IP rate limiter that activates when Redis is
-    /// unavailable, preventing fail-open bypass.
+    /// In-process rate limiter used when Redis is unavailable or
+    /// unconfigured, preventing fail-open bypass. Shared by every call
+    /// site: it holds one governor limiter per distinct quota, so each
+    /// caller's ceiling is still its own.
     pub fallback_rate_limiter: FallbackRateLimiter,
-    /// In-process per-domain federation rate limiter (same purpose).
-    pub fallback_fed_rate_limiter: FallbackRateLimiter,
     /// Per-IP rate limit ceiling (Redis primary).
     pub rate_limit: i64,
     /// Per-IP rate limit window in seconds (Redis primary).
