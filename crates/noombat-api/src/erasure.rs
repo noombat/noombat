@@ -48,14 +48,12 @@ pub async fn erase_actor(
 
     // Likewise, and for the same reason: tombstoning deletes the post
     // rows, and afterwards there is nothing left to say which documents
-    // to withdraw. Keyed by `ap_id` rather than the primary key,
-    // because that is what `index_post` uses as the document id.
-    let indexed_posts: Vec<String> =
-        sqlx::query_scalar("SELECT ap_id FROM posts WHERE actor_id = $1")
-            .bind(actor_id)
-            .fetch_all(pool)
-            .await
-            .unwrap_or_default();
+    // to withdraw. Keyed on the primary key, matching `index_post`.
+    let indexed_posts: Vec<Uuid> = sqlx::query_scalar("SELECT id FROM posts WHERE actor_id = $1")
+        .bind(actor_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let pre_tombstone = noombat_identity::repo::tombstone_actor(pool, actor_id).await?;
 
@@ -82,15 +80,11 @@ pub async fn erase_actor(
     // documents outlive them and are full text: leaving them is an
     // erasure that leaves the writing searchable by its contents.
     //
-    // COUPLED TO `index_post`: this withdraws under whatever key that
-    // function inserts under, which is `ap_id` today. Meilisearch
-    // rejects a URL as a document id, verified against the pinned
-    // v1.12 image, so nothing is currently indexed and these removals
-    // are inert. When `index_post` is fixed to key on the post's UUID,
-    // this must move with it in the same commit, or erasure will
-    // quietly stop withdrawing documents that by then really exist.
-    for ap_id in &indexed_posts {
-        crate::search_sync::remove_from_index(search, "posts", ap_id);
+    // Withdrawn under the same key `index_post` inserts under, the
+    // post's primary key. The two must agree; changing one without the
+    // other leaves erased writing searchable by its full text.
+    for post_id in &indexed_posts {
+        crate::search_sync::remove_from_index(search, "posts", &post_id.to_string());
     }
 
     Ok(pre_tombstone)

@@ -71,20 +71,20 @@ impl SearchBackend for RecordingSearch {
     }
 }
 
-/// Give the actor a public post and return its `ap_id`, which is the
-/// key `index_post` uses as the search document id.
-async fn insert_post(pool: &PgPool, actor_id: Uuid, username: &str) -> String {
+/// Give the actor a public post and return its primary key, which is
+/// the key `index_post` uses as the search document id.
+async fn insert_post(pool: &PgPool, actor_id: Uuid, username: &str) -> Uuid {
     let ap_id = format!("https://{DOMAIN}/users/{username}/posts/{}", Uuid::new_v4());
-    sqlx::query(
+    sqlx::query_scalar(
         "INSERT INTO posts (actor_id, ap_id, content_html, visibility, ap_object) \
-         VALUES ($1, $2, '<p>something they wrote</p>', 'public', '{}'::jsonb)",
+         VALUES ($1, $2, '<p>something they wrote</p>', 'public', '{}'::jsonb) \
+         RETURNING id",
     )
     .bind(actor_id)
     .bind(&ap_id)
-    .execute(pool)
+    .fetch_one(pool)
     .await
-    .expect("post fixture inserted");
-    ap_id
+    .expect("post fixture inserted")
 }
 
 /// Insert a local actor, optionally with a deletion requested `days`
@@ -244,10 +244,10 @@ async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     let calls = search.calls.lock().expect("not poisoned").clone();
-    for ap_id in [&first, &second] {
+    for post_id in [&first, &second] {
         assert!(
-            calls.contains(&format!("delete posts {ap_id}")),
-            "post {ap_id} was left in the index; calls were {calls:?}"
+            calls.contains(&format!("delete posts {post_id}")),
+            "post {post_id} was left in the index; calls were {calls:?}"
         );
     }
     assert!(

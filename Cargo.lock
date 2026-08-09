@@ -2493,6 +2493,7 @@ dependencies = [
  "governor",
  "hmac 0.12.1",
  "http-signature-normalization",
+ "meilisearch-sdk",
  "noombat-ap",
  "noombat-chat",
  "noombat-core",

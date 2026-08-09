@@ -44,3 +44,7 @@ hmac = { workspace = true }
 # `ServiceExt::oneshot` drives the assembled Router in integration
 # tests without binding a socket.
 tower = { version = "0.5", features = ["util"] }
+# Asserting that Meilisearch accepts the documents we generate, which
+# cannot be observed from inside the process: upsert returns once the
+# task is enqueued, not once it succeeds.
+meilisearch-sdk = { workspace = true }

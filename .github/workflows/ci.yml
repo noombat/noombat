@@ -7,8 +7,8 @@
 # the Rust build are skipped.
 #
 # All jobs run on GitHub-hosted runners (`ubuntu-latest`). The
-# `integration` job additionally uses PostgreSQL and Redis service
-# containers.
+# `integration` job additionally uses PostgreSQL, Redis and Meilisearch
+# service containers.
 #
 # Related workflows:
 #   ci-reuse.yml            REUSE licence compliance (unconditional).
@@ -252,6 +252,15 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+      # The posts index is keyed on a document id Meilisearch validates,
+      # and the only way to know it accepts ours is to ask a real one.
+      meilisearch:
+        image: getmeili/meilisearch:v1.12@sha256:c9fac23131cca4db95173d41cc50fd5639121ee381795528fdd7522d7978a7b8
+        env:
+          MEILI_MASTER_KEY: ci-test-key
+          MEILI_NO_ANALYTICS: "true"
+        ports:
+          - 7700:7700
       redis:
         image: redis:7-alpine
         ports:
@@ -267,6 +276,10 @@ jobs:
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
       NOOMBAT_ADMIN_TOKEN: ci-test-token
+      # Read by tests/search_index.rs. Absent, those tests skip, so this
+      # is what makes them run rather than quietly pass.
+      MEILI_URL: http://localhost:7700
+      MEILI_KEY: ci-test-key
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: Cache Cargo artefacts

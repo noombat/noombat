@@ -137,31 +137,55 @@ pub async fn reindex_profile_from_db(
 /// Articles are indexed with their title and post type to enable
 /// differentiated search results (e.g. displaying article titles in
 /// search hits rather than content snippets).
-pub fn index_post(
-    search: &Option<Arc<dyn SearchBackend>>,
-    post_id: &str,
-    actor_id: &str,
-    content_html: &str,
-    visibility: &str,
-    post_type: &str,
-    title: Option<&str>,
-) {
-    if visibility != "public" {
+///
+/// Keyed on the post's primary key. Meilisearch document ids admit only
+/// alphanumerics, hyphens and underscores, so the AP id (a URL) is
+/// rejected outright: `add_or_replace` enqueues a task that then fails,
+/// which the fire-and-forget spawn below reports as a warning and
+/// nothing else. Passing the URL here meant no post was ever indexed.
+///
+/// `erasure::erase_actor` withdraws documents under this same key. The
+/// two have to agree, so change them together.
+pub struct IndexedPost<'a> {
+    /// Primary key, and the search document id.
+    pub id: uuid::Uuid,
+    pub ap_id: &'a str,
+    pub actor_id: &'a str,
+    pub content_html: &'a str,
+    pub visibility: &'a str,
+    pub post_type: &'a str,
+    pub title: Option<&'a str>,
+}
+
+/// The document id and body sent to Meilisearch for a post.
+///
+/// Split out so a test can assert Meilisearch accepts it. The bug this
+/// guards against was invisible from inside the process: `upsert`
+/// returns as soon as the task is *enqueued*, so an identifier the
+/// server rejects still looks like success to the caller.
+pub fn post_document(post: &IndexedPost<'_>) -> (String, serde_json::Value) {
+    (
+        post.id.to_string(),
+        json!({
+            "id": post.id.to_string(),
+            "ap_id": post.ap_id,
+            "content": post.content_html,
+            "actor_id": post.actor_id,
+            "visibility": post.visibility,
+            "post_type": post.post_type,
+            "title": post.title,
+        }),
+    )
+}
+
+pub fn index_post(search: &Option<Arc<dyn SearchBackend>>, post: &IndexedPost<'_>) {
+    if post.visibility != "public" {
         return;
     }
     let Some(backend) = search.clone() else {
         return;
     };
-    let doc = json!({
-        "id": post_id,
-        "ap_id": post_id,
-        "content": content_html,
-        "actor_id": actor_id,
-        "visibility": visibility,
-        "post_type": post_type,
-        "title": title,
-    });
-    let id = post_id.to_owned();
+    let (id, doc) = post_document(post);
     tokio::spawn(async move {
         if let Err(e) = backend.upsert("posts", &id, doc).await {
             warn!(id, error = %e, "failed to index post");

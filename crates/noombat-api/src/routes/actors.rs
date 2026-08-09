@@ -641,26 +641,33 @@ async fn post_outbox(
         visibility: body.visibility.clone(),
         ap_object: create_activity.clone(),
     };
-    noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
+    let created = noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
 
     // Link extracted hashtags to the newly created post.
-    if !hashtags.is_empty()
-        && let Some(uuid_str) = post_id.rsplit('/').next()
-        && let Ok(post_uuid) = uuid_str.parse::<Uuid>()
-    {
-        let _ =
-            noombat_identity::hashtags::link_post_hashtags(&state.pool, post_uuid, &hashtags).await;
+    //
+    // Uses the id the insert returned. This previously parsed a UUID out
+    // of the AP id's last path segment, which is a *different* UUID:
+    // `create_local_post` generates its own primary key and the URL
+    // carries one made separately at `:522`. The insert therefore failed
+    // its foreign key to `posts(id)` every time, and the error went into
+    // a discarded `let _`, so no hashtag has ever been linked.
+    if !hashtags.is_empty() {
+        let _ = noombat_identity::hashtags::link_post_hashtags(&state.pool, created.id, &hashtags)
+            .await;
     }
 
     // Index the post in Meilisearch (fire-and-forget; public only).
     crate::search_sync::index_post(
         &state.search,
-        &post_id,
-        &actor.id.to_string(),
-        &content_html,
-        &body.visibility,
-        &body.post_type,
-        body.title.as_deref(),
+        &crate::search_sync::IndexedPost {
+            id: created.id,
+            ap_id: &post_id,
+            actor_id: &actor.id.to_string(),
+            content_html: &content_html,
+            visibility: &body.visibility,
+            post_type: &body.post_type,
+            title: body.title.as_deref(),
+        },
     );
 
     // Enqueue delivery to all accepted followers.
