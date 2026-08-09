@@ -39,6 +39,101 @@ fn actor_uuid(principal: &Option<axum::Extension<Principal>>) -> Option<uuid::Uu
     principal.as_ref().and_then(|p| p.actor_id())
 }
 
+// ..... Privacy settings write path .....
+
+/// Body of `POST /settings/privacy`.
+///
+/// Every boolean carries `serde(default)` because an unchecked HTML
+/// checkbox submits nothing at all. Without it, clearing a toggle would
+/// be a deserialisation failure rather than a `false`, which is the
+/// difference between a working form and one that only ever turns
+/// things on.
+#[derive(Debug, serde::Deserialize)]
+pub struct PrivacySettingsForm {
+    #[serde(default)]
+    discoverable: bool,
+    #[serde(default)]
+    indexable: bool,
+    #[serde(default)]
+    federate_profile: bool,
+    #[serde(default)]
+    require_follow_approval: bool,
+    #[serde(default)]
+    show_followers_count: bool,
+    #[serde(default)]
+    chatmail_visible: bool,
+    #[serde(default)]
+    cv_download: noombat_core::privacy::CvDownload,
+    /// Posted by the form and deliberately unused.
+    ///
+    /// `default_visibility` is not a field on `ActorPrivacy` and has
+    /// nowhere to be stored yet. Accepted so the submission does not
+    /// fail wholesale on an unknown field, and dropped rather than
+    /// silently half-applied.
+    #[serde(default)]
+    #[allow(dead_code)]
+    default_visibility: Option<String>,
+}
+
+/// Persist the profile privacy settings of the signed-in actor.
+///
+/// There is no username in the path on purpose: the target is whoever
+/// the session says it is, so there is no other user's settings to
+/// authorise against and no confused-deputy shape to get wrong.
+async fn save_privacy_settings(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    axum::Form(form): axum::Form<PrivacySettingsForm>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&principal) else {
+        return (
+            axum::http::StatusCode::UNAUTHORIZED,
+            "sign in to change privacy settings",
+        )
+            .into_response();
+    };
+
+    let privacy = noombat_core::privacy::ActorPrivacy {
+        discoverable: form.discoverable,
+        indexable: form.indexable,
+        require_follow_approval: form.require_follow_approval,
+        federate_profile: form.federate_profile,
+        chatmail_visible: form.chatmail_visible,
+        show_followers_count: form.show_followers_count,
+        cv_download: form.cv_download,
+    };
+
+    if let Err(e) =
+        noombat_identity::profile::update_actor_privacy(&state.pool, actor_id, &privacy).await
+    {
+        tracing::error!(%actor_id, "failed to save privacy settings: {e}");
+        return (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "could not save privacy settings",
+        )
+            .into_response();
+    }
+
+    // Bring the search index into line with the setting that was just
+    // saved. Without this the control is cosmetic in the direction that
+    // matters: `index_profile` honours `discoverable` by *not* indexing,
+    // which leaves an already-indexed profile in place forever.
+    match noombat_identity::repo::find_by_id(&state.pool, actor_id).await {
+        Ok(actor) if privacy.discoverable => {
+            crate::search_sync::reindex_profile_from_db(&state.pool, &state.search, &actor).await;
+        }
+        Ok(_) => {
+            crate::search_sync::remove_from_index(&state.search, "profiles", &actor_id.to_string());
+        }
+        Err(e) => {
+            // The settings are saved; only the index is now stale.
+            tracing::warn!(%actor_id, "saved privacy settings but could not resync search: {e}");
+        }
+    }
+
+    axum::http::StatusCode::NO_CONTENT.into_response()
+}
+
 // ..... Templates .....
 
 #[derive(Template, WebTemplate)]
@@ -268,7 +363,6 @@ struct SectionVisibilityRow {
 struct PrivacyPage {
     i18n: I18n,
     nav_username: String,
-    username: String,
     discoverable: bool,
     indexable: bool,
     federate_profile: bool,
@@ -315,7 +409,10 @@ pub fn router() -> Router<AppState> {
         .route("/settings/publications", get(edit_publication_page))
         .route("/settings/links", get(edit_links_page))
         .route("/settings/jobs/new", get(edit_job_page))
-        .route("/settings/privacy", get(privacy_page))
+        .route(
+            "/settings/privacy",
+            get(privacy_page).post(save_privacy_settings),
+        )
         .route("/settings/privacy/preview", get(privacy_preview_partial))
         .route("/settings/account", get(account_settings_page))
         .route("/settings/blocked", get(blocked_muted_page))
@@ -788,8 +885,7 @@ async fn privacy_page(
 
     PrivacyPage {
         i18n,
-        nav_username: uname.clone(),
-        username: uname,
+        nav_username: uname,
         discoverable: privacy["discoverable"].as_bool().unwrap_or(true),
         indexable: privacy["indexable"].as_bool().unwrap_or(true),
         federate_profile: privacy["federate_profile"].as_bool().unwrap_or(true),
