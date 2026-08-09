@@ -105,33 +105,38 @@ fn parse_args(args: &[String]) -> Option<(String, Vec<String>)> {
 /// match does the function fall through to a full MIME parse for
 /// edge cases (Autocrypt Setup Messages, inline PGP inside nested
 /// multipart subparts).
+/// Whether a PGP armour block opens and closes here.
+///
+/// Both markers must start a line, which RFC 4880 requires of armour
+/// headers. That is what separates a real armoured message from the
+/// same characters quoted inside running text, and requiring the
+/// closing marker too rules out a fragment of a forwarded mail.
+fn has_pgp_armour(body: &[u8]) -> bool {
+    fn at_line_start(haystack: &[u8], needle: &[u8]) -> bool {
+        haystack
+            .windows(needle.len())
+            .enumerate()
+            .any(|(i, w)| w == needle && (i == 0 || haystack[i - 1] == b'\n'))
+    }
+
+    at_line_start(body, b"-----BEGIN PGP MESSAGE-----")
+        && at_line_start(body, b"-----END PGP MESSAGE-----")
+}
+
 fn is_encrypted(raw: &[u8]) -> bool {
-    let raw_lower = raw.to_ascii_lowercase();
-
-    // Fast path 1 (PGP/MIME): the Content-Type header contains both
-    // "multipart/encrypted" and "application/pgp-encrypted". Both
-    // strings must appear in the header section (before the first
-    // blank line), but checking the entire message is safe: these
-    // byte sequences do not occur in encrypted ciphertext.
-    if raw_lower
-        .windows(b"multipart/encrypted".len())
-        .any(|w| w == b"multipart/encrypted")
-        && raw_lower
-            .windows(b"application/pgp-encrypted".len())
-            .any(|w| w == b"application/pgp-encrypted")
-    {
-        return true;
-    }
-
-    // Fast path 2 (inline PGP): the PGP message marker appears
-    // anywhere in the message (case-sensitive, since the marker is
-    // defined by the OpenPGP specification as exact ASCII).
-    if raw
-        .windows(b"-----BEGIN PGP MESSAGE-----".len())
-        .any(|w| w == b"-----BEGIN PGP MESSAGE-----")
-    {
-        return true;
-    }
+    // No fast path. There used to be two, and both decided the
+    // question by searching the whole message for byte sequences with
+    // no regard to structure: `multipart/encrypted` together with
+    // `application/pgp-encrypted` anywhere, or the PGP marker
+    // anywhere. The comment defending that said the sequences "do not
+    // occur in encrypted ciphertext", which is true and beside the
+    // point. The question is whether they occur in *plaintext*, and
+    // they do: in a quoted reply, an attachment filename, or a body a
+    // sender composes on purpose. Either one turned this boundary into
+    // an opt-in, letting plaintext through the relay by asking.
+    //
+    // Parsing costs a few microseconds on a message that is about to
+    // cross a network. The boundary is worth more than that.
 
     // Slow path: fall through to full MIME parse for Autocrypt
     // Setup Messages and other edge cases.
@@ -161,11 +166,9 @@ fn is_encrypted_part(part: &mailparse::ParsedMail<'_>) -> bool {
         return true;
     }
 
-    // Inline PGP: look for the PGP message marker in the body.
+    // Inline PGP: an armour block in this part's own body.
     if let Ok(body) = part.get_body_raw()
-        && body
-            .windows(b"-----BEGIN PGP MESSAGE-----".len())
-            .any(|w| w == b"-----BEGIN PGP MESSAGE-----")
+        && has_pgp_armour(&body)
     {
         return true;
     }
@@ -331,5 +334,85 @@ mod tests {
                      -----BEGIN PGP MESSAGE-----\r\nciphertext\r\n-----END PGP MESSAGE-----\r\n\
                      --outer--\r\n";
         assert!(is_encrypted(raw));
+    }
+
+    /// Plaintext that merely mentions the PGP/MIME content types.
+    ///
+    /// The old fast path searched the whole message for
+    /// `multipart/encrypted` and `application/pgp-encrypted` and
+    /// accepted on finding both, wherever they were. A sender who put
+    /// them in the body, deliberately or by quoting a previous mail,
+    /// walked the relay's one invariant. This is the regression test
+    /// for that.
+    #[test]
+    fn plaintext_naming_the_pgp_content_types_is_not_encrypted() {
+        let raw = b"From: a@example.org\r\n\
+                    To: b@example.org\r\n\
+                    Content-Type: text/plain\r\n\
+                    \r\n\
+                    Here is how PGP/MIME works: the outer part is\r\n\
+                    multipart/encrypted and the first subpart is\r\n\
+                    application/pgp-encrypted. Hope that helps!\r\n";
+        assert!(
+            !is_encrypted(raw),
+            "a plaintext explanation of PGP must not pass as encrypted"
+        );
+    }
+
+    /// The armour marker quoted mid-line, as in a forwarded mail.
+    #[test]
+    fn a_quoted_armour_marker_is_not_encrypted() {
+        let raw = b"From: a@example.org\r\n\
+                    Content-Type: text/plain\r\n\
+                    \r\n\
+                    He wrote: \"-----BEGIN PGP MESSAGE-----\" and then gave up.\r\n";
+        assert!(
+            !is_encrypted(raw),
+            "a marker inside running text is not an armour block"
+        );
+    }
+
+    /// An opening marker with no close, as in a truncated quote.
+    #[test]
+    fn an_unclosed_armour_block_is_not_encrypted() {
+        let raw = b"From: a@example.org\r\n\
+                    Content-Type: text/plain\r\n\
+                    \r\n\
+                    -----BEGIN PGP MESSAGE-----\r\n\
+                    hQEMA0k1
+                    [truncated]\r\n";
+        assert!(!is_encrypted(raw), "an unterminated block is not a message");
+    }
+
+    /// A real inline-PGP message still passes.
+    #[test]
+    fn a_complete_armour_block_is_encrypted() {
+        let raw = b"From: a@example.org\r\n\
+                    Content-Type: text/plain\r\n\
+                    \r\n\
+                    -----BEGIN PGP MESSAGE-----\r\n\
+                    \r\n\
+                    hQEMA0k1PLACEHOLDERCIPHERTEXT\r\n\
+                    -----END PGP MESSAGE-----\r\n";
+        assert!(is_encrypted(raw), "inline PGP must still be accepted");
+    }
+
+    /// And so does real PGP/MIME, whose two content types live in
+    /// different parts: the outer header and the first subpart's.
+    #[test]
+    fn real_pgp_mime_is_encrypted() {
+        let raw = b"From: a@example.org\r\n\
+                    Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"b\"\r\n\
+                    \r\n\
+                    --b\r\n\
+                    Content-Type: application/pgp-encrypted\r\n\
+                    \r\n\
+                    Version: 1\r\n\
+                    --b\r\n\
+                    Content-Type: application/octet-stream\r\n\
+                    \r\n\
+                    hQEMA0k1PLACEHOLDER\r\n\
+                    --b--\r\n";
+        assert!(is_encrypted(raw), "PGP/MIME must still be accepted");
     }
 }
