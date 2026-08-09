@@ -291,6 +291,27 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
         }
     }
 
+    // The target inbox is a URL a remote actor declared about itself, so
+    // delivery is an SSRF vector like any inbound fetch. This is the one
+    // outbound path that cannot go through `http::guarded_get`, since it
+    // POSTs a signed request, so it applies the check directly.
+    let inbox_check = reqwest::Url::parse(&row.target_inbox)
+        .map_err(|e| e.to_string())
+        .and_then(|url| crate::http::check_url(&url).map_err(|e| e.to_string()));
+    if let Err(reason) = inbox_check {
+        // Dropped rather than retried: an inbox URI this instance must
+        // not reach will not become reachable in an hour.
+        warn!(
+            target_inbox = %row.target_inbox,
+            "refusing delivery to an inbox this instance must not reach ({reason}); dropping"
+        );
+        let _ = sqlx::query("DELETE FROM delivery_queue WHERE id = $1")
+            .bind(row.id)
+            .execute(pool)
+            .await;
+        return;
+    }
+
     let body = serde_json::to_string(&payload).unwrap_or_default();
 
     // Build the request with an HTTP Signature via the Sign trait.

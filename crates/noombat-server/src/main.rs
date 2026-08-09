@@ -247,17 +247,24 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
-    // HTTP client for federation delivery.
+    // The one outbound client for federation, hardened in
+    // `noombat_federation::http`: a resolver that refuses private and
+    // reserved addresses, a bounded and re-checked redirect policy, and
+    // https only. Every federation fetch and every delivery goes through
+    // it, so a call site added later inherits the guard instead of having
+    // to remember it.
     //
-    // NOTE: `discover_instance` in `noombat_identity::oauth_mastodon`
-    // builds a separate pinned client for SSRF protection and
-    // replicates the `user_agent` and `timeout` settings below. If
-    // these defaults change, update that function to match.
-    let http_client = reqwest::Client::builder()
-        .user_agent(format!("Noombat/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(Duration::from_secs(30))
-        .build()
-        .expect("failed to build HTTP client");
+    // The permissive posture is derived from the instance's own domain
+    // rather than offered as a setting: an option that switches off an
+    // SSRF guard is an option somebody eventually sets in production.
+    noombat_federation::http::set_allow_local_targets(noombat_federation::http::domain_is_local(
+        &config.domain,
+    ));
+    let http_client = noombat_federation::http::client(
+        format!("Noombat/{}", env!("CARGO_PKG_VERSION")),
+        Duration::from_secs(30),
+    )
+    .expect("failed to build HTTP client");
 
     // Set the process-global unsigned-fetch policy before any
     // federation activity is processed.

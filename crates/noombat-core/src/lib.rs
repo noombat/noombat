@@ -9,4 +9,5 @@ pub mod authorisation;
 pub mod envelope;
 pub mod error;
 pub mod extension;
+pub mod net;
 pub mod privacy;

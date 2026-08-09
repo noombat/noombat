@@ -2595,6 +2595,7 @@ dependencies = [
  "bs58",
  "chrono",
  "ed25519-dalek",
+ "http",
  "http-signature-normalization",
  "http-signature-normalization-reqwest",
  "noombat-ap",

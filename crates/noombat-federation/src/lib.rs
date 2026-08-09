@@ -12,6 +12,7 @@ pub mod delivery;
 pub mod digest;
 pub mod downgrade;
 pub mod flag;
+pub mod http;
 pub mod inbox;
 pub mod integrity_proof;
 pub mod move_actor;

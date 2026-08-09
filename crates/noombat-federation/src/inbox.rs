@@ -150,12 +150,7 @@ pub async fn resolve_actor(
         )));
     }
 
-    let response = http_client
-        .get(actor_uri)
-        .header("Accept", "application/activity+json")
-        .send()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("failed to fetch {actor_uri}: {e}")))?;
+    let response = crate::http::guarded_get(http_client, actor_uri).await?;
 
     if response.status().as_u16() == 410 {
         // Record the tombstone for future short-circuiting.
@@ -182,10 +177,7 @@ pub async fn resolve_actor(
     // actually served from (after any redirects) has to be taken now.
     let final_url = response.url().clone();
 
-    let ap_actor: ApActor = response
-        .json()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("invalid actor JSON: {e}")))?;
+    let ap_actor: ApActor = crate::http::json_within_limit(response, "actor document").await?;
 
     let remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri)?;
 
@@ -297,7 +289,9 @@ pub(crate) async fn refresh_assertion_key(
 
     // Taken before `json()` consumes the response; see `resolve_actor`.
     let final_url = response.url().clone();
-    let ap_actor: ApActor = response.json().await.ok()?;
+    let ap_actor: ApActor = crate::http::json_within_limit(response, "actor document")
+        .await
+        .ok()?;
 
     // The document still has to be entitled to the `id` it claims (P0-3);
     // a refresh is not a licence to skip that.
@@ -1468,12 +1462,7 @@ async fn fetch_and_persist_remote_post(
     http_client: &reqwest::Client,
     object_uri: &str,
 ) -> Result<uuid::Uuid> {
-    let response = http_client
-        .get(object_uri)
-        .header("Accept", "application/activity+json")
-        .send()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("failed to fetch {object_uri}: {e}")))?;
+    let response = crate::http::guarded_get(http_client, object_uri).await?;
 
     if !response.status().is_success() {
         return Err(NoombatError::Federation(format!(
@@ -1482,10 +1471,8 @@ async fn fetch_and_persist_remote_post(
         )));
     }
 
-    let object: serde_json::Value = response
-        .json()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("invalid object JSON: {e}")))?;
+    let object: serde_json::Value =
+        crate::http::json_within_limit(response, "fetched object").await?;
 
     let object_type = object.get("type").and_then(|v| v.as_str()).unwrap_or("");
 

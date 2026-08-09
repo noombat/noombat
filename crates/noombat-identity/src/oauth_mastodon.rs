@@ -15,6 +15,7 @@
 use noombat_core::actor::{ActorType, NewActor};
 use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
+use noombat_core::net::is_private_ip;
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::info;
@@ -148,36 +149,6 @@ async fn discover_instance(domain: &str) -> Result<String> {
     }
 
     Ok(base)
-}
-
-/// Returns `true` if `ip` falls within a private, loopback,
-/// link-local, or other reserved range that should not be reached
-/// via user-initiated HTTP requests.
-fn is_private_ip(ip: std::net::IpAddr) -> bool {
-    match ip {
-        std::net::IpAddr::V4(v4) => is_private_v4(v4),
-        std::net::IpAddr::V6(v6) => {
-            v6.is_loopback()               // ::1
-                || v6.is_unspecified()      // ::
-                || (v6.segments()[0] & 0xfe00) == 0xfc00  // fc00::/7 (ULA)
-                || (v6.segments()[0] & 0xffc0) == 0xfe80  // fe80::/10 (link-local)
-                // IPv4-mapped IPv6 (::ffff:a.b.c.d): check the
-                // embedded v4 address with the same rules.
-                || v6.to_ipv4_mapped().is_some_and(is_private_v4)
-        }
-    }
-}
-
-/// IPv4 reserved-range check, shared between the IPv4 and
-/// IPv4-mapped-IPv6 branches of [`is_private_ip`].
-fn is_private_v4(v4: std::net::Ipv4Addr) -> bool {
-    v4.is_loopback()               // 127.0.0.0/8
-        || v4.is_private()         // 10/8, 172.16/12, 192.168/16
-        || v4.is_link_local()      // 169.254/16
-        || v4.is_broadcast()       // 255.255.255.255
-        || v4.is_unspecified()     // 0.0.0.0
-        || v4.is_documentation()   // 192.0.2/24, 198.51.100/24, 203.0.113/24
-        || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64) // 100.64/10 (CGN)
 }
 
 // ..... Client registration .....

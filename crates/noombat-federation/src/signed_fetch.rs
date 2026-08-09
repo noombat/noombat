@@ -108,6 +108,13 @@ pub async fn signed_get(
     url: &str,
     signing_actor_id: Uuid,
 ) -> Result<reqwest::Response> {
+    // Checked here as well as in `unsigned_get`, because the signed path
+    // below does not go through it and is the one the inbox uses.
+    crate::http::check_url(
+        &reqwest::Url::parse(url)
+            .map_err(|e| NoombatError::BadRequest(format!("unusable URI {url}: {e}")))?,
+    )?;
+
     let fallback = allow_unsigned_fallback();
     // Look up the signing actor's AP ID and private key.
     let row = sqlx::query_as::<_, (String, Option<String>)>(
@@ -181,10 +188,5 @@ pub async fn signed_get(
 /// **Note:** The returned [`reqwest::Response`] may carry a non-success
 /// HTTP status. The caller is responsible for status checking.
 async fn unsigned_get(http_client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
-    http_client
-        .get(url)
-        .header("Accept", "application/activity+json")
-        .send()
-        .await
-        .map_err(|e| NoombatError::Federation(format!("fetch of {url} failed: {e}")))
+    crate::http::guarded_get(http_client, url).await
 }
