@@ -30,6 +30,7 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-inline-scripts.sh"
+      - "scripts/check-migrations.sh"
   pull_request:
     branches: [main]
     paths:
@@ -42,6 +43,7 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-inline-scripts.sh"
+      - "scripts/check-migrations.sh"
   workflow_dispatch:
     inputs:
       release:
@@ -110,6 +112,14 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: "Reject inline script, inline style, and javascript: URLs"
         run: scripts/check-inline-scripts.sh
+
+  migration-shape:
+    name: Migration shape
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: "Reject duplicate versions and irreversible migrations"
+        run: scripts/check-migrations.sh
 
   deny:
     name: Cargo Deny
