@@ -100,6 +100,78 @@ impl FallbackRateLimiter {
     }
 }
 
+/// The outcome of a rate-limit check.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Decision {
+    Allowed,
+    /// Over the limit. Carries the seconds to advertise in `Retry-After`.
+    Limited {
+        retry_after: i64,
+    },
+}
+
+impl Decision {
+    /// The `429` this decision maps to, or `None` when allowed.
+    pub fn into_response(self) -> Option<Response> {
+        match self {
+            Decision::Allowed => None,
+            Decision::Limited { retry_after } => Some(
+                (
+                    StatusCode::TOO_MANY_REQUESTS,
+                    [(RETRY_AFTER, retry_after.max(1).to_string())],
+                )
+                    .into_response(),
+            ),
+        }
+    }
+}
+
+/// Count one request against `key` and decide whether to allow it.
+///
+/// Redis first, then the in-process governor when Redis is absent or
+/// errors. Callers that need a limit other than the instance-wide one
+/// pass their own `limit` and `window`; note that the fallback limiter
+/// has a single quota fixed at construction, so during a Redis outage
+/// every caller degrades to that quota. The key still separates them,
+/// so a caller cannot be starved by another's traffic, but a tighter
+/// route-specific ceiling is not preserved. The exposure is bounded by
+/// the outage.
+pub async fn check_key(state: &AppState, key: &str, limit: i64, window: i64) -> Decision {
+    if let Some(mut redis) = state.redis.clone() {
+        match redis::cmd("EVAL")
+            .arg(RATE_LIMIT_LUA)
+            .arg(1i64)
+            .arg(key)
+            .arg(window)
+            .query_async::<Vec<i64>>(&mut redis)
+            .await
+        {
+            Ok(result) => {
+                let count = result.first().copied().unwrap_or(0);
+                let ttl = result.get(1).copied().unwrap_or(window);
+
+                return if count > limit {
+                    Decision::Limited { retry_after: ttl }
+                } else {
+                    Decision::Allowed
+                };
+            }
+            Err(e) => {
+                warn!("Redis EVAL failed (falling back to in-process limiter): {e}");
+                // Fall through to governor.
+            }
+        }
+    }
+
+    if state.fallback_rate_limiter.check(key) {
+        Decision::Allowed
+    } else {
+        Decision::Limited {
+            retry_after: window,
+        }
+    }
+}
+
 /// Axum middleware that enforces a per-IP rate limit.
 ///
 /// Tries Redis first; on failure, falls back to the in-process
@@ -109,9 +181,6 @@ pub async fn rate_limit(
     request: Request<Body>,
     next: Next,
 ) -> Response {
-    let limit = state.rate_limit;
-    let window = state.rate_limit_window_secs;
-
     // Extract the remote IP.
     let ip = request
         .extensions()
@@ -119,48 +188,72 @@ pub async fn rate_limit(
         .map(|ci| ci.0.ip().to_string())
         .unwrap_or_else(|| "unknown".to_owned());
 
-    // ..... Try Redis .....
-    if let Some(mut redis) = state.redis.clone() {
-        let key = format!("rl:{ip}");
+    let decision = check_key(
+        &state,
+        &format!("rl:{ip}"),
+        state.rate_limit,
+        state.rate_limit_window_secs,
+    )
+    .await;
 
-        match redis::cmd("EVAL")
-            .arg(RATE_LIMIT_LUA)
-            .arg(1i64)
-            .arg(&key)
-            .arg(window)
-            .query_async::<Vec<i64>>(&mut redis)
-            .await
-        {
-            Ok(result) => {
-                let count = result.first().copied().unwrap_or(0);
-                let ttl = result.get(1).copied().unwrap_or(window);
+    match decision.into_response() {
+        Some(limited) => limited,
+        None => next.run(request).await,
+    }
+}
 
-                if count > limit {
-                    return (
-                        StatusCode::TOO_MANY_REQUESTS,
-                        [(RETRY_AFTER, ttl.max(1).to_string())],
-                    )
-                        .into_response();
-                }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
 
-                // Redis succeeded; allow the request.
-                return next.run(request).await;
-            }
-            Err(e) => {
-                warn!("Redis EVAL failed (falling back to in-process limiter): {e}");
-                // Fall through to governor.
-            }
+    #[test]
+    fn allowed_produces_no_response() {
+        assert!(Decision::Allowed.into_response().is_none());
+    }
+
+    #[test]
+    fn limited_produces_429_with_retry_after() {
+        let response = Decision::Limited { retry_after: 42 }
+            .into_response()
+            .expect("a limited decision is a response");
+
+        assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(response.headers()[RETRY_AFTER], "42");
+    }
+
+    /// `Retry-After: 0` invites an immediate retry, which is the one
+    /// value a limiter must not emit. Redis reports a TTL of 0 for a key
+    /// expiring within the current second, and -1 for one with no TTL
+    /// set, so this is reachable rather than theoretical.
+    #[test]
+    fn retry_after_is_never_below_one() {
+        for retry_after in [-1, 0] {
+            let response = Decision::Limited { retry_after }
+                .into_response()
+                .expect("a limited decision is a response");
+
+            assert_eq!(response.headers()[RETRY_AFTER], "1", "for {retry_after}");
         }
     }
 
-    // ..... In-process fallback (Redis absent or failed) .....
-    if !state.fallback_rate_limiter.check(&ip) {
-        return (
-            StatusCode::TOO_MANY_REQUESTS,
-            [(RETRY_AFTER, window.max(1).to_string())],
-        )
-            .into_response();
-    }
+    /// Keys are independent buckets.
+    ///
+    /// This is what makes per-account keying worth anything: one
+    /// requester exhausting their budget must not spend anyone else's.
+    #[test]
+    fn the_fallback_limiter_counts_per_key() {
+        let limiter = FallbackRateLimiter::new(2, Duration::from_secs(60));
 
-    next.run(request).await
+        assert!(limiter.check("cv:acct:alice"));
+        assert!(limiter.check("cv:acct:alice"));
+        assert!(
+            !limiter.check("cv:acct:alice"),
+            "the third request is over a ceiling of two"
+        );
+        assert!(
+            limiter.check("cv:acct:bob"),
+            "a separate key has its own budget"
+        );
+    }
 }

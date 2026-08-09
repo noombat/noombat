@@ -139,11 +139,21 @@ impl Actor {
     }
 
     /// Whether the CV may be downloaded by the given viewer.
+    ///
+    /// The owner always passes, as in [`Self::chatmail_visible_to`].
+    /// Without that exemption `CvDownload::Followers` would deny owners
+    /// their own CV, since nobody is an accepted follower of themselves.
     pub fn cv_downloadable_by(&self, viewer: Option<&Actor>, follow_status: FollowStatus) -> bool {
+        if matches!(viewer, Some(v) if v.id == self.id) {
+            return true;
+        }
+
         match self.actor_privacy.cv_download {
             CvDownload::Public => true,
             CvDownload::Followers => follow_status == FollowStatus::Accepted,
-            CvDownload::SelfOnly => matches!(viewer, Some(v) if v.id == self.id),
+            // The owner is the only viewer this admits, and the check
+            // above has already returned for them.
+            CvDownload::SelfOnly => false,
         }
     }
 
@@ -337,6 +347,27 @@ mod tests {
         owner.actor_privacy.cv_download = CvDownload::SelfOnly;
         assert!(!owner.cv_downloadable_by(Some(&other), FollowStatus::Accepted));
         assert!(owner.cv_downloadable_by(Some(&owner), FollowStatus::None));
+    }
+
+    #[test]
+    fn cv_owner_is_exempt_from_every_setting() {
+        let owner_id = uuid::Uuid::new_v4();
+        let mut owner = make_actor(owner_id);
+
+        // `Followers` is the case that bites: an owner does not follow
+        // themselves, so without the exemption the setting would lock
+        // them out of their own CV.
+        for setting in [
+            CvDownload::Public,
+            CvDownload::Followers,
+            CvDownload::SelfOnly,
+        ] {
+            owner.actor_privacy.cv_download = setting;
+            assert!(
+                owner.cv_downloadable_by(Some(&owner), FollowStatus::None),
+                "the owner must reach their own CV under {setting:?}"
+            );
+        }
     }
 
     #[test]

@@ -421,7 +421,7 @@ CREATE TABLE analytics_counters (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     target_type TEXT NOT NULL CHECK (target_type IN ('job_listing', 'profile', 'article', 'event')),
     target_id   UUID NOT NULL,
-    metric      TEXT NOT NULL CHECK (metric IN ('view', 'application', 'rsvp')),
+    metric      TEXT NOT NULL CHECK (metric IN ('view', 'application', 'rsvp', 'download')),
     period      DATE NOT NULL,
     count       BIGINT NOT NULL DEFAULT 0,
     UNIQUE (target_type, target_id, metric, period)

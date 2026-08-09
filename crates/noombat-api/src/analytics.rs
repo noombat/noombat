@@ -124,3 +124,50 @@ impl AnalyticsBackend for PgAnalyticsBackend {
         Ok(results)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    /// `metric` and `target_type` are both bound as plain strings against
+    /// `CHECK` constraints, so a value the schema does not admit compiles
+    /// and fails at run time. Callers that treat a counter as best-effort
+    /// (the CV route logs and continues, since the download has already
+    /// succeeded by then) would swallow that silently.
+    ///
+    /// This pins the pairs actually in use.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn recorded_metrics_are_admitted_by_the_schema(pool: PgPool) {
+        let target = uuid::Uuid::new_v4().to_string();
+        let backend = PgAnalyticsBackend::new(pool);
+
+        for (target_type, metric) in [
+            ("profile", "download"),
+            ("profile", "view"),
+            ("job_listing", "application"),
+            ("event", "rsvp"),
+        ] {
+            backend
+                .increment(target_type, &target, metric)
+                .await
+                .unwrap_or_else(|e| panic!("{target_type}/{metric} must be recordable: {e}"));
+        }
+
+        // And the upsert increments rather than duplicating.
+        backend
+            .increment("profile", &target, "download")
+            .await
+            .expect("second download recorded");
+
+        let today = chrono::Utc::now().date_naive().to_string();
+        let rows = backend
+            .query("profile", &target, "download", &today, &today)
+            .await
+            .expect("counter read back");
+
+        assert_eq!(rows.len(), 1, "one row per target, metric and day");
+        assert_eq!(rows[0]["count"], 2, "the second download incremented it");
+    }
+}
