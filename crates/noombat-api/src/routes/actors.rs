@@ -394,6 +394,89 @@ fn default_post_type() -> String {
 /// On success, returns `201 Created` with the ActivityPub `Create`
 /// activity as JSON. The activity is also enqueued for delivery to
 /// all accepted followers.
+/// The parts of a locally authored post its ActivityPub document is
+/// built from.
+struct LocalPost<'a> {
+    post_id: &'a str,
+    ap_type: &'a str,
+    content_html: &'a str,
+    source_markdown: &'a str,
+    title: Option<&'a str>,
+    featured_image_url: Option<&'a str>,
+    in_reply_to: Option<&'a str>,
+    to: &'a [String],
+    cc: &'a [String],
+    tags: &'a [serde_json::Value],
+    published: &'a str,
+}
+
+/// Build the `Create` activity for a locally authored post, with an
+/// FEP-8b32 proof attached to the inner object.
+///
+/// Split out of the handler to give the signing step a seam. The proof on
+/// the inner object is the only proof a receiving instance can record,
+/// because the envelope is transport and is not stored; if this quietly
+/// stopped attaching one, every Noombat-to-Noombat post would silently
+/// federate as unproven and nothing else in the suite would notice. That
+/// is the shape of failure this codebase has already had once, when the
+/// sanitiser existed, was tested, and was not called.
+///
+/// Signing is the last step: JCS hashes the document as it stands, so
+/// every property has to be in place first. Failure is non-fatal, as in
+/// `delivery.rs`, since HTTP Signatures remain the primary authentication
+/// mechanism and an unproven post beats a failed publish.
+fn build_create_activity(
+    post: &LocalPost<'_>,
+    actor_ap_id: &str,
+    ed25519_private_base64: Option<&str>,
+) -> serde_json::Value {
+    let mut ap_object = json!({
+        "@context": default_context(),
+        "id": post.post_id,
+        "type": post.ap_type,
+        "attributedTo": actor_ap_id,
+        "content": post.content_html,
+        "source": {
+            "content": post.source_markdown,
+            "mediaType": "text/markdown"
+        },
+        "to": post.to,
+        "cc": post.cc,
+        "tag": post.tags,
+        "published": post.published
+    });
+
+    // Articles carry a title in the `name` property and may carry
+    // a featured image in the `image` property.
+    if let Some(title) = post.title {
+        ap_object["name"] = json!(title);
+    }
+    if let Some(image_url) = post.featured_image_url {
+        ap_object["image"] = json!({
+            "type": "Image",
+            "url": image_url
+        });
+    }
+    if let Some(reply_to) = post.in_reply_to {
+        ap_object["inReplyTo"] = json!(reply_to);
+    }
+
+    if let Some(key) = ed25519_private_base64 {
+        noombat_federation::integrity_proof::sign_as_actor(&mut ap_object, key, actor_ap_id);
+    }
+
+    json!({
+        "@context": default_context(),
+        "id": format!("{}/activity", post.post_id),
+        "type": "Create",
+        "actor": actor_ap_id,
+        "object": ap_object,
+        "to": post.to,
+        "cc": post.cc,
+        "published": post.published
+    })
+}
+
 async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -526,47 +609,24 @@ async fn post_outbox(
     // ActivityStreams type: Note or Article.
     let ap_type = if is_article { "Article" } else { "Note" };
 
-    let mut ap_object = json!({
-        "@context": default_context(),
-        "id": post_id,
-        "type": ap_type,
-        "attributedTo": actor.ap_id,
-        "content": content_html,
-        "source": {
-            "content": body.content,
-            "mediaType": "text/markdown"
+    let published = chrono::Utc::now().to_rfc3339();
+    let create_activity = build_create_activity(
+        &LocalPost {
+            post_id: &post_id,
+            ap_type,
+            content_html: &content_html,
+            source_markdown: &body.content,
+            title: body.title.as_deref(),
+            featured_image_url: body.featured_image_url.as_deref(),
+            in_reply_to: body.in_reply_to.as_deref(),
+            to: &to,
+            cc: &cc,
+            tags: &tag_objects,
+            published: &published,
         },
-        "to": to,
-        "cc": cc,
-        "tag": tag_objects,
-        "published": chrono::Utc::now().to_rfc3339()
-    });
-
-    // Articles carry a title in the `name` property and may carry
-    // a featured image in the `image` property.
-    if let Some(ref title) = body.title {
-        ap_object["name"] = json!(title);
-    }
-    if let Some(ref image_url) = body.featured_image_url {
-        ap_object["image"] = json!({
-            "type": "Image",
-            "url": image_url
-        });
-    }
-    if let Some(ref reply_to) = body.in_reply_to {
-        ap_object["inReplyTo"] = json!(reply_to);
-    }
-
-    let create_activity = json!({
-        "@context": default_context(),
-        "id": format!("{}/activity", post_id),
-        "type": "Create",
-        "actor": actor.ap_id,
-        "object": ap_object,
-        "to": to,
-        "cc": cc,
-        "published": chrono::Utc::now().to_rfc3339()
-    });
+        &actor.ap_id,
+        actor.ed25519_private_key.as_deref(),
+    );
 
     // Persist the post locally.
     let new_post = noombat_identity::repo::NewPost {
@@ -893,4 +953,134 @@ async fn initiate_move(
     // That logic is in noombat-federation and is not duplicated here.
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use noombat_federation::integrity_proof::{self, VerificationResult};
+
+    const ACTOR: &str = "https://noombat.social/users/alice";
+
+    fn sample_post<'a>(
+        to: &'a [String],
+        cc: &'a [String],
+        tags: &'a [serde_json::Value],
+    ) -> LocalPost<'a> {
+        LocalPost {
+            post_id: "https://noombat.social/posts/1",
+            ap_type: "Note",
+            content_html: "<p>hello</p>",
+            source_markdown: "hello",
+            title: None,
+            featured_image_url: None,
+            in_reply_to: None,
+            to,
+            cc,
+            tags,
+            published: "2026-01-01T00:00:00+00:00",
+        }
+    }
+
+    /// The proof has to be on the object, and it has to survive being
+    /// wrapped in the `Create`. A receiving instance records the object's
+    /// proof; the envelope is transport and is never stored.
+    #[test]
+    fn the_published_object_carries_a_verifiable_proof() {
+        let keypair = noombat_identity::keys::generate_ed25519_keypair().unwrap();
+        let to = vec!["https://www.w3.org/ns/activitystreams#Public".to_owned()];
+        let cc: Vec<String> = vec![];
+        let tags: Vec<serde_json::Value> = vec![];
+
+        let activity = build_create_activity(
+            &sample_post(&to, &cc, &tags),
+            ACTOR,
+            Some(&keypair.private_base64),
+        );
+
+        assert!(
+            activity.get("proof").is_none(),
+            "the envelope is signed at delivery, not here"
+        );
+
+        let object = &activity["object"];
+        assert_eq!(
+            integrity_proof::verify(object, &keypair.public_multibase),
+            VerificationResult::Valid,
+            "the nested object must still verify after wrapping"
+        );
+    }
+
+    /// What we publish must satisfy the binding the receiving side
+    /// enforces: the proof's verification method, with its fragment
+    /// stripped, has to be the actor the object is attributed to.
+    /// Otherwise `verify_object_proof` refuses our own posts.
+    #[test]
+    fn the_proof_is_bound_to_the_actor_the_object_is_attributed_to() {
+        let keypair = noombat_identity::keys::generate_ed25519_keypair().unwrap();
+        let to: Vec<String> = vec![];
+        let cc: Vec<String> = vec![];
+        let tags: Vec<serde_json::Value> = vec![];
+
+        let activity = build_create_activity(
+            &sample_post(&to, &cc, &tags),
+            ACTOR,
+            Some(&keypair.private_base64),
+        );
+        let object = &activity["object"];
+
+        let vm = integrity_proof::extract_verification_method_id(object)
+            .expect("the object carries a proof");
+        assert_eq!(vm.split('#').next().unwrap(), ACTOR);
+        assert_eq!(object["attributedTo"], serde_json::json!(ACTOR));
+        assert_eq!(activity["actor"], serde_json::json!(ACTOR));
+    }
+
+    /// An actor with no Ed25519 key still publishes, unproven.
+    #[test]
+    fn an_actor_without_a_key_publishes_without_a_proof() {
+        let to: Vec<String> = vec![];
+        let cc: Vec<String> = vec![];
+        let tags: Vec<serde_json::Value> = vec![];
+
+        let activity = build_create_activity(&sample_post(&to, &cc, &tags), ACTOR, None);
+
+        assert!(activity["object"].get("proof").is_none());
+        assert_eq!(
+            activity["object"]["content"],
+            serde_json::json!("<p>hello</p>")
+        );
+        assert_eq!(activity["type"], serde_json::json!("Create"));
+    }
+
+    /// The optional properties are set before signing, so a document
+    /// carrying them still verifies. Ordering here is easy to get wrong
+    /// and silent when it is.
+    #[test]
+    fn optional_properties_are_covered_by_the_proof() {
+        let keypair = noombat_identity::keys::generate_ed25519_keypair().unwrap();
+        let to: Vec<String> = vec![];
+        let cc: Vec<String> = vec![];
+        let tags = vec![serde_json::json!({"type": "Hashtag", "name": "#rust"})];
+
+        let mut post = sample_post(&to, &cc, &tags);
+        post.ap_type = "Article";
+        post.title = Some("On numbats");
+        post.featured_image_url = Some("https://noombat.social/media/1.png");
+        post.in_reply_to = Some("https://remote.example/posts/9");
+
+        let activity = build_create_activity(&post, ACTOR, Some(&keypair.private_base64));
+        let object = &activity["object"];
+
+        assert_eq!(object["name"], serde_json::json!("On numbats"));
+        assert_eq!(
+            object["inReplyTo"],
+            serde_json::json!("https://remote.example/posts/9")
+        );
+        assert!(object.get("image").is_some());
+        assert_eq!(
+            integrity_proof::verify(object, &keypair.public_multibase),
+            VerificationResult::Valid
+        );
+    }
 }

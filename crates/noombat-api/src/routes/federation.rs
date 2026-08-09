@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use axum::extract::{Path, Query, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -18,6 +18,7 @@ use serde::Deserialize;
 
 use noombat_ap::activity::Activity;
 use noombat_core::error::NoombatError;
+use noombat_federation::integrity_proof::MAX_PROOF_DOCUMENT_BYTES;
 use noombat_federation::{digest, inbox, nodeinfo, webfinger};
 
 use crate::error::ApiError;
@@ -28,8 +29,21 @@ pub fn router() -> Router<AppState> {
         .route("/.well-known/webfinger", get(webfinger_handler))
         .route("/.well-known/nodeinfo", get(nodeinfo_well_known))
         .route("/nodeinfo/2.1", get(nodeinfo_handler))
-        .route("/users/{username}/inbox", post(inbox_handler))
-        .route("/inbox", post(shared_inbox_handler))
+        // The body limit is the proof bound, deliberately.
+        //
+        // axum's 2 MiB default sat above `MAX_PROOF_DOCUMENT_BYTES`, so a
+        // signed document between the two was accepted by the transport
+        // and then refused by the verifier, while the same document with
+        // its proof removed was stored. Signing content must not be what
+        // makes it undeliverable, so the two limits are one limit.
+        .route(
+            "/users/{username}/inbox",
+            post(inbox_handler).layer(DefaultBodyLimit::max(MAX_PROOF_DOCUMENT_BYTES)),
+        )
+        .route(
+            "/inbox",
+            post(shared_inbox_handler).layer(DefaultBodyLimit::max(MAX_PROOF_DOCUMENT_BYTES)),
+        )
 }
 
 #[derive(Deserialize)]
@@ -350,6 +364,20 @@ async fn verify_and_process_inbound(
 
     // ..... PARSE AND PROCESS .....
 
+    // Parsed twice, on purpose.
+    //
+    // The FEP-8b32 proof is computed over every property the sender
+    // included and `Activity` models only the ones Noombat acts on, so
+    // the raw `Value` is needed as well as the typed view. Deriving the
+    // typed view from the `Value` would be cheaper, but `Value` keeps the
+    // last of a duplicated key while the derived `Deserialize` rejects
+    // the duplicate outright. Going through `Value` would therefore
+    // silently accept documents this route used to refuse, and a parser
+    // differential between the signature check, the proof check and the
+    // typed view is the exact failure FEP-8b32 exists to prevent. The
+    // second parse is bounded by the body limit on this route.
+    let document: serde_json::Value = serde_json::from_slice(body)
+        .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
     let activity: Activity = serde_json::from_slice(body)
         .map_err(|e| NoombatError::BadRequest(format!("invalid JSON: {e}")))?;
 
@@ -364,7 +392,14 @@ async fn verify_and_process_inbound(
         .into());
     }
 
-    inbox::process_activity(&state.pool, &state.http_client, actor_uri, activity).await?;
+    inbox::process_activity(
+        &state.pool,
+        &state.http_client,
+        actor_uri,
+        &document,
+        activity,
+    )
+    .await?;
     Ok(StatusCode::ACCEPTED)
 }
 

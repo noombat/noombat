@@ -18,13 +18,38 @@
 //! | `trust-relay`     | Accept based on the relay's HTTP Signature alone.   |
 //! |                   | Trust-sensitive objects are flagged as unverified.  |
 
+use std::sync::LazyLock;
+use std::time::Duration;
+
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::PgPool;
+use tokio::sync::Semaphore;
 use tracing::{debug, warn};
 
 use crate::integrity_proof;
+use crate::integrity_proof::VerificationResult;
+
+/// Origin fetches allowed to be in flight at once, across both paths that
+/// reach out to another instance during verification: the
+/// `verify-or-fetch` re-fetch, and the key refresh in
+/// [`verify_inbound_proof`].
+///
+/// Both are driven by inbound traffic, so both are burst-shaped and both
+/// let a sender influence our target. Uncapped, that makes Noombat an
+/// amplifier: the sender picks the victim and the burst size, and we
+/// supply the connections. One counter covers both because the resource
+/// being protected, outbound sockets aimed at a third party, is the same.
+static ORIGIN_FETCH_PERMITS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::new(4));
+
+/// How long a fetch waits for a permit before giving up.
+///
+/// Waiting beats failing (a discarded activity is lost content), but not
+/// indefinitely: a queue with no bound is the same resource exhaustion one
+/// layer down. Exceeding this is treated as a fetch failure, which both
+/// callers already handle.
+const ORIGIN_FETCH_PERMIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The relay verification policy in effect for this instance.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -160,6 +185,137 @@ pub async fn verify_relayed_activity(
     }
 }
 
+/// Verify the FEP-8b32 proof on a directly delivered document.
+///
+/// This is the ingestion-time counterpart to [`verify_relayed_activity`].
+/// There is no policy argument because direct delivery has no policy to
+/// apply: the HTTP Signature is already bound to `activity.actor`, so an
+/// absent proof is normal rather than suspicious. What the proof adds is
+/// evidence that survives redistribution, which is what a Group or a
+/// relay forwarding this document onward will rely on.
+///
+/// # The author binding is the whole point
+///
+/// `expected_author` is the actor the caller is about to attribute this
+/// document to. The proof must be signed by *that* actor. Without the
+/// check, a valid signature proves only "somebody whose key we happen to
+/// have cached signed these bytes", which is not authorship: sign an
+/// object `attributedTo: alice` with bob's key, name bob's verification
+/// method, and the row lands attributed to alice carrying a `TRUE`. This
+/// is the same binding [`crate::inbox::process_activity`] applies to the
+/// HTTP Signature signer, for the same reason.
+///
+/// The check runs *before* the key lookup, so naming an actor we have
+/// never heard of is `Invalid` (a proof we were not meant to be able to
+/// check) rather than `Absent` (nothing to check). Otherwise a sender
+/// could switch verification off by pointing `verificationMethod` at an
+/// unknown URI, which would silently turn the discard below into a store.
+///
+/// # Return value
+///
+/// The tri-state stored in `integrity_proof_verified`:
+///
+/// - [`VerificationResult::Absent`]: no proof, or a proof from the right
+///   actor whose key we do not hold and could not fetch. Not the same as
+///   a bad proof and must not be recorded as one.
+/// - [`VerificationResult::Valid`]: verified against the document exactly
+///   as received.
+/// - [`VerificationResult::Invalid`]: a proof that did not verify, or one
+///   signed by somebody other than `expected_author`. Callers discard.
+///
+/// The document passed here must be the bytes as received. JCS hashes
+/// every property that was present, so a value round-tripped through a
+/// type that drops unknown properties will not verify.
+pub async fn verify_inbound_proof(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    document: &Value,
+    expected_author: &str,
+) -> VerificationResult {
+    let vm_id = match integrity_proof::extract_verification_method_id(document) {
+        Some(vm) => vm.to_owned(),
+        None => return VerificationResult::Absent,
+    };
+    let signer = vm_id.split('#').next().unwrap_or(&vm_id);
+
+    if !crate::inbox::same_actor_uri(signer, expected_author) {
+        warn!(
+            signer,
+            expected_author, "integrity proof is signed by an actor other than the author"
+        );
+        return VerificationResult::Invalid;
+    }
+
+    let cached = cached_assertion_key(pool, signer).await;
+
+    if let Some(ref key) = cached {
+        match integrity_proof::verify(document, key) {
+            integrity_proof::VerificationResult::Valid => return VerificationResult::Valid,
+            integrity_proof::VerificationResult::Absent => return VerificationResult::Absent,
+            // Fall through: the cached key may simply be stale.
+            integrity_proof::VerificationResult::Invalid => {}
+        }
+    }
+
+    // One bounded refresh before calling it a forgery.
+    //
+    // A cached key can be wrong without anybody misbehaving: the peer
+    // rotated, or published several keys and we stored the first. Treating
+    // that as an invalid proof would return `Forbidden` from the inbox,
+    // and the only path that refreshes a cached key is an `Update` that
+    // has to pass through the same gate, so the peer would be locked out
+    // permanently with no way back. Holding the wrong key is the same
+    // epistemic state as holding no key, and this module already refuses
+    // to call that a bad proof.
+    //
+    // The fetch targets `expected_author`, which the caller has already
+    // resolved, so this reaches no host the request was not going to
+    // reach anyway. It is capped by [`ORIGIN_FETCH_PERMITS`] regardless.
+    let refreshed = crate::inbox::refresh_assertion_key(pool, http_client, signer, &vm_id).await;
+
+    match refreshed {
+        Some(key) if Some(&key) != cached.as_ref() => match integrity_proof::verify(document, &key)
+        {
+            integrity_proof::VerificationResult::Valid => VerificationResult::Valid,
+            integrity_proof::VerificationResult::Absent => VerificationResult::Absent,
+            integrity_proof::VerificationResult::Invalid => VerificationResult::Invalid,
+        },
+        // Nothing new to try. If we never had a key at all, we still have
+        // not checked anything, so this is `Absent` rather than a verdict.
+        _ => {
+            if cached.is_none() {
+                VerificationResult::Absent
+            } else {
+                VerificationResult::Invalid
+            }
+        }
+    }
+}
+
+/// The Ed25519 key cached for an actor, if any.
+async fn cached_assertion_key(pool: &PgPool, actor_ap_id: &str) -> Option<String> {
+    sqlx::query_scalar::<_, Option<String>>(
+        "SELECT ed25519_public_key FROM actors WHERE ap_id = $1",
+    )
+    .bind(actor_ap_id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten()
+}
+
+/// Acquire an outbound-fetch permit, or `None` if the wait ran out.
+///
+/// Exposed to [`crate::inbox`] so the key refresh shares one counter with
+/// the relay re-fetch. See [`ORIGIN_FETCH_PERMITS`].
+pub(crate) async fn origin_fetch_permit() -> Option<tokio::sync::SemaphorePermit<'static>> {
+    match tokio::time::timeout(ORIGIN_FETCH_PERMIT_TIMEOUT, ORIGIN_FETCH_PERMITS.acquire()).await {
+        Ok(Ok(permit)) => Some(permit),
+        _ => None,
+    }
+}
+
 /// Attempt to verify the integrity proof on the activity, if present.
 ///
 /// Returns `Some(true)` if a valid proof exists, `Some(false)` if an
@@ -215,6 +371,25 @@ async fn refetch_and_verify(
     http_client: &reqwest::Client,
     object_id: &str,
 ) -> Result<bool> {
+    // Held for the whole fetch, so the cap counts requests in flight
+    // rather than requests started. See [`ORIGIN_FETCH_PERMITS`].
+    let _permit =
+        match tokio::time::timeout(ORIGIN_FETCH_PERMIT_TIMEOUT, ORIGIN_FETCH_PERMITS.acquire())
+            .await
+        {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(e)) => {
+                return Err(NoombatError::Internal(format!(
+                    "re-fetch semaphore closed: {e}"
+                )));
+            }
+            Err(_) => {
+                return Err(NoombatError::Federation(format!(
+                    "re-fetch of {object_id} gave up waiting for a concurrency permit"
+                )));
+            }
+        };
+
     // Use a signed fetch so that instances requiring authenticated
     // requests do not reject the lookup.
     let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool).await?;

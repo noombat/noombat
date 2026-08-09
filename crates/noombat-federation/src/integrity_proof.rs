@@ -76,6 +76,33 @@ pub fn sign(
     signing_key_bytes: &[u8; 32],
     verification_method_id: &str,
 ) -> Result<()> {
+    let created = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    sign_with_config(
+        activity,
+        signing_key_bytes,
+        json!({
+            "type": PROOF_TYPE,
+            "cryptosuite": CRYPTOSUITE,
+            "verificationMethod": verification_method_id,
+            "proofPurpose": PROOF_PURPOSE,
+            "created": created,
+        }),
+    )
+}
+
+/// Sign with a caller-supplied proof configuration.
+///
+/// Split out from [`sign`] so tests can mint proofs this codebase would
+/// never emit, such as one carrying `expires` or one made for another
+/// `proofPurpose`. Those cases cannot be produced by editing a signed
+/// document, because the configuration is itself covered by the
+/// signature: editing it yields a broken proof rather than a differently
+/// purposed one, and from the outside the two look identical.
+fn sign_with_config(
+    activity: &mut Value,
+    signing_key_bytes: &[u8; 32],
+    mut proof_config: Value,
+) -> Result<()> {
     // Ensure the Data Integrity context is present.
     ensure_data_integrity_context(activity);
 
@@ -86,15 +113,7 @@ pub fn sign(
         .ok_or_else(|| NoombatError::Internal("activity is not a JSON object".into()))?
         .remove("proof");
 
-    // 2. Construct the proof configuration (without `proofValue`).
-    let created = Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
-    let mut proof_config = json!({
-        "type": PROOF_TYPE,
-        "cryptosuite": CRYPTOSUITE,
-        "verificationMethod": verification_method_id,
-        "proofPurpose": PROOF_PURPOSE,
-        "created": created,
-    });
+    // 2. The proof configuration arrives from the caller.
 
     // Per the W3C spec: if the unsigned document has `@context`,
     // set it on the proof configuration as well.
@@ -131,14 +150,87 @@ pub fn sign(
 
     activity["proof"] = proof_config;
 
-    debug!(
-        verification_method = verification_method_id,
-        "FEP-8b32 integrity proof attached"
-    );
+    debug!("FEP-8b32 integrity proof attached");
     Ok(())
 }
 
+/// [`sign_with_config`], reachable from tests in other modules.
+#[cfg(test)]
+pub(crate) fn sign_with_config_for_test(
+    activity: &mut Value,
+    signing_key_bytes: &[u8; 32],
+    proof_config: Value,
+) -> Result<()> {
+    sign_with_config(activity, signing_key_bytes, proof_config)
+}
+
+/// The verification method URI for a local actor's Ed25519 key.
+///
+/// Defined once. A signer and a verifier that disagree about this string
+/// produce proofs that are individually well formed and mutually
+/// useless, and nothing fails until federation does.
+pub fn verification_method_id(actor_ap_id: &str) -> String {
+    format!("{actor_ap_id}#ed25519-key")
+}
+
+/// Attach a proof to a locally authored document, using the actor's key
+/// as stored in `actors.ed25519_private_key` (Base64).
+///
+/// Returns whether a proof was attached. Failure is deliberately not an
+/// error for the caller to propagate: HTTP Signatures remain the primary
+/// authentication mechanism, and an unproven post beats a failed publish.
+pub fn sign_as_actor(
+    document: &mut Value,
+    ed25519_private_base64: &str,
+    actor_ap_id: &str,
+) -> bool {
+    let signing_key = match decode_private_key_base64(ed25519_private_base64) {
+        Ok(key) => key,
+        Err(e) => {
+            warn!(actor = actor_ap_id, "unusable Ed25519 private key: {e}");
+            return false;
+        }
+    };
+    match sign(document, &signing_key, &verification_method_id(actor_ap_id)) {
+        Ok(()) => true,
+        Err(e) => {
+            warn!(actor = actor_ap_id, "failed to attach integrity proof: {e}");
+            false
+        }
+    }
+}
+
 // ..... Verification .....
+
+/// Largest document this will canonicalise in order to check a proof.
+///
+/// JCS canonicalisation sorts every object key recursively and the
+/// document is cloned first, so the work is superlinear in a size the
+/// sender chooses. Canonicalising an attacker-sized document is the
+/// denial of service; verifying the signature afterwards is cheap.
+///
+/// This is also the inbox body limit (`routes::federation::router`), and
+/// the two must stay equal. When the body limit was the framework default
+/// of 2 MiB, a signed document between the two was accepted by the
+/// transport and then refused here, while the same document with its
+/// proof stripped was stored: signing content was what made it
+/// undeliverable. Coupling them means an oversized document is refused
+/// once, at the edge, whether or not it carries a proof.
+///
+/// A document over the bound is reported [`VerificationResult::Invalid`]
+/// rather than absent, because we were handed a proof and declined to
+/// check it; calling that "unproven" would describe the wrong thing. Note
+/// this is not a hardening measure on its own. Omitting `proof`, or
+/// naming an unsupported cryptosuite, reaches `Absent` without any
+/// padding, so the choice here buys accuracy of reporting, not security.
+pub const MAX_PROOF_DOCUMENT_BYTES: usize = 1024 * 1024;
+
+/// How far ahead of our clock a proof's `created` may sit.
+///
+/// Federated peers do not share a clock, and a proof signed a moment ago
+/// on a host running slightly fast is ordinary. Beyond this the timestamp
+/// is not skew.
+const CREATED_SKEW_TOLERANCE: chrono::Duration = chrono::Duration::minutes(5);
 
 /// The result of verifying an integrity proof on an inbound activity.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,7 +239,8 @@ pub enum VerificationResult {
     /// and the claimed verification method.
     Valid,
     /// The proof is present but invalid (signature mismatch, malformed
-    /// encoding, or key-type mismatch).
+    /// encoding, key-type mismatch, or a document exceeding
+    /// [`MAX_PROOF_DOCUMENT_BYTES`]).
     Invalid,
     /// No `proof` property is present on the activity.
     Absent,
@@ -172,26 +265,26 @@ pub enum VerificationResult {
 /// A [`VerificationResult`] indicating whether the proof is valid,
 /// invalid, or absent.
 pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResult {
-    let proof = match activity.get("proof") {
-        Some(p) if p.is_object() => p,
-        _ => return VerificationResult::Absent,
+    let proof = match select_proof(activity) {
+        Some(p) => p,
+        None => return VerificationResult::Absent,
     };
 
-    // Validate the proof metadata.
-    let cryptosuite = proof.get("cryptosuite").and_then(|v| v.as_str());
-    if cryptosuite != Some(CRYPTOSUITE) {
-        debug!(
-            ?cryptosuite,
-            "integrity proof uses unsupported cryptosuite; skipping"
+    // The size bound comes first, ahead of the clone at `unsigned_doc`
+    // and both `jcs_canonicalise` calls. Measuring costs one pass and no
+    // allocation; canonicalising is what an oversized document is aimed
+    // at. See [`MAX_PROOF_DOCUMENT_BYTES`].
+    let doc_len = serialised_len(activity);
+    if doc_len > MAX_PROOF_DOCUMENT_BYTES {
+        warn!(
+            doc_len,
+            limit = MAX_PROOF_DOCUMENT_BYTES,
+            "integrity proof document exceeds the size bound; refusing to canonicalise"
         );
-        return VerificationResult::Absent;
+        return VerificationResult::Invalid;
     }
 
-    let proof_type = proof.get("type").and_then(|v| v.as_str());
-    if proof_type != Some(PROOF_TYPE) {
-        debug!(?proof_type, "integrity proof has unexpected type; skipping");
-        return VerificationResult::Absent;
-    }
+    // `type` and `cryptosuite` were matched by `select_proof`.
 
     // Extract and decode the proof value.
     let proof_value_str = match proof.get("proofValue").and_then(|v| v.as_str()) {
@@ -277,6 +370,23 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
 
     match verifying_key.verify(&verify_input, &signature) {
         Ok(()) => {
+            // Only now are the proof's own claims worth reading.
+            //
+            // `proofPurpose`, `created` and `expires` live inside the
+            // proof configuration, which is hashed into the signature.
+            // Checking them before verifying would mean acting on
+            // unauthenticated input, and would hand anyone a way to
+            // downgrade a good proof to "unproven" by editing a field in
+            // transit. After verification they are the signer's own
+            // statements, and a document whose configuration was edited
+            // has already failed above as `Invalid`.
+            if let Some(reason) = unusable_claim(proof) {
+                warn!(
+                    reason,
+                    "integrity proof verifies but is not a usable authorship assertion"
+                );
+                return VerificationResult::Absent;
+            }
             debug!("FEP-8b32 integrity proof verified successfully");
             VerificationResult::Valid
         }
@@ -295,12 +405,32 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
 /// Returns `None` if no proof exists or if the proof does not use the
 /// `eddsa-jcs-2022` cryptosuite.
 pub fn extract_verification_method_id(activity: &Value) -> Option<&str> {
-    let proof = activity.get("proof")?;
-    let cs = proof.get("cryptosuite").and_then(|v| v.as_str())?;
-    if cs != CRYPTOSUITE {
-        return None;
+    select_proof(activity)?
+        .get("verificationMethod")
+        .and_then(|v| v.as_str())
+}
+
+/// The proof this implementation can check, from a `proof` property that
+/// may be a single object or a set.
+///
+/// VC-DI allows a proof *set*, and implementations do emit one. Requiring
+/// an object meant a document carrying two proofs, one of them ours, read
+/// as unproven: the strictly worse of the two failure modes, because it
+/// is silent. Entries that are not `DataIntegrityProof` with our
+/// cryptosuite are skipped rather than rejected; another suite is
+/// somebody else's business, not a defect in the document.
+fn select_proof(document: &Value) -> Option<&Value> {
+    fn ours(candidate: &Value) -> bool {
+        candidate.is_object()
+            && candidate.get("type").and_then(|v| v.as_str()) == Some(PROOF_TYPE)
+            && candidate.get("cryptosuite").and_then(|v| v.as_str()) == Some(CRYPTOSUITE)
     }
-    proof.get("verificationMethod").and_then(|v| v.as_str())
+
+    match document.get("proof")? {
+        Value::Array(entries) => entries.iter().find(|e| ours(e)),
+        single if ours(single) => Some(single),
+        _ => None,
+    }
 }
 
 // ..... Helper: decode Ed25519 private key from Base64 .....
@@ -327,6 +457,75 @@ pub fn decode_private_key_base64(base64_str: &str) -> Result<[u8; 32]> {
 
 // ..... Internal helpers .....
 
+/// Why a cryptographically sound proof still is not usable evidence of
+/// authorship, or `None` when it is.
+///
+/// Every one of these is `Absent` rather than `Invalid` at the call site:
+/// the document is not forged, we simply hold no assertion about it.
+/// Discarding a peer's content over a property they set for their own
+/// reasons would be a federation break, and recording a `TRUE` we cannot
+/// justify would be worse.
+fn unusable_claim(proof: &Value) -> Option<&'static str> {
+    // A signature is evidence of whatever it was made for. One minted
+    // over these bytes for `authentication` says the actor proved control
+    // of a key, not that they assert authorship, and treating one as the
+    // other is purpose confusion.
+    if proof.get("proofPurpose").and_then(|v| v.as_str()) != Some(PROOF_PURPOSE) {
+        return Some("proofPurpose is not assertionMethod");
+    }
+
+    // There is no freshness bound beyond what the signer declared,
+    // deliberately: an object proof is meant to outlive its delivery, and
+    // a post signed last year is still signed.
+    if let Some(expires) = proof.get("expires").and_then(|v| v.as_str()) {
+        match chrono::DateTime::parse_from_rfc3339(expires) {
+            Ok(deadline) if Utc::now() > deadline.with_timezone(&Utc) => {
+                return Some("proof has expired");
+            }
+            Ok(_) => {}
+            Err(_) => return Some("proof has an unparseable expires"),
+        }
+    }
+
+    // A proof that claims to have been made in the future cannot be what
+    // it says it is, beyond ordinary clock skew between federated peers.
+    if let Some(created) = proof.get("created").and_then(|v| v.as_str())
+        && let Ok(stamp) = chrono::DateTime::parse_from_rfc3339(created)
+        && stamp.with_timezone(&Utc) > Utc::now() + CREATED_SKEW_TOLERANCE
+    {
+        return Some("proof is dated in the future");
+    }
+
+    None
+}
+
+/// A sink that counts the bytes written to it and keeps none of them.
+struct ByteCounter(usize);
+
+impl std::io::Write for ByteCounter {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0 += buf.len();
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Serialised byte length of a JSON value, without materialising it.
+///
+/// Used for the pre-canonicalisation size bound, where allocating the
+/// serialised form of an oversized document would be the very cost the
+/// bound exists to avoid.
+fn serialised_len(value: &Value) -> usize {
+    let mut counter = ByteCounter(0);
+    // Writing into a counter cannot fail, and a `Value` is always
+    // serialisable, so the result carries no information.
+    let _ = serde_json::to_writer(&mut counter, value);
+    counter.0
+}
+
 /// JCS-canonicalise a JSON value per RFC 8785.
 fn jcs_canonicalise(value: &Value) -> Result<String> {
     serde_json_canonicalizer::to_string(value)
@@ -339,6 +538,17 @@ fn sha256(data: &[u8]) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(&digest);
     out
+}
+
+/// Whether a multibase string decodes as an Ed25519 public key.
+///
+/// The `z` prefix is base58btc, shared by every Multikey type, so
+/// filtering on it selects P-256 and RSA keys just as happily as
+/// Ed25519. Testing the decode is the only honest check: a wrong key
+/// cached here fails every proof the peer sends until something forces a
+/// refresh.
+pub fn is_ed25519_multikey(multibase: &str) -> bool {
+    decode_multibase_public_key(multibase).is_ok()
 }
 
 /// Decode a multibase-encoded Ed25519 public key.
@@ -591,6 +801,307 @@ mod tests {
         // Verification must succeed.
         let result = verify(&activity, &public_multibase);
         assert_eq!(result, VerificationResult::Valid);
+    }
+
+    /// The size bound must reject a document that would otherwise
+    /// verify, which is what distinguishes "refused before
+    /// canonicalisation" from "failed the signature check".
+    ///
+    /// Exercised just over the limit rather than at the 50 MB named in
+    /// the audit: it is the same branch, taken before the document is
+    /// cloned or canonicalised, and a 1 MiB fixture keeps the suite fast.
+    #[test]
+    fn oversized_document_is_refused_even_when_correctly_signed() {
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+        let vm_id = "https://noombat.social/users/alice#ed25519-key";
+
+        // A control at the same shape but under the bound, to show the
+        // fixture itself is signable and verifiable.
+        let mut small = test_activity();
+        small["content"] = serde_json::json!("x".repeat(1024));
+        sign(&mut small, &signing_key.to_bytes(), vm_id).unwrap();
+        assert_eq!(
+            verify(&small, &public_multibase),
+            VerificationResult::Valid,
+            "control document under the bound must verify"
+        );
+
+        let mut oversized = test_activity();
+        oversized["content"] = serde_json::json!("x".repeat(MAX_PROOF_DOCUMENT_BYTES));
+        sign(&mut oversized, &signing_key.to_bytes(), vm_id).unwrap();
+        assert!(serialised_len(&oversized) > MAX_PROOF_DOCUMENT_BYTES);
+
+        // Signed with the very key we verify against, so anything other
+        // than `Invalid` here means the bound did not fire.
+        assert_eq!(
+            verify(&oversized, &public_multibase),
+            VerificationResult::Invalid,
+            "a document over the bound must be refused, not verified"
+        );
+    }
+
+    #[test]
+    fn serialised_len_matches_a_real_serialisation() {
+        let activity = test_activity();
+        assert_eq!(
+            serialised_len(&activity),
+            serde_json::to_string(&activity).unwrap().len()
+        );
+    }
+
+    /// What `post_outbox` publishes must be what the receiving inbox
+    /// path can check: same verification method convention, same key.
+    #[test]
+    fn sign_as_actor_round_trips_through_the_convention() {
+        let keypair = noombat_identity::keys::generate_ed25519_keypair().unwrap();
+        let actor = "https://noombat.social/users/alice";
+
+        let mut object = serde_json::json!({
+            "@context": "https://www.w3.org/ns/activitystreams",
+            "id": "https://noombat.social/posts/1",
+            "type": "Note",
+            "attributedTo": actor,
+            "content": "<p>hello</p>",
+        });
+
+        assert!(sign_as_actor(&mut object, &keypair.private_base64, actor));
+
+        // The verifier resolves the actor by stripping the fragment, so
+        // the method must sit under the actor's own URI or the author
+        // binding in `relay_verify` will reject it as somebody else's.
+        let vm = extract_verification_method_id(&object).expect("proof carries a method");
+        assert_eq!(vm, format!("{actor}#ed25519-key"));
+        assert_eq!(vm.split('#').next().unwrap(), actor);
+
+        assert_eq!(
+            verify(&object, &keypair.public_multibase),
+            VerificationResult::Valid
+        );
+    }
+
+    #[test]
+    fn sign_as_actor_reports_failure_on_an_unusable_key() {
+        let mut object = serde_json::json!({ "id": "x", "type": "Note" });
+        assert!(!sign_as_actor(
+            &mut object,
+            "not base64 at all!!",
+            "https://noombat.social/users/alice"
+        ));
+        assert!(object.get("proof").is_none());
+    }
+
+    #[test]
+    fn verify_accepts_a_proof_inside_a_proof_set() {
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+        let vm_id = "https://noombat.social/users/alice#ed25519-key";
+
+        let mut activity = test_activity();
+        sign(&mut activity, &signing_key.to_bytes(), vm_id).unwrap();
+        let ours = activity["proof"].clone();
+
+        // VC-DI permits a proof set, and a foreign suite alongside ours
+        // must not hide ours.
+        activity["proof"] = serde_json::json!([
+            {
+                "type": PROOF_TYPE,
+                "cryptosuite": "ecdsa-jcs-2019",
+                "verificationMethod": "https://elsewhere.example/keys/1",
+                "proofPurpose": PROOF_PURPOSE,
+                "proofValue": "zSomeoneElsesSignature"
+            },
+            ours
+        ]);
+
+        assert_eq!(
+            verify(&activity, &public_multibase),
+            VerificationResult::Valid
+        );
+        assert_eq!(extract_verification_method_id(&activity), Some(vm_id));
+    }
+
+    /// Build a proof config the production signer would not emit.
+    fn config(extras: &[(&str, Value)]) -> Value {
+        let mut cfg = json!({
+            "type": PROOF_TYPE,
+            "cryptosuite": CRYPTOSUITE,
+            "verificationMethod": "https://noombat.social/users/alice#ed25519-key",
+            "proofPurpose": PROOF_PURPOSE,
+            "created": "2026-01-01T00:00:00Z",
+        });
+        for (k, v) in extras {
+            cfg[*k] = v.clone();
+        }
+        cfg
+    }
+
+    #[test]
+    fn verify_refuses_a_proof_made_for_another_purpose() {
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+
+        // Signed *as* an authentication proof, not edited into one: the
+        // configuration is covered by the signature, so editing would
+        // only produce a broken proof and test the wrong branch.
+        let mut activity = test_activity();
+        sign_with_config(
+            &mut activity,
+            &signing_key.to_bytes(),
+            config(&[("proofPurpose", json!("authentication"))]),
+        )
+        .unwrap();
+
+        assert_eq!(
+            verify(&activity, &public_multibase),
+            VerificationResult::Absent,
+            "a proof of key control is not an assertion of authorship"
+        );
+    }
+
+    #[test]
+    fn editing_the_proof_configuration_is_invalid_not_merely_unusable() {
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+
+        let mut activity = test_activity();
+        sign(
+            &mut activity,
+            &signing_key.to_bytes(),
+            "https://noombat.social/users/alice#ed25519-key",
+        )
+        .unwrap();
+        activity["proof"]["proofPurpose"] = json!("authentication");
+
+        // The claim checks run after verification precisely so that this
+        // is a broken proof rather than a quiet downgrade to unproven.
+        assert_eq!(
+            verify(&activity, &public_multibase),
+            VerificationResult::Invalid
+        );
+    }
+
+    #[test]
+    fn verify_honours_expiry_and_rejects_future_dating() {
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+
+        let mut expired = test_activity();
+        sign_with_config(
+            &mut expired,
+            &signing_key.to_bytes(),
+            config(&[("expires", json!("2020-01-01T00:00:00Z"))]),
+        )
+        .unwrap();
+        assert_eq!(
+            verify(&expired, &public_multibase),
+            VerificationResult::Absent
+        );
+
+        let mut future = test_activity();
+        sign_with_config(
+            &mut future,
+            &signing_key.to_bytes(),
+            config(&[("created", json!("2099-01-01T00:00:00Z"))]),
+        )
+        .unwrap();
+        assert_eq!(
+            verify(&future, &public_multibase),
+            VerificationResult::Absent
+        );
+
+        // An expiry still ahead of us changes nothing.
+        let mut live = test_activity();
+        sign_with_config(
+            &mut live,
+            &signing_key.to_bytes(),
+            config(&[("expires", json!("2099-01-01T00:00:00Z"))]),
+        )
+        .unwrap();
+        assert_eq!(verify(&live, &public_multibase), VerificationResult::Valid);
+    }
+
+    #[test]
+    fn is_ed25519_multikey_tests_the_decode_not_the_prefix() {
+        let (_, verifying_key) = test_keypair();
+        let real = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+        assert!(is_ed25519_multikey(&real));
+
+        // Correct multibase, correct multicodec, still Ed25519.
+        let mut prefixed = vec![0xed, 0x01];
+        prefixed.extend_from_slice(verifying_key.as_bytes());
+        assert!(is_ed25519_multikey(&format!(
+            "z{}",
+            bs58::encode(&prefixed).into_string()
+        )));
+
+        // A 33-byte compressed P-256 key is also base58btc with a `z`.
+        let p256_shaped = format!("z{}", bs58::encode([0x02u8; 33]).into_string());
+        assert!(
+            !is_ed25519_multikey(&p256_shaped),
+            "the `z` prefix says base58btc, not Ed25519"
+        );
+        assert!(!is_ed25519_multikey("not-multibase"));
+    }
+
+    /// Build the signature from the specification steps rather than by
+    /// calling [`sign`], so the two cannot drift into a shared, mutually
+    /// consistent, wrong format.
+    ///
+    /// This is not an interop fixture: it uses the same JCS and SHA-256
+    /// crates the implementation does. What it pins independently is the
+    /// *construction*, which is where `eddsa-jcs-2022` implementations
+    /// actually diverge: which document is hashed, that `@context` is
+    /// inherited by the proof configuration, that `proofValue` is excluded
+    /// from it, and that the signing input is proofConfigHash then
+    /// documentHash and not the reverse. A document signed by another
+    /// implementation is still wanted and still absent.
+    #[test]
+    fn verify_accepts_a_signature_constructed_from_the_spec_steps() {
+        use ed25519_dalek::Signer as _;
+
+        let (signing_key, verifying_key) = test_keypair();
+        let public_multibase = format!("z{}", bs58::encode(verifying_key.as_bytes()).into_string());
+
+        let document = serde_json::json!({
+            "@context": ["https://www.w3.org/ns/activitystreams", DATA_INTEGRITY_CONTEXT],
+            "id": "https://noombat.social/posts/1",
+            "type": "Note",
+            "attributedTo": "https://noombat.social/users/alice",
+            "content": "<p>hand rolled</p>",
+        });
+
+        let proof_config = serde_json::json!({
+            "type": "DataIntegrityProof",
+            "cryptosuite": "eddsa-jcs-2022",
+            "verificationMethod": "https://noombat.social/users/alice#ed25519-key",
+            "proofPurpose": "assertionMethod",
+            "created": "2026-01-01T00:00:00Z",
+            "@context": document["@context"].clone(),
+        });
+
+        let canon_doc = serde_json_canonicalizer::to_string(&document).unwrap();
+        let canon_cfg = serde_json_canonicalizer::to_string(&proof_config).unwrap();
+
+        let mut input = Vec::with_capacity(64);
+        input.extend_from_slice(&sha2::Sha256::digest(canon_cfg.as_bytes()));
+        input.extend_from_slice(&sha2::Sha256::digest(canon_doc.as_bytes()));
+
+        let signature = signing_key.sign(&input);
+
+        let mut signed = document.clone();
+        let mut embedded = proof_config.clone();
+        embedded.as_object_mut().unwrap().remove("@context");
+        embedded["proofValue"] = serde_json::json!(format!(
+            "z{}",
+            bs58::encode(signature.to_bytes()).into_string()
+        ));
+        signed["proof"] = embedded;
+
+        assert_eq!(
+            verify(&signed, &public_multibase),
+            VerificationResult::Valid
+        );
     }
 
     #[test]

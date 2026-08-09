@@ -564,6 +564,11 @@ pub struct RemotePost {
     /// The sanitiser policy version that produced `content_html`, so the
     /// value can be re-derived when the policy changes.
     pub sanitiser_version: i16,
+    /// FEP-8b32 verification outcome for `ap_object`, as received:
+    /// `None` when there was no checkable proof, `Some(true)` when one
+    /// verified. `Some(false)` does not arise from ingestion, which
+    /// discards a document whose proof fails rather than storing it.
+    pub integrity_proof_verified: Option<bool>,
     /// The AP URI of the post this is a reply to (`inReplyTo`).
     /// `None` for top-level posts.
     pub in_reply_to: Option<String>,
@@ -582,14 +587,40 @@ pub struct RemotePost {
 /// the `ap_id` already exists (the `ON CONFLICT` clause fires).
 /// The caller uses the returned UUID to link hashtags and perform
 /// other post-insert bookkeeping only for genuinely new posts.
+/// Record a verified integrity proof on a post that already exists.
+///
+/// `create_remote_post` returns `None` when the row was inserted by a
+/// concurrent delivery, and the proof result computed for the losing
+/// delivery would otherwise be dropped. Two deliveries of one object can
+/// carry different evidence: the first may arrive with no proof and the
+/// second with a good one.
+///
+/// Upgrades only, and only to `TRUE`. A proof that verified is a fact
+/// about the stored bytes and cannot be undone by a later delivery that
+/// happened to omit one, so `NULL` may become `TRUE` and nothing may
+/// become `NULL`. The `IS DISTINCT FROM` guard makes the statement a
+/// no-op when there is nothing to change, so calling it is always safe.
+pub async fn record_verified_proof(pool: &PgPool, ap_id: &str) -> Result<bool> {
+    let updated = sqlx::query(
+        "UPDATE posts SET integrity_proof_verified = TRUE \
+         WHERE ap_id = $1 AND integrity_proof_verified IS DISTINCT FROM TRUE",
+    )
+    .bind(ap_id)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    Ok(updated > 0)
+}
+
 pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Option<Uuid>> {
     let id = Uuid::new_v4();
     let row = sqlx::query_scalar::<_, Uuid>(
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, title, featured_image_url,
                 content_md, content_html, sanitiser_version,
-                in_reply_to, visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                in_reply_to, visibility, ap_object, integrity_proof_verified)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
            ON CONFLICT (ap_id) DO NOTHING
            RETURNING id"#,
     )
@@ -605,6 +636,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
     .bind(&post.in_reply_to)
     .bind(&post.visibility)
     .bind(&post.ap_object)
+    .bind(post.integrity_proof_verified)
     .fetch_optional(pool)
     .await?;
 
@@ -1230,6 +1262,7 @@ mod tests {
             in_reply_to: None,
             visibility: "public".to_owned(),
             ap_object: serde_json::json!({ "content": "<p>safe</p><script>x</script>" }),
+            integrity_proof_verified: None,
         }
     }
 
@@ -1274,6 +1307,53 @@ mod tests {
             "sanitiser_version must land in its own column, not shift into a neighbour"
         );
         assert_eq!(title, None, "title must not receive the sanitiser version");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn record_verified_proof_upgrades_but_never_downgrades(pool: PgPool) {
+        let ap_id = "https://remote.example/users/alice";
+        insert_actor(&pool, ap_id, "KEY", false).await;
+        let actor_id = actor_id_of(&pool, ap_id).await;
+
+        let post = remote_post_fixture(&pool, actor_id, None).await;
+        create_remote_post(&pool, &post).await.expect("insert");
+
+        let stored = |pool: PgPool, ap: String| async move {
+            sqlx::query_scalar::<_, Option<bool>>(
+                "SELECT integrity_proof_verified FROM posts WHERE ap_id = $1",
+            )
+            .bind(ap)
+            .fetch_one(&pool)
+            .await
+            .expect("row present")
+        };
+
+        assert_eq!(stored(pool.clone(), post.ap_id.clone()).await, None);
+
+        assert!(
+            record_verified_proof(&pool, &post.ap_id)
+                .await
+                .expect("upgrade runs"),
+            "NULL must be upgradeable to TRUE"
+        );
+        assert_eq!(stored(pool.clone(), post.ap_id.clone()).await, Some(true));
+
+        // Idempotent, and reports that it changed nothing.
+        assert!(
+            !record_verified_proof(&pool, &post.ap_id)
+                .await
+                .expect("second upgrade runs"),
+            "a second call must be a no-op"
+        );
+        assert_eq!(stored(pool.clone(), post.ap_id.clone()).await, Some(true));
+
+        // A post nobody stored is not an error either.
+        assert!(
+            !record_verified_proof(&pool, "https://remote.example/posts/absent")
+                .await
+                .expect("missing row is not an error")
+        );
     }
 
     #[ignore = "requires a database; run with --include-ignored"]

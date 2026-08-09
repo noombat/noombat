@@ -25,10 +25,18 @@
 -- the partial indexes below settle at the local row count rather than
 -- draining to empty.
 --
--- `posts.ap_object` is deliberately excluded. It is the wire record: the
--- bytes the peer sent, which FEP-8b32 Object Integrity Proofs are computed
--- over. Rewriting it would destroy the ability to verify, or to re-verify, a
--- proof. Sanitisation belongs to the projection, not to the record.
+-- `posts.ap_object` is deliberately excluded. It is the wire record, and
+-- FEP-8b32 Object Integrity Proofs are computed over it, so rewriting it
+-- would destroy the ability to audit a stored verification result.
+-- Sanitisation belongs to the projection, not to the record.
+--
+-- Note the limit of that guarantee: the column is `JSONB`, which stores a
+-- parsed tree, not bytes. Key order, insignificant whitespace and duplicate
+-- keys do not survive. JCS re-sorts keys, so the common case round-trips,
+-- but a document relying on anything JSONB normalises away cannot be
+-- re-verified from storage. Verification therefore happens at ingestion,
+-- against the document as received, and the stored value is evidence of
+-- that check rather than a substrate for repeating it.
 
 -- ..... ACTORS .....
 
@@ -255,7 +263,7 @@ CREATE TABLE job_listings (
     requirements             JSONB,
     published_at             TIMESTAMPTZ,
     expires_at               TIMESTAMPTZ,
-    integrity_proof_verified BOOLEAN, -- NULL = no proof; TRUE = valid; FALSE = invalid
+    integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -274,7 +282,7 @@ CREATE TABLE posts (
     in_reply_to              TEXT,
     canonical_uri            TEXT,
     visibility               TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
-    integrity_proof_verified BOOLEAN, -- NULL = no proof; TRUE = valid; FALSE = invalid
+    integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
     ap_object                JSONB NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );

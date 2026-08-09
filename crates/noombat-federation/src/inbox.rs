@@ -14,6 +14,8 @@ use sqlx::PgPool;
 use tracing::{info, warn};
 
 use crate::delivery;
+use crate::integrity_proof::VerificationResult;
+use crate::relay_verify;
 
 /// Dispatch an inbound activity to the appropriate handler.
 ///
@@ -32,6 +34,7 @@ pub async fn process_activity(
     pool: &PgPool,
     http_client: &reqwest::Client,
     verified_actor: &str,
+    document: &serde_json::Value,
     activity: Activity,
 ) -> Result<()> {
     // ..... SIGNER-TO-ACTOR BINDING .....
@@ -46,6 +49,30 @@ pub async fn process_activity(
             claimed_actor = %activity.actor,
             activity_type = %activity.activity_type,
             "rejecting activity whose actor does not match the signing key"
+        );
+        return Err(NoombatError::Forbidden);
+    }
+
+    // ..... ENVELOPE INTEGRITY PROOF .....
+    //
+    // Checked against `document`, the bytes as received, not against a
+    // re-serialisation of `activity`: `Activity` models only the
+    // properties it needs and JCS hashes every property that was
+    // present, so a round trip through the struct cannot reproduce the
+    // signed form.
+    //
+    // An absent proof is not an error. Direct delivery is authenticated
+    // by the HTTP Signature the guard above binds to `activity.actor`.
+    // What a proof adds is evidence that outlives the transport, which
+    // is what a Group or a relay redistributing this activity will have
+    // to rely on.
+    if relay_verify::verify_inbound_proof(pool, http_client, document, &activity.actor).await
+        == VerificationResult::Invalid
+    {
+        warn!(
+            actor = %activity.actor,
+            activity_type = %activity.activity_type,
+            "rejecting activity whose envelope integrity proof does not verify"
         );
         return Err(NoombatError::Forbidden);
     }
@@ -221,6 +248,83 @@ fn normalise_actor_uri(url: &Url) -> String {
     url.to_string()
 }
 
+/// Whether two actor URIs denote the same actor.
+///
+/// Both sides are normalised with [`normalise_actor_uri`], so a trailing
+/// slash, a default port or a difference in scheme/host case does not
+/// make two references to one actor look like two actors. A string that
+/// will not parse as a URL is compared literally: it cannot match a
+/// normalised URL, which is the safe direction for a guard.
+pub(crate) fn same_actor_uri(a: &str, b: &str) -> bool {
+    match (Url::parse(a), Url::parse(b)) {
+        (Ok(a), Ok(b)) => normalise_actor_uri(&a) == normalise_actor_uri(&b),
+        _ => a == b,
+    }
+}
+
+/// Re-fetch a remote actor, bypassing the cache, and return the
+/// `assertionMethod` key that `vm_id` names.
+///
+/// Used when a cached key fails to verify a proof, which is as likely to
+/// mean "the peer rotated" as "this is a forgery". Two things differ from
+/// [`resolve_actor`]: the cache is not consulted, and the key returned is
+/// the one whose `id` matches the verification method rather than
+/// whichever Multikey happens to come first. A peer that publishes two
+/// keys, or that rotates, is otherwise unverifiable forever.
+///
+/// The refreshed key is written back so the next activity from this peer
+/// verifies from cache instead of fetching again.
+///
+/// Returns `None` on any failure, including the concurrency cap: the
+/// caller treats that as "no new key to try", never as proof of forgery.
+pub(crate) async fn refresh_assertion_key(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    actor_uri: &str,
+    vm_id: &str,
+) -> Option<String> {
+    let _permit = crate::relay_verify::origin_fetch_permit().await?;
+
+    let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool)
+        .await
+        .ok()?;
+    let response = crate::signed_fetch::signed_get(pool, http_client, actor_uri, signing_actor_id)
+        .await
+        .ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+
+    // Taken before `json()` consumes the response; see `resolve_actor`.
+    let final_url = response.url().clone();
+    let ap_actor: ApActor = response.json().await.ok()?;
+
+    // The document still has to be entitled to the `id` it claims (P0-3);
+    // a refresh is not a licence to skip that.
+    let mut remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri).ok()?;
+
+    let named = ap_actor.assertion_method.as_ref().and_then(|methods| {
+        methods
+            .iter()
+            .find(|m| {
+                m.key_type == "Multikey"
+                    && m.id == vm_id
+                    && crate::integrity_proof::is_ed25519_multikey(&m.public_key_multibase)
+            })
+            .map(|m| m.public_key_multibase.clone())
+    });
+
+    // Cache the key that the proof actually names, so a peer with several
+    // keys does not force a fetch on every activity.
+    if let Some(ref key) = named {
+        remote.ed25519_public_key = Some(key.clone());
+    }
+    let cached = remote.ed25519_public_key.clone();
+    let _ = repo::upsert_remote_actor(pool, &remote).await;
+
+    named.or(cached)
+}
+
 /// Whether two URLs share a scheme, host and effective port.
 fn same_origin(a: &Url, b: &Url) -> bool {
     a.scheme() == b.scheme()
@@ -313,17 +417,21 @@ fn ap_actor_to_remote(
         .map(String::from);
 
     // Extract the Ed25519 public key from `assertionMethod` (FEP-521a).
-    // The first `Multikey`-typed entry whose `publicKeyMultibase` starts
-    // with `z` (Base58btc multibase prefix for Ed25519) is used. Remote
-    // actors that do not publish an Ed25519 key yield `None`.
+    //
+    // The first `Multikey` entry that actually decodes as Ed25519 wins.
+    // Selecting on the `z` prefix alone was wrong: that is base58btc,
+    // which every Multikey type uses, so an actor publishing a P-256 or
+    // RSA key first had it stored in `ed25519_public_key`, where it fails
+    // every proof they ever send. Remote actors publishing no Ed25519 key
+    // yield `None`, which is the honest answer.
     let ed25519_public_key = ap_actor.assertion_method.as_ref().and_then(|methods| {
-        methods.iter().find_map(|m| {
-            if m.key_type == "Multikey" && m.public_key_multibase.starts_with('z') {
-                Some(m.public_key_multibase.clone())
-            } else {
-                None
-            }
-        })
+        methods
+            .iter()
+            .find(|m| {
+                m.key_type == "Multikey"
+                    && crate::integrity_proof::is_ed25519_multikey(&m.public_key_multibase)
+            })
+            .map(|m| m.public_key_multibase.clone())
     });
 
     Ok(repo::RemoteActor {
@@ -422,6 +530,45 @@ fn truncate_on_char_boundary(s: &str, max: usize) -> &str {
 /// re-cleans it in place and must apply exactly this rule to do so.
 pub(crate) fn sanitise_remote_html(html: &str) -> String {
     noombat_markup::sanitise::clean_strict(truncate_on_char_boundary(html, MAX_REMOTE_HTML_BYTES))
+}
+
+/// Verify an inbound object's integrity proof and reduce it to the
+/// value stored in `integrity_proof_verified`.
+///
+/// Returns `Err(Forbidden)` when a proof is present and fails: a
+/// document that contradicts its own proof is discarded, not stored, so
+/// the column never has to mean "kept, but known bad". `Ok(None)` covers
+/// both "no proof" and "proof present but the author's key is not
+/// cached", which are the same thing from the column's point of view:
+/// nothing was checked.
+///
+/// `expected_author` is the actor the row will be attributed to. The
+/// proof has to come from that actor, or a `TRUE` here would certify the
+/// wrong party; see [`relay_verify::verify_inbound_proof`].
+///
+/// `object` must be the document exactly as received. JCS hashes bytes,
+/// so this has to run before anything derives from or rewrites the
+/// document. It is the same constraint that requires `ap_object` to be
+/// persisted verbatim rather than sanitised in place: rewriting the
+/// record would destroy the bytes a stored `TRUE` refers to.
+async fn verify_object_proof(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    object: &serde_json::Value,
+    expected_author: &str,
+    ap_id: &str,
+) -> Result<Option<bool>> {
+    match relay_verify::verify_inbound_proof(pool, http_client, object, expected_author).await {
+        VerificationResult::Valid => Ok(Some(true)),
+        VerificationResult::Absent => Ok(None),
+        VerificationResult::Invalid => {
+            warn!(
+                ap_id,
+                "object carries an integrity proof that does not verify; discarding"
+            );
+            Err(NoombatError::Forbidden)
+        }
+    }
 }
 
 /// Extract and sanitise the renderable content of a remote object.
@@ -720,6 +867,12 @@ async fn handle_create(
         .and_then(|v| v.as_str())
         .ok_or_else(|| NoombatError::BadRequest("Create object missing id".into()))?;
 
+    // Before `extract_remote_content`, which is the first thing to
+    // derive from the document. The row is attributed to `activity.actor`
+    // (see `remote_actor` below), so that is who the proof must come from.
+    let integrity_proof_verified =
+        verify_object_proof(pool, http_client, object, &activity.actor, ap_id).await?;
+
     let content = extract_remote_content(object);
 
     let post_type = match object_type {
@@ -796,9 +949,23 @@ async fn handle_create(
         in_reply_to,
         visibility,
         ap_object: activity.object.clone(),
+        integrity_proof_verified,
     };
 
     let post_id = repo::create_remote_post(pool, &remote_post).await?;
+
+    // A concurrent delivery won the insert. The proof this delivery
+    // verified still applies to the same bytes, so hand it over rather
+    // than dropping it; nothing re-verifies a stored row later.
+    if post_id.is_none()
+        && integrity_proof_verified == Some(true)
+        && let Err(e) = repo::record_verified_proof(pool, ap_id).await
+    {
+        warn!(
+            ap_id,
+            "failed to record a verified proof on an existing row: {e}"
+        );
+    }
 
     // ..... HASHTAG LINKING .....
     //
@@ -1059,6 +1226,9 @@ async fn handle_update_post(
     // Resolve the remote author (may already be cached).
     let _remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
 
+    let integrity_proof_verified =
+        verify_object_proof(pool, http_client, object, &activity.actor, ap_id).await?;
+
     let content = extract_remote_content(object);
 
     let title = object.get("name").and_then(|v| v.as_str());
@@ -1082,8 +1252,10 @@ async fn handle_update_post(
                featured_image_url = $6,
                visibility = $7,
                in_reply_to = $8,
-               ap_object = $9
-           WHERE ap_id = $1"#,
+               ap_object = $9,
+               integrity_proof_verified = $10
+           WHERE ap_id = $1
+             AND actor_id = (SELECT id FROM actors WHERE ap_id = $11)"#,
     )
     .bind(ap_id)
     .bind(&content.content_md)
@@ -1094,6 +1266,8 @@ async fn handle_update_post(
     .bind(&visibility)
     .bind(&in_reply_to)
     .bind(object)
+    .bind(integrity_proof_verified)
+    .bind(&activity.actor)
     .execute(pool)
     .await?
     .rows_affected();
@@ -1343,6 +1517,14 @@ async fn fetch_and_persist_remote_post(
         })
         .ok_or_else(|| NoombatError::Federation("fetched object missing attributedTo".into()))?;
 
+    // The proof check comes first on this path too, ahead of both the
+    // content extraction below and the de-duplication further down.
+    // `author_uri` is the document's own `attributedTo`, and it is also
+    // what `actor_id` is set from, so it is exactly the party the proof
+    // has to come from.
+    let integrity_proof_verified =
+        verify_object_proof(pool, http_client, &object, author_uri, ap_id).await?;
+
     let content = extract_remote_content(&object);
 
     let title = object
@@ -1360,6 +1542,11 @@ async fn fetch_and_persist_remote_post(
     // Cross-post de-duplication: if a local post already matches
     // the canonical URI or URL of this object, return its UUID
     // rather than creating a duplicate.
+    //
+    // Deliberately below the proof check above: a document that fails its
+    // own proof must be refused whether or not it happens to collide with
+    // something we already hold, and returning early here would have
+    // skipped the check entirely.
     if let Ok(Some(existing_id)) = crate::crosspost::try_dedup(pool, &object).await {
         info!(
             ap_id,
@@ -1387,11 +1574,24 @@ async fn fetch_and_persist_remote_post(
         in_reply_to,
         visibility,
         ap_object: object.clone(),
+        integrity_proof_verified,
     };
 
     // Persist the post. If it was inserted by a concurrent request in
     // the meantime, `create_remote_post` returns `None`; fall back to
     // a lookup.
+    if integrity_proof_verified == Some(true) {
+        // Same reasoning as the `Create` path: the row may already exist,
+        // and a verified proof about these bytes should not be lost to a
+        // race. A no-op when the insert below wins.
+        if let Err(e) = repo::record_verified_proof(pool, ap_id).await {
+            warn!(
+                ap_id,
+                "failed to record a verified proof on an existing row: {e}"
+            );
+        }
+    }
+
     let post_id = match repo::create_remote_post(pool, &remote_post).await? {
         Some(id) => {
             // Record the canonical URI (if present) so that future
@@ -2028,11 +2228,14 @@ mod tests {
 
         // The key at `attacker.example` signed the request, but the activity
         // claims to come from a local actor.
+        let activity = activity_from("https://noombat.social/users/admin");
+        let document = serde_json::to_value(&activity).expect("activity serialises");
         let result = process_activity(
             &pool,
             &client,
             "https://attacker.example/users/mallory",
-            activity_from("https://noombat.social/users/admin"),
+            &document,
+            activity,
         )
         .await;
 
@@ -2050,11 +2253,14 @@ mod tests {
         // `verified_actor` is the keyId with its fragment stripped by the
         // caller (see noombat-api::routes::federation), so a legitimate
         // `...#main-key` signature matches the bare actor URI here.
+        let activity = activity_from("https://remote.example/users/alice");
+        let document = serde_json::to_value(&activity).expect("activity serialises");
         let result = process_activity(
             &pool,
             &client,
             "https://remote.example/users/alice",
-            activity_from("https://remote.example/users/alice"),
+            &document,
+            activity,
         )
         .await;
 
@@ -2308,6 +2514,474 @@ mod tests {
         .expect("actor fixture inserted");
     }
 
+    /// Insert a remote actor whose Ed25519 public key is cached, which
+    /// is what `attempt_proof_verification` looks up. Returns the raw
+    /// 32-byte secret so the test can sign as that actor.
+    async fn insert_actor_with_ed25519(pool: &PgPool, ap_id: &str) -> [u8; 32] {
+        let keypair =
+            noombat_identity::keys::generate_ed25519_keypair().expect("keypair generated");
+        // Username derived from the URI so two fixtures can coexist.
+        let username = ap_id.rsplit('/').next().unwrap_or("someone").to_owned();
+        sqlx::query(
+            r#"INSERT INTO actors
+                   (actor_type, ap_id, username, domain, public_key_pem, is_local,
+                    ed25519_public_key)
+               VALUES ('individual', $1, $3, 'example.test', 'KEY', FALSE, $2)"#,
+        )
+        .bind(ap_id)
+        .bind(&keypair.public_multibase)
+        .bind(&username)
+        .execute(pool)
+        .await
+        .expect("actor fixture inserted");
+
+        crate::integrity_proof::decode_private_key_base64(&keypair.private_base64)
+            .expect("private key decodes")
+    }
+
+    async fn post_count(pool: &PgPool, ap_id: &str) -> i64 {
+        sqlx::query_scalar("SELECT count(*) FROM posts WHERE ap_id = $1")
+            .bind(ap_id)
+            .fetch_one(pool)
+            .await
+            .expect("count runs")
+    }
+
+    /// Build a `Create` whose inner object is the given value.
+    fn create_activity(actor_uri: &str, object: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "id": "https://remote.example/activities/1",
+            "type": "Create",
+            "actor": actor_uri,
+            "to": ["https://www.w3.org/ns/activitystreams#Public"],
+            "object": object,
+        })
+    }
+
+    /// Half of the P1-8 acceptance criterion: a valid proof is recorded.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_with_valid_proof_records_it_verified(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut object = serde_json::json!({
+            "id": post_uri,
+            "type": "Note",
+            "attributedTo": actor_uri,
+            "content": "<p>signed</p>",
+        });
+        crate::integrity_proof::sign(&mut object, &secret, &format!("{actor_uri}#ed25519-key"))
+            .expect("object signs");
+
+        let document = create_activity(actor_uri, object);
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("create processes");
+
+        let verified: Option<bool> =
+            sqlx::query_scalar("SELECT integrity_proof_verified FROM posts WHERE ap_id = $1")
+                .bind(post_uri)
+                .fetch_one(&pool)
+                .await
+                .expect("post row present");
+
+        assert_eq!(
+            verified,
+            Some(true),
+            "a valid proof must be recorded as TRUE"
+        );
+    }
+
+    /// The other half: a proof that does not match the document it
+    /// travels with is not merely flagged, the object is not stored.
+    ///
+    /// The audit's criterion also asks that this row read `FALSE`. Both
+    /// cannot hold at once, and discarding is the safer of the two: see
+    /// the note on `verify_object_proof`.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_with_tampered_proof_is_not_persisted(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut object = serde_json::json!({
+            "id": post_uri,
+            "type": "Note",
+            "attributedTo": actor_uri,
+            "content": "<p>original</p>",
+        });
+        crate::integrity_proof::sign(&mut object, &secret, &format!("{actor_uri}#ed25519-key"))
+            .expect("object signs");
+
+        // Flip the content after signing, leaving the proof in place.
+        object["content"] = serde_json::json!("<p>substituted</p>");
+
+        let document = create_activity(actor_uri, object);
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        let result = process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "expected Forbidden for a proof that does not match its document, got {result:?}"
+        );
+
+        let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM posts WHERE ap_id = $1")
+            .bind(post_uri)
+            .fetch_one(&pool)
+            .await
+            .expect("count runs");
+        assert_eq!(
+            rows, 0,
+            "a document failing its own proof must not be stored"
+        );
+    }
+
+    /// An unproven object is ordinary: the HTTP Signature already
+    /// authenticated the delivery, so it is stored with a NULL rather
+    /// than being treated as suspect.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_without_proof_records_null(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        insert_actor(&pool, actor_uri, false).await;
+
+        let document = create_activity(
+            actor_uri,
+            serde_json::json!({
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": actor_uri,
+                "content": "<p>unproven</p>",
+            }),
+        );
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("create processes");
+
+        let verified: Option<bool> =
+            sqlx::query_scalar("SELECT integrity_proof_verified FROM posts WHERE ap_id = $1")
+                .bind(post_uri)
+                .fetch_one(&pool)
+                .await
+                .expect("post row present");
+
+        assert_eq!(verified, None, "no proof must record NULL, not FALSE");
+    }
+
+    /// An `Update` may only rewrite a post its sender owns.
+    ///
+    /// The guard above the statement compares `activity.actor` to the
+    /// object's `attributedTo`, both of which the sender supplies, so it
+    /// is self-satisfying. The predicate in the SQL is the real check.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn update_cannot_rewrite_another_actors_post(pool: PgPool) {
+        let alice = "https://remote.example/users/alice";
+        let mallory = "https://remote.example/users/mallory";
+        let post_uri = "https://remote.example/posts/1";
+        insert_actor(&pool, alice, false).await;
+        insert_actor_with_ed25519(&pool, mallory).await;
+
+        let alice_id: uuid::Uuid = sqlx::query_scalar("SELECT id FROM actors WHERE ap_id = $1")
+            .bind(alice)
+            .fetch_one(&pool)
+            .await
+            .expect("actor present");
+
+        sqlx::query(
+            r#"INSERT INTO posts (actor_id, ap_id, post_type, content_md, content_html,
+                                  visibility, ap_object, integrity_proof_verified)
+               VALUES ($1, $2, 'note', NULL, '<p>alice wrote this</p>', 'public', '{}'::jsonb, TRUE)"#,
+        )
+        .bind(alice_id)
+        .bind(post_uri)
+        .execute(&pool)
+        .await
+        .expect("post fixture inserted");
+
+        // Mallory claims the post as her own and rewrites it. Both fields
+        // the pre-existing guard compares are hers, so it lets her past.
+        let document = serde_json::json!({
+            "id": "https://remote.example/activities/9",
+            "type": "Update",
+            "actor": mallory,
+            "object": {
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": mallory,
+                "content": "<p>mallory wrote this</p>"
+            }
+        });
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        process_activity(&pool, &reqwest::Client::new(), mallory, &document, activity)
+            .await
+            .expect("update is ignored, not an error");
+
+        let (html, verified): (String, Option<bool>) = sqlx::query_as(
+            "SELECT content_html, integrity_proof_verified FROM posts WHERE ap_id = $1",
+        )
+        .bind(post_uri)
+        .fetch_one(&pool)
+        .await
+        .expect("post row present");
+
+        assert_eq!(html, "<p>alice wrote this</p>", "content must be untouched");
+        assert_eq!(verified, Some(true), "the integrity flag must be untouched");
+    }
+
+    /// A proof carrying the wrong purpose is not an authorship assertion,
+    /// so it must not produce a `TRUE`, and must not discard the post
+    /// either.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_with_a_non_assertion_proof_records_null(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut object = serde_json::json!({
+            "id": post_uri,
+            "type": "Note",
+            "attributedTo": actor_uri,
+            "content": "<p>signed for something else</p>",
+        });
+        // Minted as an authentication proof. Editing a signed one would
+        // break the signature and test the `Invalid` branch instead.
+        crate::integrity_proof::sign_with_config_for_test(
+            &mut object,
+            &secret,
+            serde_json::json!({
+                "type": crate::integrity_proof::PROOF_TYPE,
+                "cryptosuite": crate::integrity_proof::CRYPTOSUITE,
+                "verificationMethod": format!("{actor_uri}#ed25519-key"),
+                "proofPurpose": "authentication",
+                "created": "2026-01-01T00:00:00Z",
+            }),
+        )
+        .expect("object signs");
+
+        let document = create_activity(actor_uri, object);
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("the post is still accepted");
+
+        let verified: Option<bool> =
+            sqlx::query_scalar("SELECT integrity_proof_verified FROM posts WHERE ap_id = $1")
+                .bind(post_uri)
+                .fetch_one(&pool)
+                .await
+                .expect("post row present");
+        assert_eq!(
+            verified, None,
+            "an authentication proof is not an assertion"
+        );
+    }
+
+    /// A proof is only evidence of authorship if it comes from the
+    /// author. Two cached actors is all it takes to show the difference.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_with_a_proof_from_another_actor_is_refused(pool: PgPool) {
+        let alice = "https://remote.example/users/alice";
+        let bob = "https://remote.example/users/bob";
+        let post_uri = "https://remote.example/posts/1";
+        insert_actor_with_ed25519(&pool, alice).await;
+        let bob_secret = insert_actor_with_ed25519(&pool, bob).await;
+
+        // Attributed to alice, delivered by alice, signed by bob.
+        let mut object = serde_json::json!({
+            "id": post_uri,
+            "type": "Note",
+            "attributedTo": alice,
+            "content": "<p>put words in alice's mouth</p>",
+        });
+        crate::integrity_proof::sign(&mut object, &bob_secret, &format!("{bob}#ed25519-key"))
+            .expect("object signs");
+
+        let document = create_activity(alice, object);
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        let result =
+            process_activity(&pool, &reqwest::Client::new(), alice, &document, activity).await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "a proof signed by someone other than the author must be refused, got {result:?}"
+        );
+        assert_eq!(post_count(&pool, post_uri).await, 0);
+    }
+
+    /// Naming an actor we hold no key for must not be a way to switch
+    /// verification off: that would turn the discard into a store.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn create_with_a_proof_naming_an_unknown_actor_is_refused(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut object = serde_json::json!({
+            "id": post_uri,
+            "type": "Note",
+            "attributedTo": actor_uri,
+            "content": "<p>tampered</p>",
+        });
+        crate::integrity_proof::sign(
+            &mut object,
+            &secret,
+            "https://elsewhere.example/users/nobody#ed25519-key",
+        )
+        .expect("object signs");
+        object["content"] = serde_json::json!("<p>substituted</p>");
+
+        let document = create_activity(actor_uri, object);
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+
+        let result = process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "a proof naming a stranger must be refused, got {result:?}"
+        );
+        assert_eq!(post_count(&pool, post_uri).await, 0);
+    }
+
+    /// The envelope gate had no test at all: deleting it left the whole
+    /// suite green. These two cover both of its branches.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn envelope_proof_that_does_not_verify_rejects_the_activity(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut document = create_activity(
+            actor_uri,
+            serde_json::json!({
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": actor_uri,
+                "content": "<p>original</p>",
+            }),
+        );
+        crate::integrity_proof::sign(&mut document, &secret, &format!("{actor_uri}#ed25519-key"))
+            .expect("envelope signs");
+        // Tamper with the envelope after signing it.
+        document["object"]["content"] = serde_json::json!("<p>substituted</p>");
+
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+        let result = process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await;
+
+        assert!(
+            matches!(result, Err(NoombatError::Forbidden)),
+            "a broken envelope proof must reject the activity, got {result:?}"
+        );
+        assert_eq!(post_count(&pool, post_uri).await, 0);
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn envelope_proof_that_verifies_lets_the_activity_through(pool: PgPool) {
+        let actor_uri = "https://remote.example/users/alice";
+        let post_uri = "https://remote.example/posts/1";
+        let secret = insert_actor_with_ed25519(&pool, actor_uri).await;
+
+        let mut document = create_activity(
+            actor_uri,
+            serde_json::json!({
+                "id": post_uri,
+                "type": "Note",
+                "attributedTo": actor_uri,
+                "content": "<p>intact</p>",
+            }),
+        );
+        crate::integrity_proof::sign(&mut document, &secret, &format!("{actor_uri}#ed25519-key"))
+            .expect("envelope signs");
+
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("a valid envelope proof must not block the activity");
+
+        assert_eq!(post_count(&pool, post_uri).await, 1);
+
+        // The envelope is transport and is not stored, so the column
+        // still describes the object, which carries no proof of its own.
+        let verified: Option<bool> =
+            sqlx::query_scalar("SELECT integrity_proof_verified FROM posts WHERE ap_id = $1")
+                .bind(post_uri)
+                .fetch_one(&pool)
+                .await
+                .expect("post row present");
+        assert_eq!(verified, None);
+    }
+
     /// The acceptance criterion for P0-4: deliver the attack payload
     /// down the real `Create` path and read the row back.
     ///
@@ -2327,7 +3001,7 @@ mod tests {
                        <style>body{display:none}</style>\
                        <p>legitimate</p>";
 
-        let activity: Activity = serde_json::from_value(serde_json::json!({
+        let document = serde_json::json!({
             "id": "https://remote.example/activities/1",
             "type": "Create",
             "actor": actor_uri,
@@ -2338,12 +3012,19 @@ mod tests {
                 "attributedTo": actor_uri,
                 "content": hostile
             }
-        }))
-        .expect("activity deserialises");
+        });
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
 
-        process_activity(&pool, &reqwest::Client::new(), actor_uri, activity)
-            .await
-            .expect("create processes");
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("create processes");
 
         let (html, md, ver): (String, Option<String>, i16) = sqlx::query_as(
             "SELECT content_html, content_md, sanitiser_version FROM posts WHERE ap_id = $1",
@@ -2408,7 +3089,7 @@ mod tests {
         .await
         .expect("post fixture inserted");
 
-        let activity: Activity = serde_json::from_value(serde_json::json!({
+        let document = serde_json::json!({
             "id": "https://remote.example/activities/1",
             "type": "Update",
             "actor": actor_uri,
@@ -2418,12 +3099,19 @@ mod tests {
                 "attributedTo": actor_uri,
                 "content": "<p>new</p><script>alert(1)</script>"
             }
-        }))
-        .expect("activity deserialises");
+        });
+        let activity: Activity =
+            serde_json::from_value(document.clone()).expect("activity deserialises");
 
-        process_activity(&pool, &reqwest::Client::new(), actor_uri, activity)
-            .await
-            .expect("update processes");
+        process_activity(
+            &pool,
+            &reqwest::Client::new(),
+            actor_uri,
+            &document,
+            activity,
+        )
+        .await
+        .expect("update processes");
 
         let (html, ver, title): (String, i16, Option<String>) = sqlx::query_as(
             "SELECT content_html, sanitiser_version, title FROM posts WHERE ap_id = $1",

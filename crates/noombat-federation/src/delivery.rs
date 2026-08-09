@@ -279,7 +279,7 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
     // HTTP Signature covers the body digest.
     let mut payload = row.payload.clone();
     if let Some(ref ed25519_key) = creds.ed25519_private_key {
-        let vm_id = format!("{}#ed25519-key", creds.ap_id);
+        let vm_id = crate::integrity_proof::verification_method_id(&creds.ap_id);
         if let Err(e) = crate::integrity_proof::sign(&mut payload, ed25519_key, &vm_id) {
             // Non-fatal: the activity is still delivered without a
             // proof; HTTP Signatures remain the primary authentication

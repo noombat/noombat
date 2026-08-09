@@ -19,6 +19,7 @@ use uuid::Uuid;
 use noombat_ap::context::{AS_CONTEXT, default_context};
 use noombat_core::error::NoombatError;
 use noombat_markup::headings::Heading;
+use tracing::warn;
 
 use crate::error::ApiError;
 use crate::i18n::I18n;
@@ -114,13 +115,35 @@ async fn get_post(
             .cloned()
             .unwrap_or_else(|| row.ap_object.clone());
 
-        // Ensure the `@context` is present (the inner object from
-        // local posts omits it because the wrapping Create carries
-        // it). Re-set `id` from the authoritative column to guard
-        // against stale stored values.
+        // Fill these in only when they are missing.
+        //
+        // Both used to be overwritten unconditionally: `@context` because
+        // an inner object nested in a Create may omit it, and `id` to
+        // guard against a stale stored value. Neither can be rewritten
+        // now. Locally published objects carry an FEP-8b32 proof computed
+        // over the document including these properties, so replacing them
+        // invalidates the proof of every object we serve, which is the
+        // one redistribution path that exists today.
+        //
+        // A stored `id` that disagrees with the column is a real
+        // inconsistency rather than an absence, so it is still corrected,
+        // and loudly: the proof is already void in that case.
         let mut obj = inner;
-        obj["@context"] = serde_json::json!(default_context());
-        obj["id"] = serde_json::json!(row.ap_id);
+        if obj.get("@context").is_none() {
+            obj["@context"] = serde_json::json!(default_context());
+        }
+        match obj.get("id").and_then(|v| v.as_str()) {
+            Some(stored) if stored == row.ap_id => {}
+            Some(stored) => {
+                warn!(
+                    stored,
+                    authoritative = %row.ap_id,
+                    "stored ap_object id disagrees with the posts row; correcting"
+                );
+                obj["id"] = serde_json::json!(row.ap_id);
+            }
+            None => obj["id"] = serde_json::json!(row.ap_id),
+        }
 
         // Set the human-facing `url` property if absent.
         if obj.get("url").is_none() {
