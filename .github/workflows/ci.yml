@@ -31,6 +31,8 @@ on:
       - "rustfmt.toml"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-typst-injection.sh"
+      - "templates/**"
   pull_request:
     branches: [main]
     paths:
@@ -44,6 +46,8 @@ on:
       - "rustfmt.toml"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-typst-injection.sh"
+      - "templates/**"
   workflow_dispatch:
     inputs:
       release:
@@ -120,6 +124,28 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - name: "Reject duplicate versions and irreversible migrations"
         run: scripts/check-migrations.sh
+
+  typst-injection:
+    name: Typst injection
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Cache Cargo artefacts
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: cargo-typst-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-typst-
+      # Compiles the emitter's corpus with the real Typst binary. The
+      # unit tests assert that no user text leaves a string literal in
+      # the generated source; only the compiler can say what Typst then
+      # does with it.
+      - name: "Assert hostile CV markup compiles to inert text"
+        run: scripts/check-typst-injection.sh
 
   deny:
     name: Cargo Deny

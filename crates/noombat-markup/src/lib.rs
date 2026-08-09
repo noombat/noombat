@@ -16,7 +16,7 @@ pub mod sanitise;
 pub mod typst_conv;
 
 pub use headings::{extract_headings, inject_ids};
-pub use typst_conv::md_to_typst;
+pub use typst_conv::{TYPST_PRELUDE, md_to_typst_expr};
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 

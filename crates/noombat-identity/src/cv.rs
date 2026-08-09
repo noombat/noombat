@@ -63,6 +63,13 @@ pub async fn generate_cv_pdf(
     // ..... Assemble Typst source .....
     let mut src = String::with_capacity(4096);
 
+    // The prelude first, because every binding below is an expression
+    // built from its functions. It lives here rather than in a template
+    // file so that it precedes those bindings and covers every
+    // template, including any added later.
+    src.push_str(noombat_markup::TYPST_PRELUDE);
+    src.push('\n');
+
     // Inject all #let bindings expected by the template. The template
     // file contains no #let declarations of its own (doing so would
     // shadow these values).
@@ -83,8 +90,11 @@ pub async fn generate_cv_pdf(
     // content block `[]` is truthy and not equal to `""` or `none`).
     match actor.summary_md.as_deref() {
         Some(md) if !md.trim().is_empty() => {
-            let typst = noombat_markup::md_to_typst(md);
-            src.push_str(&format!("#let summary = [{typst}]\n"));
+            // Bound to the expression directly. Wrapping it in `[...]`
+            // would put it back in markup context, which is the whole
+            // thing this avoids.
+            let typst = noombat_markup::md_to_typst_expr(md);
+            src.push_str(&format!("#let summary = {typst}\n"));
         }
         _ => {
             src.push_str("#let summary = none\n");
@@ -93,7 +103,10 @@ pub async fn generate_cv_pdf(
 
     // ORCID iD (empty string when absent).
     match actor.orcid.as_deref() {
-        Some(orcid) => src.push_str(&format!("#let orcid = \"{orcid}\"\n")),
+        Some(orcid) => src.push_str(&format!(
+            "#let orcid = \"{}\"\n",
+            escape_typst_string(orcid)
+        )),
         None => src.push_str("#let orcid = \"\"\n"),
     }
 
@@ -104,10 +117,10 @@ pub async fn generate_cv_pdf(
         let desc = exp
             .description_md
             .as_deref()
-            .map(noombat_markup::md_to_typst)
-            .unwrap_or_default();
+            .map(noombat_markup::md_to_typst_expr)
+            .unwrap_or_else(|| "none".to_owned());
         src.push_str(&format!(
-            "  (title: \"{}\", company: \"{}\", dates: \"{dates}\", description: [{desc}]),\n",
+            "  (title: \"{}\", company: \"{}\", dates: \"{dates}\", description: {desc}),\n",
             escape_typst_string(&exp.title),
             escape_typst_string(&exp.company),
         ));
@@ -121,12 +134,12 @@ pub async fn generate_cv_pdf(
         let desc = edu
             .description_md
             .as_deref()
-            .map(noombat_markup::md_to_typst)
-            .unwrap_or_default();
+            .map(noombat_markup::md_to_typst_expr)
+            .unwrap_or_else(|| "none".to_owned());
         let degree = edu.degree.as_deref().unwrap_or("");
         let field = edu.field_of_study.as_deref().unwrap_or("");
         src.push_str(&format!(
-            "  (institution: \"{}\", degree: \"{}\", field: \"{}\", dates: \"{dates}\", description: [{desc}]),\n",
+            "  (institution: \"{}\", degree: \"{}\", field: \"{}\", dates: \"{dates}\", description: {desc}),\n",
             escape_typst_string(&edu.institution),
             escape_typst_string(degree),
             escape_typst_string(field),
@@ -227,17 +240,20 @@ async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
 
 /// Escape a string for embedding in a Typst string literal.
 fn escape_typst_string(s: &str) -> String {
-    s.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('#', "\\#")
+    // Backslash and quote only. `\#` is *not* a Typst string escape:
+    // the compiler keeps both characters, so escaping a hash here put a
+    // stray backslash in front of every one, and a headline of "C#"
+    // typeset as "C\#". Verified against typst 0.15:
+    // `assert.eq("a\#b".len(), 4)` passes.
+    s.replace('\\', "\\\\").replace('"', "\\\"")
 }
 
-/// Format a date range as `"Jan 2020 – Dec 2023"` or `"Jan 2020 – present"`.
+/// Format a date range as `"Jan 2020 - Dec 2023"` or `"Jan 2020 - present"`.
 fn format_date_range(start: chrono::NaiveDate, end: Option<chrono::NaiveDate>) -> String {
     let start_str = start.format("%b %Y").to_string();
     match end {
-        Some(e) => format!("{start_str} – {}", e.format("%b %Y")),
-        None => format!("{start_str} – present"),
+        Some(e) => format!("{start_str} - {}", e.format("%b %Y")),
+        None => format!("{start_str} - present"),
     }
 }
 
@@ -304,21 +320,29 @@ fn format_citation(
 mod tests {
     use super::*;
 
+    /// Backslash and quote are escaped. A hash is not.
+    ///
+    /// This assertion used to require `C#` to become `C\#`, which is
+    /// what the function did and what typst does not want: `\#` is not
+    /// a string escape, so the compiler keeps both characters and the
+    /// PDF read `C\#`. Confirmed against typst 0.15, where
+    /// `assert.eq("a\#b".len(), 4)` passes and `"C\#".len()` is 3.
     #[test]
     fn escape_special_chars() {
-        assert_eq!(escape_typst_string("C# \"dev\""), "C\\# \\\"dev\\\"");
+        assert_eq!(escape_typst_string(r#"C# "dev""#), r#"C# \"dev\""#);
+        assert_eq!(escape_typst_string(r"back\slash"), r"back\\slash");
     }
 
     #[test]
     fn date_range_with_end() {
         let start = chrono::NaiveDate::from_ymd_opt(2020, 1, 15).unwrap();
         let end = chrono::NaiveDate::from_ymd_opt(2023, 12, 1);
-        assert_eq!(format_date_range(start, end), "Jan 2020 – Dec 2023");
+        assert_eq!(format_date_range(start, end), "Jan 2020 - Dec 2023");
     }
 
     #[test]
     fn date_range_present() {
         let start = chrono::NaiveDate::from_ymd_opt(2022, 6, 1).unwrap();
-        assert_eq!(format_date_range(start, None), "Jun 2022 – present");
+        assert_eq!(format_date_range(start, None), "Jun 2022 - present");
     }
 }
