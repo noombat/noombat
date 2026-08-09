@@ -767,22 +767,9 @@ async fn delete_actor_handler(
 
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
-    // Fetch the follower inbox list BEFORE tombstoning, because
-    // tombstone_actor deletes the follow relationships.
-    let inboxes = noombat_identity::repo::get_follower_inboxes(&state.pool, actor.id)
-        .await
-        .unwrap_or_default();
-
-    // Tombstone the actor (clears personal data, retains ap_id for
-    // federation consistency) and retrieve the pre-tombstone snapshot.
-    let pre_tombstone = noombat_identity::repo::tombstone_actor(&state.pool, actor.id).await?;
-
-    // Broadcast a Delete activity to all accepted followers so that
-    // remote instances remove their cached copy.
-    noombat_federation::delete::broadcast_delete(&state.pool, &pre_tombstone, &inboxes).await;
-
-    // Purge the actor's data from Meilisearch search indices.
-    crate::search_sync::remove_from_index(&state.search, "profiles", &actor.id.to_string());
+    // Shared with the grace-period worker in `crate::erasure`, which
+    // is where the inbox-before-tombstone ordering is explained.
+    crate::erasure::erase_actor(&state.pool, &state.search, actor.id).await?;
     // Posts were deleted by tombstone_actor; their Meilisearch
     // documents will become stale. A full reindex or per-post
     // removal is deferred to the search sync worker.

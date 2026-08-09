@@ -53,7 +53,7 @@ fn require_actor(
 /// `GET /api/v1/me/export`
 ///
 /// Returns a ZIP archive containing the authenticated user's data in
-/// JSON-LD–compatible format. The archive is generated in memory.
+/// JSON-LD-compatible format. The archive is generated in memory.
 async fn export_data(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
@@ -295,7 +295,7 @@ async fn request_deletion(
 
     Ok(Json(serde_json::json!({
         "status": "deletion_pending",
-        "grace_period_days": 30,
+        "grace_period_days": state.deletion_grace_days,
     })))
 }
 

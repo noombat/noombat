@@ -139,6 +139,12 @@ struct Config {
     /// (default 10).
     #[serde(default = "default_typst_timeout")]
     typst_timeout_secs: u64,
+    /// Days between an account deletion request and the erasure that
+    /// completes it (default 30). Read both by the API that quotes the
+    /// figure back to the user and by the worker that acts on it, so
+    /// the promise and the behaviour cannot drift apart.
+    #[serde(default = "default_deletion_grace_days")]
+    deletion_grace_days: i32,
     /// Hex-encoded 256-bit key-encryption key (KEK) for envelope
     /// encryption of secrets at rest. 64 hex characters (32 bytes).
     /// Required in production; if unset, secrets are stored as
@@ -190,6 +196,9 @@ fn default_typst_concurrency() -> usize {
 }
 fn default_typst_timeout() -> u64 {
     10
+}
+fn default_deletion_grace_days() -> i32 {
+    30
 }
 
 /// The migration set compiled into this binary.
@@ -489,6 +498,12 @@ async fn main() -> anyhow::Result<()> {
             config.cv_download_window_secs
         );
     }
+    if config.deletion_grace_days < 0 {
+        anyhow::bail!(
+            "deletion_grace_days ({}) must be >= 0",
+            config.deletion_grace_days
+        );
+    }
     if config.typst_max_concurrent == 0 || config.typst_timeout_secs == 0 {
         anyhow::bail!(
             "typst_max_concurrent ({}) and typst_timeout_secs ({}) must both be > 0",
@@ -509,6 +524,7 @@ async fn main() -> anyhow::Result<()> {
         cv_download_window_secs = config.cv_download_window_secs,
         typst_max_concurrent = config.typst_max_concurrent,
         typst_timeout_secs = config.typst_timeout_secs,
+        deletion_grace_days = config.deletion_grace_days,
         "rate and resource limits in force"
     );
 
@@ -563,10 +579,25 @@ async fn main() -> anyhow::Result<()> {
         rate_limit_window_secs: config.rate_limit_window_secs,
         fed_rate_limit: config.fed_rate_limit as i64,
         fed_rate_limit_window_secs: config.fed_rate_limit_window_secs,
+        deletion_grace_days: config.deletion_grace_days,
         cv_download_limit: config.cv_download_limit as i64,
         cv_download_window_secs: config.cv_download_window_secs,
         allow_unsigned_fetch: config.allow_unsigned_fetch,
     };
+    // Spawn the account erasure worker before the router, so a restart
+    // during a grace period still completes it. Hourly: the grace
+    // period is measured in days, so the cost of a slightly late
+    // erasure is nil and the cost of a busy loop is not.
+    {
+        let pool = state.pool.clone();
+        let search = state.search.clone();
+        let grace_days = config.deletion_grace_days;
+        tokio::spawn(async move {
+            noombat_api::erasure::run_worker(pool, search, grace_days, Duration::from_secs(3600))
+                .await;
+        });
+    }
+
     let app = noombat_api::build_router(state);
 
     // Spawn the trending hashtags background worker.

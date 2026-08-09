@@ -87,6 +87,10 @@ pub struct AppState {
     pub cv_download_limit: i64,
     /// Window for [`Self::cv_download_limit`], in seconds.
     pub cv_download_window_secs: i64,
+    /// Days between a deletion request and the erasure that completes
+    /// it. Quoted to the user by the deletion API and acted on by the
+    /// erasure worker, from this one value.
+    pub deletion_grace_days: i32,
     /// Whether signed-fetch failures fall back to unsigned GET
     /// (default `false`).
     pub allow_unsigned_fetch: bool,

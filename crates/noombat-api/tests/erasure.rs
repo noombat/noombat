@@ -1,0 +1,167 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+//! The account erasure grace period, end to end against the database.
+//!
+//! The bug these exist for is not a wrong answer, it is a missing
+//! actor: `deletion_requested_at` was written by the API, read only to
+//! decide what to display, and consumed by nothing. Every unit test of
+//! `tombstone_actor` passed throughout, because `tombstone_actor` was
+//! never the broken part. So these drive the sweep, and the assertions
+//! are about the boundary (who is picked up) and the effect (what is
+//! actually gone), not about the pieces.
+//!
+//! The effect assertion matters most. Erasure that flags the actor row
+//! and leaves the career history behind would satisfy any test that
+//! only checked `actor_status`, and would be a data-protection failure
+//! dressed as a pass.
+
+use std::sync::Arc;
+
+use noombat_core::extension::SearchBackend;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+const DOMAIN: &str = "noombat.example";
+const GRACE_DAYS: i32 = 30;
+
+/// No search backend: the index removal is spawned and asserted
+/// elsewhere (`privacy_settings.rs` covers the recording-fake pattern).
+/// What is under test here is the database effect.
+fn no_search() -> Option<Arc<dyn SearchBackend>> {
+    None
+}
+
+/// Insert a local actor, optionally with a deletion requested `days`
+/// ago, plus one row of career history to prove erasure reaches past
+/// the actors table.
+async fn insert_actor(pool: &PgPool, username: &str, requested_days_ago: Option<i32>) -> Uuid {
+    let id = Uuid::new_v4();
+
+    sqlx::query(
+        r#"INSERT INTO actors
+               (id, actor_type, ap_id, username, domain, public_key_pem, is_local,
+                display_name, summary_md, deletion_requested_at)
+           VALUES ($1, 'individual', $2, $3, $4, 'PEM', TRUE, 'Real Name', 'a summary',
+                   CASE WHEN $5::int IS NULL THEN NULL
+                        ELSE now() - ($5::text || ' days')::interval END)"#,
+    )
+    .bind(id)
+    .bind(format!("https://{DOMAIN}/users/{username}"))
+    .bind(username)
+    .bind(DOMAIN)
+    .bind(requested_days_ago)
+    .execute(pool)
+    .await
+    .expect("actor fixture inserted");
+
+    sqlx::query(
+        "INSERT INTO experiences \
+             (actor_id, title, company, start_date, visibility, ap_object) \
+         VALUES ($1, 'Engineer', 'Acme', '2020-01-01', 'public', '{}'::jsonb)",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .expect("experience fixture inserted");
+
+    id
+}
+
+async fn experience_count(pool: &PgPool, actor_id: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM experiences WHERE actor_id = $1")
+        .bind(actor_id)
+        .fetch_one(pool)
+        .await
+        .expect("countable")
+}
+
+async fn display_name(pool: &PgPool, actor_id: Uuid) -> Option<String> {
+    sqlx::query_scalar("SELECT display_name FROM actors WHERE id = $1")
+        .bind(actor_id)
+        .fetch_one(pool)
+        .await
+        .expect("actor row present")
+}
+
+/// The boundary: past the grace period is erased, inside it is not.
+///
+/// Both directions in one test on purpose. A sweep that erased
+/// everything would pass a "the expired one is gone" assertion, and a
+/// sweep that erased nothing would pass "the recent one survives".
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_sweep_erases_only_expired_requests(pool: PgPool) {
+    let expired = insert_actor(&pool, "expired", Some(GRACE_DAYS + 1)).await;
+    let recent = insert_actor(&pool, "recent", Some(1)).await;
+    let never = insert_actor(&pool, "never", None).await;
+
+    let erased = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+
+    assert_eq!(erased, 1, "exactly the one past its grace period");
+    assert_eq!(display_name(&pool, expired).await, None, "expired erased");
+    assert_eq!(
+        display_name(&pool, recent).await.as_deref(),
+        Some("Real Name"),
+        "a request one day old is still inside the grace period"
+    );
+    assert_eq!(
+        display_name(&pool, never).await.as_deref(),
+        Some("Real Name"),
+        "an account that never asked must never be touched"
+    );
+}
+
+/// Erasure reaches past the actors row.
+///
+/// Career history is the thing this instance exists to hold, and it is
+/// the thing a "mark the account deleted" implementation would leave
+/// sitting in the database.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
+    let actor_id = insert_actor(&pool, "leaver", Some(GRACE_DAYS + 1)).await;
+    assert_eq!(
+        experience_count(&pool, actor_id).await,
+        1,
+        "fixture should start with career history"
+    );
+
+    noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+
+    assert_eq!(
+        experience_count(&pool, actor_id).await,
+        0,
+        "the experience row survived erasure"
+    );
+}
+
+/// A second sweep is a no-op.
+///
+/// `tombstone_actor` does not clear `deletion_requested_at`, so without
+/// care the same account is selected forever, re-erased on every pass
+/// and re-broadcast to every follower's inbox each hour.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_second_sweep_does_not_erase_again(pool: PgPool) {
+    insert_actor(&pool, "leaver", Some(GRACE_DAYS + 1)).await;
+
+    let first = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+    let second = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+
+    assert_eq!(first, 1, "the first sweep erases");
+    assert_eq!(second, 0, "the second must find nothing left to do");
+}
+
+/// A grace period of zero erases immediately, which is what an operator
+/// setting it to zero is asking for.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_zero_grace_period_erases_on_the_next_sweep(pool: PgPool) {
+    let actor_id = insert_actor(&pool, "immediate", Some(0)).await;
+
+    let erased = noombat_api::erasure::sweep(&pool, &no_search(), 0).await;
+
+    assert_eq!(erased, 1);
+    assert_eq!(display_name(&pool, actor_id).await, None);
+}

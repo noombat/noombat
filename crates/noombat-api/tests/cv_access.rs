@@ -68,6 +68,7 @@ fn test_state(pool: PgPool) -> AppState {
         fed_rate_limit_window_secs: 60,
         cv_download_limit: 100_000,
         cv_download_window_secs: 60,
+        deletion_grace_days: 30,
         allow_unsigned_fetch: false,
     }
 }
