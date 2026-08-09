@@ -164,6 +164,18 @@ fn default_rate_window() -> i64 {
     60
 }
 
+/// The migration set compiled into this binary.
+///
+/// Behind the one-liner is a footgun worth naming: `sqlx::migrate!`
+/// resolves `migrations/` at compile time, and on stable Rust cargo does
+/// not notice when a file is *added* to that directory. `build.rs` is
+/// what makes it notice. Going through a named function keeps the boot
+/// path and the test below on the same expansion, so the assertion is
+/// about the set this binary would actually apply.
+fn embedded_migrations() -> sqlx::migrate::Migrator {
+    sqlx::migrate!("../../migrations")
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env (if present) before reading configuration.
@@ -222,7 +234,7 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to connect to PostgreSQL");
 
     // Run pending migrations.
-    sqlx::migrate!("../../migrations")
+    embedded_migrations()
         .run(&pool)
         .await
         .expect("failed to run database migrations");
@@ -653,5 +665,77 @@ async fn shutdown_signal() {
     tokio::select! {
         _ = ctrl_c => info!("received Ctrl+C"),
         _ = terminate => info!("received SIGTERM"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::embedded_migrations;
+    use sqlx::migrate::{Migration, Migrator};
+    use std::path::{Path, PathBuf};
+
+    fn migrations_dir() -> PathBuf {
+        // From the manifest rather than the working directory, so the
+        // test does not depend on where the harness was started.
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../migrations");
+        // Only to keep `../..` out of the failure message.
+        dir.canonicalize().unwrap_or(dir)
+    }
+
+    /// Identity of a migration, for comparison and for error messages.
+    ///
+    /// Spelled out rather than comparing `Migration` values directly:
+    /// its `PartialEq` looks at the version and the type and nothing
+    /// else, so two migrations with the same number and different
+    /// contents compare equal. That is precisely the case in question.
+    fn identity(m: &Migration) -> String {
+        format!("{} {} ({:?})", m.version, m.description, m.migration_type)
+    }
+
+    /// The binary applies the migrations it was compiled with, not the
+    /// ones in the repository. When those differ, a fresh install gets a
+    /// schema missing whatever the newest migration adds, the server
+    /// reports success, and the failure surfaces later somewhere else
+    /// entirely. `build.rs` keeps them in step; this is the assertion
+    /// that it did.
+    ///
+    /// It holds even when the test binary itself is not recompiled: the
+    /// directory side is read at run time, so a cached binary carrying a
+    /// stale set still fails here rather than shipping.
+    #[tokio::test]
+    async fn embedded_migrations_match_the_directory() {
+        let dir = migrations_dir();
+        let on_disk = Migrator::new(dir.as_path())
+            .await
+            .expect("failed to read the migrations directory");
+
+        let compiled_in = embedded_migrations();
+
+        let compiled_names: Vec<String> = compiled_in.iter().map(identity).collect();
+        let disk_names: Vec<String> = on_disk.iter().map(identity).collect();
+
+        assert_eq!(
+            compiled_names,
+            disk_names,
+            "the migration set compiled into this binary does not match {}. \
+             Cargo did not re-expand sqlx::migrate!; see build.rs. \
+             A clean rebuild of noombat-server will resolve it.",
+            dir.display()
+        );
+
+        // Same migrations, and also the same bytes. Catches an edit made
+        // to a file whose expansion was already cached, which is the
+        // other half of the same problem.
+        for (compiled, disk) in compiled_in.iter().zip(on_disk.iter()) {
+            // `assert!` rather than `assert_eq!`: the digests are 48
+            // bytes each and printing both says nothing the name does
+            // not already say.
+            assert!(
+                compiled.checksum == disk.checksum,
+                "migration `{}` differs on disk from the copy compiled in. \
+                 A clean rebuild of noombat-server will resolve it.",
+                identity(disk)
+            );
+        }
     }
 }
