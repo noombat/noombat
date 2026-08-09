@@ -123,6 +123,22 @@ struct Config {
     /// Per-domain federation rate limit window in seconds (default 60).
     #[serde(default = "default_rate_window")]
     fed_rate_limit_window_secs: i64,
+    /// CV downloads allowed per requester per window (default 20).
+    /// Keyed per account when authenticated, per address when not.
+    #[serde(default = "default_cv_download_limit")]
+    cv_download_limit: u32,
+    /// CV download rate limit window in seconds (default 3600).
+    #[serde(default = "default_cv_download_window")]
+    cv_download_window_secs: i64,
+    /// Typst compilations allowed to run at once (default 4). Compiling
+    /// is CPU-bound, so this is really "cores you are willing to give
+    /// to CV generation".
+    #[serde(default = "default_typst_concurrency")]
+    typst_max_concurrent: usize,
+    /// Seconds a single Typst compilation may run before it is killed
+    /// (default 10).
+    #[serde(default = "default_typst_timeout")]
+    typst_timeout_secs: u64,
     /// Hex-encoded 256-bit key-encryption key (KEK) for envelope
     /// encryption of secrets at rest. 64 hex characters (32 bytes).
     /// Required in production; if unset, secrets are stored as
@@ -162,6 +178,18 @@ fn default_fed_rate_limit() -> u32 {
 }
 fn default_rate_window() -> i64 {
     60
+}
+fn default_cv_download_limit() -> u32 {
+    20
+}
+fn default_cv_download_window() -> i64 {
+    3600
+}
+fn default_typst_concurrency() -> usize {
+    4
+}
+fn default_typst_timeout() -> u64 {
+    10
 }
 
 /// The migration set compiled into this binary.
@@ -454,6 +482,41 @@ async fn main() -> anyhow::Result<()> {
             config.fed_rate_limit_window_secs
         );
     }
+    if config.cv_download_limit == 0 || config.cv_download_window_secs <= 0 {
+        anyhow::bail!(
+            "cv_download_limit ({}) and cv_download_window_secs ({}) must both be > 0",
+            config.cv_download_limit,
+            config.cv_download_window_secs
+        );
+    }
+    if config.typst_max_concurrent == 0 || config.typst_timeout_secs == 0 {
+        anyhow::bail!(
+            "typst_max_concurrent ({}) and typst_timeout_secs ({}) must both be > 0",
+            config.typst_max_concurrent,
+            config.typst_timeout_secs
+        );
+    }
+
+    // Logged because the quiet failure here is a ceiling set high enough
+    // to remove the protection. Nothing else would ever say so: an
+    // ineffective limit produces no error, no warning and no metric.
+    info!(
+        rate_limit = config.rate_limit,
+        rate_limit_window_secs = config.rate_limit_window_secs,
+        fed_rate_limit = config.fed_rate_limit,
+        fed_rate_limit_window_secs = config.fed_rate_limit_window_secs,
+        cv_download_limit = config.cv_download_limit,
+        cv_download_window_secs = config.cv_download_window_secs,
+        typst_max_concurrent = config.typst_max_concurrent,
+        typst_timeout_secs = config.typst_timeout_secs,
+        "rate and resource limits in force"
+    );
+
+    noombat_identity::cv::init_limits(noombat_identity::cv::TypstLimits {
+        max_concurrent: config.typst_max_concurrent,
+        timeout: Duration::from_secs(config.typst_timeout_secs),
+        ..Default::default()
+    });
     // One limiter for every call site. It holds a governor limiter per
     // distinct quota, so the ceilings validated above still apply
     // separately; they travel with each call rather than being baked in
@@ -500,6 +563,8 @@ async fn main() -> anyhow::Result<()> {
         rate_limit_window_secs: config.rate_limit_window_secs,
         fed_rate_limit: config.fed_rate_limit as i64,
         fed_rate_limit_window_secs: config.fed_rate_limit_window_secs,
+        cv_download_limit: config.cv_download_limit as i64,
+        cv_download_window_secs: config.cv_download_window_secs,
         allow_unsigned_fetch: config.allow_unsigned_fetch,
     };
     let app = noombat_api::build_router(state);

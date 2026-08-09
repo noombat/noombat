@@ -33,18 +33,6 @@ use crate::error::ApiError;
 use crate::middleware::Principal;
 use crate::state::AppState;
 
-/// CV downloads permitted per requester per window.
-///
-/// Deliberately far below the instance-wide request limit: every
-/// download spawns a Typst compilation, and the legitimate pattern is
-/// occasional rather than bulk. Anonymous requesters are keyed by
-/// address, authenticated ones by account, so rotating through profiles
-/// from one session does not buy extra budget.
-const CV_DOWNLOAD_LIMIT: i64 = 20;
-
-/// Window for [`CV_DOWNLOAD_LIMIT`], in seconds.
-const CV_DOWNLOAD_WINDOW_SECS: i64 = 3600;
-
 /// Query parameters for `GET /users/{username}/cv`.
 #[derive(Debug, Deserialize)]
 pub struct CvParams {
@@ -154,8 +142,8 @@ async fn download_cv(
     if let Some(limited) = crate::rate_limit::check_key(
         &state,
         &limit_key,
-        CV_DOWNLOAD_LIMIT,
-        CV_DOWNLOAD_WINDOW_SECS,
+        state.cv_download_limit,
+        state.cv_download_window_secs,
     )
     .await
     .into_response()

@@ -146,6 +146,17 @@ jobs:
       # does with it.
       - name: "Assert hostile CV markup compiles to inert text"
         run: scripts/check-typst-injection.sh
+      # The compile bounds need typst on PATH inside the test process,
+      # which the script's container cannot provide. This is the only
+      # job where that test actually runs: everywhere else it skips.
+      - name: Install the pinned typst binary
+        run: |
+          cid=$(docker create ghcr.io/typst/typst:0.15.0@sha256:b23ba03da5c085a2c8780bc9f2296db937abe1d0c75348cf2f8a9273199c3a14)
+          docker cp "$cid:/bin/typst" /usr/local/bin/typst
+          docker rm "$cid"
+          typst --version
+      - name: "Assert a slow compilation is killed, not abandoned"
+        run: cargo test -p noombat-identity --lib -- --include-ignored a_slow_compile
 
   deny:
     name: Cargo Deny

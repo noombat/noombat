@@ -82,6 +82,11 @@ pub struct AppState {
     pub fed_rate_limit: i64,
     /// Per-domain federation rate limit window in seconds (Redis primary).
     pub fed_rate_limit_window_secs: i64,
+    /// CV downloads allowed per requester per window. Far below the
+    /// instance-wide limit, because each one spawns a Typst compilation.
+    pub cv_download_limit: i64,
+    /// Window for [`Self::cv_download_limit`], in seconds.
+    pub cv_download_window_secs: i64,
     /// Whether signed-fetch failures fall back to unsigned GET
     /// (default `false`).
     pub allow_unsigned_fetch: bool,
