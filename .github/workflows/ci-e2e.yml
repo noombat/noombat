@@ -76,7 +76,14 @@ jobs:
       DATABASE_URL: postgres://noombat:noombat@postgres/noombat
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
+      # The server reads NOOMBAT_ADMIN_TOKEN; the Playwright suite presents
+      # ADMIN_TOKEN. Both names are needed and the values must match: the
+      # suite skips its authenticated groups when its own variable is
+      # empty, so setting only the server's silently dropped 21 of the 29
+      # accessibility tests. accessibility.spec.ts now refuses to skip
+      # under CI rather than let that recur.
       NOOMBAT_ADMIN_TOKEN: ci-test-token
+      ADMIN_TOKEN: ci-test-token
       # Effectively disable per-IP rate limiting for the e2e run.
       # The values mirror the test overlay in compose.test.yml.
       NOOMBAT_RATE_LIMIT: "10000"
