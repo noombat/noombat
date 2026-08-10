@@ -49,7 +49,7 @@ jobs:
     name: End-to-end tests (Firefox, Chromium, WebKit)
     runs-on: ubuntu-latest
     container:
-      image: mcr.microsoft.com/playwright:v1.60.0-noble
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
       options: "--shm-size=2g --ipc=host"
     services:
       postgres:
