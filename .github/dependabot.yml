@@ -12,6 +12,12 @@
 # proposed individually so that breaking changes receive dedicated
 # review.
 #
+# Every group therefore carries `update-types: [minor, patch]`. Omitting
+# it does not mean "the default", it means the group swallows majors too:
+# that is how one "service images" pull request came to propose
+# PostgreSQL 16 to 18, Redis 7 to 8 and Meilisearch v1.12 to v1.51 at
+# once, and how a Typst patch arrived bundled with Node 22 to 26.
+#
 # Docs: https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 
 version: 2
@@ -33,6 +39,9 @@ updates:
       github-actions:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   # 2. Cargo: Rust workspace dependencies.
   - package-ecosystem: cargo
@@ -66,6 +75,15 @@ updates:
     commit-message:
       prefix: "deps(frontend)"
       include: scope
+    ignore:
+      # @types/node describes the runtime, so it has to track the runtime
+      # rather than the newest release. Node is pinned to 22 in three
+      # places: .nvmrc, the `engines` field in frontend/package.json, and
+      # the `node:22` frontend stage in the Dockerfile. Without this rule
+      # Dependabot reopens the same major indefinitely, because nothing
+      # here will ever accept it.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       frontend-minor-patch:
         patterns:
@@ -89,6 +107,10 @@ updates:
     commit-message:
       prefix: "deps(e2e)"
       include: scope
+    ignore:
+      # Same reasoning as the frontend: pinned to the Node 22 line.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
 
   # 4. Docker: base images across all Dockerfiles.
   - package-ecosystem: docker
@@ -106,6 +128,9 @@ updates:
       docker-base-images:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
 
   # 5. Docker Compose: digest-pinned service images.
   #    Kept separate from the docker ecosystem, which covers only
@@ -126,3 +151,6 @@ updates:
       compose-service-images:
         patterns:
           - "*"
+        update-types:
+          - minor
+          - patch
