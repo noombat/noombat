@@ -14,14 +14,6 @@ ignore = [
     # Marvin Attack (RSA timing side-channel). No patched version available.
     # https://rustsec.org/advisories/RUSTSEC-2023-0071
     "RUSTSEC-2023-0071",
-    # ammonia SVG `animate`/`set` XSS. Noombat's sanitiser allowlist
-    # (EXTRA_TAGS in noombat-markup/src/sanitise.rs) does not include
-    # `animate`, `set`, `animateTransform`, or `animateMotion`.
-    # ammonia strips tags not in the allowlist by default, so the
-    # vulnerable code path is unreachable. Remove this entry when
-    # ammonia publishes a patched version.
-    # https://rustsec.org/advisories/RUSTSEC-2026-0213
-    "RUSTSEC-2026-0213",
 ]
 
 [licenses]
