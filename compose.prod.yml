@@ -91,6 +91,11 @@ services:
   meilisearch:
     environment:
       MEILI_MASTER_KEY: "${MEILI_MASTER_KEY:?required}"
+      # Production mode is selected here rather than in the base file,
+      # so that the mode and the key it demands arrive together. It
+      # rejects a key under 16 bytes, disables the search preview, and
+      # turns off analytics.
+      MEILI_ENV: production
     restart: unless-stopped
     deploy:
       resources:

@@ -58,9 +58,21 @@ services:
     image: docker.io/getmeili/meilisearch:v1.52@sha256:d36e713e8f89483af1ab0d72011bbd503f5ab100b68ccbfad51c39e3f0a0567d
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
-      # Default to production mode. Override to "development" via
-      # compose.dev.yml for local development.
-      MEILI_ENV: production
+      # Development by default, production selected by compose.prod.yml,
+      # which is also where the master key becomes mandatory.
+      #
+      # This file used to default to production, which did not start:
+      # production mode requires a key of at least 16 bytes and the
+      # default above is 15, so `docker compose up -d` exited 1 on the
+      # documented quickstart. Lengthening the default would have fixed
+      # the symptom and left a publicly known key running in a mode
+      # whose whole purpose is to demand a secret one.
+      MEILI_ENV: development
+      # Meilisearch reports anonymised usage to its vendor in production
+      # mode unless this is set, which a self-hosted instance of a
+      # privacy-oriented network should not do by default. The CI
+      # integration job already sets it; no compose file did.
+      MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili-data:/meili_data
 
