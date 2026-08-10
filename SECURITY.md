@@ -119,6 +119,25 @@ enforcement mechanisms in category 2 above rely on the CSP to constrain what enr
 - Dependabot proposes review-gated updates across Cargo, npm, Docker, Docker Compose, and GitHub Actions.
 - All first-party crates declare `#![forbid(unsafe_code)]`, verified in CI.
 
+## What leaves the instance
+
+An operator should be able to answer "what does this box report, and to whom" without reading the
+source, so it is stated here.
+
+**Third-party telemetry is off.**
+Meilisearch reports to `telemetry.meilisearch.com` by default when running in production mode.
+The payload is a per-instance UUID persisted in its data directory, the host's OS name, kernel version, CPU core count, total RAM and largest disk size, days since first start, the document count of every index, its configuration flags, and whether TLS options such as client-certificate requirement and OCSP are configured.
+Its master key is not sent.
+`compose.yml` sets `MEILI_NO_ANALYTICS`, so a Compose deployment reports none of it.
+The per-index document counts are the reason: for a federated instance they are a periodic report of the size of one community, tied to an identifier that survives restarts.
+
+**What the instance publishes on purpose is a different matter.**
+NodeInfo and the served asset manifest at `/.well-known/noombat/assets.json` are public endpoints, and Fediverse crawlers aggregate the former across instances.
+That is by design and is how a federated network is discoverable, but it is disclosure, and an operator should know it is happening rather than infer it.
+
+**Federation, DOI resolution, ORCID and Mastodon sign-in contact third parties by design.**
+They are requests the feature cannot work without, not reporting.
+
 ## Additional notes
 
 Two known gaps, stated rather than left to be "discovered".
