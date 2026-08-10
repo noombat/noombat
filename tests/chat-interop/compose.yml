@@ -20,7 +20,7 @@ services:
   # ..... DATABASES .....
 
   db:
-    image: docker.io/library/postgres:16-alpine
+    image: docker.io/library/postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
     environment:
       POSTGRES_USER: noombat
       POSTGRES_PASSWORD: noombat
@@ -33,7 +33,7 @@ services:
     networks: [chattest]
 
   redis:
-    image: docker.io/library/redis:7-alpine
+    image: docker.io/library/redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
     networks: [chattest]
 
   # ..... CHATMAIL RELAY .....

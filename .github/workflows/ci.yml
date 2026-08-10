@@ -248,7 +248,7 @@ jobs:
     runs-on: ubuntu-latest
     services:
       postgres:
-        image: postgres:16-alpine
+        image: postgres:18-alpine
         env:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
@@ -263,14 +263,14 @@ jobs:
       # The posts index is keyed on a document id Meilisearch validates,
       # and the only way to know it accepts ours is to ask a real one.
       meilisearch:
-        image: getmeili/meilisearch:v1.12@sha256:c9fac23131cca4db95173d41cc50fd5639121ee381795528fdd7522d7978a7b8
+        image: getmeili/meilisearch:v1.52@sha256:d36e713e8f89483af1ab0d72011bbd503f5ab100b68ccbfad51c39e3f0a0567d
         env:
           MEILI_MASTER_KEY: ci-test-key
           MEILI_NO_ANALYTICS: "true"
         ports:
           - 7700:7700
       redis:
-        image: redis:7-alpine
+        image: redis:8-alpine
         ports:
           - 6379:6379
         options: >-

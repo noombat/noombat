@@ -136,8 +136,22 @@ updates:
   #    Kept separate from the docker ecosystem, which covers only
   #    Dockerfiles; the compose service images are pinned by digest
   #    and would otherwise never be refreshed.
+  #
+  #    `directories` rather than `directory`: the file fetcher reads the
+  #    named directory non-recursively, so the two compose files under
+  #    tests/ were invisible and drifted.
+  #
+  #    Still NOT covered, and there is no configuration that would cover
+  #    it: `services.*.image` inside a workflow file. The github-actions
+  #    parser harvests `uses:` and nothing else, and neither docker
+  #    ecosystem reads workflows. The seven service images in ci.yml and
+  #    ci-e2e.yml must therefore be bumped by hand, in step with the
+  #    compose files here.
   - package-ecosystem: docker-compose
-    directory: /
+    directories:
+      - /
+      - /tests/interop
+      - /tests/chat-interop
     schedule:
       interval: weekly
       day: monday
