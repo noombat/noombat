@@ -28,14 +28,7 @@ import { test, expect, type Page } from "@playwright/test";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
 
 /** Pages that must carry the full header set. */
-const PAGES = [
-  "/",
-  "/auth/login",
-  "/auth/register",
-  "/chat",
-  "/settings/chat",
-  "/compose",
-];
+const PAGES = ["/", "/auth/login", "/auth/register", "/chat", "/settings/chat", "/compose"];
 
 /** Headers required on every response, with their exact values. */
 const EXACT_HEADERS: Record<string, string> = {
@@ -71,10 +64,7 @@ test.describe("Security headers", () => {
       }
 
       expect(headers["content-security-policy"], `${path}: CSP`).toBeDefined();
-      expect(
-        headers["permissions-policy"],
-        `${path}: Permissions-Policy`,
-      ).toBeDefined();
+      expect(headers["permissions-policy"], `${path}: Permissions-Policy`).toBeDefined();
     });
   }
 
@@ -101,9 +91,7 @@ test.describe("Security headers", () => {
 // ..... Policy content .....
 
 test.describe("Content-Security-Policy", () => {
-  test("denies by default and permits no unsafe source", async ({
-    request,
-  }) => {
+  test("denies by default and permits no unsafe source", async ({ request }) => {
     const res = await request.get("/auth/login", { maxRedirects: 0 });
     const csp = res.headers()["content-security-policy"];
 
@@ -119,9 +107,7 @@ test.describe("Content-Security-Policy", () => {
     expect(csp).not.toContain("unsafe-eval");
   });
 
-  test("pins the WebSocket host rather than the scheme", async ({
-    request,
-  }) => {
+  test("pins the WebSocket host rather than the scheme", async ({ request }) => {
     const res = await request.get("/auth/login", { maxRedirects: 0 });
     const csp = res.headers()["content-security-policy"];
 
@@ -165,9 +151,9 @@ async function collectViolations(page: Page): Promise<string[]> {
     document.addEventListener("securitypolicyviolation", (e) => {
       const event = e as SecurityPolicyViolationEvent;
       const record = `${event.violatedDirective} blocked ${event.blockedURI || "inline"} (${event.sourceFile ?? "?"}:${event.lineNumber ?? 0})`;
-      (
-        window as unknown as { __recordCspViolation?: (d: string) => void }
-      ).__recordCspViolation?.(record);
+      (window as unknown as { __recordCspViolation?: (d: string) => void }).__recordCspViolation?.(
+        record,
+      );
     });
   });
 
@@ -176,9 +162,7 @@ async function collectViolations(page: Page): Promise<string[]> {
 
 test.describe("Policy compliance", () => {
   for (const path of PAGES) {
-    test(`${path} loads with no policy violation and no inline script`, async ({
-      page,
-    }) => {
+    test(`${path} loads with no policy violation and no inline script`, async ({ page }) => {
       const violations = await collectViolations(page);
 
       await page.goto(path, { waitUntil: "networkidle" });
@@ -224,10 +208,7 @@ test.describe("Policy compliance", () => {
 // ..... Asset provenance .....
 
 test.describe("Asset provenance", () => {
-  test("every script a page loads is named in the served manifest", async ({
-    page,
-    request,
-  }) => {
+  test("every script a page loads is named in the served manifest", async ({ page, request }) => {
     // The manifest is a set of hashes for files that exist. On its own
     // it constrains nothing about which files a page loads, so an
     // instance could add a same-origin script absent from the manifest

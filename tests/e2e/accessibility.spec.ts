@@ -36,9 +36,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
  * Wait for any in-flight HTMX requests to complete. Falls back to a
  * short delay if HTMX is not present on the page.
  */
-async function waitForHtmx(
-  page: import("@playwright/test").Page,
-): Promise<void> {
+async function waitForHtmx(page: import("@playwright/test").Page): Promise<void> {
   try {
     await page.waitForFunction(
       () => {
@@ -292,13 +290,8 @@ test.describe("Assistive-technology status region", () => {
         const s = getComputedStyle(el);
         return { display: s.display, visibility: s.visibility };
       });
-      expect(hiding.display, `${path}: region is display:none`).not.toBe(
-        "none",
-      );
-      expect(
-        hiding.visibility,
-        `${path}: region is visibility:hidden`,
-      ).not.toBe("hidden");
+      expect(hiding.display, `${path}: region is display:none`).not.toBe("none");
+      expect(hiding.visibility, `${path}: region is visibility:hidden`).not.toBe("hidden");
     });
   }
 
@@ -319,9 +312,7 @@ test.describe("Assistive-technology status region", () => {
     await page.goto("/", { waitUntil: "networkidle" });
 
     const offenders = await page.evaluate(() =>
-      Array.from(
-        document.querySelectorAll("[aria-live], [role=status], [role=alert]"),
-      )
+      Array.from(document.querySelectorAll("[aria-live], [role=status], [role=alert]"))
         .filter((el) => {
           const s = getComputedStyle(el);
           return s.display === "none" || s.visibility === "hidden";
@@ -329,9 +320,6 @@ test.describe("Assistive-technology status region", () => {
         .map((el) => el.tagName.toLowerCase() + (el.id ? `#${el.id}` : "")),
     );
 
-    expect(
-      offenders,
-      "live regions hidden from the accessibility tree",
-    ).toEqual([]);
+    expect(offenders, "live regions hidden from the accessibility tree").toEqual([]);
   });
 });

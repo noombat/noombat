@@ -101,14 +101,8 @@ function formatViolation(v: AxeResults["violations"][number]): string {
       return `      → ${target}\n        ${fix}`;
     })
     .join("\n");
-  const extra =
-    v.nodes.length > 5 ? `\n      … and ${v.nodes.length - 5} more` : "";
-  return (
-    `  [${v.impact ?? "unknown"}] ${v.id}: ${v.help}\n` +
-    `    ${v.helpUrl}\n` +
-    nodes +
-    extra
-  );
+  const extra = v.nodes.length > 5 ? `\n      … and ${v.nodes.length - 5} more` : "";
+  return `  [${v.impact ?? "unknown"}] ${v.id}: ${v.help}\n` + `    ${v.helpUrl}\n` + nodes + extra;
 }
 
 /**
@@ -125,8 +119,7 @@ export function expectNoViolations(results: AxeResults): void {
 
   const summary = violations.map(formatViolation).join("\n\n");
   const message =
-    `Expected zero WCAG 2.2 AA violations but found ${violations.length}:\n\n` +
-    summary;
+    `Expected zero WCAG 2.2 AA violations but found ${violations.length}:\n\n` + summary;
 
   // Use `expect` so that Playwright's reporter captures the failure
   // with proper formatting and trace attachment.
