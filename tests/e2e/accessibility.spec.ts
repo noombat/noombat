@@ -299,7 +299,7 @@ test.describe("Assistive-technology status region", () => {
 
   for (const path of PAGES) {
     test(`${path} carries a persistent status region`, async ({ page }) => {
-      await page.goto(path, { waitUntil: "networkidle" });
+      await page.goto(path);
 
       const region = page.locator("#a11y-status");
       await expect(region).toHaveCount(1);
@@ -321,7 +321,7 @@ test.describe("Assistive-technology status region", () => {
     // The region starts empty and is filled by an out-of-band swap when
     // the feed partial arrives. Either outcome is a valid announcement:
     // a post count, or the end-of-feed message when there are none.
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/");
 
     const region = page.locator("#a11y-status");
     await expect(region).not.toBeEmpty();
@@ -331,7 +331,13 @@ test.describe("Assistive-technology status region", () => {
     // A region removed from the accessibility tree cannot announce, so
     // marking one live is at best inert and at worst misleading to a
     // reviewer.
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/");
+    // Unlike the two tests above, this one scans with `page.evaluate`,
+    // which does not retry. Without an explicit settle it reads the
+    // page before the feed partial lands, so it would be scanning
+    // almost nothing. `networkidle` did not wait for the partial
+    // either: both it and the load event observe 18 nodes here.
+    await waitForHtmx(page);
 
     const offenders = await page.evaluate(() =>
       Array.from(document.querySelectorAll("[aria-live], [role=status], [role=alert]"))

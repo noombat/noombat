@@ -165,7 +165,7 @@ test.describe("Policy compliance", () => {
     test(`${path} loads with no policy violation and no inline script`, async ({ page }) => {
       const violations = await collectViolations(page);
 
-      await page.goto(path, { waitUntil: "networkidle" });
+      await page.goto(path);
 
       // Every script must be external, so that `script-src 'self'`
       // without 'unsafe-inline' is satisfiable.
@@ -191,15 +191,24 @@ test.describe("Policy compliance", () => {
   test("the login flow raises no policy violation", async ({ page }) => {
     const violations = await collectViolations(page);
 
-    await page.goto("/auth/login", { waitUntil: "networkidle" });
+    await page.goto("/auth/login");
     await page.fill("#login-username", "testuser");
     await page.fill("#login-password", "not-the-real-password");
     await page.click("#login-form button[type=submit]");
 
     // The credentials are wrong on purpose: the assertion is about
     // the key derivation and fetch running under the policy at all,
-    // not about the outcome of the attempt.
-    await page.waitForTimeout(2000);
+    // not about the outcome of the attempt. Wait for the POST that
+    // frontend/src/auth.ts issues once it has derived the auth key,
+    // rather than for a fixed interval. Measured locally the derivation
+    // and request take 800 to 870 ms, so the 2000 ms sleep this replaces
+    // did have margin; what it did not have is any relationship to the
+    // thing being waited for. Waiting for the response is both exact and
+    // faster, and it cannot expire early on a loaded runner.
+    await page.waitForResponse(
+      (r) => r.url().includes("/api/v1/auth/login") && r.request().method() === "POST",
+      { timeout: 15_000 },
+    );
 
     expect(violations).toEqual([]);
   });
@@ -223,7 +232,7 @@ test.describe("Asset provenance", () => {
     expect(known.size, "manifest lists no assets").toBeGreaterThan(0);
 
     for (const path of PAGES) {
-      await page.goto(path, { waitUntil: "networkidle" });
+      await page.goto(path);
       const origin = new URL(page.url()).origin;
 
       const sources = await page.evaluate(() =>
