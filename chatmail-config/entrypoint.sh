@@ -59,6 +59,49 @@ if [ ! -f /etc/ssl/certs/chatmail.pem ]; then
     chmod 640 /etc/ssl/private/chatmail.key
 fi
 
+# ..... DKIM .....
+
+# Generate the signing key on first boot and write the tables that
+# opendkim.conf points at. Without these, opendkim has nothing to sign
+# with; without opendkim.conf it would also be listening on a unix
+# socket while Postfix dials inet:localhost:8891.
+#
+# The selector is `noombat`, matching the TXT record name documented in
+# docs/deployment.md and printed below.
+DKIM_DIR=/etc/opendkim
+DKIM_SELECTOR=noombat
+
+if [ ! -f "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private" ]; then
+    echo "[entrypoint] generating DKIM key for ${MAIL_DOMAIN}"
+    mkdir -p "${DKIM_DIR}/keys/${MAIL_DOMAIN}" /run/opendkim
+    opendkim-genkey \
+        --directory="${DKIM_DIR}/keys/${MAIL_DOMAIN}" \
+        --selector="${DKIM_SELECTOR}" \
+        --domain="${MAIL_DOMAIN}" \
+        --bits=2048
+
+    printf '%s._domainkey.%s %s:%s:%s\n' \
+        "${DKIM_SELECTOR}" "${MAIL_DOMAIN}" \
+        "${MAIL_DOMAIN}" "${DKIM_SELECTOR}" \
+        "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private" \
+        > "${DKIM_DIR}/KeyTable"
+    printf '*@%s %s._domainkey.%s\n' \
+        "${MAIL_DOMAIN}" "${DKIM_SELECTOR}" "${MAIL_DOMAIN}" \
+        > "${DKIM_DIR}/SigningTable"
+    printf '127.0.0.1\n::1\nlocalhost\n%s\n' "${MAIL_DOMAIN}" \
+        > "${DKIM_DIR}/TrustedHosts"
+
+    # Publish this before the relay is used, or every message is signed
+    # with a key no resolver can find, which verifies worse than not
+    # signing at all.
+    echo "[entrypoint] ..... DKIM DNS record, publish this TXT record ....."
+    cat "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.txt"
+    echo "[entrypoint] ..... end DKIM DNS record ....."
+fi
+
+chown -R opendkim:opendkim "${DKIM_DIR}" /run/opendkim
+chmod 600 "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
+
 # ..... PERMISSIONS .....
 
 chown -R vmail:vmail /home/vmail

@@ -106,6 +106,7 @@ RUN touch /etc/postfix/noombat_recipient_access \
 # Copy Chatmail-specific Postfix and Dovecot configuration.
 COPY chatmail-config/main.cf /etc/postfix/main.cf
 COPY chatmail-config/dovecot.conf /etc/dovecot/dovecot.conf
+COPY chatmail-config/opendkim.conf /etc/opendkim.conf
 COPY chatmail-config/master.cf.filtermail /etc/postfix/master.cf.filtermail
 COPY chatmail-config/entrypoint.sh /entrypoint.sh
 COPY chatmail-config/noombat-doveauth /usr/local/bin/noombat-doveauth
