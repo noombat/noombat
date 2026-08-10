@@ -54,6 +54,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/admin/domains/{id}",
             delete(remove_domain_restriction),
         )
+        .route("/api/v1/admin/users/{username}/role", post(set_user_role))
         .route("/api/v1/admin/settings", patch(update_settings))
         .route("/api/v1/admin/announcements", post(create_announcement))
         .route(
@@ -717,4 +718,60 @@ async fn federation_page(
         tombstoned_count,
     }
     .into_response()
+}
+
+/// Body of `POST /api/v1/admin/users/{username}/role`.
+#[derive(Debug, Deserialize)]
+struct RoleChange {
+    role: InstanceRole,
+}
+
+/// Promote or demote a local actor.
+///
+/// This is the route `docs/operator.md` has always claimed exists.
+/// Until it did, `actors.instance_role` was written by nothing, so the
+/// only administrator an instance could have was one created by hand in
+/// SQL, and the moderation pages here were unreachable by construction.
+///
+/// Two refusals, both about not locking the instance out of itself:
+/// an administrator may not change their own role, and the last
+/// administrator may not be demoted by anyone.
+async fn set_user_role(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Path(username): Path<String>,
+    Form(body): Form<RoleChange>,
+) -> Result<impl IntoResponse, ApiError> {
+    let admin = require_admin_api(&principal)?;
+
+    let target = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    if admin.actor_id() == Some(target.id) {
+        return Err(ApiError(NoombatError::BadRequest(
+            "an administrator cannot change their own role; ask another administrator".into(),
+        )));
+    }
+
+    // Counted before the write, and only when the write would remove an
+    // administrator. A demotion that leaves none returns the instance to
+    // the state this route exists to escape.
+    if target.instance_role == InstanceRole::Admin
+        && body.role != InstanceRole::Admin
+        && noombat_identity::repo::count_admins(&state.pool).await? <= 1
+    {
+        return Err(ApiError(NoombatError::BadRequest(
+            "refusing to demote the last administrator; promote another one first".into(),
+        )));
+    }
+
+    noombat_identity::repo::set_instance_role(&state.pool, target.id, body.role).await?;
+
+    info!(
+        actor = %target.username,
+        role = ?body.role,
+        by = ?admin.username,
+        "instance role changed"
+    );
+
+    Ok(StatusCode::NO_CONTENT)
 }

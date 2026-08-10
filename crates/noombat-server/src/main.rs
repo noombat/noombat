@@ -139,6 +139,10 @@ struct Config {
     /// (default 10).
     #[serde(default = "default_typst_timeout")]
     typst_timeout_secs: u64,
+    /// Username to promote to administrator at boot, but only when the
+    /// instance has no administrator at all. This is the bootstrap for
+    /// the first one; every later change goes through the promote route.
+    bootstrap_admin: Option<String>,
     /// Days between an account deletion request and the erasure that
     /// completes it (default 30). Read both by the API that quotes the
     /// figure back to the user and by the worker that acts on it, so
@@ -527,6 +531,43 @@ async fn main() -> anyhow::Result<()> {
         deletion_grace_days = config.deletion_grace_days,
         "rate and resource limits in force"
     );
+
+    // Promote the bootstrap administrator, if there is nobody to do it
+    // the ordinary way.
+    //
+    // Guarded on there being no administrator at all, not on the named
+    // actor's current role. Without that, leaving the variable set would
+    // re-promote on every restart and silently undo a demotion, which
+    // makes the promote route a suggestion rather than a decision.
+    if let Some(ref username) = config.bootstrap_admin {
+        match noombat_identity::repo::count_admins(&pool).await {
+            Ok(0) => match noombat_identity::repo::find_local_by_username(&pool, username).await {
+                Ok(actor) => {
+                    match noombat_identity::repo::set_instance_role(
+                        &pool,
+                        actor.id,
+                        noombat_core::actor::InstanceRole::Admin,
+                    )
+                    .await
+                    {
+                        Ok(()) => info!(%username, "promoted the bootstrap administrator"),
+                        Err(e) => {
+                            error!(%username, "failed to promote the bootstrap administrator: {e}")
+                        }
+                    }
+                }
+                Err(_) => error!(
+                    %username,
+                    "NOOMBAT_BOOTSTRAP_ADMIN names no local account; register it first, then restart"
+                ),
+            },
+            Ok(n) => info!(
+                admins = n,
+                "NOOMBAT_BOOTSTRAP_ADMIN is set but the instance already has an administrator; ignoring it"
+            ),
+            Err(e) => error!("could not count administrators, skipping the bootstrap: {e}"),
+        }
+    }
 
     noombat_identity::cv::init_limits(noombat_identity::cv::TypstLimits {
         max_concurrent: config.typst_max_concurrent,

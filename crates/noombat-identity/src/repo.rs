@@ -207,6 +207,44 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
     row.into_actor()
 }
 
+/// Set a local actor's instance role.
+///
+/// Nothing wrote this column until now: it defaulted to `'user'` and no
+/// code path ever changed it, so no administrator could exist on any
+/// instance and the whole moderation surface was unreachable.
+pub async fn set_instance_role(pool: &PgPool, actor_id: Uuid, role: InstanceRole) -> Result<()> {
+    let affected = sqlx::query(
+        "UPDATE actors SET instance_role = $2, updated_at = now() \
+         WHERE id = $1 AND is_local = TRUE",
+    )
+    .bind(actor_id)
+    .bind(role)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    if affected == 0 {
+        return Err(NoombatError::ActorNotFound(actor_id.to_string()));
+    }
+
+    Ok(())
+}
+
+/// How many local administrators there are.
+///
+/// Used to refuse the demotion that would leave none. Without that
+/// guard an administrator can demote themselves and lock the instance
+/// out of its own moderation tools, which is the state this whole
+/// change exists to escape.
+pub async fn count_admins(pool: &PgPool) -> Result<i64> {
+    let n = sqlx::query_scalar::<_, i64>(
+        "SELECT count(*) FROM actors WHERE is_local = TRUE AND instance_role = 'admin'",
+    )
+    .fetch_one(pool)
+    .await?;
+    Ok(n)
+}
+
 /// Retrieve an actor by its ActivityPub identifier (local or remote).
 pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> {
     let row = sqlx::query_as::<_, ActorRow>(
