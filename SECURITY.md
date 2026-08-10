@@ -130,7 +130,7 @@ Closing this needs those flags, a pinned toolchain version rather than `channel 
 It is planned;
 until it lands, treat the binary hashes as a record of what shipped rather than something you can recreate.
 The `typst` binary is a separate case:
-it is not built here at all, but taken from `ghcr.io/typst/typst:0.15.0` pinned by digest, which makes it immutable rather than reproducible.
+it is not built here at all, but taken from the `ghcr.io/typst/typst` image, pinned by digest in the Dockerfile, which makes it immutable rather than reproducible.
 
 **Signing trusts the build platform.**
 GitHub Actions, Fulcio, and Rekor are in the trusted set.

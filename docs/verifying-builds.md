@@ -41,7 +41,7 @@ The binary entries let you confirm that the image you are running is the image t
 See the gaps section of [`SECURITY.md`](../SECURITY.md) for what closing this requires.
 
 The `typst` binary is a different case:
-it is not built here, but taken from `ghcr.io/typst/typst:0.15.0` pinned by digest.
+it is not built here, but taken from the `ghcr.io/typst/typst` image, pinned by digest in the Dockerfile.
 That makes it immutable rather than reproducible, which for these purposes is stronger, i.e. there is one artefact and its identity is fixed.
 
 Package entries are names and versions, not content hashes:

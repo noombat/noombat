@@ -72,7 +72,7 @@ RUN cargo build --release --bin noombat
 # ..... TYPST BINARY .....
 # Copy the pre-built Typst CLI from the official container image.
 # Pinned to the release series used by the project; bump when upgrading.
-FROM ghcr.io/typst/typst:0.15.0@sha256:b23ba03da5c085a2c8780bc9f2296db937abe1d0c75348cf2f8a9273199c3a14 AS typst
+FROM ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f AS typst
 
 # ..... RUNTIME .....
 FROM debian:bookworm-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818

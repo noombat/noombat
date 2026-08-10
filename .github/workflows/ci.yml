@@ -151,7 +151,11 @@ jobs:
       # job where that test actually runs: everywhere else it skips.
       - name: Install the pinned typst binary
         run: |
-          cid=$(docker create ghcr.io/typst/typst:0.15.0@sha256:b23ba03da5c085a2c8780bc9f2296db937abe1d0c75348cf2f8a9273199c3a14)
+          # Read from the Dockerfile so the binary under test is the one
+          # the runtime ships. See scripts/check-typst-injection.sh.
+          image=$(sed -n 's/^FROM \(ghcr\.io\/typst\/typst:[^ ]*\) AS typst$/\1/p' Dockerfile)
+          [ -n "$image" ] || { echo "no typst stage in Dockerfile" >&2; exit 1; }
+          cid=$(docker create "$image")
           docker cp "$cid:/bin/typst" /usr/local/bin/typst
           docker rm "$cid"
           typst --version

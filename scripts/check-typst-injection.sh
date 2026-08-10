@@ -29,9 +29,16 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$REPO_ROOT"
 
-# Pinned by digest, matching the Dockerfile's typst stage. An unpinned
-# tag would let the thing under test change without the test changing.
-TYPST_IMAGE="ghcr.io/typst/typst:0.15.0@sha256:b23ba03da5c085a2c8780bc9f2296db937abe1d0c75348cf2f8a9273199c3a14"
+# Read from the Dockerfile's typst stage rather than pinned again here.
+# An unpinned tag would let the thing under test change without the test
+# changing, but a second copy of the digest is no better: Dependabot's
+# docker ecosystem reads Dockerfiles, not shell scripts, so it would
+# bump the runtime and leave the check validating the old compiler.
+TYPST_IMAGE="$(sed -n 's/^FROM \(ghcr\.io\/typst\/typst:[^ ]*\) AS typst$/\1/p' Dockerfile)"
+if [ -z "$TYPST_IMAGE" ]; then
+    echo "error: no digest-pinned typst stage found in Dockerfile" >&2
+    exit 1
+fi
 MARKER="NB_EXEC_MARKER"
 
 CORPUS="$(mktemp -d)"
