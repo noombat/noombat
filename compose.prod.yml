@@ -40,7 +40,20 @@ services:
     expose:
       - "8443"
     environment:
-      NOOMBAT_KEK: ${NOOMBAT_KEK}
+      # Every value the production guard rails refuse to start without.
+      # compose.yml supplies development defaults for these, and
+      # `validate_production_config` treats those defaults as fatal once
+      # NOOMBAT_DOMAIN is not localhost, so an override here is what makes
+      # the stack bootable at all. Compose substitutes an unset host
+      # variable with the empty string rather than omitting it, hence the
+      # `:?` form: it fails at `compose up` with the variable's name
+      # instead of at boot with a less obvious error.
+      NOOMBAT_KEK: "${NOOMBAT_KEK:?generate one with openssl rand -hex 32}"
+      NOOMBAT_JWT_SECRET: "${NOOMBAT_JWT_SECRET:?at least 32 bytes of randomness}"
+      NOOMBAT_DATABASE_URL: "postgres://noombat:${POSTGRES_PASSWORD:?required}@db/noombat"
+      NOOMBAT_MEILI_KEY: "${MEILI_MASTER_KEY:?required}"
+      NOOMBAT_CHATMAIL_ADMIN_SECRET: "${CHATMAIL_ADMIN_SECRET:?required}"
+      NOOMBAT_BOOTSTRAP_ADMIN: "${NOOMBAT_BOOTSTRAP_ADMIN:-}"
     deploy:
       resources:
         limits:
@@ -53,6 +66,8 @@ services:
         max-file: "5"
 
   db:
+    environment:
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?required}"
     restart: unless-stopped
     deploy:
       resources:
@@ -74,6 +89,8 @@ services:
           cpus: "0.5"
 
   meilisearch:
+    environment:
+      MEILI_MASTER_KEY: "${MEILI_MASTER_KEY:?required}"
     restart: unless-stopped
     deploy:
       resources:

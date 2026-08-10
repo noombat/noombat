@@ -205,6 +205,19 @@ fn default_deletion_grace_days() -> i32 {
     30
 }
 
+impl Config {
+    /// The key-encryption key, treating blank as absent.
+    ///
+    /// Compose substitutes an unset host variable with the empty
+    /// string rather than omitting it, so `Option::is_none` is not the
+    /// question worth asking about any secret that arrives that way:
+    /// `NOOMBAT_KEK=` yields `Some("")`, which is not a key and is not
+    /// a decision to run without one either.
+    fn kek(&self) -> Option<&str> {
+        self.kek.as_deref().map(str::trim).filter(|k| !k.is_empty())
+    }
+}
+
 /// The migration set compiled into this binary.
 ///
 /// Behind the one-liner is a footgun worth naming: `sqlx::migrate!`
@@ -249,10 +262,23 @@ async fn main() -> anyhow::Result<()> {
     //
     // Parse the hex-encoded KEK (if configured) and initialise the
     // process-global envelope key.
-    let envelope_key: Option<Arc<EnvelopeKey>> = match config.kek.as_deref() {
+    let envelope_key: Option<Arc<EnvelopeKey>> = match config.kek() {
         Some(hex) => {
-            let key = EnvelopeKey::from_hex(hex)
-                .expect("NOOMBAT_KEK must be 64 hex characters (32 bytes)");
+            // A clean exit, not a panic. Compose interpolates an unset
+            // host variable as the empty string, so a missing KEK
+            // arrived here as `Some("")` and produced a stack trace
+            // where the operator needed the one-line explanation that
+            // `validate_production_config` already knows how to give.
+            let key = match EnvelopeKey::from_hex(hex) {
+                Ok(key) => key,
+                Err(e) => {
+                    error!(
+                        "NOOMBAT_KEK is not a valid key ({e}). It must be 64 hex \
+                         characters (32 bytes); generate one with: openssl rand -hex 32"
+                    );
+                    std::process::exit(1);
+                }
+            };
             info!("envelope encryption enabled (KEK configured)");
             Some(Arc::new(key))
         }
@@ -755,7 +781,7 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
-    if config.kek.is_none() {
+    if config.kek().is_none() {
         error!(
             "NOOMBAT_KEK is not set. TOTP secrets and private keys \
              will be stored as plaintext. Set a 64-character hex key \
