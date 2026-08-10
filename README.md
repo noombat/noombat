@@ -46,7 +46,7 @@ their predecessors' data directories.
 - PostgreSQL ≥ 18
 - Redis ≥ 8
 - Meilisearch ≥ 1.52
-- Node.js 22 (pinned in `.nvmrc`; `frontend/package.json` declares `>=22 <23`)
+- Node.js 24 (pinned in `.nvmrc`; `frontend/package.json` declares `>=24 <25`)
 - pnpm 11 (provisioned by Corepack from the `packageManager` field)
 - Podman with `podman-compose` or Docker with Docker Compose
 

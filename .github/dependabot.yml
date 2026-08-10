@@ -77,11 +77,15 @@ updates:
       include: scope
     ignore:
       # @types/node describes the runtime, so it has to track the runtime
-      # rather than the newest release. Node is pinned to 22 in three
-      # places: .nvmrc, the `engines` field in frontend/package.json, and
-      # the `node:22` frontend stage in the Dockerfile. Without this rule
-      # Dependabot reopens the same major indefinitely, because nothing
-      # here will ever accept it.
+      # rather than the newest release. Node is pinned to 24, the current
+      # Active LTS, in three places: .nvmrc, the `engines` field in
+      # frontend/package.json, and the `node:24` frontend stage in the
+      # Dockerfile. Without this rule Dependabot reopens the same major
+      # indefinitely, because nothing here will ever accept it.
+      #
+      # Moving to 26 is not just a version bump: Node stopped distributing
+      # Corepack at 25.0.0, and `corepack enable` is load-bearing in six
+      # jobs across ci-frontend.yml and ci.yml.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     groups:
@@ -108,7 +112,7 @@ updates:
       prefix: "deps(e2e)"
       include: scope
     ignore:
-      # Same reasoning as the frontend: pinned to the Node 22 line.
+      # Same reasoning as the frontend: pinned to the Node 24 line.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
 

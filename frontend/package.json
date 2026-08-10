@@ -5,7 +5,7 @@
   "packageManager": "pnpm@11.8.0+sha512.c1f5e7c4cb241c8f174b743851d82f42b802324afc8b0f116b96adb15aa06664948dde36960a3ba1079ba5b4b29dd0140135b94b5b5f5263592249d68e555f26",
   "type": "module",
   "engines": {
-    "node": ">=22 <23"
+    "node": ">=24 <25"
   },
   "scripts": {
     "dev": "vite",
@@ -29,7 +29,7 @@
     "@tailwindcss/vite": "^4.0.0",
     "@types/katex": "^0.16.7",
     "@types/markdown-it": "^14.1.2",
-    "@types/node": "^22",
+    "@types/node": "^24",
     "@types/qrcode": "^1.5.0",
     "eslint": "^9.0.0",
     "eslint-plugin-solid": "~0.14.5",
