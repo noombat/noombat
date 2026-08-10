@@ -38,12 +38,16 @@ and exchange end-to-end encrypted direct messages via an integrated Chatmail rel
 
 ## Prerequisites
 
+These are the versions CI exercises and the Compose stack pins. Older ones may work
+and are not tested; the three service floors moved together and cannot be mixed with
+their predecessors' data directories.
+
 - Rust ≥ 1.94.0
-- PostgreSQL ≥ 16
-- Redis ≥ 7
-- Meilisearch ≥ 1.12
-- Node.js ≥ 20 (required by pnpm)
-- pnpm ≥ 9
+- PostgreSQL ≥ 18
+- Redis ≥ 8
+- Meilisearch ≥ 1.52
+- Node.js 22 (pinned in `.nvmrc`; `frontend/package.json` declares `>=22 <23`)
+- pnpm 11 (provisioned by Corepack from the `packageManager` field)
 - Podman with `podman-compose` or Docker with Docker Compose
 
 ## Quick Start
