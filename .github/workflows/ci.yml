@@ -192,7 +192,11 @@ jobs:
             target
           key: cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: cargo-clippy-
-      - run: cargo clippy --workspace -- -D warnings
+      # `--all-targets` so test and bench code is linted too. Without it
+      # everything under `#[cfg(test)]` is never compiled by this job,
+      # which is how a `nonminimal_bool` in middleware.rs stayed green
+      # from July onwards.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   test:
     name: Unit tests

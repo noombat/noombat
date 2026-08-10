@@ -392,8 +392,9 @@ mod tests {
         // `wss://noombat.social` and a substring test cannot tell the
         // two apart.
         for source in connect_src.split_whitespace().skip(1) {
+            let scheme_wide = source.ends_with(':') && !source.contains("//");
             assert!(
-                !(source.ends_with(':') && !source.contains("//")),
+                !scheme_wide,
                 "connect-src names the scheme-wide source {source}"
             );
         }
