@@ -1,0 +1,30 @@
+# Prettier's scope in this repository is the two TypeScript trees,
+# `frontend/` and `tests/e2e/`, and nothing else.
+#
+# The list below is an allowlist rather than a denylist: everything is
+# excluded, then those two directories are added back. A denylist would
+# silently pull in each new top-level directory, and Prettier claims more
+# here than you would expect. Left unrestricted it reformats the Askama
+# templates under `crates/noombat-api/templates/` (it reads them as plain
+# HTML and does not know what `{% %}` is), the Compose files, and every
+# Markdown file, where the prose uses semantic line breaks that Prettier
+# reflows away.
+#
+# Patterns resolve relative to this file, so this only behaves as intended
+# while it stays at the repository root.
+
+/*
+!/frontend
+!/tests
+/tests/*
+!/tests/e2e
+
+# Build output and dependencies.
+/frontend/dist/
+**/node_modules/
+
+# Lockfiles are YAML, so Prettier would claim them. pnpm writes them in
+# its own style and Dependabot regenerates them wholesale, so formatting
+# them here would put every dependency pull request in permanent conflict
+# with the format check.
+**/pnpm-lock.yaml

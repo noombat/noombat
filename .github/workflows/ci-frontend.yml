@@ -3,6 +3,11 @@
 # Runs TypeScript type checking, ESLint linting, Prettier format
 # checking, and the Vitest unit suite on changes to frontend source,
 # configuration, or this workflow file.
+#
+# The Prettier job also covers tests/e2e, which is why this workflow
+# triggers on that path too. Path filters are per-workflow rather than
+# per-job, so an e2e-only change runs the other jobs as well; that is
+# cheaper than leaving those specs unformatted and unchecked.
 # Complements ci.yml (Rust-focused) and ci-e2e.yml
 # (browser integration tests).
 
@@ -14,12 +19,18 @@ on:
     paths:
       - ".github/workflows/ci-frontend.yml"
       - "frontend/**"
+      - "tests/e2e/**"
+      - ".prettierrc.json"
+      - ".prettierignore"
       - "scripts/check-reproducible.sh"
   pull_request:
     branches: [main]
     paths:
       - ".github/workflows/ci-frontend.yml"
       - "frontend/**"
+      - "tests/e2e/**"
+      - ".prettierrc.json"
+      - ".prettierignore"
       - "scripts/check-reproducible.sh"
 
 permissions:

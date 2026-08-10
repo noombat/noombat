@@ -31,6 +31,8 @@ path = [
     ".gitignore",
     ".dockerignore",
     ".nvmrc",
+    ".prettierrc.json",
+    ".prettierignore",
     # Database migrations.
     "migrations/**",
     # Typst CV templates.
@@ -41,8 +43,6 @@ path = [
     "frontend/package.json",
     "frontend/tsconfig.json",
     "frontend/pnpm-lock.yaml",
-    "frontend/.prettierrc.json",
-    "frontend/.prettierignore",
     "frontend/**/*.d.ts",
     # Test metadata.
     "tests/e2e/package.json",

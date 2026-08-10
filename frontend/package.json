@@ -14,7 +14,7 @@
     "test": "vitest run",
     "lint": "eslint src/",
     "typecheck": "tsc --noEmit",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check --ignore-path ../.prettierignore . ../tests/e2e"
   },
   "dependencies": {
     "htmx.org": "^2.0.0",
