@@ -78,7 +78,7 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
         "attributedTo": actor_ap_id,
         "name": title,
         "content": format!(
-            "<p><b>{title_escaped}</b> — {location_escaped}</p>{description_html}",
+            "<p><b>{title_escaped}</b> - {location_escaped}</p>{description_html}",
         ),
         "url": ap_id,
     });
@@ -258,6 +258,21 @@ pub fn build_federated_actor(
         });
     }
 
+    // If the user has disabled profile federation, stop here,
+    // i.e. remote instances see only the minimal actor object.
+    //
+    // This check used to sit *after* the attachment array had already
+    // been assigned into `obj`, so the early return handed back a
+    // document still carrying the ORCID, the Chatmail address and every
+    // verified link. Turning the setting off suppressed the sections
+    // below and pushed the attachments anyway, to every peer. The fetch
+    // path in `noombat-api::routes::actors` (`get_actor`) has always
+    // gated the whole attachment block on this flag; the two paths
+    // disagreed, and this one was the permissive side.
+    if !actor.actor_privacy.federate_profile {
+        return obj;
+    }
+
     // Attachment array (verified links, ORCID, chatmail).
     let mut attachments: Vec<Value> = Vec::new();
 
@@ -294,12 +309,6 @@ pub fn build_federated_actor(
 
     if !attachments.is_empty() {
         obj["attachment"] = json!(attachments);
-    }
-
-    // If the user has disabled profile federation, stop here,
-    // i.e. remote instances see only the minimal actor object.
-    if !actor.actor_privacy.federate_profile {
-        return obj;
     }
 
     // Include public sections as noombat:* extension properties.
@@ -397,6 +406,46 @@ mod tests {
         let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
         assert!(obj.get("noombat:experience").is_none());
         assert!(obj.get(vocab::TTL).is_some());
+    }
+
+    #[test]
+    fn federated_actor_omits_attachments_when_federate_profile_disabled() {
+        // The sections test above passed throughout the period when this
+        // did not hold: the attachment array was assigned into the object
+        // before the `federate_profile` early return, so turning the
+        // setting off suppressed the sections and pushed the ORCID, the
+        // Chatmail address and the verified links to every peer anyway.
+        let mut actor = test_actor();
+        actor.actor_privacy.federate_profile = false;
+        actor.orcid = Some("0000-0002-1825-0097".into());
+        actor.chatmail_addr = Some("alice@chat.noombat.social".into());
+        actor.actor_privacy.chatmail_visible = true;
+
+        let links = vec![VerifiedLinkRef {
+            url: "https://example.org/alice",
+        }];
+
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None);
+
+        let rendered = obj.to_string();
+        assert!(
+            obj.get("attachment").is_none(),
+            "attachment present with federate_profile disabled: {rendered}"
+        );
+        // Assert on the values, not just the key: a future refactor could
+        // rename the key and reintroduce the leak under another name.
+        assert!(
+            !rendered.contains("0000-0002-1825-0097"),
+            "ORCID leaked: {rendered}"
+        );
+        assert!(
+            !rendered.contains("alice@chat.noombat.social"),
+            "Chatmail address leaked"
+        );
+        assert!(
+            !rendered.contains("example.org/alice"),
+            "verified link leaked"
+        );
     }
 
     #[test]
