@@ -19,8 +19,10 @@
 /tests/*
 !/tests/e2e
 
-# Build output and dependencies.
+# Build output, run artefacts and dependencies.
 /frontend/dist/
+/tests/e2e/test-results/
+/tests/e2e/playwright-report/
 **/node_modules/
 
 # Lockfiles are YAML, so Prettier would claim them. pnpm writes them in

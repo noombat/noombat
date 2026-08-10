@@ -119,7 +119,10 @@ test.describe("Accessibility: unauthenticated pages", () => {
 // 2. AUTHENTICATED PAGES
 
 test.describe("Accessibility: authenticated pages", () => {
-  // Skip the entire group if no admin token is available.
+  // Skip the entire group if no admin token is available. Local
+  // convenience only: under CI the guard at the top of this file throws
+  // before reaching here, so this cannot silently drop coverage there.
+  // eslint-disable-next-line playwright/no-skipped-test -- conditional, and CI cannot reach it
   test.skip(
     () => ADMIN_TOKEN === "",
     "ADMIN_TOKEN not set; skipping authenticated-page accessibility tests",
@@ -244,6 +247,8 @@ test.describe("Accessibility: authenticated pages", () => {
 // 3. ADMIN PAGES
 
 test.describe("Accessibility: admin pages", () => {
+  // As above: local convenience, unreachable under CI.
+  // eslint-disable-next-line playwright/no-skipped-test -- conditional, and CI cannot reach it
   test.skip(
     () => ADMIN_TOKEN === "",
     "ADMIN_TOKEN not set; skipping admin-page accessibility tests",

@@ -192,9 +192,9 @@ test.describe("Policy compliance", () => {
     const violations = await collectViolations(page);
 
     await page.goto("/auth/login");
-    await page.fill("#login-username", "testuser");
-    await page.fill("#login-password", "not-the-real-password");
-    await page.click("#login-form button[type=submit]");
+    await page.locator("#login-username").fill("testuser");
+    await page.locator("#login-password").fill("not-the-real-password");
+    await page.locator("#login-form button[type=submit]").click();
 
     // The credentials are wrong on purpose: the assertion is about
     // the key derivation and fetch running under the policy at all,
@@ -225,6 +225,11 @@ test.describe("Asset provenance", () => {
     // permits it. This closes that gap by checking the complement:
     // nothing outside the manifest is loaded.
     const res = await request.get("/.well-known/noombat/assets.json");
+    // A deployment may legitimately serve no manifest. CI always does,
+    // because ci-e2e.yml generates it before starting the server, so a
+    // skip here means that step regressed rather than that the feature
+    // is absent.
+    // eslint-disable-next-line playwright/no-skipped-test -- deployment-conditional
     test.skip(!res.ok(), "this deployment serves no asset manifest");
 
     const manifest = (await res.json()) as { assets?: Record<string, string> };

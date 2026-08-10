@@ -97,6 +97,37 @@ jobs:
       - name: Lint (eslint)
         run: pnpm lint
 
+  lint-e2e:
+    name: ESLint (e2e specs)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node (version from .nvmrc)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-e2e-${{ hashFiles('tests/e2e/pnpm-lock.yaml') }}
+          restore-keys: pnpm-e2e-
+
+      # No browsers needed: this lints the specs, it does not run them.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Lint (eslint)
+        run: pnpm lint
+
   format:
     name: Prettier
     runs-on: ubuntu-latest

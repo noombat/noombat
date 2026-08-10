@@ -12,3 +12,11 @@ frontend/dist/
 /assets-manifest.json
 /assets-manifest.sigstore.json
 /local-manifest.json
+
+# Playwright run output. Created by `pnpm test` in tests/e2e and by the
+# e2e CI job, which uploads playwright-report/ as an artefact.
+tests/e2e/test-results/
+tests/e2e/playwright-report/
+
+# pnpm creates a store beside the project when none is configured.
+.pnpm-store/
