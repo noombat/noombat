@@ -1025,6 +1025,15 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         .await?;
 
     // 6. Delivery queue entries for this actor.
+    // The recruiter's listings are their content and go with them.
+    // `applications.job_listing_id` is SET NULL rather than CASCADE, so
+    // applicants keep their own records; the snapshot columns on that
+    // table are what keeps those records legible afterwards.
+    sqlx::query("DELETE FROM job_listings WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(pool)
+        .await?;
+
     sqlx::query("DELETE FROM delivery_queue WHERE actor_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)

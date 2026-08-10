@@ -255,3 +255,81 @@ async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
         "the profile document should go too; calls were {calls:?}"
     );
 }
+
+/// A recruiter's erasure takes their listings and spares the applicants.
+///
+/// The whole decision in one assertion. `applications.job_listing_id`
+/// used to be `NOT NULL ... ON DELETE CASCADE`, so deleting a listing
+/// deleted every application to it: erasing one person destroyed
+/// another person's records. The listing is the recruiter's content and
+/// goes; the application is the applicant's and stays, legible because
+/// of the snapshot taken when it was created.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
+    let recruiter = insert_actor(&pool, "recruiter", Some(GRACE_DAYS + 1)).await;
+    let applicant = insert_actor(&pool, "applicant", None).await;
+
+    let listing: Uuid = sqlx::query_scalar(
+        "INSERT INTO job_listings \
+             (actor_id, ap_id, title, description_md, description_html) \
+         VALUES ($1, 'https://noombat.example/jobs/1', 'Engineer', 'Build things', \
+                 '<p>Build things</p>') \
+         RETURNING id",
+    )
+    .bind(recruiter)
+    .fetch_one(&pool)
+    .await
+    .expect("listing fixture inserted");
+
+    sqlx::query(
+        "INSERT INTO applications \
+             (applicant_id, job_listing_id, listing_title, listing_company, ap_id, \
+              cover_letter_md) \
+         VALUES ($1, $2, 'Engineer', 'Acme', 'https://noombat.example/applications/1', \
+                 'please hire me')",
+    )
+    .bind(applicant)
+    .bind(listing)
+    .execute(&pool)
+    .await
+    .expect("application fixture inserted");
+
+    let search = Arc::new(RecordingSearch::default());
+    let backend: Option<Arc<dyn SearchBackend>> = Some(search.clone());
+    noombat_api::erasure::sweep(&pool, &backend, GRACE_DAYS).await;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // The recruiter's content is gone.
+    let listings: i64 = sqlx::query_scalar("SELECT count(*) FROM job_listings")
+        .fetch_one(&pool)
+        .await
+        .expect("countable");
+    assert_eq!(
+        listings, 0,
+        "the listing should have been erased with its author"
+    );
+
+    // The applicant's record is not.
+    let (title, company, orphaned): (String, String, Option<Uuid>) = sqlx::query_as(
+        "SELECT listing_title, listing_company, job_listing_id FROM applications \
+         WHERE applicant_id = $1",
+    )
+    .bind(applicant)
+    .fetch_one(&pool)
+    .await
+    .expect("the application must survive the recruiter's erasure");
+
+    assert_eq!(orphaned, None, "the reference is cleared, not cascaded");
+    assert_eq!(title, "Engineer", "and the snapshot keeps it legible");
+    assert_eq!(company, "Acme");
+
+    assert!(
+        search
+            .calls
+            .lock()
+            .expect("not poisoned")
+            .contains(&format!("delete jobs {listing}")),
+        "the listing must leave the search index too"
+    );
+}

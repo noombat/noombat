@@ -55,6 +55,15 @@ pub async fn erase_actor(
         .await
         .unwrap_or_default();
 
+    // Same reason again: tombstoning deletes the listings, so the ids
+    // have to be taken while they still exist.
+    let indexed_jobs: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM job_listings WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
     let pre_tombstone = noombat_identity::repo::tombstone_actor(pool, actor_id).await?;
 
     // The request has been fulfilled, so retire it. `tombstone_actor`
@@ -85,6 +94,11 @@ pub async fn erase_actor(
     // other leaves erased writing searchable by its full text.
     for post_id in &indexed_posts {
         crate::search_sync::remove_from_index(search, "posts", &post_id.to_string());
+    }
+
+    // `index_job` keys on the listing's primary key, so this matches.
+    for job_id in &indexed_jobs {
+        crate::search_sync::remove_from_index(search, "jobs", &job_id.to_string());
     }
 
     Ok(pre_tombstone)

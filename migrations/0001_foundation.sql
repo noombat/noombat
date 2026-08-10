@@ -340,7 +340,19 @@ CREATE TABLE likes (
 CREATE TABLE applications (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     applicant_id      UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    job_listing_id    UUID NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+    -- Nullable, and SET NULL rather than CASCADE, because erasing the
+    -- recruiter deletes their listings and must not take the
+    -- applicants' records with them: the listing is the recruiter's
+    -- content, the application is the applicant's.
+    job_listing_id    UUID REFERENCES job_listings(id) ON DELETE SET NULL,
+    -- Denormalised at insert, never at erasure. These are what keeps an
+    -- application meaningful once the listing is gone ("I applied to X
+    -- at Y on Z"), and NOT NULL so a future insert cannot forget them:
+    -- copying at erasure would mean reading a row that is about to be
+    -- deleted, which races anything else deleting it.
+    listing_title     TEXT NOT NULL,
+    listing_company   TEXT NOT NULL,
+    applied_on        DATE NOT NULL DEFAULT CURRENT_DATE,
     ap_id             TEXT NOT NULL UNIQUE,
     cover_letter_md   TEXT,
     cover_letter_html TEXT,
