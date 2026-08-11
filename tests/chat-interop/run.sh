@@ -65,6 +65,25 @@ echo ""
 
 wait_for "Noombat" "$NOOMBAT/healthz" || exit 1
 
+# The Chatmail admin sidecar. Asserted here because nothing else notices
+# when it is down: the container healthcheck is an IMAP NOOP, which
+# Dovecot answers whether or not the sidecar is running, and the sidecar
+# crash-looped in every shipped image for the life of the project without
+# a single test failing. If this cannot be reached, password rotation,
+# doveadm kick, maildir deletion and transport_maps are all dead.
+# Every admin route requires the shared secret and there is no health
+# route, so an unauthenticated 401 is the liveness signal: it proves the
+# process is up and serving. A crash-loop gives a connection error
+# instead, which is exactly what this exists to catch.
+CHATMAIL_ADMIN="${CHATMAIL_ADMIN:-http://localhost:9100}"
+ADMIN_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
+  "$CHATMAIL_ADMIN/admin/v1/accounts/probe@example.invalid/exists" 2>/dev/null) || ADMIN_CODE="000"
+if [ "$ADMIN_CODE" = "401" ]; then
+    pass "Chatmail admin sidecar is serving (401 without the secret)"
+else
+    fail "Chatmail admin sidecar unreachable at $CHATMAIL_ADMIN (got '$ADMIN_CODE', expected 401)"
+fi
+
 # ..... Account Registration .....
 
 echo ""
@@ -183,7 +202,7 @@ if [ -n "$ALICE_TOKEN" ]; then
     if [ "$STATUS" = "201" ]; then
         pass "Chat report submitted (HTTP 201)"
     elif [ "$STATUS" = "403" ]; then
-        pass "Chat report route exists (HTTP 403 — auth gating)"
+        pass "Chat report route exists (HTTP 403, auth gating)"
     else
         fail "Chat report returned $STATUS"
     fi

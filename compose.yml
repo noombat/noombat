@@ -91,7 +91,10 @@ services:
       CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
       CHATMAIL_ADMIN_HOST: "0.0.0.0"
       CHATMAIL_ADMIN_PORT: "9100"
-      CHATMAIL_ALLOWLIST_URL: ${CHATMAIL_ALLOWLIST_URL:-https://noombat.org/chatmail-allowlist.json}
+      # Empty by default. Set it to join the closed federation, which
+      # is also the point at which this relay begins contacting a third
+      # party on a timer. See .env.example.
+      CHATMAIL_ALLOWLIST_URL: ${CHATMAIL_ALLOWLIST_URL:-}
     ports:
       - "25:25"       # inbound SMTP (MX)
       - "993:993"     # IMAP (TLS)

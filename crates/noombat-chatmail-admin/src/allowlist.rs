@@ -62,10 +62,13 @@ pub fn start_polling(state: Arc<AppState>) {
             .build()
             .into();
         let mut last_domains: BTreeSet<String> = BTreeSet::new();
+        let mut etag: Option<String> = None;
 
         loop {
-            match fetch_allowlist(&agent, &url) {
-                Ok(domains) => {
+            match fetch_allowlist(&agent, &url, etag.as_deref()) {
+                Ok(FetchOutcome::Unchanged) => {}
+                Ok(FetchOutcome::Fetched { domains, etag: new }) => {
+                    etag = new;
                     if domains != last_domains {
                         info!(
                             count = domains.len(),
@@ -89,22 +92,66 @@ pub fn start_polling(state: Arc<AppState>) {
                 }
             }
 
-            std::thread::sleep(interval);
+            // Jitter up to a tenth of the interval, so that relays
+            // started from the same image do not poll in lockstep and
+            // the sequence reveals a little less about this one's uptime.
+            let jitter = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.subsec_nanos() as u64 % (interval.as_secs() / 10 + 1))
+                .unwrap_or(0);
+            std::thread::sleep(interval + Duration::from_secs(jitter));
         }
     });
+}
+
+/// The result of one allowlist poll.
+enum FetchOutcome {
+    /// The server answered `304 Not Modified`; the cached set stands.
+    Unchanged,
+    /// A body was returned, with its `ETag` if the server supplied one.
+    Fetched {
+        domains: BTreeSet<String>,
+        etag: Option<String>,
+    },
 }
 
 /// Fetch the allowlist JSON document from the given URL.
 ///
 /// Uses a blocking HTTP GET via `ureq`. The caller provides
 /// a pre-configured [`ureq::Agent`] with the desired timeout.
+///
+/// When `etag` is supplied it is sent as `If-None-Match`, so an
+/// unchanged list costs a `304` and no body. Note what this does and
+/// does not buy: it saves bandwidth for whoever hosts the list, and it
+/// does **not** reduce disclosure, because the request is still made and
+/// still reveals this relay's address and the time it was made.
 fn fetch_allowlist(
     agent: &ureq::Agent,
     url: &str,
-) -> Result<BTreeSet<String>, Box<dyn std::error::Error>> {
-    let body: String = agent.get(url).call()?.body_mut().read_to_string()?;
+    etag: Option<&str>,
+) -> Result<FetchOutcome, Box<dyn std::error::Error>> {
+    let mut request = agent.get(url);
+    if let Some(tag) = etag {
+        request = request.header("If-None-Match", tag);
+    }
+
+    let mut response = request.call()?;
+    if response.status() == 304 {
+        return Ok(FetchOutcome::Unchanged);
+    }
+
+    let new_etag = response
+        .headers()
+        .get("etag")
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_owned);
+
+    let body: String = response.body_mut().read_to_string()?;
     let doc: AllowlistDocument = serde_json::from_str(&body)?;
-    Ok(doc.domains.into_iter().collect())
+    Ok(FetchOutcome::Fetched {
+        domains: doc.domains.into_iter().collect(),
+        etag: new_etag,
+    })
 }
 
 /// Write the Postfix `transport_maps` file.

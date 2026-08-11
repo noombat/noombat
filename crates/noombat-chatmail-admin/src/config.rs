@@ -28,11 +28,12 @@ pub struct Config {
     /// Debounce interval in seconds for Postfix reloads (default `2`).
     pub reload_debounce_secs: u64,
     /// URL of the published Chatmail allowlist JSON document
-    /// (default: `https://noombat.org/chatmail-allowlist.json`).
-    /// Set to an empty string to disable allowlist synchronisation.
+    /// Empty by default, which disables allowlist synchronisation.
+    /// Set it to enable closed-federation routing, conventionally
+    /// `https://noombat.org/chatmail-allowlist.json`.
     pub allowlist_url: String,
-    /// Polling interval in seconds for the allowlist (default `900`,
-    /// i.e. 15 minutes).
+    /// Polling interval in seconds for the allowlist (default `21600`,
+    /// i.e. 6 hours).
     pub allowlist_poll_interval_secs: u64,
     /// Path to the Postfix `transport_maps` file
     /// (default `/etc/postfix/noombat_transport_maps`).
@@ -66,12 +67,21 @@ impl Config {
                 .ok()
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(2),
-            allowlist_url: env::var("CHATMAIL_ALLOWLIST_URL")
-                .unwrap_or_else(|_| "https://noombat.org/chatmail-allowlist.json".into()),
+            // Empty by default: an instance contacts noombat.org only
+            // when its operator sets this, which is the moment they
+            // register their domain. Defaulting to the URL would make
+            // every relay poll a third party without anyone choosing it,
+            // and would tie a beacon to a crash fix.
+            allowlist_url: env::var("CHATMAIL_ALLOWLIST_URL").unwrap_or_default(),
+            // Six hours, not fifteen minutes. A curated federation list
+            // changes on a timescale of days, transport_maps is persisted
+            // so a stale poll delays discovering a peer rather than
+            // breaking delivery, and 900s was 2,880 requests a month, each
+            // one disclosing this relay's address and uptime.
             allowlist_poll_interval_secs: env::var("CHATMAIL_ALLOWLIST_POLL_INTERVAL_SECS")
                 .ok()
                 .and_then(|v| v.parse().ok())
-                .unwrap_or(900),
+                .unwrap_or(21_600),
             transport_maps_path: env::var("CHATMAIL_TRANSPORT_MAPS_PATH")
                 .unwrap_or_else(|_| "/etc/postfix/noombat_transport_maps".into()),
         };

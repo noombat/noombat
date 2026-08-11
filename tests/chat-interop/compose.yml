@@ -54,6 +54,10 @@ services:
       CHATMAIL_ADMIN_PORT: "9100"
       # Disable allowlist polling in the test environment.
       CHATMAIL_ALLOWLIST_URL: ""
+    # Published so tests/chat-interop/run.sh, which runs on the host, can
+    # assert the admin sidecar is actually serving.
+    ports:
+      - "9100:9100"
     networks:
       chattest:
         aliases: [chat.test.local]
