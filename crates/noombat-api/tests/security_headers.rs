@@ -113,6 +113,23 @@ fn assert_header_set(response: &axum::response::Response, path: &str) {
         headers.contains_key("content-security-policy"),
         "{path}: Content-Security-Policy is absent"
     );
+
+    // `img-src` specifically, because it is the directive this suite used
+    // to leave unguarded while asserting every other one. Featured images
+    // render an author-supplied absolute URL into `<img src>`, unvalidated
+    // on both write paths (`routes::actors` passes `featured_image_url`
+    // through; `federation::inbox::extract_image_url` takes a remote
+    // actor's `image` verbatim). Only this directive stops that becoming
+    // a per-reader IP disclosure to an arbitrary host, so whoever makes
+    // featured images work must not be able to relax it quietly.
+    let csp = headers
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(
+        csp.contains("img-src 'self' data:"),
+        "{path}: CSP does not restrict img-src to 'self' data: -- got {csp}"
+    );
     assert!(
         headers.contains_key("permissions-policy"),
         "{path}: Permissions-Policy is absent"

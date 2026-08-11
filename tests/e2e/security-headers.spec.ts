@@ -102,6 +102,13 @@ test.describe("Content-Security-Policy", () => {
     expect(csp).toContain("base-uri 'self'");
     expect(csp).toContain("form-action 'self'");
 
+    // Featured images render an author-supplied absolute URL into
+    // <img src>, unvalidated on both the local and the federated write
+    // path. This directive is the only thing that stops that becoming a
+    // per-reader IP disclosure to whatever host the URL names, and it
+    // was the one directive neither suite asserted.
+    expect(csp).toContain("img-src 'self' data:");
+
     // Either would defeat the point of extracting the inline scripts.
     expect(csp).not.toContain("unsafe-inline");
     expect(csp).not.toContain("unsafe-eval");
