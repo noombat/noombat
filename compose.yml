@@ -68,10 +68,15 @@ services:
       # the symptom and left a publicly known key running in a mode
       # whose whole purpose is to demand a secret one.
       MEILI_ENV: development
-      # Meilisearch reports anonymised usage to its vendor in production
+      # Meilisearch reports anonymised usage to its vendor in EVERY
       # mode unless this is set, which a self-hosted instance of a
       # privacy-oriented network should not do by default. The CI
       # integration job already sets it; no compose file did.
+      #
+      # Not conditional on MEILI_ENV: analytics/mod.rs branches only on
+      # `opt.no_analytics`, and `Opt::analytics` is `!self.no_analytics`
+      # (meilisearch v1.52.0). MEILI_ENV is reported as a field, never
+      # consulted as a gate.
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili-data:/meili_data

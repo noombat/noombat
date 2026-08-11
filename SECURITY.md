@@ -125,7 +125,8 @@ An operator should be able to answer "what does this box report, and to whom" wi
 source, so it is stated here.
 
 **Third-party telemetry is off.**
-Meilisearch reports to `telemetry.meilisearch.com` by default when running in production mode.
+Meilisearch reports to `telemetry.meilisearch.com` by default, in every mode.
+The reporting is gated solely on `MEILI_NO_ANALYTICS`; `MEILI_ENV` is one of the fields reported, not a condition on the reporting.
 The payload is a per-instance UUID persisted in its data directory, the host's OS name, kernel version, CPU core count, total RAM and largest disk size, days since first start, the document count of every index, its configuration flags, and whether TLS options such as client-certificate requirement and OCSP are configured.
 Its master key is not sent.
 `compose.yml` sets `MEILI_NO_ANALYTICS`, so a Compose deployment reports none of it.
