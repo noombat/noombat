@@ -138,6 +138,31 @@ updates:
       # Same reasoning as the frontend: pinned to the Node 24 line.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+    groups:
+      # axe-core and its Playwright wrapper must land in ONE pull request,
+      # because the wrapper hard-pins the engine to a single minor:
+      # @axe-core/playwright 4.12.1 depends on `axe-core: ~4.12.1`, and 4.13.0
+      # on `~4.13.0`. Bump axe-core alone and pnpm can no longer share one copy,
+      # so the tree splits into a top-level axe-core used only for the
+      # `AxeResults` type import in axe-fixture.ts and a nested older copy that
+      # actually runs every scan. The suite then reports against one engine
+      # while the types describe another, and nothing fails to say so.
+      #
+      # That is not hypothetical: it is the state PRs #30 and #39 were held to
+      # avoid on 2026-08-15, and Dependabot could not have warned about it,
+      # because eslint-plugin-playwright's peer range is an open `>=8.40.0`.
+      #
+      # This group deliberately carries NO `update-types`, unlike every other
+      # group in this file. The blanket rule at the top of the file exists to
+      # stop a group swallowing majors by accident; here it is the point. The
+      # pair must move together whatever the bump is, including axe-core 4 to 5.
+      # Landing them together is cheap: the wrapper's four dist files are
+      # byte-identical between 4.12.1 and 4.13.0, so its release is nothing but
+      # the dependency range.
+      axe:
+        patterns:
+          - "axe-core"
+          - "@axe-core/*"
 
   # 4. Docker: base images across all Dockerfiles.
   - package-ecosystem: docker
