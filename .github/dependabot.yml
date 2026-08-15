@@ -84,14 +84,37 @@ updates:
       # indefinitely, because nothing here will ever accept it.
       #
       # Moving to 26 is not just a version bump: Node stopped distributing
-      # Corepack at 25.0.0, and `corepack enable` is load-bearing in six
-      # jobs across ci-frontend.yml and ci.yml.
+      # Corepack at 25.0.0, and `corepack enable` is load-bearing in ten
+      # jobs across four files: ci-frontend.yml (typecheck, lint, lint-e2e,
+      # format, test, reproducible), ci-e2e.yml (e2e, interop), ci.yml
+      # (release-build) and release.yml (release). Counted 2026-08-15; the
+      # figure here previously said six jobs across two files, which was
+      # ci-frontend.yml's share mistaken for the total.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     groups:
       frontend-minor-patch:
         patterns:
           - "*"
+        # A `0.x` release treats its minor as the breaking position, but
+        # Dependabot still classifies `0.16 -> 0.18` as a minor, so the
+        # `update-types` filter below does not hold it back and the group
+        # swallows it. That is not the same failure as the one described
+        # at the top of this file, where omitting `update-types` swallows
+        # majors; here the filter is present and correct and the version
+        # scheme is what differs.
+        #
+        # katex is the only unconstrained `0.x` dependency here
+        # (eslint-plugin-solid is pinned `~0.14.5`, so patches only), and
+        # it is excluded so it arrives as its own reviewable pull request.
+        # Two consequences to check when taking it: katex ships its own
+        # types from 0.18.0, so `@types/katex` stops being load-bearing
+        # and should be removed in the same change; and `katex.min.css`
+        # is imported directly by `frontend/src/katex.ts` and
+        # `frontend/src/editor/index.tsx`, so the stylesheet path is part
+        # of the upgrade surface, not just the API.
+        exclude-patterns:
+          - "katex"
         update-types:
           - minor
           - patch
@@ -128,6 +151,17 @@ updates:
     commit-message:
       prefix: "deps(docker)"
       include: scope
+    ignore:
+      # The same Node 24 hold both npm ecosystems carry, applied to the
+      # image that the `engines` field and `.nvmrc` are pinned against.
+      # Without it the hold is only two thirds enforced: the group below
+      # cannot suppress this, because majors are deliberately proposed
+      # individually rather than grouped, so `node:24 -> node:26` was
+      # reopened every Monday and failed the same check each time. The
+      # blocker is Corepack, dropped from the Node distribution at
+      # 25.0.0; lift this rule in the change that stops relying on it.
+      - dependency-name: "node"
+        update-types: ["version-update:semver-major"]
     groups:
       docker-base-images:
         patterns:
