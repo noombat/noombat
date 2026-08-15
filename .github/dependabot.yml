@@ -56,6 +56,37 @@ updates:
       prefix: "deps"
       include: scope
     groups:
+      # askama and askama_web must land in ONE pull request, for the same
+      # reason as the axe pair below: the wrapper hard-pins the engine to a
+      # single 0.x minor. Every askama_web release ever published declares
+      # askama at exactly one minor (0.14.7 requires `askama ^0.14.0`, 0.16.0
+      # requires `^0.16.0`), so bumping either alone leaves Cargo resolving
+      # BOTH copies into the lockfile. That is not a warning, it is a hard
+      # compile error: `#[derive(Template)]` then implements a trait from one
+      # askama while askama_web expects the trait from the other, giving
+      # E0277 "there are multiple different versions of crate `askama` in the
+      # dependency graph". Verified in both directions, and confirmed that the
+      # pair applied together resolves to one copy and compiles.
+      #
+      # This group deliberately carries NO `update-types`, unlike
+      # cargo-minor-patch below, and the reason is specific to Cargo rather
+      # than to this crate. Dependabot classifies a 0.x MINOR bump in the
+      # Cargo ecosystem as semver-MAJOR: for a `0.y.z` version its cargo
+      # classifier only ever returns "major" or "patch", never "minor". So
+      # `update-types: [minor, patch]` excludes 0.14 -> 0.16 by design, which
+      # is exactly why cargo-minor-patch did not capture these two on
+      # 2026-07-21 while correctly grouping twelve other crates the same
+      # minute. Adding `minor` here would be a no-op; omitting update-types is
+      # what makes the group work.
+      #
+      # Note this is the OPPOSITE of npm's behaviour, where a 0.x minor is
+      # classified as minor and therefore does get swallowed by a
+      # [minor, patch] group. See the katex exclusion under /frontend. Do not
+      # generalise either rule across ecosystems.
+      askama:
+        patterns:
+          - "askama"
+          - "askama_web"
       cargo-minor-patch:
         patterns:
           - "*"
