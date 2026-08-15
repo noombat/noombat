@@ -52,7 +52,7 @@ RUN NOOMBAT_VERSION="$NOOMBAT_VERSION" NOOMBAT_COMMIT="$NOOMBAT_COMMIT" \
 # The `rust:1-bookworm` tag tracks the latest stable Rust 1.x release,
 # matching the CI `stable` channel. The workspace MSRV (rust-version in
 # Cargo.toml) is verified separately by the CI `msrv` job.
-FROM rust:1-bookworm@sha256:14bc9c5966e7b3a385794b3d5389a8765668342025fbcc7b2e3d2866ac4bd8c3 AS builder
+FROM rust:1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
 
 WORKDIR /build
 COPY Cargo.toml rust-toolchain.toml ./
