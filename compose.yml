@@ -55,7 +55,7 @@ services:
       - redis-data:/data
 
   meilisearch:
-    image: docker.io/getmeili/meilisearch:v1.52@sha256:d36e713e8f89483af1ab0d72011bbd503f5ab100b68ccbfad51c39e3f0a0567d
+    image: docker.io/getmeili/meilisearch:v1.52@sha256:4b97a53f5a64a5f0228da6d1db2fde016695d287aecb11a83bca368148542f7e
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
       # Development by default, production selected by compose.prod.yml,
