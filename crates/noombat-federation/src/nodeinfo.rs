@@ -36,8 +36,6 @@ pub struct NodeInfoParams {
     pub active_month: u64,
     pub active_half_year: u64,
     pub local_posts: u64,
-    /// Number of currently active (published, non-expired) job listings.
-    pub active_job_listings: u64,
     pub open_registrations: bool,
     /// Instance-level feature flags exposed in the `metadata` object.
     pub features: NodeInfoFeatures,
@@ -74,8 +72,18 @@ pub fn build(params: &NodeInfoParams) -> Value {
             "noombat:Application",
             "noombat:EventExtensions"
         ],
+        // `jobListingsEnabled` is a capability: it tells a peer this
+        // software supports job listings, which is what discovery needs.
+        //
+        // The count that used to sit here, `noombat:activeJobListings`,
+        // was not a capability. This endpoint is unauthenticated and
+        // polled on a schedule by Fediverse observatories, so publishing
+        // it made a machine-readable hiring-volume time series out of an
+        // instance, and on a single-company instance the inference is
+        // direct. NodeInfo 2.1 treats `metadata` as free-form and tells
+        // clients not to rely on specific keys, so nothing federates
+        // worse without it.
         "noombat:jobListingsEnabled": true,
-        "noombat:activeJobListings": params.active_job_listings,
         "noombat:chatmailAvailable": params.features.chatmail_available,
         "noombat:groupsEnabled": params.features.groups_enabled,
         "noombat:eventsEnabled": params.features.events_enabled,
@@ -133,7 +141,6 @@ mod tests {
             active_month: 5,
             active_half_year: 8,
             local_posts: 42,
-            active_job_listings: 7,
             open_registrations: true,
             features: NodeInfoFeatures::default(),
         };
@@ -142,7 +149,137 @@ mod tests {
         assert_eq!(doc["usage"]["users"]["total"], 10);
         assert_eq!(doc["usage"]["localPosts"], 42);
         assert_eq!(doc["openRegistrations"], true);
-        assert_eq!(doc["metadata"]["noombat:activeJobListings"], 7);
+        // The capability is published; the count deliberately is not.
+        assert_eq!(doc["metadata"]["noombat:jobListingsEnabled"], true);
+        assert!(
+            doc["metadata"].get("noombat:activeJobListings").is_none(),
+            "the active job listing count is a business metric and must not be \
+             published on an unauthenticated, observatory-polled endpoint"
+        );
+    }
+
+    /// Every key `build` can emit, as a flat path list.
+    ///
+    /// This is a golden list, and the point of it is the failure it
+    /// causes. Adding a key to `build` without adding it here fails
+    /// this test, and the fix is to add the key in both places: here,
+    /// and in the NodeInfo section of `docs/federation.md`. That
+    /// section previously documented five of the twenty-one paths
+    /// below, and an operator could not learn what their instance
+    /// discloses by reading it. The list is asserted here rather than
+    /// parsed out of the document because a crate test that reads its
+    /// way up to the repository root couples this crate to the layout
+    /// above it, and because the document is not required to be
+    /// present for the workspace to build.
+    const EMITTED_PATHS: &[&str] = &[
+        "version",
+        "software.name",
+        "software.version",
+        "software.repository",
+        "protocols",
+        "usage.users.total",
+        "usage.users.activeMonth",
+        "usage.users.activeHalfyear",
+        "usage.localPosts",
+        "openRegistrations",
+        "metadata.noombat:supportedVocabulary",
+        "metadata.noombat:jobListingsEnabled",
+        "metadata.noombat:chatmailAvailable",
+        "metadata.noombat:groupsEnabled",
+        "metadata.noombat:eventsEnabled",
+        "metadata.noombat:articlesEnabled",
+        // Conditional: emitted only when the feature is configured.
+        "metadata.noombat:chatmailDomain",
+        "metadata.noombat:integrityProofsEnabled",
+        "metadata.noombat:integrityProofsCryptosuite",
+        "metadata.noombat:relaySupported",
+        "metadata.noombat:relayVerificationPolicy",
+    ];
+
+    /// Flatten a JSON object into dotted paths, stopping at non-objects.
+    fn paths(value: &Value, prefix: &str, out: &mut Vec<String>) {
+        match value.as_object() {
+            Some(map) => {
+                for (key, child) in map {
+                    let path = if prefix.is_empty() {
+                        key.clone()
+                    } else {
+                        format!("{prefix}.{key}")
+                    };
+                    paths(child, &path, out);
+                }
+            }
+            None => out.push(prefix.to_owned()),
+        }
+    }
+
+    fn emitted_paths(params: &NodeInfoParams) -> Vec<String> {
+        let mut out = Vec::new();
+        paths(&build(params), "", &mut out);
+        out.sort();
+        out
+    }
+
+    #[test]
+    fn every_emitted_key_is_accounted_for() {
+        // Every conditional field turned on, so the document is at its
+        // widest and the golden list is exercised in full.
+        let params = NodeInfoParams {
+            total_users: 1,
+            active_month: 1,
+            active_half_year: 1,
+            local_posts: 1,
+            open_registrations: true,
+            features: NodeInfoFeatures {
+                chatmail_available: true,
+                chatmail_domain: Some("chat.example.org".to_owned()),
+                groups_enabled: true,
+                events_enabled: true,
+                articles_enabled: true,
+                integrity_proofs_enabled: true,
+                relay_verification_policy: Some("allowlist".to_owned()),
+            },
+        };
+
+        let mut expected: Vec<String> = EMITTED_PATHS.iter().map(|p| (*p).to_owned()).collect();
+        expected.sort();
+
+        assert_eq!(
+            emitted_paths(&params),
+            expected,
+            "the NodeInfo document changed shape. Update EMITTED_PATHS above and the \
+             NodeInfo section of docs/federation.md in the same change, so an operator \
+             can still learn what their instance discloses by reading the documentation"
+        );
+    }
+
+    #[test]
+    fn a_default_instance_emits_no_conditional_keys() {
+        // Absence is the contract for the conditional keys: they are
+        // never emitted as `false`, so a peer must test for presence.
+        // `docs/federation.md` says so, and this is what makes that true.
+        let params = NodeInfoParams {
+            total_users: 0,
+            active_month: 0,
+            active_half_year: 0,
+            local_posts: 0,
+            open_registrations: false,
+            features: NodeInfoFeatures::default(),
+        };
+
+        let emitted = emitted_paths(&params);
+        for conditional in [
+            "metadata.noombat:chatmailDomain",
+            "metadata.noombat:integrityProofsEnabled",
+            "metadata.noombat:integrityProofsCryptosuite",
+            "metadata.noombat:relaySupported",
+            "metadata.noombat:relayVerificationPolicy",
+        ] {
+            assert!(
+                !emitted.contains(&conditional.to_owned()),
+                "{conditional} must be absent on a default instance, not present and false"
+            );
+        }
     }
 
     #[test]
@@ -152,7 +289,6 @@ mod tests {
             active_month: 1,
             active_half_year: 1,
             local_posts: 0,
-            active_job_listings: 0,
             open_registrations: false,
             features: NodeInfoFeatures {
                 chatmail_available: true,

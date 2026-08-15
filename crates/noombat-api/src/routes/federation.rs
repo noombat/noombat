@@ -87,43 +87,33 @@ async fn nodeinfo_well_known(State(state): State<AppState>) -> impl IntoResponse
 }
 
 async fn nodeinfo_handler(State(state): State<AppState>) -> Result<impl IntoResponse, ApiError> {
-    // Execute the five independent COUNT queries concurrently.
-    let (total_users, active_month, active_half_year, local_posts, active_job_listings) =
-        tokio::try_join!(
-            sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM actors WHERE is_local = TRUE")
-                .fetch_one(&state.pool),
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM actors \
+    // Execute the four independent COUNT queries concurrently.
+    let (total_users, active_month, active_half_year, local_posts) = tokio::try_join!(
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM actors WHERE is_local = TRUE")
+            .fetch_one(&state.pool),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM actors \
                  WHERE is_local = TRUE AND updated_at > now() - interval '30 days'"
-            )
-            .fetch_one(&state.pool),
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM actors \
-                 WHERE is_local = TRUE AND updated_at > now() - interval '180 days'"
-            )
-            .fetch_one(&state.pool),
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM posts \
-                 WHERE actor_id IN (SELECT id FROM actors WHERE is_local = TRUE)"
-            )
-            .fetch_one(&state.pool),
-            sqlx::query_scalar::<_, i64>(
-                "SELECT COUNT(*) FROM job_listings jl \
-                 JOIN actors a ON a.id = jl.actor_id \
-                 WHERE a.is_local = TRUE \
-                   AND jl.published_at IS NOT NULL \
-                   AND (jl.expires_at IS NULL OR jl.expires_at > now())"
-            )
-            .fetch_one(&state.pool),
         )
-        .map_err(noombat_core::error::NoombatError::from)?;
+        .fetch_one(&state.pool),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM actors \
+                 WHERE is_local = TRUE AND updated_at > now() - interval '180 days'"
+        )
+        .fetch_one(&state.pool),
+        sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM posts \
+                 WHERE actor_id IN (SELECT id FROM actors WHERE is_local = TRUE)"
+        )
+        .fetch_one(&state.pool),
+    )
+    .map_err(noombat_core::error::NoombatError::from)?;
 
     let params = nodeinfo::NodeInfoParams {
         total_users: total_users as u64,
         active_month: active_month as u64,
         active_half_year: active_half_year as u64,
         local_posts: local_posts as u64,
-        active_job_listings: active_job_listings as u64,
         open_registrations: state.open_registrations,
         features: state.nodeinfo_features.clone(),
     };
