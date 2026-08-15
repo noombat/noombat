@@ -12,8 +12,8 @@ importers:
         specifier: ^2.0.0
         version: 2.0.10
       katex:
-        specifier: ^0.16.22
-        version: 0.16.47
+        specifier: ^0.18.4
+        version: 0.18.4
       markdown-it:
         specifier: ^14.1.0
         version: 14.3.0
@@ -971,8 +971,8 @@ packages:
     engines: {node: '>=6'}
     hasBin: true
 
-  katex@0.16.47:
-    resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
+  katex@0.18.4:
+    resolution: {integrity: sha512-IMPntbRLOU+eu88XDiFKqQ8Akhr9Tv7jDMXqPhjG9SI1JMA4DIgXk4x9k4skJz2NZJXBRbC+2pYBLj9olqcZow==}
     hasBin: true
 
   kebab-case@1.0.2:
@@ -2452,7 +2452,7 @@ snapshots:
 
   json5@2.2.3: {}
 
-  katex@0.16.47:
+  katex@0.18.4:
     dependencies:
       commander: 8.3.0
 
