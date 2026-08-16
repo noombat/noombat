@@ -2543,7 +2543,6 @@ dependencies = [
  "sqlx",
  "tokio",
  "tokio-rustls",
- "tokio-tungstenite",
  "tracing",
  "uuid",
  "webpki-roots",

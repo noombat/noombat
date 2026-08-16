@@ -187,8 +187,15 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 # MIME parsing (Autocrypt header extraction from IMAP messages).
 mailparse = "0.15"
 
-# WebSocket (chat relay: browser <--> server).
-tokio-tungstenite = "0.29"
+# The browser side of the chat relay speaks WebSocket through axum's `ws`
+# feature (see `noombat-api::routes::ws_chat`), which vendors its own
+# tokio-tungstenite and pins it to one minor: axum 0.8.9 requires exactly
+# `0.29.0`. A workspace entry here would therefore have to track axum's pin
+# rather than the newest release, and Dependabot cannot know that: PR #47
+# proposed 0.30.0 on 2026-08-15, which resolves to a SECOND copy of both
+# tokio-tungstenite and tungstenite rather than an upgrade, because axum
+# keeps 0.29.0 regardless. noombat-chat declared the crate and never
+# imported it, so it is not declared here at all; axum governs the version.
 
 # Base58 encoding (Ed25519 multibase public keys, FEP-521a).
 bs58 = "0.5"
