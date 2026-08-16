@@ -140,6 +140,54 @@ fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
     builder.add_tag_attributes("math", ["xmlns", "display"]);
     builder.add_tag_attributes("annotation", ["encoding"]);
     builder.add_tag_attributes("annotation-xml", ["encoding"]);
+
+    // MathML layout attributes.
+    //
+    // These are not decoration. MathML expresses part of an
+    // expression's meaning in attributes, so stripping them changes
+    // what the reader sees into a different expression rather than an
+    // uglier one. `\binom{n}{k}` is the clearest case: it is an
+    // `mfrac` with `linethickness="0px"`, so dropping that attribute
+    // draws a division bar that the author never wrote. `stretchy`
+    // and `fence` decide whether delimiters grow to their content,
+    // and `mathvariant` is the difference between a variable and a
+    // unit.
+    //
+    // Every attribute below is presentational and inert. None takes a
+    // URL and none names a script. Deliberately absent: `href` and the
+    // `xlink:*` family, which MathML does define and which would be a
+    // navigation vector, and `style`, which the CSP refuses anyway.
+    builder.add_tag_attributes("mfrac", ["linethickness"]);
+    builder.add_tag_attributes(
+        "mo",
+        [
+            "fence",
+            "stretchy",
+            "separator",
+            "form",
+            "largeop",
+            "movablelimits",
+            "symmetric",
+            "lspace",
+            "rspace",
+            "minsize",
+            "maxsize",
+        ],
+    );
+    for tag in ["mi", "mn", "ms", "mtext"] {
+        builder.add_tag_attributes(tag, ["mathvariant"]);
+    }
+    builder.add_tag_attributes("mspace", ["width", "height", "depth"]);
+    builder.add_tag_attributes("mpadded", ["width", "height", "depth", "lspace", "voffset"]);
+    builder.add_tag_attributes("menclose", ["notation"]);
+    builder.add_tag_attributes("mtable", ["columnalign", "rowspacing", "columnspacing"]);
+    builder.add_tag_attributes("mtr", ["columnalign", "rowalign"]);
+    builder.add_tag_attributes("mtd", ["columnalign", "rowalign", "columnspan", "rowspan"]);
+    for tag in ["mover", "munder", "munderover"] {
+        builder.add_tag_attributes(tag, ["accent", "accentunder"]);
+    }
+    builder.add_tag_attributes("msqrt", ["mathvariant"]);
+    builder.add_tag_attributes("mroot", ["mathvariant"]);
     builder.add_tag_attributes("time", ["datetime"]);
 
     // Task-list checkboxes: permit only the attributes that

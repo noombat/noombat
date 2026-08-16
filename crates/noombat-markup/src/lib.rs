@@ -286,7 +286,29 @@ fn extract_headings_from_events(events: &[Event<'_>]) -> Vec<Heading> {
     headings_out
 }
 
-/// Render a KaTeX math expression to (HTML + MathML).
+/// Render a KaTeX math expression to MathML.
+///
+/// MathML only, deliberately, rather than KaTeX's default of MathML
+/// plus a visually-rendered HTML span layer. That layer positions
+/// every glyph with inline `style` attributes, and this project
+/// destroys them twice over: `sanitise::clean_strict` strips `style`
+/// from `<span>` on articles, and the deployed Content-Security-Policy
+/// sets `style-src 'self'` with no `'unsafe-inline'`, which a test
+/// asserts. So the browser was refusing the styles even where the
+/// sanitiser left them, and the layer could only ever render as
+/// unpositioned glyphs.
+///
+/// Dropping it also decouples the server from the stylesheet. The span
+/// layer depends on KaTeX's CSS class names, which are versioned: 0.18
+/// renamed twenty-one of them (`base` became `katex-base`, and so on),
+/// so the frontend's npm KaTeX and this vendored one had to be upgraded
+/// in lockstep, and nothing enforced that. MathML carries no class
+/// names, so the two halves are now independent.
+///
+/// What is kept is what carries meaning: MathML is what a screen reader
+/// reads, and the `<annotation encoding="application/x-tex">` inside it
+/// is what a federated peer reads. Mastodon's transformer recovers the
+/// original LaTeX from that annotation.
 ///
 /// On failure (e.g. invalid LaTeX), returns the raw source wrapped
 /// in a `<code>` element so that the user sees their input rather
@@ -294,7 +316,7 @@ fn extract_headings_from_events(events: &[Event<'_>]) -> Vec<Heading> {
 fn render_katex(source: &str, display_mode: bool) -> String {
     let opts = katex::Opts::builder()
         .display_mode(display_mode)
-        .output_type(katex::OutputType::HtmlAndMathml)
+        .output_type(katex::OutputType::Mathml)
         .throw_on_error(false)
         .build();
 
@@ -344,6 +366,107 @@ mod tests {
     fn display_math() {
         let output = render("$$\\sum_{i=1}^{n} i$$");
         assert!(output.html.contains("katex"));
+    }
+
+    // ..... Maths output, characterised .....
+    //
+    // The two assertions above only check for the substring "katex",
+    // which every output shape satisfies, so they cannot tell one
+    // renderer from another. These do.
+    //
+    // Maths is emitted as MathML, and it is the MathML that has to
+    // survive: it is what carries meaning to screen readers, and it is
+    // what federates. Mastodon's FEP-8b32 transformer reads the
+    // `<annotation encoding="application/x-tex">` back out of a
+    // `<semantics>` block to recover the source, so a remote reader
+    // sees the LaTeX only if these elements reach the wire intact.
+    //
+    // Each of these asserts on output that has already been through
+    // `sanitise`, because that is the only shape a reader ever gets.
+
+    #[test]
+    fn inline_math_emits_mathml_the_sanitiser_keeps() {
+        let html = render("Energy: $E = mc^2$").html;
+
+        assert!(
+            html.contains(r#"<math xmlns="http://www.w3.org/1998/Math/MathML">"#),
+            "the MathML root did not survive sanitisation: {html}"
+        );
+        assert!(
+            html.contains("<semantics>") && html.contains("<mrow>"),
+            "the semantics wrapper did not survive: {html}"
+        );
+        assert!(
+            html.contains(r#"<annotation encoding="application/x-tex">E = mc^2</annotation>"#),
+            "the TeX annotation federation depends on is missing: {html}"
+        );
+        assert!(
+            html.contains("<msup>"),
+            "the superscript became flat text: {html}"
+        );
+    }
+
+    #[test]
+    fn display_math_is_marked_as_a_block() {
+        let html = render("$$\\frac{a}{b}$$").html;
+
+        // `display="block"` is the only thing distinguishing display
+        // maths from inline once the HTML span layer is gone.
+        assert!(
+            html.contains(r#"display="block""#),
+            "display maths lost its block marker: {html}"
+        );
+        assert!(html.contains("<mfrac>"), "the fraction flattened: {html}");
+    }
+
+    #[test]
+    fn presentation_attributes_survive_sanitisation() {
+        // `\binom` renders as a fraction with the rule suppressed by
+        // `linethickness="0px"`. Strip that attribute and the reader
+        // sees a division bar that is not in the source, i.e. a
+        // different expression, silently. The sanitiser allowlist has
+        // to carry the layout attributes for this reason, and this
+        // test is what stops one being dropped again.
+        let html = render(r"$\binom{n}{k}$").html;
+
+        assert!(
+            html.contains(r#"linethickness="0px""#),
+            "binomial gained a fraction bar it should not have: {html}"
+        );
+        assert!(
+            html.contains(r#"fence="true""#),
+            "the delimiters lost their fence role: {html}"
+        );
+    }
+
+    #[test]
+    fn the_html_span_layer_is_gone() {
+        // The span layer was styled entirely by inline `style`
+        // attributes, which `clean_strict` strips and which the
+        // deployed CSP refuses (`style-src 'self'`, no
+        // `'unsafe-inline'`). Emitting it produced markup that could
+        // not lay out and that federated to peers as glyph soup.
+        let html = render("Energy: $E = mc^2$").html;
+
+        assert!(
+            !html.contains("katex-html"),
+            "the unstyleable span layer is back: {html}"
+        );
+        assert!(
+            !html.contains("katex-mathml"),
+            "MathML is wrapped in the class katex.css hides: {html}"
+        );
+    }
+
+    #[test]
+    fn invalid_maths_falls_back_to_the_source() {
+        // `throw_on_error(false)` plus the `<code>` fallback: a reader
+        // must see what they typed rather than a blank space.
+        let html = render(r"$\frac{$").html;
+        assert!(
+            html.contains("frac"),
+            "invalid maths rendered as nothing: {html}"
+        );
     }
 
     #[test]
