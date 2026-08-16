@@ -68,10 +68,20 @@ const INLINE_MATH_RE = /\$([^\s$](?:[^$]*[^\s$])?)\$/g;
 /** Render a single TeX fragment to KaTeX HTML. */
 function renderKatex(tex: string, displayMode: boolean): string {
   try {
+    // MathML only, to match what the server publishes.
+    //
+    // `noombat-markup`'s `render_katex` emits `OutputType::Mathml`, so
+    // a preview using KaTeX's HTML span layer would show the author
+    // something no reader ever receives. It would also be a preview of
+    // markup that cannot render here either: the layer positions every
+    // glyph with inline `style` attributes, injected through
+    // `innerHTML`, and the deployed policy is `style-src 'self'` with
+    // no `style-src-attr`, so the browser refuses them on this page
+    // exactly as it does on an article.
     return katex.renderToString(tex, {
       displayMode,
       throwOnError: false,
-      output: "htmlAndMathml",
+      output: "mathml",
     });
   } catch {
     return `<code class="katex-error">${escapeForHtml(tex)}</code>`;
