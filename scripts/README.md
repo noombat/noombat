@@ -11,6 +11,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `clean.sh`          | Remove all build artifacts  | Before a clean rebuild or to reclaim disk space            |
 | `test.sh`           | Run all verification checks | Before committing or pushing                               |
 | `smoke-test.sh`     | Black-box HTTP tests        | After starting the server, to verify it responds correctly |
+| `e2e-stack.sh`      | Raise/tear down the e2e stack | Before and after a Playwright run (`up`, `down`, `status`) |
 | `chatmail-setup.sh` | Chatmail DNS verification   | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
