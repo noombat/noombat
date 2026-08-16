@@ -405,7 +405,7 @@ mod tests {
     //
     // Maths is emitted as MathML, and it is the MathML that has to
     // survive: it is what carries meaning to screen readers, and it is
-    // what federates. Mastodon's FEP-8b32 transformer reads the
+    // what federates. Mastodon's FEP-dc88 transformer reads the
     // `<annotation encoding="application/x-tex">` back out of a
     // `<semantics>` block to recover the source, so a remote reader
     // sees the LaTeX only if these elements reach the wire intact.

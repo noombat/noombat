@@ -21,6 +21,7 @@ pub mod jobs;
 pub mod moderation;
 pub mod pages;
 pub mod posts;
+pub mod preview;
 pub mod profile_sections;
 pub mod search;
 pub mod wellknown;

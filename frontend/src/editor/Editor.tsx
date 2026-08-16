@@ -2,19 +2,25 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * Live (Markdown + KaTeX) editor island.
+ * Markdown editor island with a server-rendered preview.
  *
  * Renders a split editor (textarea | preview) on wide viewports and a
- * tabbed view (edit / preview) on narrow viewports. Math delimiters
- * `$...$` (inline) and `$$...$$` (display) are rendered via KaTeX in
- * the preview pane. The canonical render remains the server-side
- * `noombat-markup` pipeline; this client-side preview is for authoring
- * convenience only.
+ * tabbed view (edit / preview) on narrow viewports.
+ *
+ * The preview is produced by `POST /api/v1/preview`, which calls the
+ * same `noombat-markup` function the persist path calls. There is
+ * deliberately no Markdown or maths renderer in this file: per
+ * `adr/0010`, a preview from a second engine shows the author a
+ * different document than the one that will be stored and federated,
+ * and a federated `Create` cannot be recalled. The engines had already
+ * drifted (markdown-it ran with `linkify` and `typographer` on, and did
+ * no hashtag, DOI or heading-anchor extraction at all).
+ *
+ * The cost of that correctness is a round trip per preview, debounced
+ * below, and no preview while offline. The editor itself keeps working.
  */
 
 import { createSignal, createEffect, onCleanup, type JSX } from "solid-js";
-import MarkdownIt from "markdown-it";
-import katex from "katex";
 
 // ..... i18n .....
 
@@ -23,6 +29,7 @@ interface EditorStrings {
   tab_edit: string;
   tab_preview: string;
   placeholder: string;
+  preview_unavailable: string;
 }
 
 const TRANSLATIONS: Record<string, EditorStrings> = {
@@ -31,102 +38,28 @@ const TRANSLATIONS: Record<string, EditorStrings> = {
     tab_preview: "Preview",
     placeholder:
       "Write Markdown here\u2026 Use $\u2026$ for inline math, $$\u2026$$ for display math.",
+    preview_unavailable: "Preview unavailable. Your text is unaffected.",
   },
   "en-AU": {
     tab_edit: "Edit",
     tab_preview: "Preview",
     placeholder:
       "Write Markdown here\u2026 Use $\u2026$ for inline math, $$\u2026$$ for display math.",
+    preview_unavailable: "Preview unavailable. Your text is unaffected.",
   },
   "pt-BR": {
     tab_edit: "Editar",
     tab_preview: "Pr\u00e9-visualizar",
     placeholder:
       "Escreva Markdown aqui\u2026 Use $\u2026$ para f\u00f3rmulas em linha, $$\u2026$$ para f\u00f3rmulas em destaque.",
+    preview_unavailable:
+      "Pr\u00e9-visualiza\u00e7\u00e3o indispon\u00edvel. Seu texto n\u00e3o foi afetado.",
   },
 };
 
 /** Resolve translations for the given locale, falling back to en-US. */
 function t(locale: string): EditorStrings {
   return TRANSLATIONS[locale] ?? TRANSLATIONS["en-US"];
-}
-
-// ..... Markdown-it instance .....
-
-const md = new MarkdownIt({ html: false, linkify: true, typographer: true });
-
-// ..... KaTeX rendering helpers .....
-//
-// Math is extracted from the raw Markdown source before markdown-it
-// runs, replaced with inert placeholders, and restored in the HTML
-// output. This avoids applying math regexes to HTML (where `$` might
-// appear inside attributes or entity references).
-
-const DISPLAY_MATH_RE = /\$\$([\s\S]+?)\$\$/g;
-const INLINE_MATH_RE = /\$([^\s$](?:[^$]*[^\s$])?)\$/g;
-
-/** Render a single TeX fragment to KaTeX HTML. */
-function renderKatex(tex: string, displayMode: boolean): string {
-  try {
-    // MathML only, to match what the server publishes.
-    //
-    // `noombat-markup`'s `render_katex` emits `OutputType::Mathml`, so
-    // a preview using KaTeX's HTML span layer would show the author
-    // something no reader ever receives. It would also be a preview of
-    // markup that cannot render here either: the layer positions every
-    // glyph with inline `style` attributes, injected through
-    // `innerHTML`, and the deployed policy is `style-src 'self'` with
-    // no `style-src-attr`, so the browser refuses them on this page
-    // exactly as it does on an article.
-    return katex.renderToString(tex, {
-      displayMode,
-      throwOnError: false,
-      output: "mathml",
-    });
-  } catch {
-    return `<code class="katex-error">${escapeForHtml(tex)}</code>`;
-  }
-}
-
-/** Minimal HTML escaping for error display. */
-function escapeForHtml(s: string): string {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
-
-/**
- * Extract math spans from raw Markdown source, render them with KaTeX,
- * and return the source with placeholders plus a map to restore them.
- */
-function extractMath(source: string): {
-  processed: string;
-  fragments: Map<string, string>;
-} {
-  const fragments = new Map<string, string>();
-  let counter = 0;
-
-  // Display math first ($$ is greedy over $).
-  let processed = source.replace(DISPLAY_MATH_RE, (_m, tex: string) => {
-    const id = `\uE000MATH${counter++}\uE000`;
-    fragments.set(id, renderKatex(tex.trim(), true));
-    return id;
-  });
-
-  // Inline math.
-  processed = processed.replace(INLINE_MATH_RE, (_m, tex: string) => {
-    const id = `\uE000MATH${counter++}\uE000`;
-    fragments.set(id, renderKatex(tex.trim(), false));
-    return id;
-  });
-
-  return { processed, fragments };
-}
-
-/** Replace placeholders in rendered HTML with KaTeX output. */
-function restoreMath(html: string, fragments: Map<string, string>): string {
-  for (const [placeholder, rendered] of fragments) {
-    html = html.replaceAll(placeholder, rendered);
-  }
-  return html;
 }
 
 // ..... Editor component .....
@@ -142,6 +75,14 @@ export interface EditorProps {
   rows?: number;
   /** BCP 47 locale tag (e.g. "en-US", "pt-BR"). Defaults to "en-US". */
   locale?: string;
+  /**
+   * Render as an Article rather than a Note.
+   *
+   * Selects the same `MarkupOptions` the outbox handler selects: strict
+   * sanitisation and heading anchors. Must match what the submitting
+   * form will produce, or the preview is accurate about the wrong mode.
+   */
+  article?: boolean;
 }
 
 export default function Editor(props: EditorProps): JSX.Element {
@@ -151,23 +92,68 @@ export default function Editor(props: EditorProps): JSX.Element {
   const [preview, setPreview] = createSignal("");
   const [activeTab, setActiveTab] = createSignal<"edit" | "preview">("edit");
 
-  // Debounced render: re-render preview after 150 ms of inactivity.
+  // Debounced server render.
+  //
+  // 500 ms rather than the old 150 ms, because a pause now costs a
+  // request rather than a local parse. adr/0010 names debouncing as
+  // what keeps this to one request per typing pause.
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let inFlight: AbortController | undefined;
 
   createEffect(() => {
     const text = source();
     clearTimeout(timer);
+
+    if (text === "") {
+      inFlight?.abort();
+      setPreview("");
+      return;
+    }
+
     timer = setTimeout(() => {
-      // 1: extract math from raw source to placeholders + KaTeX.
-      const { processed, fragments } = extractMath(text);
-      // 2: render Markdown (placeholders survive untouched).
-      const html = md.render(processed);
-      // 3: restore placeholders with KaTeX output.
-      setPreview(restoreMath(html, fragments));
-    }, 150);
+      // Supersede rather than race: a slow response for older text
+      // must not overwrite a newer one.
+      inFlight?.abort();
+      const controller = new AbortController();
+      inFlight = controller;
+
+      const body = new URLSearchParams({ content: text });
+      if (props.article === true) {
+        body.set("article", "true");
+      }
+
+      void fetch("/api/v1/preview", {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body,
+        signal: controller.signal,
+        credentials: "same-origin",
+      })
+        .then((response) =>
+          response.ok
+            ? response.text()
+            : Promise.reject(new Error(`preview failed: ${String(response.status)}`)),
+        )
+        .then(setPreview)
+        .catch((error: unknown) => {
+          // A superseded request is not a failure.
+          if (error instanceof DOMException && error.name === "AbortError") {
+            return;
+          }
+          // Say so rather than leaving stale HTML on screen looking
+          // current. The preview is the author's only check before
+          // publishing, so a silent stale pane is the worst outcome.
+          setPreview(
+            `<p class="noombat-editor__preview-error">${strings().preview_unavailable}</p>`,
+          );
+        });
+    }, 500);
   });
 
-  onCleanup(() => clearTimeout(timer));
+  onCleanup(() => {
+    clearTimeout(timer);
+    inFlight?.abort();
+  });
 
   return (
     <div class="noombat-editor">
