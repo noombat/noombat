@@ -69,10 +69,15 @@ reqwest = { version = "0.13", default-features = false, features = ["rustls", "j
 
 # Cryptography.
 rsa = { version = "0.9", features = ["sha2"] }
-ed25519-dalek = { version = "2", features = ["rand_core"] }
+ed25519-dalek = { version = "3", features = ["rand_core"] }
 sha2 = "0.10"
 base64 = "0.22"
+# `rand` stays at 0.8 because rsa 0.9 requires rand_core 0.6 for
+# `generate_rsa_keypair`. ed25519-dalek 3 wants rand_core 0.10, and the
+# two cannot be satisfied by one `rand`, so the Ed25519 path takes its
+# entropy straight from the OS via getrandom instead of through `rand`.
 rand = "0.8"
+getrandom = "0.4"
 
 # HTTP Signatures.
 http-signature-normalization = "0.7"
