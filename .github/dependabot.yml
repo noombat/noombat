@@ -81,8 +81,8 @@ updates:
       #
       # Note this is the OPPOSITE of npm's behaviour, where a 0.x minor is
       # classified as minor and therefore does get swallowed by a
-      # [minor, patch] group. See the katex exclusion under /frontend. Do not
-      # generalise either rule across ecosystems.
+      # [minor, patch] group. See the `0.x` note on frontend-minor-patch
+      # below. Do not generalise either rule across ecosystems.
       askama:
         patterns:
           - "askama"
@@ -94,7 +94,23 @@ updates:
           - minor
           - patch
 
-  # 3a. npm: Frontend assets (SolidJS, KaTeX, Vite, TailwindCSS).
+  # 3a. npm: Frontend assets (SolidJS, Vite, TailwindCSS).
+  #
+  #     This directory is deliberately a major behind /tests/e2e on ESLint:
+  #     9 here, 10 there. eslint-plugin-solid 0.14.5 declares its peer range
+  #     as `^6.0.0 || ^7.0.0 || ^8.0.0 || ^9.0.0`, and the package is pinned
+  #     `~0.14.5`, so no patch release can widen it. typescript-eslint is
+  #     not the constraint: 8.67.0 already accepts `^10.0.0`.
+  #
+  #     There is no `ignore` rule holding the major back, and none is
+  #     needed. Dependabot respects the peer range and has never proposed
+  #     the major here: across pull requests #1 to #47 every ESLint major
+  #     was raised against /tests/e2e, which carries no Solid plugin, and
+  #     not one against this directory. This is the
+  #     opposite of the @types/node case below, where the major does get
+  #     proposed and has to be refused explicitly. Do not close the skew by
+  #     hand; it closes itself when eslint-plugin-solid takes ESLint 10 or
+  #     is replaced.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -135,17 +151,20 @@ updates:
         # majors; here the filter is present and correct and the version
         # scheme is what differs.
         #
-        # katex is the only unconstrained `0.x` dependency here
-        # (eslint-plugin-solid is pinned `~0.14.5`, so patches only), and
-        # it is excluded so it arrives as its own reviewable pull request.
-        # Two consequences to check when taking it: katex ships its own
-        # types from 0.18.0, so `@types/katex` stops being load-bearing
-        # and should be removed in the same change; and `katex.min.css`
-        # is imported directly by `frontend/src/katex.ts` and
-        # `frontend/src/editor/index.tsx`, so the stylesheet path is part
-        # of the upgrade surface, not just the API.
-        exclude-patterns:
-          - "katex"
+        # Nothing is excluded, because no unconstrained `0.x` dependency
+        # remains in this directory. katex was the one that made the rule
+        # above matter, and it was excluded here until 2026-08-16, when the
+        # move to the math-core crate took katex, @types/katex and
+        # markdown-it out of the frontend entirely; the server now renders
+        # both the published Markdown and the editor preview. Pull request
+        # #45, katex 0.16.47 to 0.18.4, is exactly the bump that exclusion
+        # existed to keep out of the group, and it closed unmerged.
+        # eslint-plugin-solid is `0.x` but pinned `~0.14.5`, so it can only
+        # move by patch and the rule cannot bite it.
+        #
+        # Add an `exclude-patterns` entry the next time an unconstrained
+        # `0.x` dependency is added here, or the group will carry its
+        # breaking changes in under a minor-and-patch label.
         update-types:
           - minor
           - patch
