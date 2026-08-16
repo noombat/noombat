@@ -22,7 +22,6 @@ export default defineConfig({
         main: "src/main.css",
         htmx: "src/htmx.ts",
         auth: "src/auth.ts",
-        katex: "src/katex.ts",
         editor: "src/editor/index.tsx",
         chat: "src/chat/index.tsx",
         "chat-cred": "src/chat-cred.ts",
@@ -42,8 +41,7 @@ export default defineConfig({
             chunkInfo.name === "chat" ||
             chunkInfo.name === "chat-cred" ||
             chunkInfo.name === "compose" ||
-            chunkInfo.name === "upgrade" ||
-            chunkInfo.name === "katex"
+            chunkInfo.name === "upgrade"
           ) {
             return "assets/[name].js";
           }

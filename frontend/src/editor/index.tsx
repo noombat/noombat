@@ -2,17 +2,20 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * Island entry point for the (Markdown + KaTeX) editor.
+ * Island entry point for the Markdown editor.
  *
  * The server-rendered template places a `<div id="editor-mount">` with
  * optional `data-*` attributes for initial state. This script hydrates
  * that element into an interactive editor.
+ *
+ * No renderer is bundled here. Markdown and maths are rendered by
+ * `POST /api/v1/preview`, which is the same code path that produces the
+ * stored and federated bytes (`adr/0010`).
  */
 
 import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import Editor from "./Editor";
-import "katex/dist/katex.min.css";
 import "./editor.css";
 
 const mount = document.getElementById("editor-mount");
