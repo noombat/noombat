@@ -9,6 +9,7 @@
  * that element into an interactive editor.
  */
 
+import { createSignal } from "solid-js";
 import { render } from "solid-js/web";
 import Editor from "./Editor";
 import "katex/dist/katex.min.css";
@@ -23,6 +24,32 @@ if (mount) {
   const rows = mount.dataset.rows ? parseInt(mount.dataset.rows, 10) : undefined;
   const locale = mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
 
+  // Article mode, tracked live.
+  //
+  // The server renders Articles with a different sanitisation profile
+  // and with heading anchors, so a preview in the wrong mode is exactly
+  // the divergence the server-rendered preview exists to remove. It
+  // cannot be a static attribute: compose.html carries a post-type
+  // radio the author can flip at any time, and the preview has to
+  // follow it.
+  //
+  // `data-article-selector` names the control that means "Article" when
+  // checked. A mount without it is always a Note, which is right for
+  // the profile summary editor.
+  const articleSelector = mount.dataset.articleSelector;
+  const [isArticle, setIsArticle] = createSignal(false);
+
+  if (articleSelector !== undefined) {
+    const readArticleState = () => {
+      const control = document.querySelector(articleSelector);
+      setIsArticle(control instanceof HTMLInputElement && control.checked);
+    };
+    readArticleState();
+    // Delegated: the radios live outside the island, and a `change`
+    // event from any of them can flip the answer.
+    document.addEventListener("change", readArticleState);
+  }
+
   render(
     () => (
       <Editor
@@ -31,6 +58,7 @@ if (mount) {
         placeholder={placeholder}
         rows={rows}
         locale={locale}
+        article={isArticle()}
       />
     ),
     mount,
