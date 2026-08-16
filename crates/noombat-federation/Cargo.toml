@@ -17,7 +17,11 @@ reqwest = { workspace = true }
 rsa = { workspace = true }
 base64 = { workspace = true }
 sha2 = { workspace = true }
-http-signature-normalization = { workspace = true }
+# Only the reqwest wrapper is used here, for outbound signing in
+# `signed_fetch` and `delivery`. The base http-signature-normalization crate
+# is not declared: it is a direct dependency of noombat-api, which uses its
+# `Config` to verify inbound signatures. Declaring it here as well bought
+# nothing, because the wrapper already carries it.
 http-signature-normalization-reqwest = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
