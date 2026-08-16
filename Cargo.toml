@@ -37,7 +37,7 @@ noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 # HTTP framework.
 axum = { version = "0.8.9", features = ["macros", "ws"] }
 http = "1"
-tower-http = { version = "0.6.8", features = ["cors", "trace", "compression-gzip", "limit", "request-id", "fs", "set-header"] }
+tower-http = { version = "0.7.0", features = ["cors", "trace", "compression-gzip", "limit", "request-id", "fs", "set-header"] }
 
 # Async runtime.
 tokio = { version = "1", features = ["full"] }
