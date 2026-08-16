@@ -96,7 +96,35 @@ math-core = "0.7"
 regex = "1"
 
 # Search.
-meilisearch-sdk = "0.28"
+#
+# The feature list is load-bearing and must not be "simplified" back to
+# a bare version string. From 0.33 the default features include
+# `jwt_aws_lc_rs`, which turns on `jsonwebtoken/aws_lc_rs`, while this
+# workspace turns on `jsonwebtoken/rust_crypto` below. Cargo features
+# are additive, so jsonwebtoken then has BOTH crypto backends enabled,
+# refuses to pick one, and installs a provider whose signer and verifier
+# both panic:
+#
+#   Could not automatically determine the process-level CryptoProvider
+#   from jsonwebtoken crate features. [...] make sure exactly one of the
+#   'rust_crypto' and 'aws_lc_rs' features is enabled.
+#
+# That is not a build failure, which is what makes it dangerous: it
+# compiles cleanly and panics at run time on every JWT signature and
+# every verification, i.e. on every login and every authenticated
+# request. Reproduced here on the naive bump: three session tests panic
+# in jsonwebtoken-10.4.0/src/crypto/mod.rs:124.
+#
+# `default-features = false` drops the SDK's whole default set
+# (`reqwest`, `tls`, `jwt_aws_lc_rs`), so the first two have to be named
+# again explicitly. `tls` is the one to watch: dropping it would NOT
+# fail CI, because CI and compose both reach Meilisearch over plain
+# HTTP, so the loss would only appear against a TLS deployment.
+meilisearch-sdk = { version = "0.33", default-features = false, features = [
+    "reqwest",
+    "tls",
+    "jwt_rust_crypto",
+] }
 
 # Redis (session store, rate-limit counters).
 redis = { version = "1.3", features = ["tokio-comp", "connection-manager"] }
