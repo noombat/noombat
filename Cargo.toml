@@ -159,7 +159,7 @@ governor = { version = "0.10", features = ["dashmap", "std"] }
 argon2 = "0.5"
 
 # HMAC-SHA256 for constant-time token comparison.
-hmac = "0.12"
+hmac = "0.13"
 
 # JWT (short-lived access tokens).
 jsonwebtoken = { version = "10", features = ["rust_crypto"] }
