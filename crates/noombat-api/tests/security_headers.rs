@@ -89,6 +89,29 @@ async fn get(domain: &str, path: &str) -> axum::response::Response {
         .expect("the router is infallible")
 }
 
+/// The content type Askama's web integration sets on a rendered page.
+const HTML_CONTENT_TYPE: &str = "text/html; charset=utf-8";
+
+/// Assert an HTML page declares the right content type.
+///
+/// Deliberately not part of [`assert_header_set`], which also runs
+/// against static assets, redirects and unmatched paths, none of which
+/// are HTML.
+///
+/// This is the one response header no code in this repository sets:
+/// `askama_web` chooses it, so a templating upgrade can change it
+/// without anything here failing to compile. Nothing else in the suite
+/// would notice.
+fn assert_html_content_type(response: &axum::response::Response, path: &str) {
+    let actual = response
+        .headers()
+        .get("content-type")
+        .unwrap_or_else(|| panic!("{path}: content-type is absent"))
+        .to_str()
+        .unwrap_or_else(|_| panic!("{path}: content-type is not valid UTF-8"));
+    assert_eq!(actual, HTML_CONTENT_TYPE, "{path}: content-type");
+}
+
 /// Headers required on every response, with their exact values.
 const EXACT_HEADERS: &[(&str, &str)] = &[
     ("x-content-type-options", "nosniff"),
@@ -151,6 +174,7 @@ async fn root_page_carries_the_header_set() {
     let response = get(DOMAIN, "/").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_header_set(&response, "/");
+    assert_html_content_type(&response, "/");
 }
 
 #[tokio::test]
@@ -158,6 +182,7 @@ async fn login_page_carries_the_header_set() {
     let response = get(DOMAIN, "/auth/login").await;
     assert_eq!(response.status(), StatusCode::OK);
     assert_header_set(&response, "/auth/login");
+    assert_html_content_type(&response, "/auth/login");
 }
 
 #[tokio::test]

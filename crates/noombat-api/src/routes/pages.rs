@@ -1240,3 +1240,60 @@ struct SearchQueryParams {
     q: Option<String>,
     index: Option<String>,
 }
+
+// ..... Tests .....
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::i18n::DEFAULT_LOCALE;
+
+    /// Every character HTML escaping exists for, in one string.
+    const HOSTILE: &str = r#"<script>alert('xss') & "quoted"</script>"#;
+
+    /// What Askama's `Html` escaper must produce for [`HOSTILE`].
+    ///
+    /// Askama emits numeric entities rather than the named ones, so
+    /// `&#60;` and not `&lt;`. Asserting the exact string rather than
+    /// "contains no `<script>`" is deliberate: a half-broken escaper
+    /// that dropped only the quote handling would still satisfy the
+    /// weaker check.
+    const ESCAPED: &str =
+        "&#60;script&#62;alert(&#39;xss&#39;) &#38; &#34;quoted&#34;&#60;/script&#62;";
+
+    /// Interpolation escapes user-controlled content.
+    ///
+    /// Nothing else in the suite asserts a single byte of rendered
+    /// HTML: the header tests drive real template routes but check
+    /// only the status and a header set, so an escaper regression
+    /// would ship green. That gap is not hypothetical. The escaper is
+    /// selected by file extension, `.html` mapping to `Html` through a
+    /// table in `askama_derive`, and an upgrade that changed either
+    /// the table or the escaper would silently turn every `{{ }}` on
+    /// every page into an injection point.
+    #[test]
+    fn interpolation_escapes_user_controlled_content() {
+        let page = LoginPage {
+            i18n: I18n {
+                locale: DEFAULT_LOCALE.to_owned(),
+            },
+            error: Some(HOSTILE.to_owned()),
+            orcid_enabled: false,
+        };
+
+        let html = page.render().expect("login.html renders");
+
+        assert!(
+            html.contains(ESCAPED),
+            "escaped form absent from the rendered page; got:\n{html}"
+        );
+        assert!(
+            !html.contains(HOSTILE),
+            "raw user content reached the rendered page verbatim"
+        );
+        assert!(
+            !html.contains("<script>alert"),
+            "an executable script tag reached the rendered page"
+        );
+    }
+}
