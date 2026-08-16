@@ -92,7 +92,7 @@ rust-i18n = "4"
 # Markup pipeline.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 ammonia = "4"
-katex = { version = "0.4", default-features = true }
+math-core = "0.7"
 regex = "1"
 
 # Search.

@@ -180,7 +180,27 @@ fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
     builder.add_tag_attributes("mspace", ["width", "height", "depth"]);
     builder.add_tag_attributes("mpadded", ["width", "height", "depth", "lspace", "voffset"]);
     builder.add_tag_attributes("menclose", ["notation"]);
-    builder.add_tag_attributes("mtable", ["columnalign", "rowspacing", "columnspacing"]);
+    // `displaystyle` and `scriptlevel` are what make a matrix render at
+    // text size inside a paragraph instead of inheriting display sizing.
+    // math-core emits both on every `mtable`.
+    //
+    // Not allowed, and worth knowing: math-core also puts inline `style`
+    // on `mtd` for column padding and justification. That is stripped
+    // here and would be refused by the deployed CSP anyway
+    // (`style-src 'self'`, no `style-src-attr`), so matrices lay out
+    // with browser default spacing. This is the same class of loss as
+    // KaTeX's span layer, but bounded to table padding rather than all
+    // positioning.
+    builder.add_tag_attributes(
+        "mtable",
+        [
+            "columnalign",
+            "rowspacing",
+            "columnspacing",
+            "displaystyle",
+            "scriptlevel",
+        ],
+    );
     builder.add_tag_attributes("mtr", ["columnalign", "rowalign"]);
     builder.add_tag_attributes("mtd", ["columnalign", "rowalign", "columnspan", "rowspan"]);
     for tag in ["mover", "munder", "munderover"] {

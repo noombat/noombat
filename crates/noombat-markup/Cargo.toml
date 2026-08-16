@@ -10,7 +10,7 @@ description = "(Markdown and KaTeX) to HTML pipeline and Markdown to Typst conve
 noombat-core = { workspace = true }
 pulldown-cmark = { workspace = true }
 ammonia = { workspace = true }
-katex = { workspace = true }
+math-core = { workspace = true }
 regex = { workspace = true }
 tokio = { workspace = true }
 

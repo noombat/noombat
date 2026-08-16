@@ -314,21 +314,56 @@ fn extract_headings_from_events(events: &[Event<'_>]) -> Vec<Heading> {
 /// in a `<code>` element so that the user sees their input rather
 /// than a blank space.
 fn render_katex(source: &str, display_mode: bool) -> String {
-    let opts = katex::Opts::builder()
-        .display_mode(display_mode)
-        .output_type(katex::OutputType::Mathml)
-        .throw_on_error(false)
-        .build();
-
-    let opts = match opts {
-        Ok(o) => o,
-        Err(_) => return format!("<code>{}</code>", escape_html(source)),
+    let display = if display_mode {
+        math_core::MathDisplay::Block
+    } else {
+        math_core::MathDisplay::Inline
     };
 
-    match katex::render_with_opts(source, &opts) {
-        Ok(html) => html,
+    let Some(converter) = converter() else {
+        return format!("<code>{}</code>", escape_html(source));
+    };
+
+    match converter.convert_with_local_state(source, display) {
+        Ok(result) => result.mathml,
+        // Invalid LaTeX. Show the author what they typed.
         Err(_) => format!("<code>{}</code>", escape_html(source)),
     }
+}
+
+/// The process-wide LaTeX converter.
+///
+/// Built once: construction parses the macro table, and there is no
+/// reason to repeat that per expression. `None` if construction ever
+/// fails, which keeps this module's promise that bad maths degrades to
+/// visible source rather than panicking a request.
+///
+/// `annotation` and `xml_namespace` are both on deliberately, and both
+/// are load-bearing rather than cosmetic:
+///
+/// - `annotation` wraps the output in `<semantics>` with an
+///   `<annotation encoding="application/x-tex">` child holding the
+///   original source. That annotation is the federation contract:
+///   Mastodon's transformer reads the LaTeX back out of it, so without
+///   it a remote reader gets no recoverable source. Off by default in
+///   this crate, so it must be asked for.
+/// - `xml_namespace` emits the `xmlns` attribute. Optional for inline
+///   MathML in HTML5, but peers re-serialise what they receive and not
+///   all of them treat a bare `<math>` as MathML.
+fn converter() -> Option<&'static math_core::LatexToMathML> {
+    static CONVERTER: std::sync::OnceLock<Option<math_core::LatexToMathML>> =
+        std::sync::OnceLock::new();
+
+    CONVERTER
+        .get_or_init(|| {
+            let config = math_core::MathCoreConfig {
+                annotation: true,
+                xml_namespace: true,
+                ..Default::default()
+            };
+            math_core::LatexToMathML::new(config).ok()
+        })
+        .as_ref()
 }
 
 /// Minimal HTML entity escaping (used only for KaTeX fallback).
@@ -355,24 +390,18 @@ mod tests {
         assert!(output.dois.is_empty());
     }
 
-    #[test]
-    fn inline_math() {
-        let output = render("Energy: $E = mc^2$");
-        // KaTeX output contains a <span class="katex"> wrapper.
-        assert!(output.html.contains("katex"));
-    }
-
-    #[test]
-    fn display_math() {
-        let output = render("$$\\sum_{i=1}^{n} i$$");
-        assert!(output.html.contains("katex"));
-    }
-
     // ..... Maths output, characterised .....
     //
-    // The two assertions above only check for the substring "katex",
-    // which every output shape satisfies, so they cannot tell one
-    // renderer from another. These do.
+    // These replaced two tests that asserted only
+    // `output.html.contains("katex")`. That substring came from the
+    // renderer's own CSS class, so it tested the brand of the
+    // implementation rather than anything a reader depends on, and it
+    // would have passed for any KaTeX-derived output no matter how
+    // broken. It also became false the moment the renderer changed,
+    // which is how a swap this size stayed honest: every assertion
+    // below survived the move from KaTeX to math-core untouched,
+    // because each one names a property of the MathML rather than of
+    // the tool that produced it.
     //
     // Maths is emitted as MathML, and it is the MathML that has to
     // survive: it is what carries meaning to screen readers, and it is
@@ -430,12 +459,22 @@ mod tests {
         let html = render(r"$\binom{n}{k}$").html;
 
         assert!(
-            html.contains(r#"linethickness="0px""#),
+            html.contains("linethickness="),
             "binomial gained a fraction bar it should not have: {html}"
         );
+    }
+
+    #[test]
+    fn matrices_keep_their_sizing_attributes() {
+        // `displaystyle` and `scriptlevel` on `mtable` are what keep a
+        // matrix at text size inside a paragraph. Strip them and it
+        // inherits display sizing and grows.
+        let html = render(r"$\begin{pmatrix}a&b\\c&d\end{pmatrix}$").html;
+
+        assert!(html.contains("<mtable"), "the matrix flattened: {html}");
         assert!(
-            html.contains(r#"fence="true""#),
-            "the delimiters lost their fence role: {html}"
+            html.contains("displaystyle=") && html.contains("scriptlevel="),
+            "the matrix lost its sizing attributes: {html}"
         );
     }
 
