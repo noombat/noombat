@@ -185,7 +185,7 @@ webpki-roots = "1"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
 
 # MIME parsing (Autocrypt header extraction from IMAP messages).
-mailparse = "0.15"
+mailparse = "0.16"
 
 # The browser side of the chat relay speaks WebSocket through axum's `ws`
 # feature (see `noombat-api::routes::ws_chat`), which vendors its own
