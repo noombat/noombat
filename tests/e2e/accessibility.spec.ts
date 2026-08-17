@@ -70,23 +70,22 @@ if (process.env.CI && ADMIN_TOKEN === "") {
 // ..... Helper: wait for HTMX partials to settle .....
 
 /**
- * Wait for any in-flight HTMX requests to complete. Falls back to a
- * short delay if HTMX is not present on the page.
+ * Wait for an HTMX target to receive its content.
+ *
+ * The container ships in the initial HTML and its content does not, so
+ * emptiness is the signal. No quiescence check can serve: no request in
+ * flight is equally true before one starts and after it ends, so on a
+ * page filled by `hx-trigger="load"` it returns before anything has
+ * happened.
+ *
+ * The timeout fails the test deliberately; a partial that never arrives
+ * is a defect, not something to scan empty.
  */
-async function waitForHtmx(page: import("@playwright/test").Page): Promise<void> {
-  try {
-    await page.waitForFunction(
-      () => {
-        const htmx = (window as unknown as Record<string, unknown>)["htmx"];
-        if (!htmx) return true;
-        // The internal request queue is empty when no XHRs are in flight.
-        return document.querySelectorAll(".htmx-request").length === 0;
-      },
-      { timeout: 5_000 },
-    );
-  } catch {
-    // HTMX not loaded or timed out; proceed anyway.
-  }
+async function waitForPartial(
+  page: import("@playwright/test").Page,
+  selector: string,
+): Promise<void> {
+  await expect(page.locator(`${selector} > *`).first()).toBeAttached({ timeout: 10_000 });
 }
 
 // 1. UNAUTHENTICATED PAGES
@@ -106,7 +105,7 @@ test.describe("Accessibility: unauthenticated pages", () => {
 
   test("feed page", async ({ page, axeScan }) => {
     await page.goto("/");
-    await waitForHtmx(page);
+    await waitForPartial(page, "#feed-items");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -140,8 +139,9 @@ test.describe("Accessibility: unauthenticated pages", () => {
   });
 
   test("search page (with query)", async ({ page, axeScan }) => {
+    // No wait: search.html carries no hx- attributes, so the results are
+    // server-rendered and present in the first response.
     await page.goto("/search/html?q=test&index=profiles");
-    await waitForHtmx(page);
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -212,7 +212,7 @@ test.describe("Accessibility: authenticated pages", () => {
 
   test("privacy and safety settings", async ({ page, axeScan }) => {
     await page.goto("/settings/privacy");
-    await waitForHtmx(page);
+    await waitForPartial(page, "#privacy-preview");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -378,7 +378,7 @@ test.describe("Assistive-technology status region", () => {
     // page before the feed partial lands, so it would be scanning
     // almost nothing. `networkidle` did not wait for the partial
     // either: both it and the load event observe 18 nodes here.
-    await waitForHtmx(page);
+    await waitForPartial(page, "#feed-items");
 
     const offenders = await page.evaluate(() =>
       Array.from(document.querySelectorAll("[aria-live], [role=status], [role=alert]"))

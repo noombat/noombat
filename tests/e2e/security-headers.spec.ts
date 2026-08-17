@@ -293,21 +293,22 @@ test.describe("Policy compliance", () => {
     await page.goto("/auth/login");
     await page.locator("#login-username").fill("testuser");
     await page.locator("#login-password").fill("not-the-real-password");
-    await page.locator("#login-form button[type=submit]").click();
 
-    // The credentials are wrong on purpose: the assertion is about
-    // the key derivation and fetch running under the policy at all,
-    // not about the outcome of the attempt. Wait for the POST that
-    // frontend/src/auth.ts issues once it has derived the auth key,
-    // rather than for a fixed interval. Measured locally the derivation
-    // and request take 800 to 870 ms, so the 2000 ms sleep this replaces
-    // did have margin; what it did not have is any relationship to the
-    // thing being waited for. Waiting for the response is both exact and
-    // faster, and it cannot expire early on a loaded runner.
-    await page.waitForResponse(
+    // The credentials are wrong on purpose: the assertion is about the key
+    // derivation and fetch running under the policy at all, not about the
+    // outcome of the attempt. Wait for the POST that frontend/src/auth.ts
+    // issues once it has derived the auth key, rather than for a fixed
+    // interval, which would have no relationship to the thing waited for.
+    //
+    // Registered before the click, because Playwright does not buffer
+    // network events: a response arriving in between is never seen and the
+    // wait runs to its timeout.
+    const loginPosted = page.waitForResponse(
       (r) => r.url().includes("/api/v1/auth/login") && r.request().method() === "POST",
       { timeout: 15_000 },
     );
+    await page.locator("#login-form button[type=submit]").click();
+    await loginPosted;
 
     expect(violations).toEqual([]);
   });
