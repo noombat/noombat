@@ -1,0 +1,35 @@
+# Report a workflow that GitHub rejected before it ran.
+#
+# A rejected workflow concludes `startup_failure`, creating no jobs and
+# therefore no check runs, so the commit shows every other check green
+# and the rejected one is simply absent. That is indistinguishable from
+# "not triggered" on the commit page, and it hid three dead jobs for a
+# day.
+#
+# Scheduled rather than triggered by push, deliberately: a job in one
+# workflow cannot see whether another has concluded yet, so checking on
+# the same event would race. This looks at main's head some time after
+# the fact, which is when the answer is stable.
+
+name: Startup watch
+
+on:
+  schedule:
+    # Daily. A rejected workflow stays rejected until someone changes it,
+    # so detection latency costs only the delay in noticing.
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  startup-watch:
+    name: Rejected workflows
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: "Report any workflow rejected at startup on main"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-workflow-startup.sh "$(git rev-parse HEAD)"

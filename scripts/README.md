@@ -16,6 +16,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `check-image-pins.sh`        | Compare workflow images to compose  | After touching a workflow service or a compose image       |
 | `check-template-comments.sh` | Find unbalanced HTML comments       | After editing an Askama template                           |
 | `check-action-allowlist.sh`  | Reject actions the policy refuses   | After adding or repinning any `uses:` in a workflow        |
+| `check-workflow-startup.sh`  | Find workflows rejected before running | After a push, when a workflow seems not to have run     |
 | `chatmail-setup.sh`          | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
@@ -167,6 +168,23 @@ The policy permits actions owned by `noombat` plus a short list of patterns.
 This exists because the failure is invisible. A refused `uses:` does not fail a job, it makes the whole workflow report `startup_failure`, which creates no jobs and therefore no check runs, so the commit shows every other check green while nothing ran. On 2026-08-17 `ci-e2e.yml` was in that state and all three of its jobs silently did not execute, alongside 35 green checks on the same commit.
 
 `actionlint` does not cover this. It validates the workflow schema and knows nothing about the policy.
+
+## `check-workflow-startup.sh`
+
+Reports a workflow GitHub rejected before it ran, for a commit.
+
+```sh
+./scripts/check-workflow-startup.sh          # HEAD
+./scripts/check-workflow-startup.sh <sha>
+```
+
+Exit `0` means nothing was rejected, `1` means at least one was, and `2` means the API gave no usable answer, which must not read as a clean commit.
+
+A rejected workflow concludes `startup_failure`: no jobs, so no check runs, so nothing on the commit page distinguishes it from a workflow that was never triggered.
+`check-action-allowlist.sh` catches the usual cause before a push; this catches the symptom afterwards whatever the cause.
+`.github/workflows/startup-watch.yml` runs it daily against `main`, scheduled rather than on push because one workflow cannot see whether another has concluded yet.
+
+It reads the public API, so no token is needed, though one raises the rate limit. A token that is present but rejected is ignored rather than treated as a failure.
 
 ## `check-template-comments.sh`
 

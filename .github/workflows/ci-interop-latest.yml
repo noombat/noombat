@@ -51,7 +51,13 @@ jobs:
 
       - name: Build the Noombat image
         run: |
-          docker buildx bake -f tests/interop/compose.yml \
+          # --allow because every compose file here sets
+          # `context: ../..`, which is outside the file's own
+          # directory, and bake refuses to read outside it without
+          # the entitlement. Granted rather than disabled via
+          # BUILDX_BAKE_ENTITLEMENTS_FS=0, so a context that later
+          # reaches somewhere unexpected still has to be granted.
+          docker buildx bake --allow=fs.read='*' -f tests/interop/compose.yml \
             --load \
             --set '*.cache-from=type=gha' \
             --set '*.cache-to=type=gha,mode=max'
