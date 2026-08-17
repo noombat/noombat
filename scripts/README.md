@@ -140,6 +140,13 @@ GoToSocial tracks `latest` in both the workflow and `tests/interop/compose.yml`,
 
 It compares what the files say, not what a registry resolves them to; a digest that has been withdrawn upstream passes here and fails at `docker pull`.
 
+**This runs from `test.sh` only, and no workflow runs `test.sh`, so it is a local gate.**
+It will not fail a pull request that reintroduces the drift it exists to catch; someone has to run it, or it needs its own step in a workflow.
+The same is true of `check-unused-deps.sh`, `check-migrations.sh` and the other `check-*.sh` scripts.
+
+When pinning a digest by hand, take the **manifest list** digest and not a platform one.
+`docker manifest inspect --verbose` returns the per-platform descriptor, and pinning that ties the image to a single architecture; `docker buildx imagetools inspect <ref> --format '{{println .Manifest.Digest}}'` returns the list digest, which is also what Dependabot writes.
+
 ## `chatmail-setup.sh`
 
 Pre-deployment DNS and network verification for the Chatmail relay.
