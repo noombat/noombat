@@ -348,14 +348,22 @@ jobs:
         run: echo "127.0.0.1 noombat.localhost gotosocial.localhost" | sudo tee -a /etc/hosts
 
       - name: Build the Noombat image
+        working-directory: tests/interop
         run: |
-          # --allow because every compose file here sets
-          # `context: ../..`, which is outside the file's own
-          # directory, and bake refuses to read outside it without
-          # the entitlement. Granted rather than disabled via
-          # BUILDX_BAKE_ENTITLEMENTS_FS=0, so a context that later
-          # reaches somewhere unexpected still has to be granted.
-          docker buildx bake --allow=fs.read='*' -f tests/interop/compose.yml \
+          # bake resolves a compose file's `context` and `dockerfile`
+          # against the WORKING DIRECTORY, while compose resolves them
+          # against the file. `context: ../..` therefore only means the
+          # repository root when bake runs from the file's own directory,
+          # which is why this step sets working-directory and passes a
+          # bare -f. From the root it reads a Dockerfile that is not
+          # there and fails with `transferring dockerfile: 2B`.
+          #
+          # --allow because that context is still outside the compose
+          # file's directory, which bake will not read unprompted.
+          # Granted rather than disabled via BUILDX_BAKE_ENTITLEMENTS_FS=0,
+          # so a context that later reaches somewhere unexpected still has
+          # to be granted.
+          docker buildx bake --allow=fs.read='*' -f compose.yml \
             --load \
             --set '*.cache-from=type=gha' \
             --set '*.cache-to=type=gha,mode=max'
@@ -438,14 +446,22 @@ jobs:
       # from the federation job and sharing a scope has them evict each
       # other.
       - name: Build the stack images
+        working-directory: tests/chat-interop
         run: |
-          # --allow because every compose file here sets
-          # `context: ../..`, which is outside the file's own
-          # directory, and bake refuses to read outside it without
-          # the entitlement. Granted rather than disabled via
-          # BUILDX_BAKE_ENTITLEMENTS_FS=0, so a context that later
-          # reaches somewhere unexpected still has to be granted.
-          docker buildx bake --allow=fs.read='*' -f tests/chat-interop/compose.yml \
+          # bake resolves a compose file's `context` and `dockerfile`
+          # against the WORKING DIRECTORY, while compose resolves them
+          # against the file. `context: ../..` therefore only means the
+          # repository root when bake runs from the file's own directory,
+          # which is why this step sets working-directory and passes a
+          # bare -f. From the root it reads a Dockerfile that is not
+          # there and fails with `transferring dockerfile: 2B`.
+          #
+          # --allow because that context is still outside the compose
+          # file's directory, which bake will not read unprompted.
+          # Granted rather than disabled via BUILDX_BAKE_ENTITLEMENTS_FS=0,
+          # so a context that later reaches somewhere unexpected still has
+          # to be granted.
+          docker buildx bake --allow=fs.read='*' -f compose.yml \
             --load \
             --set 'noombat.tags=chat-interop-noombat' \
             --set 'chatmail.tags=chat-interop-chatmail' \
