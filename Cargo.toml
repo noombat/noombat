@@ -147,7 +147,7 @@ tempfile = "3"
 subtle = "2"
 
 # Envelope encryption (AES-256-GCM) for secrets at rest.
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 
 # Scrub key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
