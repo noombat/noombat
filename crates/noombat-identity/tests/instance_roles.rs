@@ -4,12 +4,8 @@
 //! Instance roles: the write path, and the two refusals that keep an
 //! instance from locking itself out.
 //!
-//! Nothing wrote `actors.instance_role` before this. The column
-//! defaulted to `'user'`, no code path changed it, so no administrator
-//! could exist and every page in `admin.rs` was unreachable by
-//! construction, while `docs/operator.md` claimed administrators could
-//! promote moderators. These drive the repository layer directly: the
-//! interesting behaviour is the guard arithmetic, not the HTTP.
+//! These drive the repository layer directly, because the interesting
+//! behaviour is the guard arithmetic rather than the HTTP.
 
 use noombat_core::actor::InstanceRole;
 use noombat_identity::repo::{count_admins, set_instance_role};

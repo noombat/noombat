@@ -14,12 +14,8 @@ pub struct MeilisearchBackend {
 }
 
 impl MeilisearchBackend {
-    /// Create a new backend connected to the given Meilisearch instance.
-    ///
-    /// # Arguments
-    ///
-    /// * `url`: Base URL (e.g. `http://localhost:7700`).
-    /// * `api_key`: Optional master/admin API key.
+    /// Create a new backend connected to the given Meilisearch instance,
+    /// e.g. `http://localhost:7700`.
     pub fn new(url: &str, api_key: Option<&str>) -> Result<Self> {
         let client = Client::new(url, api_key)
             .map_err(|e| NoombatError::Internal(format!("meilisearch client init: {e}")))?;

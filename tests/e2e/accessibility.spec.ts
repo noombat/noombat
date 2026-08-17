@@ -26,7 +26,7 @@
 // server reads NOOMBAT_ADMIN_TOKEN to decide which token it accepts;
 // this suite reads ADMIN_TOKEN to decide which one to present. CI must
 // set both, to the same value. Locally, `ADMIN_TOKEN=... pnpm test:a11y`
-// is enough (see docs/dev-setup.md).
+// is enough.
 //
 // When ADMIN_TOKEN is absent the authenticated groups skip, which is
 // convenient locally and unacceptable under CI, so CI is a hard error

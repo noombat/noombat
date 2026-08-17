@@ -47,12 +47,8 @@ function encodeAad(chatmailAddr: string): Uint8Array {
 /**
  * Encrypt a credential blob with the given AES-GCM key.
  *
- * Returns the raw bytes (`iv || ciphertext || tag`) suitable for
- * storage in the `chatmail_cred` BYTEA column.
- *
- * @param blobKey: AES-256-GCM key (derived via split key derivation).
- * @param blob: The plaintext credential material.
- * @param chatmailAddr: The owner's Chatmail address, bound as AAD.
+ * Returns the raw bytes (`iv || ciphertext || tag`) suitable for storage
+ * in the `chatmail_cred` BYTEA column. `chatmailAddr` is bound as AAD.
  */
 export async function encryptBlob(
   blobKey: CryptoKey,
@@ -85,12 +81,8 @@ export async function encryptBlob(
  * Decrypt a credential blob with the given AES-GCM key.
  *
  * `encrypted` is the raw bytes from the `chatmail_cred` column
- * (`iv || ciphertext || tag`).
- *
- * @param blobKey: AES-256-GCM key (derived via split key derivation).
- * @param encrypted: The raw ciphertext from the server.
- * @param chatmailAddr: The owner's Chatmail address, bound as AAD
- *   (must match the value used during encryption).
+ * (`iv || ciphertext || tag`). `chatmailAddr` is the AAD and must match
+ * the value used to encrypt.
  */
 export async function decryptBlob(
   blobKey: CryptoKey,

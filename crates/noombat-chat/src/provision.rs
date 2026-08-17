@@ -27,10 +27,8 @@ pub struct ProvisionedAccount {
 /// generates a random password, connects via IMAP, authenticates
 /// (which triggers account creation), and returns the credentials.
 ///
-/// # Arguments
-///
-/// * `chatmail_domain`: e.g. `"chat.noombat.social"`.
-/// * `username`: the local-part of the address (e.g. `"alice"`).
+/// The address is `username@chatmail_domain`, e.g.
+/// `alice@chat.noombat.social`.
 pub async fn provision_chatmail_account(
     chatmail_domain: &str,
     username: &str,

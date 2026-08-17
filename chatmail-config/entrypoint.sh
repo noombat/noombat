@@ -66,8 +66,8 @@ fi
 # with; without opendkim.conf it would also be listening on a unix
 # socket while Postfix dials inet:localhost:8891.
 #
-# The selector is `noombat`, matching the TXT record name documented in
-# docs/deployment.md and printed below.
+# The selector is `noombat`, which must match the TXT record name
+# printed below.
 DKIM_DIR=/etc/opendkim
 DKIM_SELECTOR=noombat
 

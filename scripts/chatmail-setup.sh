@@ -79,7 +79,7 @@ elif command -v ncat >/dev/null 2>&1; then
     pass "ncat found"
     NC_CMD="ncat"
 else
-    warn "nc / ncat not found — port 25 check will be skipped"
+    warn "nc / ncat not found, port 25 check will be skipped"
     NC_CMD=""
 fi
 
@@ -121,7 +121,7 @@ if [ -n "${MX_RECORDS}" ]; then
     if echo "${MX_RECORDS}" | grep -qi "${DOMAIN}"; then
         pass "MX points to ${DOMAIN} (self-referential, as expected)"
     else
-        warn "MX does not point to ${DOMAIN} — Chatmail relays typically point MX to themselves"
+        warn "MX does not point to ${DOMAIN}. Chatmail relays typically point MX to themselves"
     fi
 else
     fail "No MX record found for ${DOMAIN}"

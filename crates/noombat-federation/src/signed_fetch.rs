@@ -94,14 +94,6 @@ pub async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
 /// HTTP status. The caller is responsible for checking
 /// `response.status().is_success()` and handling errors as appropriate
 /// (e.g. distinguishing 404 from 410 from 5xx).
-///
-/// # Arguments
-///
-/// * `pool`: Database connection pool (used to look up the signing key).
-/// * `http_client`: The HTTP client for the outbound request.
-/// * `url`: The URL to fetch.
-/// * `signing_actor_id`: UUID of the local actor whose key is used
-///   for signing.
 pub async fn signed_get(
     pool: &PgPool,
     http_client: &reqwest::Client,

@@ -31,13 +31,11 @@ use tracing::{debug, warn};
 use crate::integrity_proof;
 use crate::integrity_proof::VerificationResult;
 
-/// Origin fetches allowed to be in flight at once, across both paths that
-/// reach out to another instance during verification: the
-/// `verify-or-fetch` re-fetch, and the key refresh in
-/// [`verify_inbound_proof`].
+/// Origin fetches allowed in flight at once, across both paths that reach
+/// another instance during verification: the `verify-or-fetch` re-fetch,
+/// and the key refresh in [`verify_inbound_proof`].
 ///
-/// Both are driven by inbound traffic, so both are burst-shaped and both
-/// let a sender influence our target. Uncapped, that makes Noombat an
+/// Both are driven by inbound traffic, so uncapped they make Noombat an
 /// amplifier: the sender picks the victim and the burst size, and we
 /// supply the connections. One counter covers both because the resource
 /// being protected, outbound sockets aimed at a third party, is the same.
@@ -45,10 +43,10 @@ static ORIGIN_FETCH_PERMITS: LazyLock<Semaphore> = LazyLock::new(|| Semaphore::n
 
 /// How long a fetch waits for a permit before giving up.
 ///
-/// Waiting beats failing (a discarded activity is lost content), but not
-/// indefinitely: a queue with no bound is the same resource exhaustion one
-/// layer down. Exceeding this is treated as a fetch failure, which both
-/// callers already handle.
+/// Waiting beats failing, because a discarded activity is lost content,
+/// but an unbounded queue is the same exhaustion one layer down.
+/// Exceeding this is treated as a fetch failure, which both callers
+/// already handle.
 const ORIGIN_FETCH_PERMIT_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// The relay verification policy in effect for this instance.
@@ -97,55 +95,37 @@ pub enum RelayVerificationOutcome {
     Discard,
 }
 
-/// Determine whether a relayed activity should be accepted, and
-/// with what verification status.
+/// Determine whether a relayed activity should be accepted, and with what
+/// verification status.
 ///
-/// This function implements the three-tier verification policy.
-///
-/// # Arguments
-///
-/// * `pool`: database pool (for actor key lookup during proof
-///   verification, and for re-fetch in `verify-or-fetch` mode).
-/// * `http_client`: HTTP client for re-fetching the original
-///   activity from the origin instance.
-/// * `activity`: the inner activity extracted from the relay's
-///   `Announce` wrapper.
-/// * `policy`: the instance's relay verification policy.
-///
-/// # Returns
-///
-/// A [`RelayVerificationOutcome`] indicating whether the activity
-/// should be indexed, flagged, or discarded.
+/// `activity` is the inner activity extracted from the relay's `Announce`
+/// wrapper. The outcome says whether to index it, flag it, or discard it.
 pub async fn verify_relayed_activity(
     pool: &PgPool,
     http_client: &reqwest::Client,
     activity: &Value,
     policy: RelayVerificationPolicy,
 ) -> RelayVerificationOutcome {
-    // Attempt proof verification if the activity carries one.
     let proof_result = attempt_proof_verification(pool, activity).await;
 
     match (policy, proof_result) {
-        // Valid proof: always accept regardless of policy.
         (_, Some(true)) => {
             debug!("relayed activity has valid integrity proof");
             RelayVerificationOutcome::Verified
         }
 
-        // Invalid proof: reject under all policies (a present but
-        // invalid proof is more suspicious than an absent one).
+        // A present but invalid proof is more suspicious than an absent
+        // one, so this rejects under every policy.
         (_, Some(false)) => {
             warn!("relayed activity has invalid integrity proof; discarding");
             RelayVerificationOutcome::Discard
         }
 
-        // No proof, `verify` policy: discard.
         (RelayVerificationPolicy::Verify, None) => {
             debug!("relayed activity lacks proof under 'verify' policy; discarding");
             RelayVerificationOutcome::Discard
         }
 
-        // No proof, `verify-or-fetch` policy: re-fetch from origin.
         (RelayVerificationPolicy::VerifyOrFetch, None) => {
             let object_id = activity
                 .get("id")
@@ -177,7 +157,6 @@ pub async fn verify_relayed_activity(
             }
         }
 
-        // No proof, `trust-relay` policy: accept but flag.
         (RelayVerificationPolicy::TrustRelay, None) => {
             debug!("relayed activity accepted under 'trust-relay' policy (unverified)");
             RelayVerificationOutcome::Unverified
@@ -187,45 +166,28 @@ pub async fn verify_relayed_activity(
 
 /// Verify the FEP-8b32 proof on a directly delivered document.
 ///
-/// This is the ingestion-time counterpart to [`verify_relayed_activity`].
-/// There is no policy argument because direct delivery has no policy to
-/// apply: the HTTP Signature is already bound to `activity.actor`, so an
-/// absent proof is normal rather than suspicious. What the proof adds is
-/// evidence that survives redistribution, which is what a Group or a
-/// relay forwarding this document onward will rely on.
+/// The ingestion-time counterpart to [`verify_relayed_activity`], with no
+/// policy argument: the HTTP Signature is already bound to
+/// `activity.actor`, so an absent proof is normal rather than suspicious.
+/// What the proof adds is evidence that survives redistribution.
 ///
-/// # The author binding is the whole point
-///
-/// `expected_author` is the actor the caller is about to attribute this
-/// document to. The proof must be signed by *that* actor. Without the
-/// check, a valid signature proves only "somebody whose key we happen to
-/// have cached signed these bytes", which is not authorship: sign an
+/// The proof must be signed by `expected_author`, the actor the caller is
+/// about to attribute the document to. Otherwise a valid signature proves
+/// only that somebody whose key we cached signed these bytes: sign an
 /// object `attributedTo: alice` with bob's key, name bob's verification
 /// method, and the row lands attributed to alice carrying a `TRUE`. This
-/// is the same binding [`crate::inbox::process_activity`] applies to the
-/// HTTP Signature signer, for the same reason.
+/// is the binding [`crate::inbox::process_activity`] applies to the HTTP
+/// Signature signer, for the same reason.
 ///
-/// The check runs *before* the key lookup, so naming an actor we have
-/// never heard of is `Invalid` (a proof we were not meant to be able to
-/// check) rather than `Absent` (nothing to check). Otherwise a sender
-/// could switch verification off by pointing `verificationMethod` at an
-/// unknown URI, which would silently turn the discard below into a store.
+/// That check runs *before* the key lookup, so naming an actor we have
+/// never heard of is `Invalid` rather than `Absent`; otherwise a sender
+/// switches verification off by pointing `verificationMethod` at a URI we
+/// cannot resolve, turning the caller's discard into a store.
 ///
-/// # Return value
-///
-/// The tri-state stored in `integrity_proof_verified`:
-///
-/// - [`VerificationResult::Absent`]: no proof, or a proof from the right
-///   actor whose key we do not hold and could not fetch. Not the same as
-///   a bad proof and must not be recorded as one.
-/// - [`VerificationResult::Valid`]: verified against the document exactly
-///   as received.
-/// - [`VerificationResult::Invalid`]: a proof that did not verify, or one
-///   signed by somebody other than `expected_author`. Callers discard.
-///
-/// The document passed here must be the bytes as received. JCS hashes
-/// every property that was present, so a value round-tripped through a
-/// type that drops unknown properties will not verify.
+/// `Absent`, the tri-state stored in `integrity_proof_verified`, covers
+/// both no proof and a proof whose key we could not obtain, and must not
+/// be recorded as a bad one. The document must be the bytes as received,
+/// because JCS hashes every property that was present.
 pub async fn verify_inbound_proof(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -260,17 +222,14 @@ pub async fn verify_inbound_proof(
     // One bounded refresh before calling it a forgery.
     //
     // A cached key can be wrong without anybody misbehaving: the peer
-    // rotated, or published several keys and we stored the first. Treating
-    // that as an invalid proof would return `Forbidden` from the inbox,
-    // and the only path that refreshes a cached key is an `Update` that
-    // has to pass through the same gate, so the peer would be locked out
-    // permanently with no way back. Holding the wrong key is the same
-    // epistemic state as holding no key, and this module already refuses
-    // to call that a bad proof.
+    // rotated, or published several and we stored the first. Treating that
+    // as invalid would return `Forbidden` from the inbox, and the only
+    // path that refreshes a cached key is an `Update` through that same
+    // gate, so the peer would be locked out with no way back.
     //
     // The fetch targets `expected_author`, which the caller has already
-    // resolved, so this reaches no host the request was not going to
-    // reach anyway. It is capped by [`ORIGIN_FETCH_PERMITS`] regardless.
+    // resolved, so it reaches no host the request was not going to reach
+    // anyway, and is capped by [`ORIGIN_FETCH_PERMITS`] regardless.
     let refreshed = crate::inbox::refresh_assertion_key(pool, http_client, signer, &vm_id).await;
 
     match refreshed {
@@ -322,11 +281,8 @@ pub(crate) async fn origin_fetch_permit() -> Option<tokio::sync::SemaphorePermit
 /// invalid proof exists, and `None` if no proof is present.
 async fn attempt_proof_verification(pool: &PgPool, activity: &Value) -> Option<bool> {
     let vm_id = integrity_proof::extract_verification_method_id(activity)?;
-
-    // Extract the actor AP ID from the verification method.
     let actor_ap_id = vm_id.split('#').next().unwrap_or(vm_id);
 
-    // Look up the actor's Ed25519 public key.
     let public_key: Option<String> =
         sqlx::query_scalar("SELECT ed25519_public_key FROM actors WHERE ap_id = $1")
             .bind(actor_ap_id)
@@ -339,11 +295,8 @@ async fn attempt_proof_verification(pool: &PgPool, activity: &Value) -> Option<b
     let public_key_multibase = match public_key {
         Some(pk) => pk,
         None => {
-            // The actor's key is not cached locally. For `verify-or-fetch`,
-            // the caller will re-fetch the activity from the origin; for
-            // `verify` and `trust-relay`, we report "no proof" rather
-            // than "invalid proof" (the proof may be valid but we lack
-            // the key to check).
+            // No cached key, so report "no proof" rather than "invalid":
+            // the proof may be valid and we simply cannot check it.
             debug!(
                 actor = actor_ap_id,
                 "no Ed25519 public key cached for proof verification"
@@ -360,12 +313,11 @@ async fn attempt_proof_verification(pool: &PgPool, activity: &Value) -> Option<b
     }
 }
 
-/// Re-fetch an activity from its origin instance and verify that it
-/// exists and is structurally consistent with the relayed version.
+/// Re-fetch an activity from its origin and check it is consistent with
+/// the relayed version.
 ///
-/// Returns `Ok(true)` if the origin returned a valid object matching
-/// the claimed AP ID, `Ok(false)` if the origin's object does not
-/// match, and `Err` on network or parse failure.
+/// `Ok(false)` means the origin's object does not match the claimed AP ID;
+/// `Err` means the fetch or parse failed.
 async fn refetch_and_verify(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -390,8 +342,8 @@ async fn refetch_and_verify(
             }
         };
 
-    // Use a signed fetch so that instances requiring authenticated
-    // requests do not reject the lookup.
+    // Signed, so instances requiring authenticated requests do not reject
+    // the lookup.
     let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool).await?;
     let response =
         crate::signed_fetch::signed_get(pool, http_client, object_id, signing_actor_id).await?;
@@ -407,25 +359,16 @@ async fn refetch_and_verify(
         NoombatError::Federation(format!("invalid JSON from origin for {object_id}: {e}"))
     })?;
 
-    // Verify that the origin's `id` matches the claimed AP ID.
     let origin_id = origin_object.get("id").and_then(|v| v.as_str());
     Ok(origin_id == Some(object_id))
 }
 
-/// Check whether an inbound `Announce` is from a subscribed relay
-/// rather than a regular boost.
-///
-/// Relays deliver `Announce` activities where:
-/// 1. The announcing actor is the relay's actor URI.
-/// 2. The `to` field contains `https://www.w3.org/ns/activitystreams#Public`.
-///
-/// This function checks whether the announcing actor matches a
-/// relay subscription in the `relay_subscriptions` table.
+/// Check whether an inbound `Announce` is from a subscribed relay rather
+/// than a regular boost, by matching the announcing actor against
+/// `relay_subscriptions`.
 pub async fn is_relay_announce(pool: &PgPool, actor_uri: &str) -> bool {
-    // The relay's inbox URL may differ from its actor URI (e.g.
-    // `https://relay.example/inbox` vs `https://relay.example/actor`).
-    // Check both patterns, mirroring the logic in
-    // `relay::try_handle_relay_accept`.
+    // A relay's inbox URL may differ from its actor URI, so match both,
+    // mirroring `relay::try_handle_relay_accept`.
     let derived_inbox = format!("{actor_uri}/inbox");
     let is_relay: bool = sqlx::query_scalar(
         r#"SELECT EXISTS(

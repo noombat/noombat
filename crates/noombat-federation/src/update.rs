@@ -31,12 +31,7 @@ use crate::move_actor;
 /// Errors are logged, not propagated: a federation delivery failure
 /// must not block the local mutation that triggered it.
 ///
-/// # Arguments
-///
-/// * `pool`: Database connection pool.
-/// * `actor`: The actor whose profile was modified.
-/// * `domain`: The instance domain (e.g. `"noombat.social"`), used
-///   to construct the human-facing `url` field (`/@{username}`).
+/// `domain` builds the human-facing `url` field, `/@{username}`.
 pub async fn enqueue_actor_update(pool: &PgPool, actor: &Actor, domain: &str) {
     // Fetch public profile sections for federation.
     let sections = match fetch_public_sections(pool, actor.id).await {

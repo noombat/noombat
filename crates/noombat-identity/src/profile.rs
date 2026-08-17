@@ -805,7 +805,6 @@ fn visibility_filter(max: &SectionVisibility) -> Vec<String> {
 /// Render an optional Markdown field through the markup pipeline.
 ///
 /// Returns `(source, html)`. If the input is `None`, both are `None`.
-/// Offloaded to a blocking thread because KaTeX embeds QuickJS.
 async fn render_optional_markdown(
     input: Option<&str>,
 ) -> noombat_core::error::Result<(Option<String>, Option<String>)> {

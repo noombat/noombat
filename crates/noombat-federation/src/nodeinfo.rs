@@ -160,17 +160,15 @@ mod tests {
 
     /// Every key `build` can emit, as a flat path list.
     ///
-    /// This is a golden list, and the point of it is the failure it
-    /// causes. Adding a key to `build` without adding it here fails
-    /// this test, and the fix is to add the key in both places: here,
-    /// and in the NodeInfo section of `docs/federation.md`. That
-    /// section previously documented five of the twenty-one paths
-    /// below, and an operator could not learn what their instance
-    /// discloses by reading it. The list is asserted here rather than
-    /// parsed out of the document because a crate test that reads its
-    /// way up to the repository root couples this crate to the layout
-    /// above it, and because the document is not required to be
-    /// present for the workspace to build.
+    /// A golden list whose point is the failure it causes: adding a key
+    /// to `build` without adding it here fails the test below, and the
+    /// fix is to add it in both places, here and in the NodeInfo section
+    /// of the federation documentation, so an operator can still learn
+    /// what their instance discloses by reading it.
+    ///
+    /// Hard-coded rather than parsed out of that document, which would
+    /// couple this crate to the repository layout above it and require
+    /// the document to be present for the workspace to build.
     const EMITTED_PATHS: &[&str] = &[
         "version",
         "software.name",
@@ -248,8 +246,8 @@ mod tests {
             emitted_paths(&params),
             expected,
             "the NodeInfo document changed shape. Update EMITTED_PATHS above and the \
-             NodeInfo section of docs/federation.md in the same change, so an operator \
-             can still learn what their instance discloses by reading the documentation"
+             NodeInfo section of the federation documentation in the same change, so an \
+             operator can still learn what their instance discloses by reading it"
         );
     }
 
@@ -257,7 +255,6 @@ mod tests {
     fn a_default_instance_emits_no_conditional_keys() {
         // Absence is the contract for the conditional keys: they are
         // never emitted as `false`, so a peer must test for presence.
-        // `docs/federation.md` says so, and this is what makes that true.
         let params = NodeInfoParams {
             total_users: 0,
             active_month: 0,

@@ -203,8 +203,7 @@ export class PeerStateTable {
 
   /** Apply the Autocrypt Level 1 update algorithm on receipt of an
    *  incoming message.
-   *
-   *  @returns: see {@link UpdateResult}. */
+   *  See {@link UpdateResult}. */
   update(msg: IncomingMessage): UpdateResult {
     const addr = canonicalise(msg.from);
 
@@ -292,8 +291,7 @@ export class PeerStateTable {
    *  stored gossip key is never used for encryption. Adding a fallback
    *  would turn an inert record into a live encryption key, and an
    *  injected one into a confidentiality breach.
-   *
-   *  @returns: see {@link UpdateResult}. */
+   *  See {@link UpdateResult}. */
   updateGossip(addr: string, key: Uint8Array, timestamp: number): UpdateResult {
     const canonical = canonicalise(addr);
     let entry = this.peers.get(canonical);
@@ -364,10 +362,8 @@ export class PeerStateTable {
 /**
  * Compute the encryption recommendation for the given recipients.
  *
- * @param table: The sender's peer state table.
- * @param recipients: The email addresses of all recipients.
- * @param senderPrefersMutual: Whether the sender has set
- *   `prefer-encrypt: mutual` in their own Autocrypt header.
+ * `senderPrefersMutual` is whether the sender has set
+ * `prefer-encrypt: mutual` in their own Autocrypt header.
  */
 export function recommend(
   table: PeerStateTable,

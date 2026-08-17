@@ -33,16 +33,10 @@ pub struct Heading {
 
 /// Extract all headings from a Markdown source string.
 ///
-/// The extraction uses pulldown-cmark's parser in the same mode as
-/// the main render pipeline (CommonMark + math + tables +
-/// strikethrough + task lists) to ensure heading detection is
-/// consistent with the rendered output.
-///
-/// Duplicate heading texts receive disambiguated slugs: the first
-/// occurrence uses the base slug (e.g. `introduction`), and
-/// subsequent occurrences receive a numeric suffix (`introduction-1`,
-/// `introduction-2`, etc.), matching the convention used by GitHub,
-/// GitLab, and most static-site generators.
+/// Parses in the same mode as the render pipeline, so heading detection
+/// matches the rendered output. Duplicate texts are disambiguated with a
+/// numeric suffix (`introduction`, then `introduction-1`), as GitHub,
+/// GitLab and most static-site generators do.
 pub fn extract_headings(input: &str) -> Vec<Heading> {
     let mut options = Options::empty();
     options.insert(Options::ENABLE_MATH);
@@ -98,18 +92,12 @@ pub fn extract_headings(input: &str) -> Vec<Heading> {
 
 /// Convert a heading's plain text into a URL-safe slug.
 ///
-/// The algorithm lowercases, replaces whitespace runs with a single
-/// hyphen, strips non-alphanumeric non-hyphen characters, and trims
-/// leading and trailing hyphens. This matches the slug convention
-/// used by GitHub, GitLab, and most static-site generators.
+/// Lowercases, collapses whitespace runs to one hyphen, strips anything
+/// outside `[a-z0-9-]` and trims hyphens, so the result needs no escaping
+/// in an HTML `id`. The same convention GitHub and GitLab use.
 ///
-/// The output alphabet is restricted to `[a-z0-9-]`, which is safe
-/// for use in HTML `id` attributes without additional escaping.
-///
-/// This function is public so that the render pipeline
-/// ([`crate::render_with_options`]) can reuse it when extracting
-/// headings from the event stream. External callers should prefer
-/// [`extract_headings`], which handles deduplication.
+/// Public only so the render pipeline can reuse it; external callers want
+/// [`extract_headings`], which also deduplicates.
 pub fn slugify_heading(text: &str) -> String {
     slugify(text)
 }
@@ -141,20 +129,11 @@ fn slugify(text: &str) -> String {
 /// Inject `id` attributes into rendered HTML heading tags so that
 /// table-of-contents anchor links resolve correctly.
 ///
-/// The function processes headings in document order: for each entry
-/// in `headings`, it finds the next matching heading opening tag in
-/// the HTML (starting from where the previous match ended) and
-/// inserts `id="{slug}"`. This order-preserving approach handles
-/// duplicate heading text correctly.
-///
-/// A match requires the tag prefix (`<h{depth}`) to be followed
-/// immediately by `>` (no attributes) or ` ` (attributes follow).
-/// This prevents false matches against tags like `<h2x>` in
-/// user-authored raw HTML.
-///
-/// If a heading tag already carries an `id` attribute, it is left
-/// unchanged and the heading is consumed (the search cursor advances
-/// past the tag).
+/// Walks `headings` in document order, advancing a cursor through the
+/// HTML, which is what makes duplicate heading text land on the right
+/// tags. A match needs `<h{depth}` followed by `>` or a space, so `<h2x>`
+/// in user-authored HTML cannot match. A tag that already carries an `id`
+/// is left alone and consumed.
 pub fn inject_ids(html: &str, headings: &[Heading]) -> String {
     let mut result = String::with_capacity(html.len() + headings.len() * 24);
     let mut search_from = 0;

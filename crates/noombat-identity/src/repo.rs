@@ -421,12 +421,9 @@ pub struct RemoteActor {
 /// document claiming a local actor's `ap_id` cannot overwrite that
 /// actor's published signing key.
 ///
-/// # Errors
-///
-/// Returns [`NoombatError::Forbidden`] when the `ap_id` belongs to a
-/// local actor. Postgres skips a guarded `DO UPDATE` silently rather
-/// than erroring, so this is the only signal a caller gets that the
-/// write did not happen (see the comment on the check itself).
+/// A local `ap_id` is [`NoombatError::Forbidden`]. Postgres skips a
+/// guarded `DO UPDATE` silently rather than erroring, so that is the only
+/// signal a caller gets that the write did not happen.
 pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Actor> {
     let id = Uuid::new_v4();
     let privacy = ActorPrivacy::default();
@@ -619,12 +616,6 @@ pub struct RemotePost {
     pub ap_object: serde_json::Value,
 }
 
-/// Persist a post received from a remote instance.
-///
-/// Returns `Some(uuid)` when a new row is inserted, or `None` when
-/// the `ap_id` already exists (the `ON CONFLICT` clause fires).
-/// The caller uses the returned UUID to link hashtags and perform
-/// other post-insert bookkeeping only for genuinely new posts.
 /// Record a verified integrity proof on a post that already exists.
 ///
 /// `create_remote_post` returns `None` when the row was inserted by a
@@ -651,6 +642,10 @@ pub async fn record_verified_proof(pool: &PgPool, ap_id: &str) -> Result<bool> {
     Ok(updated > 0)
 }
 
+/// Persist a post received from a remote instance.
+///
+/// `None` means the `ap_id` already existed and `ON CONFLICT` fired; the
+/// caller links hashtags only for the genuinely new posts.
 pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Option<Uuid>> {
     let id = Uuid::new_v4();
     let row = sqlx::query_scalar::<_, Uuid>(
@@ -796,22 +791,11 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
 
 /// Update a local actor's moderation status.
 ///
-/// Sets the `actor_status` column to the given value and returns the
-/// updated [`Actor`].
-///
-/// # Search-Index Obligation
-///
-/// When the new status is `Silenced` or `Suspended`, the caller
-/// **must** remove the actor's profile from the search index (via
-/// `search_sync::remove_from_index("profiles", &actor.id.to_string())`)
-/// to prevent the actor from appearing in public search results.
-/// This function does not interact with the search layer because
-/// the repository crate has no dependency on the search backend.
-///
-/// When the new status is `Active` (un-silencing or un-suspending),
-/// the caller should re-index the actor's profile (via
-/// `search_sync::reindex_profile_from_db`) if the actor is
-/// discoverable.
+/// The caller owns the search index, because this crate has no dependency
+/// on the search backend: `Silenced` or `Suspended` **must** be followed
+/// by `search_sync::remove_from_index("profiles", ...)`, or the actor
+/// keeps appearing in public results, and `Active` by
+/// `search_sync::reindex_profile_from_db` if they are discoverable.
 pub async fn set_actor_status(pool: &PgPool, actor_id: Uuid, status: ActorStatus) -> Result<Actor> {
     let status_str = match status {
         ActorStatus::Active => "active",
@@ -840,53 +824,27 @@ pub async fn set_actor_status(pool: &PgPool, actor_id: Uuid, status: ActorStatus
 
 // ..... ACTOR DELETE .....
 
-/// Tombstone a local actor: clear all personal data, record the
-/// tombstone for federation consistency, and delete all dependent
-/// rows from the database.
+/// Tombstone a local actor: clear the personal data, record the tombstone
+/// for federation consistency, and delete the dependent rows. Returns the
+/// actor as it was immediately before, so the caller can broadcast the
+/// `Delete` and purge search indices.
 ///
-/// This function does **not** broadcast the `Delete` activity; the
-/// caller is responsible for fetching follower inboxes (via
-/// [`get_follower_inboxes`]) **before** calling this function (which
-/// deletes the follow relationships) and then passing those inboxes
-/// to [`noombat_federation::delete::broadcast_delete`].
+/// Does **not** broadcast that `Delete`. The caller must fetch follower
+/// inboxes with [`get_follower_inboxes`] *before* calling this, which
+/// deletes the follow relationships, then pass them to
+/// [`noombat_federation::delete::broadcast_delete`].
 ///
-/// After this function returns, the actor row is retained with only
-/// the `ap_id`, `username`, `domain`, and `public_key_pem` columns
-/// populated; all other fields are cleared and the `actor_status` is
-/// set to `"suspended"`. Dependent data (posts, profile sections,
-/// follows, etc.) is explicitly deleted.
+/// The row is retained carrying only `ap_id`, `username`, `domain` and
+/// `public_key_pem`, with `actor_status` set to `"suspended"`, so that the
+/// `Delete` can still be signed with the actor's key, `tombstoned_actors`
+/// can answer `410 Gone`, and the grace period can be cancelled before any
+/// irreversible loss.
 ///
-/// The two-phase approach (tombstone now, hard-delete later) ensures
-/// that:
-/// 1. The `Delete` activity can reference the actor's `ap_id` and be
-///    signed with its private key.
-/// 2. The `tombstoned_actors` table records the `ap_id` so that
-///    future federation requests return `410 Gone`.
-/// 3. A configurable grace period allows the user to cancel the
-///    deletion before irreversible data loss.
+/// `moved_to` is deliberately not cleared: followers who have not yet
+/// processed an earlier `Move` still need the pointer to find the target.
 ///
-/// The `moved_to` column is intentionally **not** cleared: if the
-/// actor had previously migrated via a `Move` activity, the migration
-/// pointer is preserved on the tombstoned row so that followers who
-/// have not yet processed the `Move` can still discover the target
-/// actor. The `Delete` broadcast informs followers of the deletion;
-/// the `moved_to` pointer provides an alternative discovery path.
-///
-/// All deletion steps are executed within a single database
-/// transaction to ensure atomicity: if the process crashes mid-way,
-/// the entire tombstoning operation is rolled back rather than
-/// leaving the actor in a partially-tombstoned state.
-///
-/// # Arguments
-///
-/// - `pool`: Database connection pool.
-/// - `actor_id`: The UUID of the local actor to delete.
-///
-/// # Returns
-///
-/// The actor's data as it was immediately before tombstoning,
-/// enabling the caller to perform follow-up actions (e.g.
-/// broadcasting the `Delete` activity, purging search indices).
+/// Every step runs in one transaction, so a crash part-way rolls back
+/// rather than leaving the actor partly tombstoned.
 pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
     // Fetch the actor before clearing data (needed for the Delete
     // activity and follower inbox resolution).
@@ -935,16 +893,12 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
     .execute(&mut *tx)
     .await?;
 
-    // Cascade-delete all dependent personal data. The FK constraints
-    // with ON DELETE CASCADE would handle this if the actor row were
-    // deleted, but since the row is retained (tombstoned), explicit
-    // deletion of dependents is required.
+    // The ON DELETE CASCADE constraints would cover this if the actor row
+    // were deleted, but it is retained, so dependents go explicitly.
+    // Order matters: everything referencing `posts` (likes, boosts,
+    // post_hashtags, media_attachments) must go before `posts` itself.
     //
-    // Deletion order matters: tables that reference `posts` (likes,
-    // boosts, post_hashtags, media_attachments) must be deleted
-    // before `posts` to avoid relying on cascade side-effects.
-    //
-    // Each query uses a literal `&'static str` (not `format!`) to
+    // Each query is a literal `&'static str` rather than a `format!`, to
     // satisfy sqlx's `SqlSafeStr` compile-time injection check.
 
     // 1. Tables with `actor_id` FK column (excluding posts and
@@ -1193,16 +1147,13 @@ pub async fn list_following_ap_ids(
 
 // ..... TESTS .....
 //
-// These require a live PostgreSQL and are therefore `#[ignore]`d: the
-// `test` CI job (`.github/workflows/ci.yml`) and `scripts/test.sh` both
-// run `cargo test --workspace` with no database, and must stay green.
-// The `integration` job runs them via `--include-ignored`, so they are
-// executed on every push and cannot rot unnoticed.
+// `#[ignore]`d because they need a live PostgreSQL, which `cargo test
+// --workspace` does not have; the `integration` CI job runs them with
+// `--include-ignored`, so they cannot rot unnoticed.
 //
-// `#[sqlx::test]` provisions a fresh database per test and applies the
-// migrations, so each one starts from an empty schema. `migrations` is
-// given explicitly because migrations/ lives at the workspace root, not
-// in this crate.
+// `#[sqlx::test]` gives each one a fresh database with the migrations
+// applied. `migrations` is named explicitly because migrations/ lives at
+// the workspace root, not in this crate.
 
 #[cfg(test)]
 mod tests {
@@ -1464,25 +1415,17 @@ mod tests {
 
     /// Every statement in `tombstone_actor` runs on the transaction.
     ///
-    /// This is a source-level assertion because the type system permits
-    /// the defect: `.execute(pool)` and `.execute(&mut *tx)` both compile
-    /// inside a transaction, and one statement out of twenty-seven took
-    /// the pool for months without a warning from Cargo, clippy or any
-    /// test.
+    /// A source-level assertion, because the type system permits the
+    /// defect: `.execute(pool)` and `.execute(&mut *tx)` both compile
+    /// inside a transaction. A statement on `pool` takes a different
+    /// connection and commits immediately, so a later failure rolls back
+    /// every table except that one and leaves the account partly deleted;
+    /// it can also deadlock against the transaction whose locks it waits
+    /// for.
     ///
-    /// What it costs when it recurs is not a slow query. A statement on
-    /// `pool` runs on a different connection and commits the moment it
-    /// returns, so it is outside the transaction's atomicity: if anything
-    /// later in the erasure fails, the rollback restores every table
-    /// except that one, and the account is left partly deleted with no
-    /// error describing which part. It can also deadlock against its own
-    /// transaction, because the pool statement waits for locks that `tx`
-    /// holds while `tx` waits for the statement to return.
-    ///
-    /// A behavioural test for the same property is
-    /// `a_failed_erasure_leaves_the_job_listings_intact`, which needs a
-    /// database. This one runs on a bare `cargo test`, which is where a
-    /// regression would actually be caught.
+    /// `a_failed_erasure_leaves_the_job_listings_intact` asserts the same
+    /// property behaviourally, but needs a database. This one runs on a
+    /// bare `cargo test`, which is where a regression would be caught.
     #[test]
     fn erasure_runs_entirely_inside_its_transaction() {
         let body = tombstone_actor_source();
@@ -1557,16 +1500,15 @@ mod tests {
     /// A failure part-way through erasure rolls the whole thing back,
     /// job listings included.
     ///
-    /// The fault is injected by dropping `hashtag_follows`, which the
-    /// last step of `tombstone_actor` deletes from. That guarantees the
-    /// transaction fails *after* the job listings have been deleted,
-    /// which is the only ordering that can distinguish a statement on the
-    /// transaction from one on the pool. Each `#[sqlx::test]` gets its
-    /// own database, so dropping a table affects nothing else.
+    /// The fault is injected by dropping `hashtag_follows`, which the last
+    /// step of `tombstone_actor` deletes from, so the transaction fails
+    /// *after* the listings are gone. That ordering is the only one that
+    /// distinguishes a statement on the transaction from one on the pool.
+    /// Each `#[sqlx::test]` gets its own database, so the drop affects
+    /// nothing else.
     ///
-    /// Against the old code this fails: the delete had already committed
-    /// on a separate connection, so the rollback could not reach it and
-    /// the listings stayed gone while the actor came back.
+    /// Against the unfixed code it fails, which is what makes this a test
+    /// rather than a description.
     #[ignore = "requires a database; run with --include-ignored"]
     #[sqlx::test(migrations = "../../migrations")]
     async fn a_failed_erasure_leaves_the_job_listings_intact(pool: PgPool) {

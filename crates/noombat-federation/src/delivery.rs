@@ -50,12 +50,8 @@ struct SigningCredentials {
 
 /// Enqueue an activity for delivery to a remote inbox.
 ///
-/// # Arguments
-/// * `pool`: the database connection pool.
-/// * `actor_id`: the UUID of the local actor sending the activity
-///   (used by the delivery worker to look up the signing key).
-/// * `payload`: the full ActivityPub activity as JSON.
-/// * `target_inbox`: the remote actor's inbox URI.
+/// `actor_id` is the local sender, which the delivery worker uses to look
+/// up the signing key.
 pub async fn enqueue(
     pool: &PgPool,
     actor_id: Uuid,
@@ -468,12 +464,6 @@ async fn schedule_retry(pool: &PgPool, queue_id: i64, current_attempts: i16) {
 ///
 /// A polling fallback runs every `poll_interval` as a safety net in
 /// case a `NOTIFY` is missed (e.g. during reconnection).
-///
-/// # Arguments
-///
-/// * `pool`: the database connection pool (used for queue queries).
-/// * `http_client`: the HTTP client for outbound deliveries.
-/// * `poll_interval`: fallback polling interval (default: 30s).
 pub async fn run_worker(pool: PgPool, http_client: reqwest::Client, poll_interval: Duration) {
     // PgListener manages its own connection, independent of the pool.
     let mut listener = match sqlx::postgres::PgListener::connect_with(&pool).await {

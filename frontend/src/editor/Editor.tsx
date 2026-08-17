@@ -9,12 +9,10 @@
  *
  * The preview is produced by `POST /api/v1/preview`, which calls the
  * same `noombat-markup` function the persist path calls. There is
- * deliberately no Markdown or maths renderer in this file: per
- * `adr/0010`, a preview from a second engine shows the author a
- * different document than the one that will be stored and federated,
- * and a federated `Create` cannot be recalled. The engines had already
- * drifted (markdown-it ran with `linkify` and `typographer` on, and did
- * no hashtag, DOI or heading-anchor extraction at all).
+ * deliberately no Markdown or maths renderer in this file: a preview
+ * from a second engine shows the author a different document than the
+ * one that will be stored and federated, and a federated `Create`
+ * cannot be recalled.
  *
  * The cost of that correctness is a round trip per preview, debounced
  * below, and no preview while offline. The editor itself keeps working.
@@ -98,11 +96,8 @@ export default function Editor(props: EditorProps): JSX.Element {
   // here, so nothing this file composes can reach `innerHTML`.
   const [failed, setFailed] = createSignal(false);
 
-  // Debounced server render.
-  //
-  // 500 ms rather than the old 150 ms, because a pause now costs a
-  // request rather than a local parse. adr/0010 names debouncing as
-  // what keeps this to one request per typing pause.
+  // Debounced server render: 500 ms rather than 150 ms, because a pause
+  // now costs a request rather than a local parse.
   let timer: ReturnType<typeof setTimeout> | undefined;
   let inFlight: AbortController | undefined;
 

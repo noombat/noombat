@@ -10,8 +10,8 @@
 //! sections by the same relationship it just established, counts the
 //! download, and rate-limits the requester.
 //!
-//! Denials are `404`, never `403`, per the evaluation order in
-//! `plan.md` § 8: a `403` would confirm the profile exists.
+//! Denials are `404`, never `403`: a `403` would confirm the profile
+//! exists.
 
 use std::net::SocketAddr;
 

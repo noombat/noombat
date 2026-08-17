@@ -353,49 +353,8 @@ fn default_post_type() -> String {
     "note".to_owned()
 }
 
-/// Create a Note or Article via the C2S outbox endpoint.
-///
-/// # Authentication
-///
-/// This development-only endpoint is protected by a bearer token configured via
-/// `NOOMBAT_ADMIN_TOKEN`. A request must include:
-///
-/// ```text
-/// Authorization: Bearer <token>
-/// ```
-///
-/// This mechanism is a development-only placeholder!
-/// To be replaced by full OAuth and session-based authentication!
-///
-/// # Request body
-///
-/// ```json
-/// {
-///     "content": "Hello, Fediverse!",
-///     "visibility": "public",
-///     "post_type": "note"
-/// }
-/// ```
-///
-/// For an Article:
-///
-/// ```json
-/// {
-///     "content": "# My Article\n\nBody text in Markdown.",
-///     "visibility": "public",
-///     "post_type": "article",
-///     "title": "My Article",
-///     "featured_image_url": "https://example.com/image.jpg"
-/// }
-/// ```
-///
-/// # Response
-///
-/// On success, returns `201 Created` with the ActivityPub `Create`
-/// activity as JSON. The activity is also enqueued for delivery to
-/// all accepted followers.
-/// The parts of a locally authored post its ActivityPub document is
-/// built from.
+/// The parts of a locally authored post its ActivityPub document is built
+/// from.
 struct LocalPost<'a> {
     post_id: &'a str,
     ap_type: &'a str,
@@ -477,6 +436,12 @@ fn build_create_activity(
     })
 }
 
+/// `POST /users/{username}/outbox`: create a Note or Article.
+///
+/// Development-only, gated on the `NOOMBAT_ADMIN_TOKEN` bearer token until
+/// OAuth and session authentication replace it. Returns `201` with the
+/// `Create` activity, which is also enqueued for delivery to accepted
+/// followers.
 async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -526,15 +491,11 @@ async fn post_outbox(
         Uuid::new_v4()
     );
 
-    // Render Markdown through the noombat-markup pipeline.
-    // Offloaded to a blocking thread because KaTeX embeds QuickJS.
-    // Articles use the strict sanitisation mode so that user-authored
-    // `<span style="...">` elements are stripped (CSS-based attack
-    // prevention); Notes use the default mode, which permits `style`
-    // on `<span>` because only the trusted KaTeX renderer produces
-    // styled spans.
-    // Articles also inject heading `id` attributes into the rendered
-    // HTML so that table-of-contents anchors work in federated HTML.
+    // Articles use strict sanitisation, so user-authored
+    // `<span style="...">` is stripped; Notes use the default profile,
+    // which permits `style` on `<span>` because only the trusted maths
+    // renderer produces styled spans. Articles also get heading `id`
+    // attributes, so table-of-contents anchors work in federated HTML.
     let markup_opts = noombat_markup::MarkupOptions {
         strict_sanitisation: is_article,
         inject_heading_ids: is_article,

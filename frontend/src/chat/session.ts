@@ -28,11 +28,7 @@ export function accessToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-/**
- * Build request headers for an authenticated API call.
- *
- * @param extra: Additional headers merged into the result.
- */
+/** Build request headers for an authenticated API call, merging `extra`. */
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = accessToken();
   return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };

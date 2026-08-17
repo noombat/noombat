@@ -81,11 +81,9 @@ struct ExternalId {
 /// inserts the publication into the `publications` table if it does
 /// not already exist.
 ///
-/// # Arguments
-///
-/// * `mailto`: the contact email address sent to the CrossRef polite
-///   pool (per CrossRef's usage guidelines). Instance operators should
-///   configure this to a real administrative address.
+/// `mailto` is sent to the CrossRef polite pool per their usage
+/// guidelines, so operators should configure a real administrative
+/// address.
 pub async fn import_orcid_publications(
     pool: &PgPool,
     http_client: &reqwest::Client,

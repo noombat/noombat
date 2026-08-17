@@ -249,11 +249,8 @@ mod tests {
     /// "the nonce is fresh every time" is the security property, not a
     /// detail of the encoding.
     ///
-    /// Nothing asserted it until 2026-08-17, and nothing would have: a
-    /// hard-coded all-zero nonce round-trips perfectly and passes every
-    /// other test in this module. The gap mattered the moment the nonce
-    /// source was rewritten for aes-gcm 0.11, which took it off the
-    /// crate's own RNG and onto getrandom.
+    /// No other test in this module would catch it: a hard-coded all-zero
+    /// nonce round-trips perfectly and passes all of them.
     #[test]
     fn each_seal_uses_a_fresh_nonce() {
         let key = test_key();

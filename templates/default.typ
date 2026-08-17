@@ -20,7 +20,7 @@
 //   verified_links  : array of str
 
 // ..... Page setup .....
-#set document(title: name + " — Curriculum Vitae")
+#set document(title: name + " - Curriculum Vitae")
 #set page(margin: (top: 2cm, bottom: 2cm, left: 2cm, right: 2cm))
 #set text(font: "Libertinus Serif", size: 10.5pt, lang: "en")
 #set par(justify: true)
@@ -64,7 +64,7 @@
 #if experiences.len() > 0 [
   == Experience
   #for exp in experiences [
-    *#exp.title* — #exp.company #h(1fr) #exp.dates
+    *#exp.title*, #exp.company #h(1fr) #exp.dates
     #v(2pt)
     #if "description" in exp and exp.description != "" [
       #exp.description
@@ -82,7 +82,7 @@
     #if "degree" in edu and edu.degree != "" [
       #edu.degree
       #if "field" in edu and edu.field != "" [
-        — #edu.field
+        · #edu.field
       ]
       #v(2pt)
     ]

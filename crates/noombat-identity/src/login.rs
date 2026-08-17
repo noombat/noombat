@@ -23,12 +23,9 @@ pub struct LoginRequest {
 
 /// Authenticate a local user by verifying the authentication key.
 ///
-/// Returns `(actor_id, username, role)` on success.
-///
-/// # Errors
-///
-/// Returns `Forbidden` if the username is unknown, the account has no
-/// password (OAuth-only), or the authentication key does not match.
+/// Returns `(actor_id, username, role)` on success, and `Forbidden` for
+/// all three failures alike: unknown username, an OAuth-only account with
+/// no password, and a key that does not match.
 pub async fn verify_credentials(
     pool: &PgPool,
     req: &LoginRequest,

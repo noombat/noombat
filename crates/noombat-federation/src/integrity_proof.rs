@@ -55,22 +55,8 @@ pub const PROOF_PURPOSE: &str = "assertionMethod";
 
 /// Attach an FEP-8b32 integrity proof to an ActivityPub activity.
 ///
-/// The activity is mutated in place: a `proof` property is added
-/// containing the `DataIntegrityProof` object with the `eddsa-jcs-2022`
-/// cryptosuite. If the activity's `@context` does not already include
-/// the Data Integrity context URI, it is appended.
-///
-/// # Arguments
-///
-/// * `activity`: the ActivityPub activity (JSON object) to sign.
-///   If a `proof` property already exists, it is replaced.
-/// * `signing_key_bytes`: the raw 32-byte Ed25519 secret key.
-/// * `verification_method_id`: the URI of the verification method,
-///   e.g. `https://noombat.social/users/alice#ed25519-key`.
-///
-/// # Errors
-///
-/// Returns an error if JCS canonicalisation or Ed25519 signing fails.
+/// Mutates in place: adds a `proof` property, replacing any existing one,
+/// and appends the Data Integrity context URI if it is absent.
 pub fn sign(
     activity: &mut Value,
     signing_key_bytes: &[u8; 32],
@@ -103,44 +89,37 @@ fn sign_with_config(
     signing_key_bytes: &[u8; 32],
     mut proof_config: Value,
 ) -> Result<()> {
-    // Ensure the Data Integrity context is present.
     ensure_data_integrity_context(activity);
 
-    // 1. The unsigned document is the activity without any existing `proof`.
+    // The unsigned document is the activity without any existing `proof`.
     let mut unsigned_doc = activity.clone();
     unsigned_doc
         .as_object_mut()
         .ok_or_else(|| NoombatError::Internal("activity is not a JSON object".into()))?
         .remove("proof");
 
-    // 2. The proof configuration arrives from the caller.
-
-    // Per the W3C spec: if the unsigned document has `@context`,
-    // set it on the proof configuration as well.
+    // Per the W3C spec: if the unsigned document has `@context`, set it on
+    // the proof configuration as well.
     if let Some(ctx) = unsigned_doc.get("@context") {
         proof_config["@context"] = ctx.clone();
     }
 
-    // 3. Canonicalise and hash both the document and the proof config.
     let canonical_doc = jcs_canonicalise(&unsigned_doc)?;
     let canonical_proof_config = jcs_canonicalise(&proof_config)?;
 
     let doc_hash = sha256(canonical_doc.as_bytes());
     let proof_config_hash = sha256(canonical_proof_config.as_bytes());
 
-    // 4. Concatenate: proofConfigHash || documentHash (64 bytes).
+    // The signature input is proofConfigHash || documentHash, in that
+    // order.
     let mut signature_input = [0u8; 64];
     signature_input[..32].copy_from_slice(&proof_config_hash);
     signature_input[32..].copy_from_slice(&doc_hash);
 
-    // 5. Sign with Ed25519.
     let signing_key = SigningKey::from_bytes(signing_key_bytes);
     let signature: Signature = signing_key.sign(&signature_input);
 
-    // 6. Multibase-encode: `z` prefix + base58btc(signature bytes).
     let proof_value = format!("z{}", bs58::encode(signature.to_bytes()).into_string());
-
-    // 7. Add `proofValue` to the proof config and attach to the activity.
     proof_config["proofValue"] = Value::String(proof_value);
 
     // Remove `@context` from the proof before embedding: it was needed
@@ -204,25 +183,20 @@ pub fn sign_as_actor(
 
 /// Largest document this will canonicalise in order to check a proof.
 ///
-/// JCS canonicalisation sorts every object key recursively and the
-/// document is cloned first, so the work is superlinear in a size the
-/// sender chooses. Canonicalising an attacker-sized document is the
-/// denial of service; verifying the signature afterwards is cheap.
+/// JCS canonicalisation sorts every object key recursively and clones the
+/// document first, so the work is superlinear in a size the sender
+/// chooses. Canonicalising is the denial of service; verifying the
+/// signature afterwards is cheap.
 ///
-/// This is also the inbox body limit (`routes::federation::router`), and
-/// the two must stay equal. When the body limit was the framework default
-/// of 2 MiB, a signed document between the two was accepted by the
-/// transport and then refused here, while the same document with its
-/// proof stripped was stored: signing content was what made it
-/// undeliverable. Coupling them means an oversized document is refused
-/// once, at the edge, whether or not it carries a proof.
+/// This must stay equal to the inbox body limit
+/// (`routes::federation::router`). While they differed, a signed document
+/// between the two was accepted by the transport and then refused here,
+/// so signing content was what made it undeliverable.
 ///
-/// A document over the bound is reported [`VerificationResult::Invalid`]
-/// rather than absent, because we were handed a proof and declined to
-/// check it; calling that "unproven" would describe the wrong thing. Note
-/// this is not a hardening measure on its own. Omitting `proof`, or
-/// naming an unsupported cryptosuite, reaches `Absent` without any
-/// padding, so the choice here buys accuracy of reporting, not security.
+/// Over the bound reports [`VerificationResult::Invalid`] rather than
+/// absent, because we were handed a proof and declined to check it. That
+/// buys accuracy of reporting, not security: omitting `proof` reaches
+/// `Absent` without any padding.
 pub const MAX_PROOF_DOCUMENT_BYTES: usize = 1024 * 1024;
 
 /// How far ahead of our clock a proof's `created` may sit.
@@ -248,22 +222,9 @@ pub enum VerificationResult {
 
 /// Verify an FEP-8b32 integrity proof on an inbound ActivityPub activity.
 ///
-/// This function does **not** fetch the verification method from the
-/// network. The caller must supply the Ed25519 public key for the
-/// claimed author. Use [`extract_verification_method_id`] to obtain
-/// the verification method URI, then resolve the actor and retrieve
-/// the `ed25519_public_key` from the local cache or via signed fetch.
-///
-/// # Arguments
-///
-/// * `activity`: the inbound ActivityPub activity (JSON object).
-/// * `public_key_multibase`: the multibase-encoded Ed25519 public
-///   key of the claimed author (e.g. `z6Mk...`).
-///
-/// # Returns
-///
-/// A [`VerificationResult`] indicating whether the proof is valid,
-/// invalid, or absent.
+/// Does **not** fetch the verification method: the caller supplies the
+/// claimed author's multibase Ed25519 public key, obtained by resolving
+/// the URI from [`extract_verification_method_id`].
 pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResult {
     let proof = match select_proof(activity) {
         Some(p) => p,
@@ -285,8 +246,6 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
     }
 
     // `type` and `cryptosuite` were matched by `select_proof`.
-
-    // Extract and decode the proof value.
     let proof_value_str = match proof.get("proofValue").and_then(|v| v.as_str()) {
         Some(pv) => pv,
         None => {
@@ -303,7 +262,6 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
         }
     };
 
-    // Decode the public key.
     let public_key_bytes = match decode_multibase_public_key(public_key_multibase) {
         Ok(bytes) => bytes,
         Err(e) => {
@@ -320,7 +278,6 @@ pub fn verify(activity: &Value, public_key_multibase: &str) -> VerificationResul
         }
     };
 
-    // Reconstruct the proof configuration (without proofValue).
     let mut proof_config = proof.clone();
     proof_config.as_object_mut().unwrap().remove("proofValue");
 
@@ -437,11 +394,6 @@ fn select_proof(document: &Value) -> Option<&Value> {
 
 /// Decode a Base64-encoded Ed25519 private key (as stored in the
 /// `ed25519_private_key` column) into a raw 32-byte array.
-///
-/// # Errors
-///
-/// Returns an error if the Base64 decoding fails or the decoded
-/// length is not 32 bytes.
 pub fn decode_private_key_base64(base64_str: &str) -> Result<[u8; 32]> {
     let bytes = BASE64
         .decode(base64_str)
@@ -807,9 +759,9 @@ mod tests {
     /// verify, which is what distinguishes "refused before
     /// canonicalisation" from "failed the signature check".
     ///
-    /// Exercised just over the limit rather than at the 50 MB named in
-    /// the audit: it is the same branch, taken before the document is
-    /// cloned or canonicalised, and a 1 MiB fixture keeps the suite fast.
+    /// Exercised just over the limit rather than at a realistic size: it
+    /// is the same branch, taken before the document is cloned or
+    /// canonicalised, and a 1 MiB fixture keeps the suite fast.
     #[test]
     fn oversized_document_is_refused_even_when_correctly_signed() {
         let (signing_key, verifying_key) = test_keypair();

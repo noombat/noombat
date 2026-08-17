@@ -73,12 +73,6 @@ impl Default for TrendingCache {
 /// Counts the number of distinct posts that reference each hashtag
 /// within `[now - window_hours, now]`, ordered by post count
 /// descending.
-///
-/// # Arguments
-///
-/// * `pool`: database connection pool.
-/// * `window_hours`: the rolling window size in hours (default: 24).
-/// * `limit`: maximum number of trending tags to return (default: 20).
 pub async fn compute_trending(
     pool: &PgPool,
     window_hours: i32,
@@ -115,14 +109,6 @@ pub async fn compute_trending(
 /// Computes trending hashtags at `interval` and writes the result
 /// to `cache`. Runs indefinitely; intended to be spawned as a
 /// detached Tokio task.
-///
-/// # Arguments
-///
-/// * `pool`: database connection pool.
-/// * `cache`: shared trending cache.
-/// * `interval`: recomputation interval (default: 5 minutes).
-/// * `window_hours`: rolling window in hours (default: 24).
-/// * `limit`: maximum trending tags (default: 20).
 pub async fn run_worker(
     pool: PgPool,
     cache: TrendingCache,

@@ -49,7 +49,7 @@ pub struct RegisterResponse {
 pub fn validate_username(username: &str) -> Result<()> {
     if username.is_empty() || username.len() > 30 {
         return Err(NoombatError::BadRequest(
-            "username must be 1–30 characters".into(),
+            "username must be 1-30 characters".into(),
         ));
     }
     let mut chars = username.chars();
@@ -96,17 +96,8 @@ pub fn hash_auth_key(auth_key: &str) -> Result<String> {
 
 /// Register a new local account.
 ///
-/// # Arguments
-///
-/// * `pool`: database connection pool.
-/// * `domain`: the instance domain (e.g. `"noombat.social"`).
-/// * `req`: the registration request containing the username,
-///   optional display name, and authentication key.
-///
-/// # Errors
-///
-/// Returns `ActorAlreadyExists` if the username is taken, or
-/// `BadRequest` if the username or auth key is invalid.
+/// `ActorAlreadyExists` if the username is taken, `BadRequest` if the
+/// username or authentication key is invalid.
 pub async fn register(
     pool: &PgPool,
     domain: &str,

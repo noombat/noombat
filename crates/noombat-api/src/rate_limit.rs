@@ -5,44 +5,30 @@
 //!
 //! [`check_key`] is the one entry point. Callers name their own key,
 //! ceiling and window, so the same counting serves the instance-wide
-//! per-IP limit, the per-domain federation limit, and per-route limits
-//! such as CV downloads, without each rebuilding it. It returns a
-//! [`Decision`] rather than a response, because the callers disagree
-//! about what a refusal looks like: the middleware answers `429`, the
-//! federation inbox answers `503`.
+//! per-IP limit, the per-domain federation limit and per-route limits such
+//! as CV downloads. It returns a [`Decision`] rather than a response,
+//! because callers disagree about what a refusal looks like: the
+//! middleware answers `429`, the federation inbox `503`.
 //!
 //! Keys are prefixed by call site (`rl:`, `rl:fed:`, `cv:`). That is
-//! load-bearing rather than cosmetic: two call sites sharing a quota
-//! share a governor limiter, and the prefix is what keeps their buckets
-//! apart.
+//! load-bearing: two call sites sharing a quota share a governor limiter,
+//! and the prefix is what keeps their buckets apart.
 //!
-//! The primary limiter uses an atomic Lua script (`INCR` + conditional
-//! `EXPIRE` + `TTL`) on Redis. When Redis is not configured or a
-//! command fails, the request is checked against a [`governor`] keyed
-//! rate limiter stored in [`AppState`](crate::state::AppState),
-//! preventing a complete bypass (fail-closed).
+//! The primary limiter is an atomic Lua script (`INCR` + conditional
+//! `EXPIRE` + `TTL`) on Redis. When Redis is unconfigured or a command
+//! fails, the request falls back to a [`governor`] keyed limiter held in
+//! [`AppState`](crate::state::AppState), so there is no complete bypass.
 //!
-//! # Fallback limiter notes
+//! The fallback is not only an outage path: `NOOMBAT_REDIS_URL` is
+//! optional, so on an instance that never configures Redis the governor is
+//! the only limiter there is. That is why it honours each caller's ceiling
+//! rather than one instance-wide quota, and why the difference in
+//! behaviour matters: Redis counts a fixed window, governor smooths with
+//! GCRA. Both enforce the configured ceiling, which is the objective.
 //!
-//! The Redis primary uses a fixed-window counter; the `governor`
-//! fallback uses the GCRA (Generic Cell Rate Algorithm), a leaky-bucket
-//! variant. GCRA smooths traffic evenly, whereas a fixed-window counter
-//! resets at window boundaries. The two are not behaviorally identical,
-//! but both enforce the configured ceiling, which is the objective of
-//! the fallback.
-//!
-//! The fallback is not only an outage path. `NOOMBAT_REDIS_URL` is
-//! optional, so on an instance that never configures Redis the governor
-//! is the only limiter there is, permanently. That is why it honours
-//! each caller's ceiling instead of applying one instance-wide quota to
-//! everything: on such a deployment, a route's limit would otherwise
-//! never be the limit.
-//!
-//! The `governor` `DashMap`-backed keyed state store grows by one entry
-//! per unique key (IP address, domain, or account). Entries are never
-//! evicted. Under a flood from many spoofed source IPs this could
-//! consume significant memory, and on a Redis-less instance there is no
-//! outage window bounding it.
+//! The governor's `DashMap` keyed state grows by one entry per unique key
+//! and never evicts, so a flood from spoofed source IPs costs memory, with
+//! no outage window bounding it on a Redis-less instance.
 
 use std::collections::HashMap;
 use std::num::NonZeroU32;
@@ -77,21 +63,19 @@ const RATE_LIMIT_LUA: &str = r"
 /// In-process keyed rate limiter (governor-backed), one limiter per
 /// quota.
 ///
-/// `governor` fixes a limiter's quota when it is constructed, so a
-/// single limiter cannot answer for two different ceilings. Callers
-/// pass their own `limit` and `window` and this keeps one governor
-/// limiter per distinct pair, created on first use.
+/// `governor` fixes a limiter's quota at construction, so one limiter
+/// cannot answer for two ceilings. This keeps one per distinct
+/// `(limit, window)` pair, created on first use.
 ///
-/// The outer map is keyed by the *quota*, which comes from
-/// configuration and compile-time constants and never from a request,
-/// so its size is the number of call sites. That is deliberate. The
-/// inner per-key stores already grow without eviction (see the module
-/// note), so an outer map keyed on anything request-derived would turn
-/// that from a bounded cost into an exhaustion vector.
+/// The outer map is keyed by the *quota*, which comes from configuration
+/// and constants and never from a request, so its size is the number of
+/// call sites. That is deliberate: the inner per-key stores already grow
+/// without eviction, so keying the outer map on anything request-derived
+/// would turn a bounded cost into an exhaustion vector.
 ///
 /// The `Arc` is what lets this be shared across the cloneable
-/// [`AppState`]: the inner [`RateLimiter`] holds atomic state and is
-/// not [`Clone`].
+/// [`AppState`], since [`RateLimiter`] holds atomic state and is not
+/// [`Clone`].
 #[derive(Clone, Default)]
 pub struct FallbackRateLimiter {
     by_quota: Arc<RwLock<HashMap<QuotaKey, Arc<DefaultKeyedRateLimiter<String>>>>>,

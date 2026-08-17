@@ -728,13 +728,8 @@ struct RoleChange {
 
 /// Promote or demote a local actor.
 ///
-/// This is the route `docs/operator.md` has always claimed exists.
-/// Until it did, `actors.instance_role` was written by nothing, so the
-/// only administrator an instance could have was one created by hand in
-/// SQL, and the moderation pages here were unreachable by construction.
-///
-/// Two refusals, both about not locking the instance out of itself:
-/// an administrator may not change their own role, and the last
+/// Two refusals, both about not locking the instance out of itself: an
+/// administrator may not change their own role, and the last
 /// administrator may not be demoted by anyone.
 async fn set_user_role(
     State(state): State<AppState>,

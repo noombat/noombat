@@ -24,12 +24,7 @@ use crate::relay_verify;
 /// the caller. Every handler below attributes its effect to `activity.actor`
 /// alone, so without this binding the signature proves only that *some*
 /// fetchable actor signed the bytes, not that it is the actor the activity
-/// claims to come from.
-///
-/// # Errors
-///
-/// Returns [`NoombatError::Forbidden`] when `verified_actor` does not equal
-/// `activity.actor`.
+/// claims to come from. A mismatch is [`NoombatError::Forbidden`].
 pub async fn process_activity(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -122,10 +117,6 @@ pub async fn process_activity(
 /// Callers for which a local actor would be nonsense (anything treating
 /// the result as a counterparty on another instance) must use
 /// [`resolve_inbound_signer`] instead.
-///
-/// This was called `resolve_remote_actor` until the name was found to be
-/// actively misleading: it had been read as a promise that the result is
-/// remote, which it never was.
 pub async fn resolve_actor(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -196,11 +187,6 @@ pub async fn resolve_actor(
 /// an attacker does not hold, and `process_activity` separately requires
 /// `activity.actor` to equal the verified signer. This guard exists so
 /// that neither of those has to stay true for the property to hold.
-///
-/// # Errors
-///
-/// Returns [`NoombatError::Forbidden`] when `actor_uri` resolves to a
-/// local actor; otherwise propagates [`resolve_actor`].
 pub async fn resolve_inbound_signer(
     pool: &PgPool,
     http_client: &reqwest::Client,
@@ -293,8 +279,8 @@ pub(crate) async fn refresh_assertion_key(
         .await
         .ok()?;
 
-    // The document still has to be entitled to the `id` it claims (P0-3);
-    // a refresh is not a licence to skip that.
+    // The document still has to be entitled to the `id` it claims; a
+    // refresh is not a licence to skip that.
     let mut remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri).ok()?;
 
     let named = ap_actor.assertion_method.as_ref().and_then(|methods| {
@@ -345,11 +331,6 @@ fn same_origin(a: &Url, b: &Url) -> bool {
 /// Same-origin redirects (a trailing-slash canonicalisation, say) are
 /// permitted, and the document's `id` is then compared against the URL
 /// actually served, not the one requested.
-///
-/// # Errors
-///
-/// Returns [`NoombatError::Federation`] when either condition fails, or
-/// when the requested URI or the document's `id` will not parse.
 fn verify_fetched_actor_id(doc_id: &str, final_url: &Url, requested_uri: &str) -> Result<()> {
     let requested = Url::parse(requested_uri).map_err(|e| {
         NoombatError::Federation(format!("actor URI {requested_uri} is not a valid URL: {e}"))
@@ -380,20 +361,15 @@ fn verify_fetched_actor_id(doc_id: &str, final_url: &Url, requested_uri: &str) -
 /// persistence, rejecting documents that claim an `id` they were not
 /// served from.
 ///
-/// This function is the single conversion point used by both
-/// [`resolve_actor`] and `handle_update_actor`, ensuring
-/// that the field mapping (and now the `id` check) remains
+/// The single conversion point for both [`resolve_actor`] and
+/// `handle_update_actor`, so the field mapping and the `id` check stay
 /// consistent.
 ///
 /// `final_url` must be the URL the document was actually served from
 /// (`Response::url()`, i.e. after redirects), not the one requested;
-/// `requested_uri` is the original, and is used for the same-origin
-/// check. `domain` is derived from `final_url` so that it can never
-/// disagree with the persisted `ap_id`.
-///
-/// # Errors
-///
-/// Propagates [`verify_fetched_actor_id`].
+/// `requested_uri` is the original, used for the same-origin check.
+/// `domain` is derived from `final_url` so that it can never disagree
+/// with the persisted `ap_id`.
 fn ap_actor_to_remote(
     ap_actor: &ApActor,
     final_url: &Url,
@@ -963,13 +939,8 @@ async fn handle_create(
 
     // ..... HASHTAG LINKING .....
     //
-    // The ActivityPub `tag` array carries `Hashtag` objects (the same
-    // format used by Mastodon, Lemmy, and others):
-    //
-    //   { "type": "Hashtag", "name": "#rust", "href": "https://..." }
-    //
-    // Extract the names and link them to the newly persisted post so
-    // that hashtag-following feeds include federated content.
+    // Link the `tag` array's `Hashtag` names to the newly persisted post,
+    // so hashtag-following feeds include federated content.
 
     if let Some(post_id) = post_id {
         // Record the canonical URI (if present) so that future
@@ -1117,25 +1088,20 @@ async fn handle_update_actor(
         return Ok(());
     }
 
-    // Re-fetch the remote actor profile and upsert it. The inbound
-    // Update may carry the full actor object in its body, but
-    // re-fetching from the authoritative source is safer (the Update
-    // body could be stale or tampered with by a relay).
+    // Re-fetch from the authoritative source rather than trusting the
+    // actor object in the Update body, which a relay could have staled or
+    // tampered with. The cache is bypassed by fetching directly rather
+    // than deleting the row, which would cascade into follows, posts and
+    // likes; `upsert_remote_actor`'s ON CONFLICT then updates in place,
+    // and refuses if the conflicting row is local.
     //
-    // To force a fresh HTTP fetch, we must bypass the local cache.
-    // Rather than deleting the row (which would cascade-delete all
-    // dependent data, e.g. follows, posts, likes), we fetch directly and
-    // let upsert_remote_actor's ON CONFLICT clause update in place,
-    // unless the conflicting row is local, which it refuses.
-    //
-    // Bypassing the cache is what makes this the more dangerous of the
-    // two conversion call sites: the fetched document goes straight to
+    // That bypass makes this the more dangerous of the two conversion
+    // call sites, since the fetched document goes straight to
     // persistence. `ap_actor_to_remote` checking the document's `id`
-    // against the URL it was served from is what makes the bypass safe.
+    // against the URL it was served from is what makes it safe.
     //
-    // Use a signed fetch so that instances requiring authenticated
-    // requests (e.g. GotoSocial with
-    // `accounts-allow-incoming-from-known-instances-only`) do not
+    // Signed, so instances requiring authenticated requests (GotoSocial
+    // with `accounts-allow-incoming-from-known-instances-only`) do not
     // reject the lookup.
     let signing_actor_id = crate::signed_fetch::find_local_signing_actor(pool).await?;
     let response =
@@ -1772,15 +1738,8 @@ fn extract_string_array(value: &serde_json::Value, key: &str) -> Option<Vec<Stri
 
 /// Extract the `inReplyTo` URI from an inbound ActivityPub object.
 ///
-/// The `inReplyTo` property may be:
-///
-/// - A string URI (Mastodon, GotoSocial).
-/// - An object with an `id` field (some other implementations).
-/// - An array of URIs or objects (uncommon; the first usable entry
-///   is returned).
-/// - `null` or absent for top-level posts.
-///
-/// Returns `None` if the property is absent or not extractable.
+/// Accepts a string URI, an object with an `id`, or an array of either,
+/// returning the first usable entry. `None` for a top-level post.
 fn extract_in_reply_to(object: &serde_json::Value) -> Option<String> {
     let field = object.get("inReplyTo")?;
 
@@ -1813,15 +1772,9 @@ fn extract_in_reply_to(object: &serde_json::Value) -> Option<String> {
 
 /// Extract a featured-image URL from an inbound ActivityPub object.
 ///
-/// Checks two locations, in order:
-///
-/// 1. The `image` property: used by Ghost and some CMS-based
-///    Fediverse publishers. May be a bare URL string or an object
-///    with a `url` field.
-/// 2. The first element of the `attachment` array whose `type` is
-///    `"Image"`: used by WordPress and Mastodon.
-///
-/// Returns `None` if neither location contains a usable URL.
+/// Checks `image` first (Ghost and CMS publishers; a bare URL or an
+/// object with `url`), then the first `attachment` of type `"Image"`
+/// (WordPress, Mastodon).
 fn extract_image_url(object: &serde_json::Value) -> Option<String> {
     // 1. `image` property (string or object).
     if let Some(image) = object.get("image") {
@@ -1850,17 +1803,10 @@ fn extract_image_url(object: &serde_json::Value) -> Option<String> {
 
 // ..... HASHTAG EXTRACTION FROM TAG ARRAY .....
 
-/// Extract hashtag names from the `tag` array of an inbound object.
+/// Extract hashtag names from the `tag` array of an inbound object, as
+/// `{ "type": "Hashtag", "name": "#rust", "href": "..." }`.
 ///
-/// Mastodon, Lemmy, GotoSocial, and other Fediverse software include
-/// hashtags as:
-///
-/// ```json
-/// { "type": "Hashtag", "name": "#rust", "href": "https://.../tags/rust" }
-/// ```
-///
-/// Returns a `Vec<String>` of normalised names (lowercase, leading
-/// `#` stripped), suitable for passing to
+/// Names are normalised (lowercased, leading `#` stripped) for
 /// [`noombat_identity::hashtags::link_post_hashtags`].
 fn extract_hashtags_from_tags(object: &serde_json::Value) -> Vec<String> {
     let tags = match object.get("tag").and_then(|v| v.as_array()) {
@@ -2545,7 +2491,7 @@ mod tests {
         })
     }
 
-    /// Half of the P1-8 acceptance criterion: a valid proof is recorded.
+    /// A valid proof is recorded as verified.
     #[ignore = "requires a database; run with --include-ignored"]
     #[sqlx::test(migrations = "../../migrations")]
     async fn create_with_valid_proof_records_it_verified(pool: PgPool) {
@@ -2969,13 +2915,13 @@ mod tests {
         assert_eq!(verified, None);
     }
 
-    /// The acceptance criterion for P0-4: deliver the attack payload
-    /// down the real `Create` path and read the row back.
+    /// Deliver the attack payload down the real `Create` path and read the
+    /// row back.
     ///
     /// The unit tests above cover `extract_remote_content` in isolation,
-    /// but isolation is exactly what was wrong before: the sanitiser
-    /// existed and was tested, and the federation path simply did not
-    /// call it. Only an end-to-end delivery proves the wiring.
+    /// but isolation is what was wrong before: the sanitiser existed and
+    /// was tested, and the federation path simply did not call it. Only an
+    /// end-to-end delivery proves the wiring.
     #[ignore = "requires a database; run with --include-ignored"]
     #[sqlx::test(migrations = "../../migrations")]
     async fn create_note_persists_no_hostile_markup(pool: PgPool) {

@@ -273,16 +273,11 @@ const MAX_AUTOCRYPT_HEADER_BYTES: usize = 16_384;
 /// Validate an Autocrypt header value before injection into an
 /// SMTP message.
 ///
-/// Returns `Some(header)` if:
-/// - the header contains an `addr=` attribute whose value matches
-///   `expected_sender` (case-insensitive);
-/// - the total byte length does not exceed
-///   [`MAX_AUTOCRYPT_HEADER_BYTES`].
-///
-/// Returns `None` otherwise. The validation is intentionally
-/// lightweight, i.e. it verifies the `addr` binding and size, not the
-/// full Autocrypt grammar, because the upstream `autocrypt.ts`
-/// module has already parsed and validated the header client-side.
+/// `Some` only when the `addr=` attribute matches `expected_sender`
+/// case-insensitively and the value fits [`MAX_AUTOCRYPT_HEADER_BYTES`].
+/// Deliberately lightweight: it checks the `addr` binding and the size,
+/// not the full Autocrypt grammar, because `autocrypt.ts` has already
+/// parsed and validated the header client-side.
 fn validate_autocrypt_header<'a>(header: &'a str, expected_sender: &str) -> Option<&'a str> {
     if header.len() > MAX_AUTOCRYPT_HEADER_BYTES {
         return None;
@@ -312,18 +307,12 @@ fn validate_autocrypt_header<'a>(header: &'a str, expected_sender: &str) -> Opti
 
 /// Format a header field name and value as a folded RFC 5322 header line.
 ///
-/// RFC 5322 §2.1.1 limits each line to 998 characters (excluding
-/// the CRLF). Long values, common for Autocrypt headers whose
-/// `keydata` attribute is a base64-encoded OpenPGP key, are folded
-/// by inserting `\r\n ` (CRLF followed by a single space, "folding
-/// white space" or FWS) at a position that keeps each line within
-/// the limit.
-///
-/// The function folds at 76-character widths (matching the base64
-/// line-wrap convention in RFC 2045 and the existing ciphertext
-/// wrapping in this module). The returned string is terminated by
-/// `\r\n` and is ready for direct concatenation into the header
-/// block.
+/// RFC 5322 §2.1.1 caps a line at 998 characters, which an Autocrypt
+/// header carrying a base64 OpenPGP key in `keydata` passes easily, so
+/// this inserts folding white space (CRLF and one space) at 76-character
+/// widths, matching RFC 2045's base64 convention and the ciphertext
+/// wrapping elsewhere in this module. The result ends with `\r\n`, ready
+/// to concatenate into the header block.
 fn fold_header_value(name: &str, value: &str) -> String {
     // Maximum number of value characters per line. The first line
     // carries the field name, colon, and space (`Name: `), so its

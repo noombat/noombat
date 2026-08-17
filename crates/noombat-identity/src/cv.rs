@@ -18,19 +18,9 @@ use crate::profile;
 
 /// Generate a CV as a PDF byte vector for the given actor.
 ///
-/// # Arguments
-///
-/// * `pool`: Database connection pool.
-/// * `actor_id`: The actor whose CV is being generated.
-/// * `max_vis`: Maximum section visibility to include.
-/// * `template_dir`: Path to the directory containing `.typ` templates.
-/// * `template`: Template filename stem (e.g. `"default"`).
-/// * `citation_style`: Citation format for publications (e.g. `"apa"`, `"ieee"`, or `"vancouver"`).
-///
-/// # Errors
-///
-/// Returns [`NoombatError::Internal`] if template loading, Typst source
-/// assembly, or Typst compilation fails.
+/// `max_vis` caps which sections are included. `template` is a filename
+/// stem within `template_dir`, e.g. `"default"`, and `citation_style` is
+/// one of `"apa"`, `"ieee"` or `"vancouver"`.
 pub async fn generate_cv_pdf(
     pool: &PgPool,
     actor_id: Uuid,
@@ -465,9 +455,8 @@ mod tests {
     /// function's behaviour, not about generated markup.
     ///
     /// The assertion is deliberately not "the call returned quickly". A
-    /// timeout that abandons its work would satisfy that while leaving
-    /// the compiler running, which is the trap recorded against the
-    /// KaTeX bounds. So this counts `typst` processes afterwards.
+    /// timeout that abandons its work would satisfy that while leaving the
+    /// compiler running, so this counts `typst` processes afterwards.
     #[ignore = "requires the typst binary; run with --include-ignored"]
     #[tokio::test]
     async fn a_slow_compile_is_killed_not_merely_abandoned() {

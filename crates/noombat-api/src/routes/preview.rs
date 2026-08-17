@@ -4,23 +4,15 @@
 //!
 //! - `POST /api/v1/preview`  render Markdown exactly as the persist path does
 //!
-//! Implements `adr/0010`. The point is not convenience: it is that there
-//! is one Markdown engine. The preview an author reads before publishing
-//! is produced by the same function that produces the bytes that get
-//! stored and federated, so the two cannot disagree.
-//!
-//! They used to. The editor ran markdown-it with `linkify` and
-//! `typographer` on, which autolink bare URLs and rewrite quotes where
-//! the server does neither, and it performed no hashtag extraction, no
-//! DOI extraction and no heading anchoring at all. An author was shown
-//! an approximation of a document that cannot be recalled once it
-//! federates.
+//! The point is not convenience: it is that there is one Markdown
+//! engine. The preview an author reads before publishing is produced by
+//! the same function that produces the bytes that get stored and
+//! federated, so the two cannot disagree about a document that cannot be
+//! recalled once it federates.
 //!
 //! The session requirement and the input cap below are conditions of
-//! the decision rather than decoration: this endpoint runs a parser
-//! over attacker-supplied input on demand. It is less exposed than when
-//! the ADR was written, because maths is no longer rendered by an
-//! embedded QuickJS, but it is still CPU work on request.
+//! that design rather than decoration: this endpoint runs a parser over
+//! attacker-supplied input on demand.
 
 use axum::extract::State;
 use axum::response::Html;
@@ -111,25 +103,17 @@ mod tests {
 
     /// The preview and the persist path render identically.
     ///
-    /// `adr/0010` requirement 5, and the ADR is candid that with both
-    /// sides calling one function byte equality is close to a tautology.
-    /// That is the point: the test exists to fail when a later change
-    /// gives one call site different options, a different sanitiser
-    /// profile, or a post-processing step the other does not have. That
-    /// is precisely how the divergence this endpoint removes arose, one
-    /// option at a time.
+    /// With both sides calling one function this is close to a
+    /// tautology, which is the point: it fails when a later change gives
+    /// one call site different options, a different sanitiser profile,
+    /// or a post-processing step the other does not have.
     ///
-    /// The fixtures are chosen to cover the features that actually
-    /// differed: autolinking, typographic rewriting, hashtags, DOIs,
-    /// heading anchors and maths.
-    ///
-    /// Two of them exist specifically so that this test can fail. The
-    /// corpus must be sensitive to BOTH `MarkupOptions` fields, or a
-    /// call site that sets the wrong one passes unnoticed: the styled
+    /// The corpus must stay sensitive to BOTH `MarkupOptions` fields or
+    /// a call site that sets the wrong one passes unnoticed: the styled
     /// span is what `strict_sanitisation` strips, and the heading is
-    /// what `inject_heading_ids` anchors. Without those two, every
-    /// fixture renders identically in both modes and the assertion is a
-    /// tautology. It was, until a mutation test caught it.
+    /// what `inject_heading_ids` anchors. Without those two every
+    /// fixture renders identically in both modes and the assertion
+    /// proves nothing, as a mutation test found.
     #[tokio::test]
     async fn preview_matches_the_persist_path() {
         const FIXTURES: &[&str] = &[

@@ -10,7 +10,7 @@
  *
  * No renderer is bundled here. Markdown and maths are rendered by
  * `POST /api/v1/preview`, which is the same code path that produces the
- * stored and federated bytes (`adr/0010`).
+ * stored and federated bytes.
  */
 
 import { createSignal } from "solid-js";

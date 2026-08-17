@@ -19,17 +19,9 @@ use crate::inbox::extract_domain;
 
 /// Forward a report to a remote instance as a `Flag` activity.
 ///
-/// # Arguments
-///
-/// * `pool`: Database connection pool.
-/// * `instance_actor_id`: The UUID of the instance-level actor (used
-///   for signing). Typically the first admin actor.
-/// * `instance_ap_id`: The instance actor's AP URI.
-/// * `target_actor_ap_id`: The AP URI of the reported remote actor.
-/// * `target_post_ap_ids`: AP URIs of the reported posts (may be
-///   empty if the report targets an actor rather than a specific post).
-/// * `reason`: The report reason category.
-/// * `comment`: Optional free-text comment.
+/// Signed by the instance-level actor, typically the first administrator.
+/// `target_post_ap_ids` may be empty, when the report targets an actor
+/// rather than particular posts.
 pub async fn forward_report(
     pool: &PgPool,
     instance_actor_id: Uuid,

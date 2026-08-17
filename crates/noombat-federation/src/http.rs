@@ -23,23 +23,16 @@
 //! 3. **A byte budget on the response.** A URL that streams forever is a
 //!    denial of service even when the address is legitimate.
 //!
-//! # What the client does *not* do by itself
+//! The client does not stop an address literal by itself, because hyper's
+//! connector skips the resolver when the host already parses as an IP.
+//! Literals, scheme and embedded credentials are checked in [`check_url`]
+//! instead, on the caller's URL and again on every redirect hop.
 //!
-//! It does not stop an address literal. hyper's connector short-circuits
-//! when the host already parses as an IP: "skip resolving the dns and
-//! start connecting right away". [`GuardedResolver`] is never consulted
-//! for `https://169.254.169.254/`, which is the exact request this module
-//! exists to refuse, and a connector layer cannot substitute because
-//! reqwest's `Unnameable` keeps its `Uri` private.
-//!
-//! Literals, scheme and embedded credentials are therefore checked in
-//! [`check_url`], which runs on the URL a caller supplies and again on
-//! every redirect hop. To keep that from being a rule someone has to
-//! remember, federation fetches go through [`guarded_get`] rather than
-//! touching the client directly, and the one path that cannot ([`crate::delivery`],
-//! which POSTs) calls [`check_url`] itself. A future call site that
-//! reaches for the raw client gets the resolver and the redirect policy
-//! but not the literal check, so: do not reach for the raw client.
+//! So federation fetches go through [`guarded_get`] rather than touching
+//! the client directly, and the one path that cannot ([`crate::delivery`],
+//! which POSTs) calls [`check_url`] itself. The raw client gets the
+//! resolver and the redirect policy but not the literal check: do not
+//! reach for it.
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -126,17 +119,13 @@ pub fn check_url(url: &Url) -> Result<()> {
         ));
     };
 
-    // An address written as a literal never reaches the resolver.
+    // An address literal never reaches the resolver, because hyper's
+    // connector skips DNS when the host already parses as an IP. So
+    // `GuardedResolver` never sees `http://169.254.169.254/`, the exact
+    // request this module exists to refuse, and it has to be caught here.
     //
-    // hyper's connector short-circuits when the host parses as an IP:
-    // "If the host is already an IP addr (v4 or v6), skip resolving the
-    // dns and start connecting right away." So `GuardedResolver` never
-    // sees `http://169.254.169.254/`, which is precisely the request this
-    // whole module exists to refuse. The literal has to be checked here.
-    //
-    // Alternative encodings are already handled: the URL parser
-    // normalises `2130706433` and `0x7f.1` to `127.0.0.1` before this
-    // point, so there is one spelling left to test.
+    // One spelling is enough: the URL parser normalises `2130706433` and
+    // `0x7f.1` to `127.0.0.1` before this point.
     let bare = host.trim_start_matches('[').trim_end_matches(']');
     if let Ok(ip) = bare.parse::<IpAddr>()
         && !allow_local_targets()
@@ -221,11 +210,6 @@ fn redirect_policy() -> reqwest::redirect::Policy {
 }
 
 /// Build the client every federation fetch and delivery goes through.
-///
-/// # Errors
-///
-/// Returns an error if the underlying TLS or connection pool cannot be
-/// constructed.
 pub fn client(user_agent: String, timeout: Duration) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(user_agent)
@@ -247,11 +231,6 @@ pub fn client(user_agent: String, timeout: Duration) -> reqwest::Result<reqwest:
 /// treat statuses differently (`resolve_actor` records a tombstone on
 /// 410) and because the final URL after redirects is load-bearing for the
 /// document-origin check in `ap_actor_to_remote`.
-///
-/// # Errors
-///
-/// Returns an error if the URL is one this instance must not fetch, or if
-/// the request fails.
 pub async fn guarded_get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
     let parsed = Url::parse(url)
         .map_err(|e| NoombatError::BadRequest(format!("unusable URI {url}: {e}")))?;
@@ -271,11 +250,6 @@ pub async fn guarded_get(client: &reqwest::Client, url: &str) -> Result<reqwest:
 /// without end exhausts memory on a request it did not have to
 /// authenticate. `what` names the document in the error, since by this
 /// point the URL is several layers up.
-///
-/// # Errors
-///
-/// Returns an error if the body exceeds the budget, if the transfer fails,
-/// or if what arrived is not the expected JSON.
 pub async fn json_within_limit<T: DeserializeOwned>(
     mut response: reqwest::Response,
     what: &str,
@@ -409,9 +383,8 @@ mod tests {
     }
 
     /// A peer that answers with an unbounded body must be refused rather
-    /// than buffered. Exercised just over the limit rather than at the
-    /// 100 MB the audit names: the branch is the same, and the fixture
-    /// stays cheap.
+    /// than buffered. Exercised just over the limit rather than at a
+    /// realistic size: the branch is the same and the fixture stays cheap.
     #[tokio::test]
     async fn an_oversized_body_is_refused_rather_than_buffered() {
         fn response_of(len: usize) -> reqwest::Response {
