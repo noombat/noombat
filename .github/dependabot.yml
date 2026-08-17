@@ -55,6 +55,45 @@ updates:
     commit-message:
       prefix: "deps"
       include: scope
+    ignore:
+      # sha2 and hmac are held at their digest-0.10 line, and they are held
+      # together because neither can move without the other and the code.
+      # PRs #53 and #54 proposed them separately and neither can merge.
+      #
+      # OBSERVED, by making both changes and compiling on 2026-08-17:
+      #
+      #   sha2 0.11 alone fails in noombat-chatmail-admin with
+      #   "the trait bound `Sha256: hmac::digest::core_api::CoreProxy` is
+      #   not satisfied". `Hmac<Sha256>` in `noombat-api/src/auth.rs` and
+      #   `noombat-chatmail-admin/src/router.rs` needs hmac and sha2 to
+      #   share a digest major, and hmac 0.12 is on digest 0.10.
+      #
+      #   sha2 0.11 with hmac 0.13 gets past that and fails on hmac's own
+      #   API change: "no associated function or constant named
+      #   `new_from_slice` found for struct `Hmac<D>`". So this is not a
+      #   version bump, it is a bump plus a code change at both call sites.
+      #
+      # INFERRED, and not reached by either build because it stops earlier:
+      # rsa is a third constraint behind those two. `delivery.rs` and
+      # `routes/federation.rs` build HTTP Signatures as
+      # `rsa::pkcs1v15::SigningKey::<sha2::Sha256>` and the matching
+      # `VerifyingKey`, handing the workspace `sha2::Sha256` into rsa's
+      # generics, while rsa 0.9.10 requires `sha2 ^0.10.6`. Expect two sha2
+      # copies and a generic bound that rejects the 0.11 type. Confirm this
+      # rather than trusting it when the time comes.
+      #
+      # rsa has no stable release that takes digest 0.11: as of 2026-08-17
+      # crates.io has 0.9.10 stable and 0.10.0-rc.18. When one ships, take
+      # rsa, sha2 and hmac plus the two call-site changes as ONE change,
+      # and delete both rules.
+      #
+      # Note these say `semver-major` and mean a 0.x MINOR: for a `0.y.z`
+      # version Dependabot's cargo classifier only ever returns "major" or
+      # "patch", which is the same rule documented on the askama group.
+      - dependency-name: "sha2"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "hmac"
+        update-types: ["version-update:semver-major"]
     groups:
       # askama and askama_web must land in ONE pull request, for the same
       # reason as the axe pair below: the wrapper hard-pins the engine to a
