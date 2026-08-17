@@ -12,6 +12,7 @@
  */
 
 @import "tailwindcss";
+@import "./math.css";
 @source "../../crates/noombat-api/templates/**/*.html";
 
 @theme {

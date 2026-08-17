@@ -1,0 +1,54 @@
+/* SPDX-License-Identifier: AGPL-3.0-or-later */
+/* SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes */
+
+/*
+ * MathML rendering.
+ *
+ * Since adr/0010 the server renders maths to MathML with math-core, and
+ * MathML Core delegates almost all of its layout to the OpenType MATH
+ * table in whatever font the browser picks: the fraction bar thickness,
+ * the axis height that centres binary operators, how far a radical sign
+ * is raised, and which stretchy variants exist for brackets, sums and
+ * integrals. A font with no MATH table does not fail, it just lays the
+ * formula out as ordinary text.
+ *
+ * That is why the platforms differ. Firefox bundles Latin Modern Math
+ * and uses it whatever the system has. macOS and iOS ship STIX Two Math
+ * system-wide, so Chrome and Safari there pick it up. Android ships no
+ * MATH font at all, so Chrome falls back to a text font: fractions come
+ * out with a hairline or absent bar, brackets and integral signs stop
+ * stretching to their content, and the U+1D400 mathematical
+ * alphanumerics used for italic variables render as tofu because no
+ * installed font covers that block.
+ *
+ * Serving the font fixes that without changing anything on the
+ * platforms that were already correct, since a named family wins over
+ * the generic fallback either way.
+ *
+ * The cost is charged only where it is used. `@font-face` is lazy: a
+ * browser fetches the file when it has to lay out an element that
+ * matches, and the only selector here is `math`, so a page with no
+ * MathML on it never requests the font. `font-display: swap` then keeps
+ * the formula readable while it arrives rather than blanking it.
+ *
+ * `font-src 'self'` is already in the CSP (`middleware.rs`), and the
+ * file is served from the same origin, so no policy change is needed.
+ */
+
+@font-face {
+  font-family: "STIX Two Math";
+  src: url("./fonts/STIXTwoMath-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
+ * `math` after the family name is the CSS generic for "whatever this
+ * browser considers a maths font", so Firefox keeps Latin Modern Math if
+ * ours has not arrived yet, and the rule degrades to today's behaviour
+ * rather than to a text font if the file is ever missing.
+ */
+math {
+  font-family: "STIX Two Math", math;
+}
