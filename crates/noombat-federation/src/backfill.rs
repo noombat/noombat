@@ -26,11 +26,10 @@
 //! - Local HTML is produced by `noombat_markup::render`, which applies
 //!   the `clean` profile (or `clean_strict` when the author opted in),
 //!   not the strict ingestion profile. Re-cleaning it strictly would
-//!   strip the `style` attributes KaTeX legitimately emits, silently
-//!   breaking every local post containing maths.
-//! - Re-deriving local content means re-running `render`, which means
-//!   putting content back through QuickJS. That is gated on the KaTeX
-//!   bounds in P2-4 and does not belong in a boot-time sweep.
+//!   strip the `style` attributes the maths renderer legitimately emits,
+//!   silently breaking every local post containing maths.
+//! - Re-deriving local content means re-running `render` over every local
+//!   post, which does not belong in a boot-time sweep.
 //!
 //! So `sanitiser_version = 0` reads as "not produced by the ingestion
 //! sanitiser": true both for un-backfilled remote rows and for every
@@ -416,17 +415,17 @@ mod tests {
     #[sqlx::test(migrations = "../../migrations")]
     async fn leaves_local_posts_untouched(pool: PgPool) {
         // Local HTML comes from `render`, whose `clean` profile keeps the
-        // `style` attributes KaTeX emits. Re-cleaning it strictly would
-        // silently break every local post containing maths.
+        // `style` attributes the maths renderer emits. Re-cleaning it
+        // strictly would silently break every local post with maths.
         let actor = insert_actor(&pool, "https://noombat.test/users/bob", true, None).await;
-        let katex = r#"<p><span style="height:0.5em">x</span></p>"#;
+        let styled = r#"<p><span style="height:0.5em">x</span></p>"#;
         let id = insert_post(
             &pool,
             actor,
             "https://noombat.test/posts/1",
             Some("$x$"),
-            katex,
-            serde_json::json!({ "content": katex }),
+            styled,
+            serde_json::json!({ "content": styled }),
         )
         .await;
 
@@ -434,7 +433,7 @@ mod tests {
         assert_eq!(report.posts_updated, 0, "local rows are out of scope");
 
         let (html, md, ver) = post_row(&pool, id).await;
-        assert_eq!(html, katex, "local styling must survive");
+        assert_eq!(html, styled, "local styling must survive");
         assert_eq!(md.as_deref(), Some("$x$"));
         assert_eq!(ver, 0, "local rows stay at 0: not ingestion-sanitised");
     }

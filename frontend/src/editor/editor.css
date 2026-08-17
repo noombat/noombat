@@ -2,7 +2,7 @@
 /* SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes */
 
 /*
- * (Markdown + KaTeX) editor island styles.
+ * (Markdown + LaTeX) editor island styles.
  */
 
 .noombat-editor {
@@ -105,11 +105,4 @@
   .noombat-editor__preview--hidden {
     display: block;
   }
-}
-
-/* ..... KaTeX error styling ..... */
-
-.katex-error {
-  color: #c0392b;
-  font-family: monospace;
 }

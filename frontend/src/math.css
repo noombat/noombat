@@ -4,8 +4,8 @@
 /*
  * MathML rendering.
  *
- * Since adr/0010 the server renders maths to MathML with math-core, and
- * MathML Core delegates almost all of its layout to the OpenType MATH
+ * The server renders maths to MathML with math-core, and MathML Core
+ * delegates almost all of its layout to the OpenType MATH
  * table in whatever font the browser picks: the fraction bar thickness,
  * the axis height that centres binary operators, how far a radical sign
  * is raised, and which stretchy variants exist for brackets, sums and

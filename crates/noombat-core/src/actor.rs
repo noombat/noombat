@@ -72,7 +72,7 @@ pub struct Actor {
     pub location: Option<String>,
     pub avatar_url: Option<String>,
     pub header_url: Option<String>,
-    /// (Markdown and KaTeX) source for the profile summary.
+    /// (Markdown and LaTeX) source for the profile summary.
     pub summary_md: Option<String>,
     /// Pre-rendered HTML for the profile summary.
     pub summary_html: Option<String>,

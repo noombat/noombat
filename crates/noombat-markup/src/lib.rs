@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! (Markdown + KaTeX) to HTML pipeline, hashtag extraction, DOI detection,
+//! (Markdown + LaTeX) to HTML pipeline, hashtag extraction, DOI detection,
 //! and Markdown to Typst converter.
 //!
 //! This crate is the single source of truth for all user-authored rich
@@ -23,7 +23,7 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use crate::doi::DoiReference;
 use crate::headings::Heading;
 
-/// The result of rendering a (Markdown + KaTeX) source string.
+/// The result of rendering a (Markdown + LaTeX) source string.
 #[derive(Debug, Clone)]
 pub struct MarkupOutput {
     /// Sanitised HTML suitable for storage and federation.
@@ -39,27 +39,20 @@ pub struct MarkupOutput {
 
 /// Options controlling the rendering pipeline.
 ///
-/// The default options match the behaviour of [`render`]: the strict
-/// sanitisation profile is **not** applied (i.e. `style` is permitted
-/// on `<span>` because only the trusted KaTeX renderer produces styled
-/// spans in normal Note/profile content).
+/// The defaults match [`render`]: the strict profile is not applied, so
+/// `style` is permitted on `<span>`.
 #[derive(Debug, Clone, Default)]
 pub struct MarkupOptions {
-    /// When `true`, the strict sanitisation profile ([`sanitise::clean_strict`])
-    /// is used, which strips `style` from `<span>`. This is appropriate
-    /// for Article content where user-authored raw HTML may contain
-    /// `<span style="...">` elements that would otherwise enable
-    /// CSS-based attacks (tracking pixels, UI spoofing, etc.).
+    /// Use [`sanitise::clean_strict`], which strips `style` from `<span>`.
     ///
-    /// When `false` (the default), [`sanitise::clean`] is used, which
-    /// permits `style` on `<span>`. This is safe when KaTeX output is
-    /// the sole source of styled spans (the case for Notes, profile
-    /// summaries, and all non-Article Markdown fields).
+    /// Appropriate for Article content, where user-authored raw HTML may
+    /// carry `<span style="...">` and enable CSS-based attacks. The
+    /// default [`sanitise::clean`] permits it, which is safe only while
+    /// the maths renderer is the sole source of styled spans, as it is for
+    /// Notes and profile summaries.
     ///
-    /// Note: pulldown-cmark always passes raw HTML through per the
-    /// CommonMark specification. This flag does **not** toggle parser
-    /// behaviour; it controls only which sanitisation profile is
-    /// applied to the output.
+    /// This selects a sanitisation profile only; it does not change what
+    /// the parser accepts.
     pub strict_sanitisation: bool,
     /// When `true`, heading `id` attributes are injected into the
     /// rendered HTML via [`headings::inject_ids`]. This bakes the
@@ -71,17 +64,13 @@ pub struct MarkupOptions {
     pub inject_heading_ids: bool,
 }
 
-/// Render a (Markdown + KaTeX) source string to sanitised HTML.
+/// Render a (Markdown + LaTeX) source string to sanitised HTML.
 ///
 /// Equivalent to `render_with_options(input, &MarkupOptions::default())`.
 ///
-/// The pipeline:
-/// 1. Parse with `pulldown-cmark` (CommonMark + math + tables + strikethrough).
-/// 2. Intercept `InlineMath` or `DisplayMath` events to render via the `katex` crate.
-/// 3. Extract hashtags from `Text` events.
-/// 4. Detect DOI URIs in `Text` events and annotate the output.
-/// 5. Feed the transformed event stream to `pulldown-cmark`'s HTML renderer.
-/// 6. Sanitise with `ammonia`.
+/// The pipeline parses with `pulldown-cmark`, converts `InlineMath` and
+/// `DisplayMath` events to MathML, extracts hashtags and DOIs from `Text`
+/// events, renders to HTML, and sanitises with `ammonia`.
 pub fn render(input: &str) -> MarkupOutput {
     render_with_options(input, &MarkupOptions::default())
 }
@@ -95,14 +84,9 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
     options.insert(Options::ENABLE_TABLES);
     options.insert(Options::ENABLE_STRIKETHROUGH);
     options.insert(Options::ENABLE_TASKLISTS);
-    // Note: pulldown-cmark always passes raw HTML through to the event
-    // stream (Event::Html and Event::InlineHtml) per the CommonMark
-    // specification. There is no flag to toggle this behaviour. The
-    // `strict_sanitisation` option controls only which sanitisation
-    // profile is applied to the output: `clean` (permits `style` on
-    // `<span>`, safe when KaTeX is the sole source of styled spans)
-    // or `clean_strict` (strips `style` from `<span>`, safe when
-    // user-authored HTML may also contain styled spans).
+    // pulldown-cmark always passes raw HTML through per CommonMark, with
+    // no flag to stop it; `strict_sanitisation` picks the profile that
+    // cleans the output instead.
 
     let parser = Parser::new_ext(input, options);
 
@@ -155,11 +139,9 @@ pub fn render_with_options(input: &str, opts: &MarkupOptions) -> MarkupOutput {
 
 /// Async wrapper that offloads [`render`] to a blocking thread pool.
 ///
-/// The `katex` crate embeds QuickJS for server-side LaTeX rendering,
-/// which is CPU-bound (typically 1-10 ms per math expression).
-/// Calling [`render`] directly on a Tokio worker thread would starve
-/// the runtime under load. This wrapper uses
-/// [`tokio::task::spawn_blocking`] to prevent that.
+/// Markdown parsing and LaTeX conversion are CPU-bound, so calling
+/// [`render`] directly on a Tokio worker thread would starve the runtime
+/// under load.
 pub async fn render_async(input: String) -> noombat_core::error::Result<MarkupOutput> {
     render_async_with_options(input, MarkupOptions::default()).await
 }
@@ -178,7 +160,7 @@ pub async fn render_async_with_options(
 
 /// Transform a single pulldown-cmark event.
 ///
-/// - `InlineMath` or `DisplayMath` to KaTeX-rendered HTML fragment.
+/// - `InlineMath` or `DisplayMath` to a MathML fragment.
 /// - `Text` to extract hashtags and DOIs, pass through.
 /// - Everything else to pass through unchanged.
 fn transform_event<'a>(
@@ -188,11 +170,11 @@ fn transform_event<'a>(
 ) -> Vec<Event<'a>> {
     match event {
         Event::InlineMath(ref math_src) => {
-            let rendered = render_katex(math_src, false);
+            let rendered = render_math(math_src, false);
             vec![Event::InlineHtml(rendered.into())]
         }
         Event::DisplayMath(ref math_src) => {
-            let rendered = render_katex(math_src, true);
+            let rendered = render_math(math_src, true);
             vec![Event::Html(rendered.into())]
         }
         Event::Text(ref text) => {
@@ -286,34 +268,23 @@ fn extract_headings_from_events(events: &[Event<'_>]) -> Vec<Heading> {
     headings_out
 }
 
-/// Render a KaTeX math expression to MathML.
+/// Render a LaTeX math expression to MathML.
 ///
-/// MathML only, deliberately, rather than KaTeX's default of MathML
-/// plus a visually-rendered HTML span layer. That layer positions
-/// every glyph with inline `style` attributes, and this project
-/// destroys them twice over: `sanitise::clean_strict` strips `style`
-/// from `<span>` on articles, and the deployed Content-Security-Policy
-/// sets `style-src 'self'` with no `'unsafe-inline'`, which a test
-/// asserts. So the browser was refusing the styles even where the
-/// sanitiser left them, and the layer could only ever render as
-/// unpositioned glyphs.
+/// MathML only, with no visually-positioned HTML layer alongside it: such
+/// a layer positions every glyph with inline `style`, which
+/// `sanitise::clean_strict` strips on articles and the deployed
+/// `style-src 'self'` refuses in the browser, so it could only ever
+/// render as unpositioned glyphs. MathML also carries no CSS class names,
+/// so the server need not move in lockstep with a stylesheet.
 ///
-/// Dropping it also decouples the server from the stylesheet. The span
-/// layer depends on KaTeX's CSS class names, which are versioned: 0.18
-/// renamed twenty-one of them (`base` became `katex-base`, and so on),
-/// so the frontend's npm KaTeX and this vendored one had to be upgraded
-/// in lockstep, and nothing enforced that. MathML carries no class
-/// names, so the two halves are now independent.
+/// What is kept is what carries meaning: a screen reader reads the
+/// MathML, and a federated peer reads the
+/// `<annotation encoding="application/x-tex">` inside it, which is where
+/// Mastodon's transformer recovers the original LaTeX.
 ///
-/// What is kept is what carries meaning: MathML is what a screen reader
-/// reads, and the `<annotation encoding="application/x-tex">` inside it
-/// is what a federated peer reads. Mastodon's transformer recovers the
-/// original LaTeX from that annotation.
-///
-/// On failure (e.g. invalid LaTeX), returns the raw source wrapped
-/// in a `<code>` element so that the user sees their input rather
-/// than a blank space.
-fn render_katex(source: &str, display_mode: bool) -> String {
+/// On invalid LaTeX, returns the raw source wrapped in `<code>`, so the
+/// user sees their input rather than a blank space.
+fn render_math(source: &str, display_mode: bool) -> String {
     let display = if display_mode {
         math_core::MathDisplay::Block
     } else {
@@ -366,7 +337,7 @@ fn converter() -> Option<&'static math_core::LatexToMathML> {
         .as_ref()
 }
 
-/// Minimal HTML entity escaping (used only for KaTeX fallback).
+/// Minimal HTML entity escaping, used only for the maths fallback.
 fn escape_html(input: &str) -> String {
     input
         .replace('&', "&amp;")
@@ -392,26 +363,17 @@ mod tests {
 
     // ..... Maths output, characterised .....
     //
-    // These replaced two tests that asserted only
-    // `output.html.contains("katex")`. That substring came from the
-    // renderer's own CSS class, so it tested the brand of the
-    // implementation rather than anything a reader depends on, and it
-    // would have passed for any KaTeX-derived output no matter how
-    // broken. It also became false the moment the renderer changed,
-    // which is how a swap this size stayed honest: every assertion
-    // below survived the move from KaTeX to math-core untouched,
-    // because each one names a property of the MathML rather than of
-    // the tool that produced it.
+    // Each assertion names a property of the MathML rather than of the
+    // tool that produced it, which is what let the renderer be replaced
+    // without touching any of them.
     //
-    // Maths is emitted as MathML, and it is the MathML that has to
-    // survive: it is what carries meaning to screen readers, and it is
-    // what federates. Mastodon's FEP-dc88 transformer reads the
+    // The MathML is what has to survive: it carries meaning to screen
+    // readers, and Mastodon's FEP-dc88 transformer reads the
     // `<annotation encoding="application/x-tex">` back out of a
-    // `<semantics>` block to recover the source, so a remote reader
-    // sees the LaTeX only if these elements reach the wire intact.
-    //
-    // Each of these asserts on output that has already been through
-    // `sanitise`, because that is the only shape a reader ever gets.
+    // `<semantics>` block, so a remote reader sees the LaTeX only if
+    // these elements reach the wire intact. All of them assert on output
+    // that has already been through `sanitise`, because that is the only
+    // shape a reader ever gets.
 
     #[test]
     fn inline_math_emits_mathml_the_sanitiser_keeps() {
@@ -479,28 +441,24 @@ mod tests {
     }
 
     #[test]
-    fn the_html_span_layer_is_gone() {
-        // The span layer was styled entirely by inline `style`
-        // attributes, which `clean_strict` strips and which the
-        // deployed CSP refuses (`style-src 'self'`, no
-        // `'unsafe-inline'`). Emitting it produced markup that could
-        // not lay out and that federated to peers as glyph soup.
+    fn maths_emits_no_html_span_layer() {
+        // A visually-positioned span layer is styled entirely by inline
+        // `style`, which `clean_strict` strips and the deployed CSP
+        // refuses (`style-src 'self'`, no `'unsafe-inline'`), so it could
+        // only ever federate as glyph soup. MathML alone is emitted.
         let html = render("Energy: $E = mc^2$").html;
 
+        assert!(html.contains("<math"), "no MathML at all: {html}");
         assert!(
-            !html.contains("katex-html"),
-            "the unstyleable span layer is back: {html}"
-        );
-        assert!(
-            !html.contains("katex-mathml"),
-            "MathML is wrapped in the class katex.css hides: {html}"
+            !html.contains("<span"),
+            "maths grew an HTML span layer: {html}"
         );
     }
 
     #[test]
     fn invalid_maths_falls_back_to_the_source() {
-        // `throw_on_error(false)` plus the `<code>` fallback: a reader
-        // must see what they typed rather than a blank space.
+        // The `<code>` fallback: a reader must see what they typed rather
+        // than a blank space.
         let html = render(r"$\frac{$").html;
         assert!(
             html.contains("frac"),

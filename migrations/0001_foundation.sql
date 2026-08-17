@@ -20,7 +20,7 @@
 -- Version 0 means "not produced by the ingestion sanitiser". That is true of
 -- every locally authored row, permanently: local HTML comes from
 -- `noombat_markup::render` under the lenient profile, and re-cleaning it
--- strictly would strip the `style` attributes KaTeX emits. The backfill
+-- strictly would strip the `style` attributes the maths renderer emits. The backfill
 -- scopes itself to remote rows by joining `actors` on `is_local = FALSE`, so
 -- the partial indexes below settle at the local row count rather than
 -- draining to empty.

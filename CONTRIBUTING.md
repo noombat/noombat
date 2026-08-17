@@ -46,7 +46,7 @@ noombat-server                 (binary entry point)
         ├── noombat-events     (events, RSVP)
         ├── noombat-chat       (IMAP/SMTP ciphertext relay, admin client, closed federation allowlist)
         ├── noombat-federation (AP inbox/outbox, delivery, WebFinger)
-        ├── noombat-markup     (Markdown + KaTeX pipeline)
+        ├── noombat-markup     (Markdown + LaTeX pipeline)
         └── noombat-ap         (AP serialisation)
               └── noombat-core (domain types, error types, traits)
 
@@ -101,7 +101,7 @@ Missing keys in any locale will produce a runtime panic on the first request tha
 
 ### Markdown content pipeline
 
-All user-authored rich text is authored in CommonMark Markdown with KaTeX math delimiters.
+All user-authored rich text is authored in CommonMark Markdown with LaTeX math delimiters, rendered to MathML server-side.
 The `noombat-markup` crate processes the input and produces sanitised HTML.
 Both the Markdown source (`*_md` columns) and the pre-rendered HTML (`*_html` columns) are stored.
 Write handlers that accept Markdown must render it via `noombat_markup::render(&md).html` before storing the HTML column.
@@ -135,7 +135,7 @@ Discrete interactive components (the Markdown editor, the chat interface) are co
 |----------|------------------------|--------------------|---------------------------------------------------------|
 | `htmx`   | `src/htmx.ts`          | `assets/htmx.js`   | HTMX library (loaded on every page).                    |
 | `auth`   | `src/auth.ts`          | `assets/auth.js`   | Split key derivation, form interception, token refresh. |
-| `editor` | `src/editor/index.tsx` | `assets/editor.js` | Markdown + KaTeX live-preview editor.                   |
+| `editor` | `src/editor/index.tsx` | `assets/editor.js` | Markdown + LaTeX live-preview editor.                   |
 | `chat`   | `src/chat/index.tsx`   | `assets/chat.js`   | Real-time encrypted chat island.                        |
 
 ### Encryption and Autocrypt

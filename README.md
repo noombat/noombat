@@ -94,7 +94,7 @@ noombat/
 ├── crates/
 │   ├── noombat-core/             # Core domain types, error types, and extension-point traits.
 │   ├── noombat-ap/               # ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies.
-│   ├── noombat-markup/           # (Markdown and KaTeX) to HTML pipeline and Markdown to Typst converter.
+│   ├── noombat-markup/           # (Markdown and LaTeX) to HTML pipeline and Markdown to Typst converter.
 │   ├── noombat-federation/       # ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, HTTP Signatures.
 │   ├── noombat-identity/         # Auth (local, Mastodon OAuth, ORCID), profiles, CV generation, DOI resolution.
 │   ├── noombat-jobs/             # Job listing CRUD, search, and matching.
@@ -108,7 +108,7 @@ noombat/
 │   └── src/
 │       ├── auth.ts               # Client-side split key derivation and token refresh.
 │       ├── chat/                 # SolidJS chat island, OpenPGP.js crypto, Autocrypt state machine, credential blob.
-│       ├── editor/               # SolidJS (Markdown and KaTeX) editor island.
+│       ├── editor/               # SolidJS (Markdown and LaTeX) editor island.
 │       └── htmx.ts               # HTMX bundled entry point.
 ├── migrations/                   # SQL migrations (sqlx).
 ├── templates/                    # Typst CV templates.

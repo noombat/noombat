@@ -2,42 +2,33 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! HTML sanitisation via `ammonia`.
 //!
-//! Configures an allowlist that permits standard Markdown-generated
-//! HTML, KaTeX-rendered output (spans with classes, MathML elements),
-//! hashtag and DOI annotation elements, and task-list checkboxes.
+//! Configures an allowlist that permits standard Markdown-generated HTML,
+//! rendered maths (MathML elements and spans with classes), hashtag and
+//! DOI annotation elements, and task-list checkboxes.
 //!
 //! # Trust model for the `style` attribute
 //!
-//! Two sanitisation profiles are provided:
+//! [`clean`] allows `style` on `<span>`, which is safe only while the
+//! trusted maths renderer is the sole source of `<span style="...">`. It
+//! is used for Notes, profile summaries and every non-Article Markdown
+//! field, where users are not expected to author raw HTML.
 //!
-//! - [`clean`] allows `style` on `<span>`. This is safe when the
-//!   only source of `<span style="...">` in the input is the trusted
-//!   KaTeX renderer. This profile is used for Notes, profile
-//!   summaries, and all non-Article Markdown fields, where users are
-//!   not expected to author raw HTML containing styled spans.
+//! [`clean_strict`] omits it, and is used for Article content, where
+//! user-authored raw HTML is expected and `style` would enable CSS-based
+//! attacks: tracking pixels via `background-image: url(...)`, UI spoofing
+//! via `position: fixed`.
 //!
-//! - [`clean_strict`] omits `style` from `<span>`. This profile is
-//!   used for Article content, where user-authored raw HTML is an
-//!   expected use case and `<span style="...">` elements may reach
-//!   the sanitiser. Allowing `style` on those elements would enable
-//!   CSS-based attacks (tracking pixels via `background-image:
-//!   url(...)`, UI spoofing via `position: fixed`, etc.). KaTeX
-//!   output degrades gracefully: the MathML branch of the
-//!   `htmlAndMathml` output provides a semantic fallback.
-//!
-//! Note: pulldown-cmark always passes raw HTML through to the event
-//! stream per the CommonMark specification. The distinction between
-//! the two profiles is not about whether raw HTML reaches the
-//! sanitiser (it always does), but about which CSS properties are
-//! permitted on specific elements in the sanitised output.
+//! pulldown-cmark always passes raw HTML through per CommonMark, so the
+//! two profiles differ in what they permit in the sanitised output, not in
+//! what reaches the sanitiser.
 
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use ammonia::Builder;
 
-/// Tags allowed beyond ammonia's defaults: KaTeX HTML output, MathML
-/// elements, additional semantic HTML, and task-list checkboxes.
+/// Tags allowed beyond ammonia's defaults: MathML elements, additional
+/// semantic HTML, and task-list checkboxes.
 const EXTRA_TAGS: &[&str] = &[
     "span",
     "math",
@@ -81,17 +72,15 @@ const EXTRA_TAGS: &[&str] = &[
     "input",
 ];
 
-/// CSS properties permitted in `style` attributes on `<span>` when
-/// the non-strict profile is active. These are the properties used
-/// by the KaTeX HTML renderer.
+/// CSS properties permitted in `style` on `<span>` under the non-strict
+/// profile, being those the maths renderer uses.
 ///
-/// Properties that enable tracking pixels (`background-image`), UI
-/// spoofing (`position`, `z-index`), or content injection (`content`)
-/// are excluded. Even though the deployed CSP (`style-src 'self'`
-/// without `'unsafe-inline'`) independently blocks inline `style`
-/// attributes at the browser level, the sanitiser-level restriction
-/// ensures safety if the CSP is ever relaxed.
-const KATEX_STYLE_PROPERTIES: &[&str] = &[
+/// Excludes anything enabling tracking pixels (`background-image`), UI
+/// spoofing (`position`, `z-index`) or content injection (`content`). The
+/// deployed CSP (`style-src 'self'` without `'unsafe-inline'`) already
+/// blocks inline `style` in the browser; this restriction is what holds if
+/// that CSP is ever relaxed.
+const MATH_STYLE_PROPERTIES: &[&str] = &[
     "border-bottom-color",
     "border-bottom-style",
     "border-bottom-width",
@@ -122,14 +111,13 @@ const KATEX_STYLE_PROPERTIES: &[&str] = &[
 fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
     builder.add_tags(EXTRA_TAGS.iter().copied());
 
-    // `<span>` attributes: `class` and `aria-hidden` are always
-    // allowed; `style` is allowed only in the non-strict profile
-    // (where KaTeX is the sole source of styled spans), restricted
-    // to the set of CSS properties KaTeX actually uses.
+    // `class` and `aria-hidden` are always allowed; `style` only in the
+    // non-strict profile, and there only for the properties the maths
+    // renderer actually uses.
     if allow_span_style {
         builder.add_tag_attributes("span", ["class", "style", "aria-hidden"]);
 
-        let allowed_props: HashSet<&str> = KATEX_STYLE_PROPERTIES.iter().copied().collect();
+        let allowed_props: HashSet<&str> = MATH_STYLE_PROPERTIES.iter().copied().collect();
         builder.filter_style_properties(allowed_props);
     } else {
         builder.add_tag_attributes("span", ["class", "aria-hidden"]);
@@ -188,9 +176,8 @@ fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
     // on `mtd` for column padding and justification. That is stripped
     // here and would be refused by the deployed CSP anyway
     // (`style-src 'self'`, no `style-src-attr`), so matrices lay out
-    // with browser default spacing. This is the same class of loss as
-    // KaTeX's span layer, but bounded to table padding rather than all
-    // positioning.
+    // with browser default spacing. The same class of loss as a
+    // positioned span layer, but bounded to table padding.
     builder.add_tag_attributes(
         "mtable",
         [
@@ -218,7 +205,8 @@ fn configure_builder(builder: &mut Builder<'_>, allow_span_style: bool) {
     builder.add_tag_attribute_values("input", "type", ["checkbox"]);
 }
 
-/// Default profile: `style` allowed on `<span>` (KaTeX-only trust model).
+/// Default profile: `style` allowed on `<span>`, trusting the maths
+/// renderer to be its only source.
 static SANITISER: LazyLock<Builder<'static>> = LazyLock::new(|| {
     let mut builder = Builder::default();
     configure_builder(&mut builder, true);
@@ -235,10 +223,9 @@ static SANITISER_STRICT: LazyLock<Builder<'static>> = LazyLock::new(|| {
 
 /// Clean an HTML string using the Noombat sanitisation profile.
 ///
-/// This profile allows `style` on `<span>` because the only source of
-/// styled spans in normal operation is the trusted KaTeX renderer. If
-/// raw user-authored HTML is present (i.e. the `strict_sanitisation`
-/// rendering option is enabled), use [`clean_strict`] instead.
+/// Allows `style` on `<span>` because the only source of styled spans in
+/// normal operation is the trusted maths renderer. Where raw user-authored
+/// HTML may be present, use [`clean_strict`] instead.
 pub fn clean(html: &str) -> String {
     SANITISER.clean(html).to_string()
 }
@@ -313,11 +300,11 @@ mod tests {
     }
 
     #[test]
-    fn allows_katex_span_with_style() {
-        // KaTeX output uses style on <span> for strut sizing.
-        let input = r#"<span class="katex" style="height:0.6444em"><span class="katex-mathml">x</span></span>"#;
+    fn allows_math_span_with_style() {
+        // Rendered maths uses style on <span> for strut sizing.
+        let input = r#"<span class="math" style="height:0.6444em"><span class="math-inner">x</span></span>"#;
         let result = clean(input);
-        assert!(result.contains("katex"));
+        assert!(result.contains(r#"class="math""#));
         assert!(result.contains("style="));
     }
 
@@ -381,7 +368,7 @@ mod tests {
 
     #[test]
     fn strips_tracking_pixel_from_span_style() {
-        // background-image is not in KATEX_STYLE_PROPERTIES and must
+        // background-image is not in MATH_STYLE_PROPERTIES and must
         // be stripped even in the default (non-strict) profile.
         let input = r#"<span style="background-image:url(https://evil.example/t)">track</span>"#;
         let result = clean(input);
@@ -392,10 +379,9 @@ mod tests {
     }
 
     #[test]
-    fn allows_katex_style_properties() {
-        // KaTeX-safe properties (height, vertical-align) must survive.
-        let input =
-            r#"<span class="katex" style="height:0.6444em;vertical-align:-0.35em">x</span>"#;
+    fn allows_math_style_properties() {
+        // The allowed properties (height, vertical-align) must survive.
+        let input = r#"<span class="math" style="height:0.6444em;vertical-align:-0.35em">x</span>"#;
         let result = clean(input);
         assert!(
             result.contains("height"),
@@ -418,11 +404,11 @@ mod tests {
     }
 
     #[test]
-    fn strict_preserves_katex_class() {
-        let input = r#"<span class="katex">math</span>"#;
+    fn strict_preserves_span_class() {
+        let input = r#"<span class="math">math</span>"#;
         let result = clean_strict(input);
         assert!(
-            result.contains("katex"),
+            result.contains(r#"class="math""#),
             "strict profile must preserve class on span: {result}"
         );
     }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! (Markdown + KaTeX) to Typst converter for CV generation.
+//! (Markdown + LaTeX) to Typst converter for CV generation.
 //!
 //! This emits a Typst *expression*, not Typst markup, and the
 //! difference is the whole point.
@@ -70,7 +70,7 @@ enum ListKind {
     Unordered,
 }
 
-/// Convert a (Markdown + KaTeX) source string to a Typst expression.
+/// Convert a (Markdown + LaTeX) source string to a Typst expression.
 ///
 /// The result is a single expression and is meant to be used as one:
 /// `#let summary = <result>`. It is never valid to wrap it in a content
@@ -167,10 +167,10 @@ fn push_end(tag: &TagEnd, out: &mut String, list_stack: &mut Vec<ListKind>) {
 /// must not be evaluated, so the fragment is rendered as the literal
 /// text the author typed, delimiters included.
 ///
-/// This is the safety half of the KaTeX work. The other half, a mapping
-/// table that turns the supported subset into Typst math *calls* with
-/// literal operands, needs the golden corpus to decide what it covers,
-/// and can be added here without changing anything else.
+/// This is the safety half of the maths work. The other half, a mapping
+/// table turning the supported subset into Typst math *calls* with literal
+/// operands, needs the golden corpus to decide what it covers, and can be
+/// added here without changing anything else.
 fn push_math(out: &mut String, body: &str, display: bool) {
     let delimiter = if display { "$$" } else { "$" };
     push_call(out, "nb-text", &format!("{delimiter}{body}{delimiter}"));
