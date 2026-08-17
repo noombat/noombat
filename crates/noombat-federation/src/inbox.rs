@@ -141,7 +141,22 @@ pub async fn resolve_actor(
         )));
     }
 
-    let response = crate::http::guarded_get(http_client, actor_uri).await?;
+    // Signed, because much of the network answers an unsigned actor
+    // fetch with 401: GoToSocial requires a signature on every
+    // ActivityPub fetch and Mastodon does in secure mode, so an unsigned
+    // fetch resolves no actor there and no activity from those instances
+    // can be processed.
+    //
+    // Unsigned only when the instance has no local actor to sign as. A
+    // database failure is not that, and must not quietly downgrade the
+    // fetch to one those peers will refuse.
+    let response = match crate::signed_fetch::find_local_signing_actor(pool).await {
+        Ok(signing_actor) => {
+            crate::signed_fetch::signed_get(pool, http_client, actor_uri, signing_actor).await?
+        }
+        Err(e @ NoombatError::Database(_)) => return Err(e),
+        Err(_) => crate::http::guarded_get(http_client, actor_uri).await?,
+    };
 
     if response.status().as_u16() == 410 {
         // Record the tombstone for future short-circuiting.

@@ -3,13 +3,13 @@
 
 # Chat interoperability test environment.
 #
-# Spins up Noombat, a Chatmail relay container (stub), and
-# PostgreSQL/Redis on a shared network. Tests verify:
-#   1. Account registration and login via the HTTP API.
-#   2. Chat WebSocket route existence and chat report endpoint.
-#   3. Auth page rendering.
-#   4. Closed federation configuration.
-#   5. Interoperability with Delta Chat (via deltachat-rpc-server).
+# Spins up Noombat, the Chatmail relay container and PostgreSQL/Redis on
+# a shared network. Tests verify:
+#   1. The Chatmail admin sidecar is serving.
+#   2. Account registration and login via the HTTP API.
+#   3. Chat WebSocket route existence and chat report endpoint.
+#   4. Auth page rendering.
+#   5. Closed federation configuration.
 #
 # Usage:
 #   1. docker compose -f tests/chat-interop/compose.yml up -d --build
@@ -22,11 +22,11 @@ services:
   db:
     image: docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
-      POSTGRES_USER: noombat
-      POSTGRES_PASSWORD: noombat
-      POSTGRES_DB: noombat
+      POSTGRES_USER: chatinterop
+      POSTGRES_PASSWORD: chatinterop
+      POSTGRES_DB: chatinterop
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noombat"]
+      test: ["CMD-SHELL", "pg_isready -U chatinterop"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -63,6 +63,14 @@ services:
         aliases: [chat.test.local]
 
   # ..... NOOMBAT .....
+  #
+  # The domain is not `localhost`, so `validate_production_config` runs
+  # in full and aborts the process on any documented default. Four of
+  # the values below are what it demands: an admin token that is not
+  # `noombat`, a JWT secret of at least 32 bytes, a database credential
+  # that is not `noombat:noombat`, and a KEK. The Chatmail admin secret
+  # is checked against its own default too. They are fixtures for a
+  # throwaway instance, not secrets.
 
   noombat:
     build:
@@ -70,12 +78,13 @@ services:
       dockerfile: Dockerfile
     environment:
       NOOMBAT_DOMAIN: test.local
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
+      NOOMBAT_DATABASE_URL: postgres://chatinterop:chatinterop@db/chatinterop
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
       NOOMBAT_REDIS_URL: redis://redis:6379
       NOOMBAT_ADMIN_TOKEN: chat-test-token
       NOOMBAT_JWT_SECRET: test-secret-at-least-32-bytes-long!!
+      NOOMBAT_KEK: 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
       NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
       NOOMBAT_CHATMAIL_AVAILABLE: "true"
       NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100

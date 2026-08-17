@@ -26,13 +26,19 @@ export default tseslint.config(
     rules: {
       ...playwright.configs["flat/recommended"].rules,
 
-      // The accessibility suite asserts through a custom helper in
-      // axe-fixture.ts. Without naming it, the rule reports all 27 of
-      // those tests as having no assertions, which is noise loud enough
-      // to bury anything real.
+      // Both suites assert through helpers as well as directly:
+      // `expectNoViolations` from axe-fixture.ts, and the shared page
+      // assertions in security-headers.spec.ts. The rule does not look
+      // inside a callee, so without the pattern it reports every test
+      // that delegates to one as having no assertions, which is noise
+      // loud enough to bury anything real. The naming convention is the
+      // contract: a helper called `expectSomething` must assert.
       "playwright/expect-expect": [
         "error",
-        { assertFunctionNames: ["expect", "expectNoViolations"] },
+        {
+          assertFunctionNames: ["expect"],
+          assertFunctionPatterns: ["^expect[A-Z]"],
+        },
       ],
 
       // Both are genuine flakiness, and both are currently clean: the
@@ -42,12 +48,13 @@ export default tseslint.config(
       "playwright/no-networkidle": "error",
       "playwright/no-wait-for-timeout": "error",
 
-      // A skipped test looks exactly like a passing one. The three that
+      // A skipped test looks exactly like a passing one. The four that
       // remain are conditional and annotated at their call sites; a new
       // unannotated one should fail rather than warn. The dangerous
-      // case, CI skipping the authenticated suites because the token
-      // was absent, is caught earlier by the guard in
-      // accessibility.spec.ts, which throws instead of skipping.
+      // case, CI skipping a suite because its credential was absent, is
+      // caught earlier: session.ts throws rather than returning null
+      // under CI, and accessibility.spec.ts throws when the admin token
+      // is empty there.
       "playwright/no-skipped-test": "error",
 
       // Consistent with frontend/eslint.config.js.

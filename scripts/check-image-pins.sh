@@ -101,12 +101,43 @@ collect() {
     done
 }
 
+# An image a compose service BUILDS is produced from a Dockerfile in this
+# repository, so it has no upstream digest to pin and no ecosystem that
+# could propose one. Naming it is what lets `buildx bake` tag what it
+# builds and `compose up` find it, so the name has to be allowed to stand
+# without a digest. Collected per service, since only a service carrying
+# both `image:` and `build:` qualifies.
+built_images() {
+    for f in "$@"; do
+        [ -f "$f" ] || continue
+        awk '
+            function flush() {
+                if (img != "" && built) print img
+                img = ""; built = 0
+            }
+            /^  [A-Za-z0-9_.-]+:[ \t]*$/ { flush(); insvc = 1; next }
+            /^[A-Za-z]/               { flush(); insvc = 0 }
+            insvc && /^[ \t]+image:[ \t]*/ {
+                v = $0
+                sub(/^[ \t]*image:[ \t]*/, "", v)
+                sub(/[ \t]*$/, "", v)
+                sub(/@.*$/, "", v)
+                sub(/:[^:\/]*$/, "", v)
+                img = v
+            }
+            insvc && /^[ \t]+build:[ \t]*$/ { built = 1 }
+            END { flush() }
+        ' "$f"
+    done
+}
+
 collect .github/workflows/*.yml >"$WORK/workflow.tsv"
 # compose*.yml, not compose.yml: overrides are scanned too, so an image
 # can never escape the check by living in one. compose.latest.yml holds
 # a deliberately floating GoToSocial and is allowlisted below, which is
 # the difference between an exception and an oversight.
 collect compose.yml compose.dev.yml tests/*/compose*.yml >"$WORK/compose.tsv"
+built_images compose.yml compose.dev.yml tests/*/compose*.yml | normalise >"$WORK/built.txt"
 
 workflow_count=$(wc -l <"$WORK/workflow.tsv")
 compose_count=$(wc -l <"$WORK/compose.tsv")
@@ -153,6 +184,10 @@ done <"$WORK/workflow.tsv"
 
 while IFS=$'\t' read -r file name digest; do
     [ -n "$digest" ] && continue
+    if grep -qxF "$name" "$WORK/built.txt" 2>/dev/null; then
+        printf '  built    %-42s %s\n' "$name" "built here, so there is no upstream digest"
+        continue
+    fi
     if grep -qxF "$name" <<<"$ALLOWLIST_IMAGES"; then
         printf '  allowed  %-42s %s\n' "$name" "$(allow_reason "$name")"
         continue

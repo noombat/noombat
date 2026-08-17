@@ -2,140 +2,124 @@
 
 This directory contains the infrastructure for testing Noombat's ActivityPub federation against other Fediverse server implementations.
 
+## What this suite is for
+
+Reading Noombat's own endpoints proves that it serves the right shapes. It does not prove that it federates: WebFinger, NodeInfo and an actor document can all be correct on an instance that has never successfully sent or received an activity.
+
+So the suite is in two halves. The first reads Noombat's endpoints. The second drives one round trip and then asserts against **GoToSocial's** state, through GoToSocial's own API, as the account that was followed. Only the second half can fail for a reason internal to federation.
+
 ## Architecture
 
-### CI (services mode)
- 
-```
-┌────────────────────────────────────────────────┐
-│           GitHub Actions runner container     │
-│                                                │
-│  ┌──────────────────────────────────────────┐  │
-│  │  Job container                           │  │
-│  │    cargo build → ./noombat (background)  │  │
-│  │    tests/interop/run.sh                  │  │
-│  │      http://localhost:8443 ──► Noombat   │  │
-│  │      http://gotosocial:8080 ─┐           │  │
-│  └──────────────────────────────┼───────────┘  │
-│                                 │              │
-│  ┌────────────┐ ┌────────────┐ ┌▼───────────┐  │
-│  │ PostgreSQL │ │      Redis │ │ GotoSocial │  │
-│  │  (service) │ │  (service) │ │  (service) │  │
-│  └────────────┘ └────────────┘ └────────────┘  │
-└────────────────────────────────────────────────┘
-```
-
-### Local (Compose + Caddy mode)
-
-The test environment uses Docker Compose to run multiple Fediverse servers on a shared network:
+One topology, used by CI and locally alike:
 
 ```
-┌─────────────────────────────────────────────────┐
-│                Docker Network: interop          │
-│                                                 │
-│  ┌──────────┐  ┌──────────────┐  ┌───────────┐  │
-│  │ Noombat  │  │  GotoSocial  │  │  Caddy    │  │
-│  │ :8443    │  │  :8080       │  │  :443     │  │
-│  └──────────┘  └──────────────┘  └───────────┘  │
-│        ▲               ▲              │         │
-│        │               │              │         │
-│        └───────────────┴──────────────┘         │
-│              TLS reverse proxy                  │
-│         noombat.local / gotosocial.local        │
-└─────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────┐
+│                Docker network: interop              │
+│                                                     │
+│  ┌──────────┐  ┌──────────────┐  ┌───────────────┐  │
+│  │ Noombat  │  │  GoToSocial  │  │  Caddy        │  │
+│  │ :8443    │  │  :8080       │  │  :8443 (TLS)  │  │
+│  └──────────┘  └──────────────┘  └───────────────┘  │
+│        ▲               ▲                 │          │
+│        └───────────────┴─────────────────┘          │
+│         noombat.localhost / gotosocial.localhost    │
+└─────────────────────────────────────────────────────┘
+                          │
+                   published :8443
 ```
 
-Caddy provides TLS termination using an internal CA, so that both servers can use `https://` AP IDs without publicly trusted certificates.
+Three properties of it are load-bearing, and each of them cost a working round trip to get right.
 
-## Test Runner
- 
-`run.sh` accepts two positional arguments: the Noombat base URL and the GotoSocial base URL.
- 
+**The names end in `.localhost`.** Every address on this network is private, and `noombat-federation::http` refuses private and reserved addresses. It derives the permissive posture from the instance's own domain rather than offering it as a setting, and `domain_is_local` accepts `localhost`, `*.localhost`, `127.0.0.1` and `[::1]`. Under a `.local` name the resolver rejects the peer before a request is made, and nothing federates.
+
+**The port is part of the domain.** Noombat builds every id it generates from `NOOMBAT_DOMAIN` alone, and matches WebFinger resources against it exactly. GoToSocial does the same with `GTS_HOST`. AP ids are absolute, so an id generated behind one authority and fetched through another is a different resource. Caddy therefore listens on 8443 inside the network as well as on the published port, and both instances carry `:8443` in their domain, so one id works from the runner and from either container.
+
+**Both sides have to trust Caddy's CA.** GoToSocial is told not to verify (`GTS_HTTP_CLIENT_TLS_INSECURE_SKIP_VERIFY`). Noombat has no such setting, which is the right shape for a server that fetches URLs strangers chose, so it is pointed at Caddy's root certificate with `SSL_CERT_FILE` instead. Caddy writes that file mode 0600 under directories mode 0700, which is why the Noombat container runs as root here.
+
+## Running it
+
+The hostnames have to resolve to the machine running the stack:
+
 ```bash
-# CI (HTTP, services on the runner network):
-tests/interop/run.sh http://localhost:8443 http://gotosocial:8080
- 
-# Local (HTTPS via Caddy, after starting the Compose stack):
-tests/interop/run.sh https://noombat.local:8443 https://gotosocial.local:8443
+echo "127.0.0.1 noombat.localhost gotosocial.localhost" | sudo tee -a /etc/hosts
 ```
- 
-## CI
- 
-The GitHub Actions workflow (`.github/workflows/ci.yml`) runs the interop job using the same pattern as the end-to-end tests:
-Noombat is built from source and started as a background process;
-GotoSocial, PostgreSQL, and Redis run as `services:` containers managed by the runner.
- 
-No Docker CLI, Caddy TLS proxy, or port-mapping is involved.
-The test runner connects to both servers over plain HTTP on the runner's internal network.
- 
-## Local Testing
- 
-For local testing with HTTPS (closer to production), use the Compose stack:
- 
-``bash
-docker compose -f tests/interop/compose.yml up -d --build
- 
-# Seed a test actor (wait for Noombat to run migrations first):
-sleep 10
-docker compose -f tests/interop/compose.yml exec -T db \
-  psql -U noombat -d noombat -c "
-    INSERT INTO actors
-      (actor_type, ap_id, username, domain, public_key_pem, is_local)
-    VALUES
-      ('individual', 'https://noombat.local/users/alice',
-       'alice', 'noombat.local',
-       '-----BEGIN PUBLIC KEY-----
-    MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngu+UeqfsU3AJHhVHk2k
-    MEjaIOzbOWRPu1TsqUpGq0IX/mhQUC6/mkF9+H27ziERaM+77JB7MQ9q1ITLnukj
-    TlmQhgUrsstMV1ZiU+9WqJ+NmlpdoQ4zVFXEf7IJHmZ+mYxei/qhVrnBDvV4e1KR
-    iOTxUYyqWrI7BFGrA3eR22zb9K5/CwOuTw0uYGGhkxfMalBXd4k1AyYGsHo/riQY
-    xOCucw31jlUavoajo3CPXWXgCi+F6mumsIm7snaFNiCG8d8jqXZ8aSC8JcGImf95
-    Gg3J3oGE9ZiAue0WmYC+oMDzLBJtqN0V/c1OsU7PsP8+8fllvlfBluhuTfR/O19J
-    RQIDAQAB
-    -----END PUBLIC KEY-----',
-       TRUE)
-    ON CONFLICT (ap_id) DO NOTHING;"
- 
-# Run the tests (use CURL_OPTS for Caddy's self-signed cert):
+
+Then:
+
+```bash
+docker compose -f tests/interop/compose.yml up -d --build --wait
+
+# Both accounts, on both instances. Neither is created by its server:
+# Noombat has no open registration route and GoToSocial runs with
+# registration closed.
+tests/interop/seed.sh tests/interop/compose.yml
+
+# Caddy issues its own certificate for these names.
 CURL_OPTS="--insecure" tests/interop/run.sh \
-  https://noombat.local:8443 https://gotosocial.local:8443
- 
+  https://noombat.localhost:8443 https://gotosocial.localhost:8443
+
 docker compose -f tests/interop/compose.yml down -v
 ```
- 
-This stack includes a Caddy reverse proxy that provides TLS with an internal CA.
-When using HTTPS locally, skip certificate verification for `curl` (`CURL_OPTS="--insecure"`), or extract Caddy's root CA (see `Caddyfile`).
 
-## Test Coverage
+`run.sh` takes the two base URLs and nothing else. They have to be the URLs the instances know themselves by, for the reason given under "the port is part of the domain" above.
 
-The current suite verifies:
+Environment:
 
-| Test                       | Protocol        | Scope          |
-|----------------------------|-----------------|----------------|
-| WebFinger discovery        | RFC 7033        | Noombat        |
-| NodeInfo 2.1               | NodeInfo        | Noombat        |
-| Actor AP JSON              | ActivityPub S2S | Noombat        |
-| `endpoints.sharedInbox`    | ActivityPub S2S | Noombat        |
-| `publicKey` presence       | HTTP Signatures | Noombat        |
-| AP ID canonical format     | ActivityPub S2S | Noombat        |
-| Outbox `OrderedCollection` | ActivityPub S2S | Noombat        |
-| Shared inbox route         | ActivityPub S2S | Noombat        |
-| GotoSocial NodeInfo        | NodeInfo        | Cross-instance |
-| GotoSocial WebFinger       | RFC 7033        | Cross-instance |
-| GotoSocial actor fetch     | ActivityPub S2S | Cross-instance |
+| Variable                | Effect                                                                        |
+|-------------------------|-------------------------------------------------------------------------------|
+| `CURL_OPTS`             | Extra curl flags. `--insecure` for Caddy's internal CA.                       |
+| `NOOMBAT_ADMIN_TOKEN`   | Bearer for Noombat's authenticated routes. Matches `compose.yml`.             |
+| `INTEROP_CROSS_TIMEOUT` | Seconds to wait for an activity to cross. Default 60.                         |
+| `CI`                    | When set, a skipped assertion fails the run, an unreachable peer included.    |
+
+The accounts themselves are declared once, in `fixtures.sh`, because `seed.sh` creates them and `run.sh` signs in as one of them.
+
+## What is asserted, and where
+
+| Assertion                            | Protocol        | Asserted in           |
+|--------------------------------------|-----------------|-----------------------|
+| WebFinger discovery                  | RFC 7033        | Noombat               |
+| NodeInfo 2.1                         | NodeInfo        | Noombat               |
+| Actor AP JSON                        | ActivityPub S2S | Noombat               |
+| `endpoints.sharedInbox`              | ActivityPub S2S | Noombat               |
+| `publicKey` presence                 | HTTP Signatures | Noombat               |
+| AP ID canonical format               | ActivityPub S2S | Noombat               |
+| Outbox `OrderedCollection`           | ActivityPub S2S | Noombat               |
+| Shared inbox route                   | ActivityPub S2S | Noombat               |
+| GoToSocial NodeInfo                  | NodeInfo        | GoToSocial (liveness) |
+| Sign-in as the seeded account        | OAuth 2         | GoToSocial            |
+| Follow appears in the followers list | ActivityPub S2S | **GoToSocial**        |
+| Accept appears in `following`        | ActivityPub S2S | **Noombat**           |
+| Follow back appears in `followers`   | ActivityPub S2S | **Noombat**           |
+| Accept back appears in `following`   | ActivityPub S2S | **GoToSocial**        |
+| Note appears in the home timeline    | ActivityPub S2S | **GoToSocial**        |
+
+The last five are the suite. Everything above them would pass identically against any ActivityPub implementation, or against none.
+
+The follower assertion is reached only if GoToSocial received a signed `Follow`, resolved `alice` through WebFinger, fetched the actor document over TLS and verified the signature against the key in it. `following` lists accepted follows only, so an entry there is Noombat having received GoToSocial's `Accept` and verified *its* signature, the same exchange in reverse. The timeline assertion is the strongest single check here: the status is in the follower's timeline only if GoToSocial verified the HTTP Signature on a POST Noombat made, parsed the activity and stored the object.
+
+**Both follows are needed, and they are not the same test.** `alice` following `bob` is the outbound half: Noombat signs the `Follow` and verifies the `Accept`. `bob` following `alice`, driven through GoToSocial's own API, is the inbound half: Noombat verifies a `Follow` somebody else signed and signs the `Accept` itself. It is also what makes the timeline assertion reachable at all. Delivery targets are the *followers* of the posting actor, so with only the first follow in place nothing is enqueued and the `Create` never leaves Noombat; and a home timeline holds statuses from the accounts its owner follows, so `bob` has to be the follower for the status to land there. Neither end of that assertion is satisfied by a follow pointing the other way.
+
+Reading GoToSocial's state means signing in to it. Its ActivityPub endpoints require a signature and its client API requires a user token, so `run.sh` registers an application, posts the sign-in form, posts the consent form and exchanges the code. GoToSocial supports the `authorization_code` grant only; `password` is rejected and a `client_credentials` token is not attached to a user, so neither is a shortcut.
+
+## CI
+
+`.github/workflows/ci-e2e.yml` runs this compose stack, digest-pinned, on pull requests. `.github/workflows/ci-interop-latest.yml` runs the same harness with the pin lifted, on a schedule, so that a peer changing under us is reported against the calendar rather than against whoever pushed next.
+
+Both set `CI`, so a skip fails the run.
 
 ## Extending
 
 ### Adding a new platform
 
-1. Add the service to `compose.yml` (for local testing)
-2. Add a reverse-proxy entry to `Caddyfile`.
-3. Add the service to the `services:` block in `ci.yml` (for CI).
-4. Add seeding logic and test cases to `run.sh`.
+1. Add the service to `compose.yml`.
+2. Add a reverse-proxy entry to `Caddyfile` on port 8443.
+3. Seed its account in `seed.sh`, next to the other two.
+4. Add a round trip to `run.sh`, asserted in the new platform's own state.
 
 ### Target platforms
 
-- [x] GotoSocial
+- [x] GoToSocial
 - [ ] Mastodon
 - [ ] Ghost
 - [ ] Lemmy

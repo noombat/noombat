@@ -152,7 +152,7 @@ When pinning a digest by hand, take the **manifest list** digest and not a platf
 
 ## `check-template-comments.sh`
 
-Asserts that every `<!--` in the Askama templates has its own `-->`.
+Asserts that every `<!--` in the Askama templates has its own `-->` in every page the templates can render.
 
 ```sh
 ./scripts/check-template-comments.sh                        # crates/noombat-api/templates
@@ -167,12 +167,21 @@ Its blast radius is not the file it is in: the comment runs to the next `-->` in
 Commit `01a4e5b` deleted a stylesheet `<link>` from `article.html` and left the opening `<!--` of its comment behind, which swallowed some 1200 characters of `base.html`, i.e. the `main.css` link, the htmx script, `</head>`, the `<body>` tag and the accessibility skip link.
 Every article page rendered unstyled and without htmx, and nothing in the build, the test suite or `check-inline-scripts.sh` failed.
 
-Three faults are reported, the first two at the line where the comment at fault was *opened*.
+What counts as a delimiter is what a browser would count, not what the source looks like.
+`{# ... #}` is removed before the scan, because Askama removes it before any HTML exists, so a `-->` written inside one closes nothing; those nest, so the removal counts depth rather than stopping at the first `#}`.
+The abrupt forms the HTML tokeniser accepts are read the way it reads them: `--!>` ends a comment, and `<!-->` and `<!--->` are whole empty comments rather than an opening delimiter.
+
+Four faults are reported, the first two at the line where the comment at fault was *opened*.
 Delimiters are matched as occurrences rather than per line, so a line holding several and a comment spanning many are both handled.
 
 1. A `<!--` that reaches end of file with no `-->`.
 2. A `<!--` inside an open comment. HTML has no nested comments, so this is the fault above, and the reason an end-of-file check is not enough on its own: in `article.html` the runaway comment was terminated by the `-->` of the *next* comment down the file, so the file ended outside a comment and read as balanced. What gave it away was the second `<!--` being swallowed as comment text.
 3. A `-->` that closes nothing, reported where it appears.
+4. An `{% if %}` branch that opens or closes a comment its sibling branches do not, reported at the line the branch opened. `{% if x %}<!-- note{% else %}-->{% endif %}` holds one of each delimiter and balances in the source, but only one branch is ever emitted, so one rendered page in two carries a runaway comment. Commenting a block out under a condition is written this way too and is reported the same, since nothing in the text says that two conditions always agree.
+
+Blind spot worth knowing before trusting a green run: the check counts delimiters in the source and never renders.
+A comment left open and a later stray `-->` cancel out and read as one long deliberate comment, which is the shape of the `article.html` defect minus the second `<!--` that gave it away.
+Branches are checked for `{% if %}` only, not `{% for %}` bodies or `{% match %}` arms.
 
 Unlike `check-image-pins.sh`, this one is not a local-only gate: it runs from `test.sh` and as a step of the `Template CSP compatibility` job in `ci.yml`, over the same directory as `check-inline-scripts.sh`.
 

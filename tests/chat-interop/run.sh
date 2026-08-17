@@ -5,17 +5,20 @@
 # Chat interoperability test runner for Noombat.
 #
 # Tests:
+#         00. The Chatmail admin sidecar is serving.
 #   01 - 03. Account registration (alice, bob, duplicate rejection).
 #   04 - 05. Login (correct credentials, wrong credentials).
 #   06 - 07. Chat WebSocket route existence, chat report endpoint.
 #   08 - 09. Auth page rendering (login, register).
 #   10 - 11. Closed federation checks (allowlisted domain, config).
-#       12+. Delta Chat interoperability (when DELTACHAT_RPC is set).
 #
 # Usage:
 #   tests/chat-interop/run.sh [noombat_url]
 #
 # Defaults to http://localhost:8443 when no argument is given.
+#
+# A skip exits non-zero when CI is set. Locally a skip is a convenience;
+# under CI it is coverage that silently did not run.
 
 set -u
 
@@ -266,26 +269,6 @@ else
     skip "Chatmail domain check: no token"
 fi
 
-# ..... Delta Chat Interop .....
-
-echo ""
-echo "--- Delta Chat Interop ---"
-echo ""
-
-# Delta Chat interoperability requires a running Chatmail relay and
-# the deltachat-rpc-server binary. These are not available in the
-# default test environment; the tests below are skipped unless the
-# DELTACHAT_RPC environment variable points to a running instance.
-
-if [ -n "${DELTACHAT_RPC:-}" ]; then
-    echo "deltachat-rpc-server at $DELTACHAT_RPC"
-    # Placeholder: send a message from Delta Chat to a Noombat user
-    # and verify receipt via the Noombat API.
-    skip "Delta Chat interop tests: not yet implemented"
-else
-    skip "Delta Chat interop tests: DELTACHAT_RPC not set"
-fi
-
 # ..... Summary .....
 
 echo ""
@@ -303,6 +286,16 @@ echo ""
 
 if [ "$FAIL" -gt 0 ]; then
     exit 1
-else
-    exit 0
 fi
+
+# Every skip stands in for an assertion that never ran, and the summary
+# above reports it in the same green shape as a pass. Locally that is a
+# convenience; under CI it is a suite guarding nothing while reporting
+# success. tests/e2e/accessibility.spec.ts refuses to skip under CI for
+# the same reason.
+if [ -n "${CI:-}" ] && [ "$SKIP" -gt 0 ]; then
+    echo "::error::$SKIP chat interop test(s) skipped under CI; a skipped test asserts nothing"
+    exit 1
+fi
+
+exit 0

@@ -3,16 +3,36 @@
 
 # Interoperability test environment.
 #
-# Spins up Noombat, GotoSocial, and a Caddy reverse proxy on a shared
+# Spins up Noombat, GoToSocial, and a Caddy reverse proxy on a shared
 # Docker network. Caddy provides TLS termination with an internal CA
 # so that both services can use `https://` AP IDs without requiring
 # publicly trusted certificates.
 #
 # Usage:
-#   1. docker compose -f tests/interop/compose.yml up -d --build
-#   2. CURL_OPTS="--insecure" tests/interop/run.sh \
-#     https://noombat.local:8443 https://gotosocial.local:8443
-#   3. docker compose -f tests/interop/compose.yml down -v
+#   1. docker compose -f tests/interop/compose.yml up -d --build --wait
+#   2. tests/interop/seed.sh tests/interop/compose.yml
+#   3. CURL_OPTS="--insecure" tests/interop/run.sh \
+#     https://noombat.localhost:8443 https://gotosocial.localhost:8443
+#   4. docker compose -f tests/interop/compose.yml down -v
+#
+# ..... WHY THE NAMES END IN `.localhost` .....
+#
+# Both instances have to fetch each other, and every address on this
+# network is private. `noombat-federation::http` refuses private and
+# reserved addresses unless the instance's own domain is a loopback name,
+# and it derives that from the domain rather than offering it as a
+# setting. `domain_is_local` accepts `localhost`, `*.localhost` and
+# `127.0.0.1`, so `.localhost` is what buys this stack an outbound fetch.
+# Under `.local` the resolver rejects the peer's address before a request
+# is made, and no activity leaves either instance.
+#
+# ..... WHY THE PORT IS IN THE DOMAIN .....
+#
+# AP ids are absolute URLs and both sides have to resolve each other's
+# unchanged. Caddy therefore listens on 8443 inside the network as well
+# as on the published port, and both instances carry `:8443` in the
+# domain they generate ids from, so one id works from the runner and from
+# either container.
 
 services:
   # ..... DATABASES .....
@@ -20,11 +40,11 @@ services:
   db:
     image: docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
-      POSTGRES_USER: noombat
-      POSTGRES_PASSWORD: noombat
-      POSTGRES_DB: noombat
+      POSTGRES_USER: interop
+      POSTGRES_PASSWORD: interop
+      POSTGRES_DB: interop
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U noombat"]
+      test: ["CMD-SHELL", "pg_isready -U interop"]
       interval: 3s
       timeout: 3s
       retries: 10
@@ -35,21 +55,54 @@ services:
     networks: [interop]
 
   # ..... NOOMBAT .....
+  #
+  # The domain is not `localhost`, so `validate_production_config` runs
+  # in full and aborts the process on any documented default. The three
+  # values below are what it demands: a JWT secret of at least 32 bytes,
+  # a database credential that is not `noombat:noombat`, and a KEK. They
+  # are fixtures for a throwaway instance, not secrets.
 
   noombat:
+    # Named so that `buildx bake` tags what it builds and `compose up`
+    # then finds it. Without this the bake emits an untagged image, and
+    # compose rebuilds from scratch, so the gha cache the workflow
+    # populates is never read back.
+    image: noombat-interop:ci
     build:
       context: ../..
       dockerfile: Dockerfile
     environment:
-      NOOMBAT_DOMAIN: noombat.local
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@db/noombat
+      NOOMBAT_DOMAIN: noombat.localhost:8443
+      NOOMBAT_DATABASE_URL: postgres://interop:interop@db/interop
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
       NOOMBAT_REDIS_URL: redis://redis:6379
       NOOMBAT_ADMIN_TOKEN: interop-test-token
+      NOOMBAT_JWT_SECRET: interop-jwt-secret-32-bytes-minimum-0123456789
+      NOOMBAT_KEK: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
+      # The delivery worker and the polling assertions in run.sh both
+      # move faster than the per-IP default, and every request from
+      # GoToSocial arrives from Caddy's address.
+      NOOMBAT_RATE_LIMIT: "10000"
+      NOOMBAT_FED_RATE_LIMIT: "10000"
+      # Noombat's HTTP client verifies TLS and has no way to be told
+      # not to, which is the right shape for a server that fetches
+      # URLs strangers chose. The peer's certificate comes from Caddy's
+      # internal CA, so the CA is what has to be trusted, and
+      # `rustls-native-certs` reads this variable.
+      SSL_CERT_FILE: /caddy-data/caddy/pki/authorities/local/root.crt
+    volumes:
+      # Caddy writes its CA with mode 0600 under directories with mode
+      # 0700, which is why this container runs as root: the image's
+      # `noombat` user cannot traverse them. Confined to this harness.
+      - caddy-data:/caddy-data:ro
+    user: "0:0"
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_started }
+      # The CA has to exist before the client is built: the path above
+      # is read once, at startup.
+      caddy: { condition: service_healthy }
     networks:
       interop:
         aliases: [noombat-backend]
@@ -59,8 +112,8 @@ services:
   gotosocial:
     image: docker.io/superseriousbusiness/gotosocial:0.22.1@sha256:0078ca451dda5e8c4a8630784519f99b69f48c3dda79586a9703d4bf8ea14dae
     environment:
-      GTS_HOST: gotosocial.local
-      GTS_ACCOUNT_DOMAIN: gotosocial.local
+      GTS_HOST: gotosocial.localhost:8443
+      GTS_ACCOUNT_DOMAIN: gotosocial.localhost:8443
       GTS_PROTOCOL: https
       GTS_TLS_MODE: ""
       GTS_TRUSTED_PROXIES: "0.0.0.0/0"
@@ -71,18 +124,33 @@ services:
       GTS_ACCOUNTS_ALLOW_CUSTOM_CSS: "false"
       # Disable LetsEncrypt; Caddy handles TLS.
       GTS_LETSENCRYPT_ENABLED: "false"
+      # Caddy's certificate comes from its internal CA, which nothing
+      # here has a reason to trust, and Noombat's address on this
+      # network is private. Both refusals are correct in production and
+      # both stop the peer being fetched at all here.
+      GTS_HTTP_CLIENT_TLS_INSECURE_SKIP_VERIFY: "true"
+      GTS_HTTP_CLIENT_ALLOW_IPS: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+      # Every request arrives from Caddy's address, so the per-address
+      # limit is really a per-stack limit, and the polling loops in
+      # run.sh spend it.
+      GTS_ADVANCED_RATE_LIMIT_REQUESTS: "0"
     volumes:
       - gts-data:/gotosocial/storage
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/readyz"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
     networks:
       interop:
         aliases: [gotosocial-backend]
 
   # ..... CADDY REVERSE PROXY (TLS termination) .....
   #
-  # Provides HTTPS on ports 443 for both domains using Caddy's
-  # internal CA (no public trust required). The test runner trusts
-  # Caddy's root CA via the CURL_CA_BUNDLE / SSL_CERT_FILE
-  # environment variables.
+  # Provides HTTPS on port 8443 for both domains using Caddy's internal
+  # CA (no public trust required). The test runner skips verification
+  # with `CURL_OPTS="--insecure"`, or trusts Caddy's root CA via
+  # CURL_CA_BUNDLE / SSL_CERT_FILE.
 
   caddy:
     image: docker.io/library/caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
@@ -91,15 +159,25 @@ services:
       - caddy-data:/data
       - caddy-config:/config
     ports:
-      - "8443:443"
-    depends_on:
-      - noombat
-      - gotosocial
+      - "8443:8443"
+    # Noombat waits for Caddy, because Caddy issues the CA Noombat has to
+    # trust. Caddy resolves its upstreams per request, so it starts
+    # happily against services that are not up yet and answers 502 until
+    # they are.
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "test -f /data/caddy/pki/authorities/local/root.crt",
+        ]
+      interval: 2s
+      timeout: 2s
+      retries: 30
     networks:
       interop:
         aliases:
-          - noombat.local
-          - gotosocial.local
+          - noombat.localhost
+          - gotosocial.localhost
 
 volumes:
   gts-data:

@@ -12,28 +12,34 @@
 //   - A running Noombat instance at BASE_URL (default: localhost:8443).
 //   - A seeded test actor "testuser" and its seeded article (see the
 //     smoke.spec.ts header).
-//   - An admin-level bearer token in ADMIN_TOKEN (for authenticated
-//     pages), or a valid session cookie set via the login flow.
+//   - NOOMBAT_JWT_SECRET set on that instance, which is what lets it
+//     issue the session the authenticated group signs in with.
+//   - An admin-level bearer token in ADMIN_TOKEN, for the admin group.
 //
 // The tests are grouped by authentication level:
 //   1. Unauthenticated pages (login, register, profile, feed, search).
-//   2. Authenticated pages (settings, compose, chat, admin).
+//   2. Authenticated pages (settings, compose, chat).
+//   3. Admin pages.
 //
-// For authenticated pages, the tests use the development-only admin
-// bearer token to inject an Authorization header into the browser
-// context via `extraHTTPHeaders`.
+// The authenticated group signs a fixture account in and carries its
+// session cookie; see session.ts for why the admin bearer token cannot
+// stand in for one. Every page in that group is behind `require_auth`
+// or reads the principal's actor id, and both answer a request holding
+// the bearer token with a redirect to /auth/login, which axe scans
+// without violations.
 //
-// Two variables are involved and they are not interchangeable. The
-// server reads NOOMBAT_ADMIN_TOKEN to decide which token it accepts;
-// this suite reads ADMIN_TOKEN to decide which one to present. CI must
-// set both, to the same value. Locally, `ADMIN_TOKEN=... pnpm test:a11y`
-// is enough.
+// Two variables are involved for the admin group and they are not
+// interchangeable. The server reads NOOMBAT_ADMIN_TOKEN to decide which
+// token it accepts; this suite reads ADMIN_TOKEN to decide which one to
+// present. CI must set both, to the same value. Locally,
+// `ADMIN_TOKEN=... pnpm test:a11y` is enough.
 //
-// When ADMIN_TOKEN is absent the authenticated groups skip, which is
-// convenient locally and unacceptable under CI, so CI is a hard error
-// instead. See the guard below.
+// When ADMIN_TOKEN is absent the admin group skips, which is convenient
+// locally and unacceptable under CI, so CI is a hard error instead. See
+// the guard below.
 
 import { test, expect, expectNoViolations } from "./axe-fixture";
+import { authenticateBrowser, requireSession } from "./session";
 
 // ..... Configuration .....
 
@@ -50,14 +56,14 @@ const NOTE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000002";
 // Skipping when the token is absent is a convenience for local runs, and a
 // trap in CI: it is silent, and a skipped accessibility suite looks exactly
 // like a passing one. That is not hypothetical. CI set NOOMBAT_ADMIN_TOKEN
-// (which the server reads) while this file read ADMIN_TOKEN, so the
-// authenticated and admin groups, 21 of the 29 tests here, never ran there
-// at all. Refuse to start rather than skip.
+// (which the server reads) while this file read ADMIN_TOKEN, so the admin
+// group never ran there at all. Refuse to start rather than skip. The
+// authenticated group has the same guard, in session.ts.
 if (process.env.CI && ADMIN_TOKEN === "") {
   throw new Error(
-    "ADMIN_TOKEN is empty under CI. The authenticated and admin accessibility " +
-      "groups would skip silently. Set ADMIN_TOKEN to the same value as " +
-      "NOOMBAT_ADMIN_TOKEN in the workflow.",
+    "ADMIN_TOKEN is empty under CI. The admin accessibility group would skip " +
+      "silently. Set ADMIN_TOKEN to the same value as NOOMBAT_ADMIN_TOKEN in " +
+      "the workflow.",
   );
 }
 
@@ -144,19 +150,12 @@ test.describe("Accessibility: unauthenticated pages", () => {
 // 2. AUTHENTICATED PAGES
 
 test.describe("Accessibility: authenticated pages", () => {
-  // Skip the entire group if no admin token is available. Local
-  // convenience only: under CI the guard at the top of this file throws
-  // before reaching here, so this cannot silently drop coverage there.
-  // eslint-disable-next-line playwright/no-skipped-test -- conditional, and CI cannot reach it
-  test.skip(
-    () => ADMIN_TOKEN === "",
-    "ADMIN_TOKEN not set; skipping authenticated-page accessibility tests",
-  );
-
-  test.use({
-    extraHTTPHeaders: {
-      Authorization: `Bearer ${ADMIN_TOKEN}`,
-    },
+  // The session goes on the browser as a cookie rather than into an
+  // Authorization header, because the server prefers a header over the
+  // cookie: setting both would put every navigation back on the
+  // credential these pages refuse.
+  test.beforeEach(async ({ context, request }, testInfo) => {
+    await authenticateBrowser(context, await requireSession(request, testInfo.workerIndex));
   });
 
   // ----- Settings -----
@@ -256,6 +255,18 @@ test.describe("Accessibility: authenticated pages", () => {
 
   test("compose page", async ({ page, axeScan }) => {
     await page.goto("/compose");
+    const results = await axeScan();
+    expectNoViolations(results);
+  });
+
+  // ----- Password upgrade -----
+
+  test("upgrade page", async ({ page, axeScan }) => {
+    await page.goto("/auth/upgrade");
+    // The page is behind require_auth, which answers a request without a
+    // principal with a redirect to /auth/login. That page has no
+    // violations either, so the scan alone cannot tell the two apart.
+    await expect(page.locator("#upgrade-form"), "the upgrade page was not served").toHaveCount(1);
     const results = await axeScan();
     expectNoViolations(results);
   });

@@ -2,22 +2,19 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Seed the local actor that `run.sh` federates with.
+# Seed both sides of the interop stack.
 #
-# `run.sh` asserts against `alice`: WebFinger for `acct:alice@<domain>`,
-# the actor document at `/users/alice`, and that actor's outbox. None of
-# those exist until somebody creates the row, so this has to run between
-# `compose up` and `run.sh`.
+# `run.sh` drives a Follow and a Create from Noombat's actor to
+# GoToSocial's and then asks GoToSocial what it holds, so both accounts
+# have to exist before it starts. Neither instance creates them: Noombat
+# has no registration route reachable without a session, and GoToSocial
+# runs with `GTS_ACCOUNTS_REGISTRATION_OPEN=false`.
 #
-# It lives here rather than inline in the workflow because the ap_id has
-# to match the domain the server believes it has, and that domain differs
-# per topology. The CI job used to inline an INSERT with
-# `http://localhost:8443/users/alice`, which was correct only for the
-# native-on-localhost setup it was written for and silently wrong for the
-# Compose stack, where the server runs as `noombat.local` behind Caddy.
-# Deriving it from one place is what stops the two drifting again.
+# Both sides are seeded here rather than one here and one in the
+# workflow, because the two have to agree about a domain and the domain
+# differs per topology.
 #
-# Idempotent: `ON CONFLICT (ap_id) DO NOTHING`, so re-running is safe.
+# Idempotent, so re-running against a live stack is safe.
 #
 # Usage:
 #   tests/interop/seed.sh [compose-file ...]
@@ -29,14 +26,20 @@
 #   tests/interop/seed.sh tests/interop/compose.yml tests/interop/compose.latest.yml
 #
 # Environment:
-#   NOOMBAT_DOMAIN  domain the server serves as   (default noombat.local)
-#   NOOMBAT_PORT    port the actor URLs carry     (default 8443)
-#   NOOMBAT_SCHEME  scheme the actor URLs carry   (default https)
+#   NOOMBAT_DOMAIN  authority the actor ids carry (default noombat.localhost:8443)
+#   NOOMBAT_SCHEME  scheme the actor ids carry    (default https)
 
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+HERE="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$HERE/../.." && pwd)"
 cd "$REPO_ROOT"
+
+# shellcheck source=tests/interop/fixtures.sh
+. "$HERE/fixtures.sh" || {
+    echo "::error::cannot read $HERE/fixtures.sh" >&2
+    exit 1
+}
 
 if [ "$#" -eq 0 ]; then
     set -- tests/interop/compose.yml
@@ -45,45 +48,115 @@ COMPOSE_ARGS=()
 for f in "$@"; do
     COMPOSE_ARGS+=(-f "$f")
 done
-DOMAIN="${NOOMBAT_DOMAIN:-noombat.local}"
-PORT="${NOOMBAT_PORT:-8443}"
+
+# The port is part of the domain, not a separate variable: Noombat
+# builds every id it generates from `NOOMBAT_DOMAIN` alone, so an actor
+# id assembled here from a domain plus a port is an id the server would
+# not have written.
+DOMAIN="${NOOMBAT_DOMAIN:-noombat.localhost:8443}"
 SCHEME="${NOOMBAT_SCHEME:-https}"
+AP_ID="${SCHEME}://${DOMAIN}/users/${NOOMBAT_ACTOR}"
 
-AP_ID="${SCHEME}://${DOMAIN}:${PORT}/users/alice"
+# Matches the credentials in compose.yml.
+DB_USER=interop
+DB_NAME=interop
 
-# A fixed key rather than a generated one: the point is a stable actor
-# document, and interop asserts on the document rather than on signatures
-# made with this key.
-PUBLIC_KEY='-----BEGIN PUBLIC KEY-----
-MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngu+UeqfsU3AJHhVHk2k
-MEjaIOzbOWRPu1TsqUpGq0IX/mhQUC6/mkF9+H27ziERaM+77JB7MQ9q1ITLnukj
-TlmQhgUrsstMV1ZiU+9WqJ+NmlpdoQ4zVFXEf7IJHmZ+mYxei/qhVrnBDvV4e1KR
-iOTxUYyqWrI7BFGrA3eR22zb9K5/CwOuTw0uYGGhkxfMalBXd4k1AyYGsHo/riQY
-xOCucw31jlUavoajo3CPXWXgCi+F6mumsIm7snaFNiCG8d8jqXZ8aSC8JcGImf95
-Gg3J3oGE9ZiAue0WmYC+oMDzLBJtqN0V/c1OsU7PsP8+8fllvlfBluhuTfR/O19J
-RQIDAQAB
------END PUBLIC KEY-----'
+compose() { docker compose "${COMPOSE_ARGS[@]}" "$@"; }
+psql_noombat() { compose exec -T db psql -U "$DB_USER" -d "$DB_NAME" "$@"; }
+gts() { compose exec -T gotosocial /gotosocial/gotosocial "$@"; }
 
-echo "Seeding alice as ${AP_ID}"
+# ..... NOOMBAT: the local actor .....
+#
+# A real key pair, generated per run rather than a fixed one committed
+# here. The suite now signs with it: GoToSocial verifies the HTTP
+# Signature on every delivery against the `publicKey` it fetches from
+# this actor's document, so a public key with no matching private key
+# fails every cross-instance assertion in run.sh.
+#
+# `private_key_pem` goes in as plaintext although compose.yml sets a
+# KEK. `envelope::open` returns any value that is not valid Base64
+# unchanged, and a PEM is not, so the server reads back what was
+# written. It logs a warning per read saying so.
+KEY_DIR="$(mktemp -d)"
+trap 'rm -rf "$KEY_DIR"' EXIT
+openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+    -out "$KEY_DIR/private.pem" 2>/dev/null
+openssl rsa -in "$KEY_DIR/private.pem" -pubout -out "$KEY_DIR/public.pem" 2>/dev/null
+PRIVATE_KEY="$(cat "$KEY_DIR/private.pem")"
+PUBLIC_KEY="$(cat "$KEY_DIR/public.pem")"
 
-docker compose "${COMPOSE_ARGS[@]}" exec -T db \
-    psql -v ON_ERROR_STOP=1 -U noombat -d noombat <<SQL
+echo "Seeding ${NOOMBAT_ACTOR} as ${AP_ID}"
+
+# The update arm is what makes a re-run leave a usable actor: DO NOTHING
+# would keep the row from the previous run and pair it with the key
+# generated by this one, and every signature would then verify against
+# the wrong public key.
+psql_noombat -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO actors
-    (actor_type, ap_id, username, domain, public_key_pem, is_local)
+    (actor_type, ap_id, username, domain, public_key_pem, private_key_pem, is_local)
 VALUES
-    ('individual', '${AP_ID}', 'alice', '${DOMAIN}', '${PUBLIC_KEY}', TRUE)
-ON CONFLICT (ap_id) DO NOTHING;
+    ('individual', '${AP_ID}', '${NOOMBAT_ACTOR}', '${DOMAIN}',
+     '${PUBLIC_KEY}', '${PRIVATE_KEY}', TRUE)
+ON CONFLICT (ap_id) DO UPDATE
+    SET public_key_pem = EXCLUDED.public_key_pem,
+        private_key_pem = EXCLUDED.private_key_pem;
 SQL
 
 # Assert rather than trust. A silent zero-row insert leaves run.sh to
 # fail later with a WebFinger 404, which reads like an interop defect
-# rather than a missing fixture.
-count=$(docker compose "${COMPOSE_ARGS[@]}" exec -T db \
-    psql -tA -U noombat -d noombat \
-    -c "SELECT count(*) FROM actors WHERE ap_id = '${AP_ID}';")
+# rather than a missing fixture. The key columns are checked too: an
+# actor with no private key federates outbound not at all, and the
+# failure surfaces as a delivery that never arrives.
+count=$(psql_noombat -tA -c \
+    "SELECT count(*) FROM actors
+     WHERE ap_id = '${AP_ID}'
+       AND private_key_pem IS NOT NULL
+       AND public_key_pem IS NOT NULL;")
 
 if [ "$(echo "$count" | tr -d '[:space:]')" != "1" ]; then
-    echo "error: alice was not seeded; found $count row(s) for ${AP_ID}" >&2
+    echo "error: ${NOOMBAT_ACTOR} was not seeded with a key pair;" \
+         "found $count row(s) for ${AP_ID}" >&2
+    exit 1
+fi
+
+# ..... GOTOSOCIAL: the peer account .....
+#
+# Through the admin CLI in the running container, which writes to the
+# same SQLite file the server has open. Registration is closed, so this
+# is the only way in.
+
+echo "Seeding ${GTS_ACTOR} on GoToSocial"
+
+# `admin account create` panics rather than exiting quietly when the
+# username is taken, which is the normal outcome of a second run against
+# a live stack. Anything else is a real failure and is re-raised.
+set +e
+create_output=$(gts admin account create \
+    --username "$GTS_ACTOR" \
+    --email "$GTS_ACTOR_EMAIL" \
+    --password "$GTS_ACTOR_PASSWORD" 2>&1)
+create_status=$?
+set -e
+
+if [ "$create_status" -ne 0 ]; then
+    if ! echo "$create_output" | grep -q "already in use"; then
+        echo "error: could not create the GoToSocial account:" >&2
+        echo "$create_output" >&2
+        exit 1
+    fi
+    echo "  (${GTS_ACTOR} already exists)"
+fi
+
+# Registration is closed, so nothing will ever send a confirmation
+# email. Without this the account exists and cannot sign in, and run.sh
+# has no way to read GoToSocial's state.
+gts admin account confirm --username "$GTS_ACTOR" >/dev/null 2>&1
+
+# `admin account list` prints one row per local account with a
+# `confirmed` column. Asserted rather than assumed for the same reason
+# as the row count above.
+if ! gts admin account list 2>/dev/null | grep -q "^${GTS_ACTOR} "; then
+    echo "error: ${GTS_ACTOR} is not present in GoToSocial's account list" >&2
     exit 1
 fi
 

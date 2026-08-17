@@ -69,6 +69,12 @@ export NOOMBAT_REDIS_URL="redis://localhost:6379"
 export NOOMBAT_MEILI_URL="http://localhost:7700"
 export NOOMBAT_MEILI_KEY="${MEILI_MASTER_KEY:-noombat-dev-key}"
 export NOOMBAT_ADMIN_TOKEN="${ADMIN_TOKEN:-ci-test-token}"
+# Session authentication, which the server enables only when this is
+# set. The suite signs a fixture account in to reach the pages behind
+# `require_auth`; the admin token above cannot, because the principal it
+# resolves to carries no actor id and, outside /users/{name} and
+# /@{name}, no username either.
+export NOOMBAT_JWT_SECRET="${NOOMBAT_JWT_SECRET:-ci-e2e-jwt-secret-at-least-32-bytes-long}"
 # Effectively disable per-IP limiting: a run makes many requests from one
 # address, and the production figures are not test figures.
 export NOOMBAT_RATE_LIMIT="10000"

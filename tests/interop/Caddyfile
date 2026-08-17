@@ -5,17 +5,23 @@
 #
 # Both domains use Caddy's internal CA for TLS, so no public
 # certificates are required. The test runner must trust Caddy's
-# root CA (extracted via `caddy trust` or from the data volume).
+# root CA (extracted via `caddy trust` or from the data volume),
+# or skip verification with `CURL_OPTS="--insecure"`.
+#
+# The site addresses carry `:8443` rather than relying on the published
+# port. AP ids are absolute and both instances resolve each other's
+# unchanged, so the port the runner reaches and the port the containers
+# reach have to be the same one.
 
 {
 	# Use Caddy's internal CA for all sites (no ACME / LetsEncrypt).
 	local_certs
 }
 
-noombat.local {
+https://noombat.localhost:8443 {
 	reverse_proxy noombat-backend:8443
 }
 
-gotosocial.local {
+https://gotosocial.localhost:8443 {
 	reverse_proxy gotosocial-backend:8080
 }

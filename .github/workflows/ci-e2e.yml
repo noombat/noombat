@@ -18,8 +18,12 @@ on:
       - "frontend/**"
       - "migrations/**"
       - "templates/**"
+      - "tests/chat-interop/**"
       - "tests/e2e/**"
       - "tests/interop/**"
+      - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -31,8 +35,12 @@ on:
       - "frontend/**"
       - "migrations/**"
       - "templates/**"
+      - "tests/chat-interop/**"
       - "tests/e2e/**"
       - "tests/interop/**"
+      - "Dockerfile"
+      - "Dockerfile.chatmail"
+      - "chatmail-config/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -76,10 +84,19 @@ jobs:
       DATABASE_URL: postgres://noombat:noombat@postgres/noombat
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
+      # Session authentication, which the server enables only when this
+      # is set. Without it every page behind `require_auth` is reachable
+      # by no credential the suite can present: the admin bearer below
+      # resolves to a principal with no actor id, and with no username
+      # either on any path outside /users/{name} and /@{name}, so /chat,
+      # /settings/chat, /compose, /auth/upgrade and every /settings page
+      # answer 307 to /auth/login. A fixture for a throwaway instance,
+      # not a secret.
+      NOOMBAT_JWT_SECRET: ci-e2e-jwt-secret-at-least-32-bytes-long
       # The server reads NOOMBAT_ADMIN_TOKEN; the Playwright suite presents
       # ADMIN_TOKEN. Both names are needed and the values must match: the
-      # suite skips its authenticated groups when its own variable is
-      # empty, so setting only the server's silently dropped 21 of the 29
+      # suite skips its admin group when its own variable is empty, so
+      # setting only the server's silently dropped 21 of the 29
       # accessibility tests. accessibility.spec.ts now refuses to skip
       # under CI rather than let that recur.
       NOOMBAT_ADMIN_TOKEN: ci-test-token
@@ -299,7 +316,7 @@ jobs:
   # /etc/hosts entry for gotosocial. `tests/interop/compose.yml` describes
   # something materially different: Noombat containerised as
   # `noombat-backend` on the `interop` network, behind Caddy terminating
-  # TLS, serving `noombat.local`. For a federation test that difference is
+  # TLS, serving `noombat.localhost:8443`. For a federation test that difference is
   # the test. HTTP Signatures cover `(request-target)` and `host`, so a
   # reverse proxy is part of what is under test. Actor ids are absolute
   # URLs, and `http://localhost:8443/users/alice` is not a shape any peer
@@ -326,7 +343,7 @@ jobs:
       # Caddy serves both names on the published port, so both have to
       # resolve to the runner.
       - name: Map the interop hostnames
-        run: echo "127.0.0.1 noombat.local gotosocial.local" | sudo tee -a /etc/hosts
+        run: echo "127.0.0.1 noombat.localhost gotosocial.localhost" | sudo tee -a /etc/hosts
 
       - name: Build the Noombat image
         run: |
@@ -344,7 +361,7 @@ jobs:
       - name: Wait for Noombat through Caddy
         run: |
           for i in $(seq 1 30); do
-            if curl -ksf https://noombat.local:8443/healthz >/dev/null; then
+            if curl -ksf https://noombat.localhost:8443/healthz >/dev/null; then
               echo "Noombat is ready"
               exit 0
             fi
@@ -354,17 +371,22 @@ jobs:
           docker compose -f tests/interop/compose.yml logs --no-color
           exit 1
 
-      # run.sh asserts against an actor that has to exist first. Seeding
-      # lives in the harness so that the ap_id matches the domain the
-      # server actually serves.
-      - name: Seed the local actor
+      # Both accounts, on both instances. run.sh federates between them
+      # and neither instance will create them: Noombat has no open
+      # registration route and GoToSocial runs with registration closed.
+      # Seeding lives in the harness so that the ap_id matches the domain
+      # the server actually serves.
+      - name: Seed both instances
         run: tests/interop/seed.sh tests/interop/compose.yml
 
+      # GitHub sets CI, and run.sh treats a skip as a failure and an
+      # unreachable peer as fatal when it is set. Both are assertions
+      # that did not run, which is not a suite that passed.
       - name: Run interop tests
         env:
           # Caddy issues its own certificate for these names.
           CURL_OPTS: "--insecure"
-        run: tests/interop/run.sh https://noombat.local:8443 https://gotosocial.local:8443
+        run: tests/interop/run.sh https://noombat.localhost:8443 https://gotosocial.localhost:8443
 
       - name: Dump container logs on failure
         if: failure()
@@ -373,3 +395,92 @@ jobs:
       - name: Tear down
         if: always()
         run: docker compose -f tests/interop/compose.yml down -v
+
+  # The Chatmail half of the system: the relay image and the admin
+  # sidecar the server talks to.
+  #
+  # The sidecar is why this cannot be left to the relay's own
+  # healthcheck, which is an IMAP NOOP that Dovecot answers whether or
+  # not the sidecar is running. Password rotation, doveadm kick, maildir
+  # deletion and transport_maps can all be dead while the container
+  # reports healthy, so the suite asserts the sidecar directly.
+  #
+  # The e2e job above runs a server with no Chatmail domain set and never
+  # calls the chat API, so registration on a chat-enabled instance, the
+  # chat WebSocket route and chat reports are exercised only here.
+  chat-interop:
+    name: Chat interop (Chatmail)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # Two images: the server from Dockerfile, the relay and its sidecar
+      # from Dockerfile.chatmail.
+      #
+      # The tags are set explicitly. A compose service that names no
+      # image bakes to a dangling image, which `up` cannot find, so it
+      # would build the pair a second time and out of this cache. The
+      # names are the ones compose derives from the project, which is why
+      # every compose call below pins `-p chat-interop` rather than
+      # letting it default to the directory name.
+      #
+      # The cache scope is this job's own: it bakes a different graph
+      # from the federation job and sharing a scope has them evict each
+      # other.
+      - name: Build the stack images
+        run: |
+          docker buildx bake -f tests/chat-interop/compose.yml \
+            --load \
+            --set 'noombat.tags=chat-interop-noombat' \
+            --set 'chatmail.tags=chat-interop-chatmail' \
+            --set '*.cache-from=type=gha,scope=chat-interop' \
+            --set '*.cache-to=type=gha,scope=chat-interop,mode=max'
+
+      - name: Start the chat interop stack
+        run: |
+          docker compose -p chat-interop -f tests/chat-interop/compose.yml \
+            up -d --wait
+
+      # `--wait` returns once the containers are running, which is not the
+      # same as Noombat having migrated or s6 having started the sidecar.
+      # Poll both endpoints the suite uses, so a slow start reports here,
+      # with logs, instead of as a failed assertion.
+      - name: Wait for Noombat and the Chatmail admin sidecar
+        run: |
+          for _ in $(seq 1 45); do
+            health=$(curl -s -o /dev/null -w '%{http_code}' \
+              http://localhost:8443/healthz || true)
+            # Admin routes all require the shared secret and there is no
+            # health route, so an unauthenticated 401 is the only
+            # liveness signal the sidecar offers.
+            admin=$(curl -s -o /dev/null -w '%{http_code}' \
+              http://localhost:9100/admin/v1/accounts/probe@example.invalid/exists || true)
+            if [ "$health" = "200" ] && [ "$admin" = "401" ]; then
+              echo "Noombat and the Chatmail admin sidecar are ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::the chat interop stack was not ready within 90 seconds (healthz=$health, admin=$admin)"
+          docker compose -p chat-interop -f tests/chat-interop/compose.yml \
+            logs --no-color
+          exit 1
+
+      # GitHub sets CI, and run.sh treats a skip as a failure when it is
+      # set. Its skips are all "no token", i.e. assertions that never ran.
+      - name: Run chat interop tests
+        run: tests/chat-interop/run.sh http://localhost:8443
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -p chat-interop -f tests/chat-interop/compose.yml \
+            logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -p chat-interop -f tests/chat-interop/compose.yml \
+            down -v
