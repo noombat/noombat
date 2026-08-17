@@ -13,6 +13,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `smoke-test.sh`        | Black-box HTTP tests                | After starting the server, to verify it responds correctly |
 | `e2e-stack.sh`         | Raise/tear down the e2e stack       | Before and after a Playwright run (`up`, `down`, `status`) |
 | `check-unused-deps.sh` | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
+| `check-image-pins.sh`  | Compare workflow images to compose  | After touching a workflow service or a compose image       |
 | `chatmail-setup.sh`    | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
@@ -115,6 +116,29 @@ Delete the allowlist entry when either grows an implementation.
 The scan injects a canary dependency name into every manifest it reads and requires all of them back in the output.
 A canary that goes missing means the search matched something it should not have, so a clean result would prove nothing, and the script exits `2` rather than reporting success.
 That is not hypothetical: an early version read clean because its file list included `package.json`, so every dependency matched its own declaration.
+
+## `check-image-pins.sh`
+
+Asserts that container images named in workflows are pinned by digest, and that they agree with the compose file naming the same image.
+
+```sh
+./scripts/check-image-pins.sh
+```
+
+Exit `0` means pinned and in agreement, `1` means a disagreement or an unpinned image, and `2` means the parser matched nothing and the run proves nothing.
+
+This exists because a workflow `services:` or `container:` image is the one image reference no updater reaches.
+Dependabot's docker ecosystem reads Dockerfiles, docker-compose reads compose files, and github-actions reads `uses:`.
+On 2026-08-17 PR #48 raised Meilisearch in `compose.yml` and could not touch the copy in `ci.yml`; merging it as proposed would have left CI asserting against one Meilisearch while deployments ran another, and both would have started and passed.
+
+The durable half of the fix was to stop naming those images twice: `ci.yml`'s integration job now starts `db`, `redis` and `meilisearch` from `compose.yml` plus `compose.dev.yml` rather than repeating them in a `services:` block.
+This check covers what could not move, and pins what stayed.
+
+Two images are allowlisted, each with its reason printed on every run.
+The Playwright job container cannot come from compose and must equal the `@playwright/test` version in `tests/e2e`.
+GoToSocial tracks `latest` in both the workflow and `tests/interop/compose.yml`, and the reason is unrecorded, so that one is a decision waiting to be made rather than a settled exemption.
+
+It compares what the files say, not what a registry resolves them to; a digest that has been withdrawn upstream passes here and fails at `docker pull`.
 
 ## `chatmail-setup.sh`
 
