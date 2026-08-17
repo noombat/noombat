@@ -50,6 +50,17 @@ step "Running tests (cargo test)"
 #     cargo test --workspace -- --include-ignored
 run cargo test --workspace
 
+# ..... Manifests .....
+
+# Neither Cargo nor npm warns when a declaration outlives the code that
+# needed it, so nothing else here would notice.
+step "Checking for unused dependency declarations"
+if [ "$QUICK" = true ]; then
+    run ./scripts/check-unused-deps.sh --rust-only
+else
+    run ./scripts/check-unused-deps.sh
+fi
+
 # ..... Frontend .....
 
 if [ "$QUICK" = false ]; then

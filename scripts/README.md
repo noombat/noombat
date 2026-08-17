@@ -4,15 +4,16 @@ Development and maintenance scripts for the Noombat workspace.
 
 ## Quick Reference
 
-| Script              | Purpose                     | When to use                                                |
-|---------------------|-----------------------------|------------------------------------------------------------|
-| `dev-setup.sh`      | First-time onboarding       | Once, after cloning the repository                         |
-| `build.sh`          | Full build pipeline         | After modifying Rust or frontend source                    |
-| `clean.sh`          | Remove all build artifacts  | Before a clean rebuild or to reclaim disk space            |
-| `test.sh`           | Run all verification checks | Before committing or pushing                               |
-| `smoke-test.sh`     | Black-box HTTP tests        | After starting the server, to verify it responds correctly |
-| `e2e-stack.sh`      | Raise/tear down the e2e stack | Before and after a Playwright run (`up`, `down`, `status`) |
-| `chatmail-setup.sh` | Chatmail DNS verification   | Before deploying a Chatmail relay on a new domain          |
+| Script                 | Purpose                             | When to use                                                |
+|------------------------|-------------------------------------|------------------------------------------------------------|
+| `dev-setup.sh`         | First-time onboarding               | Once, after cloning the repository                         |
+| `build.sh`             | Full build pipeline                 | After modifying Rust or frontend source                    |
+| `clean.sh`             | Remove all build artifacts          | Before a clean rebuild or to reclaim disk space            |
+| `test.sh`              | Run all verification checks         | Before committing or pushing                               |
+| `smoke-test.sh`        | Black-box HTTP tests                | After starting the server, to verify it responds correctly |
+| `e2e-stack.sh`         | Raise/tear down the e2e stack       | Before and after a Playwright run (`up`, `down`, `status`) |
+| `check-unused-deps.sh` | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
+| `chatmail-setup.sh`    | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
 
@@ -89,6 +90,31 @@ sleep 2
 ./scripts/smoke-test.sh
 kill %1
 ```
+
+## `check-unused-deps.sh`
+
+Reports dependencies that a manifest declares and the code never names, across all twelve crate manifests, `[workspace.dependencies]`, and both `package.json` files.
+
+```sh
+./scripts/check-unused-deps.sh              # Cargo and npm
+./scripts/check-unused-deps.sh --rust-only  # skip the npm half
+```
+
+Exit `0` means nothing unused, `1` means candidates were found, and `2` means the scan could not be trusted and reported nothing meaningful.
+
+Output is a list of **candidates, not conclusions**.
+A dependency can be load-bearing without ever being named: by enabling a feature on a crate something else uses, by linking a C library, or by registering a runtime provider.
+This workspace has already hit the first of those, when `meilisearch-sdk`'s default features turned on a second `jsonwebtoken` crypto backend and every login panicked, with nothing in the source naming it.
+Confirm each candidate by deleting the line and running `cargo check --workspace --all-targets`, then comparing `cargo tree --workspace -f '{p} {f}'` before and after.
+The check has to be at workspace scope, because Cargo unifies features across the whole workspace and a package-scoped run is a different build rather than a smaller one.
+
+Two declarations are allowlisted in the script, both `noombat-core` in the `noombat-events` and `noombat-groups` placeholder crates.
+Those crates are a licence header and one doc line each, so they declare what they will need and use nothing.
+Delete the allowlist entry when either grows an implementation.
+
+The scan injects a canary dependency name into every manifest it reads and requires all of them back in the output.
+A canary that goes missing means the search matched something it should not have, so a clean result would prove nothing, and the script exits `2` rather than reporting success.
+That is not hypothetical: an early version read clean because its file list included `package.json`, so every dependency matched its own declaration.
 
 ## `chatmail-setup.sh`
 
