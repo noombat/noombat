@@ -29,6 +29,7 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-action-allowlist.sh"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
@@ -36,6 +37,7 @@ on:
       - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
       - "templates/**"
+      - ".github/workflows/**"
   pull_request:
     branches: [main]
     paths:
@@ -47,6 +49,7 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-action-allowlist.sh"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
@@ -54,6 +57,7 @@ on:
       - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
       - "templates/**"
+      - ".github/workflows/**"
   workflow_dispatch:
     inputs:
       release:
@@ -147,6 +151,18 @@ jobs:
       - name: "Report dependencies nothing imports"
         continue-on-error: true
         run: scripts/check-unused-deps.sh
+
+  actions-policy:
+    name: Actions policy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A `uses:` the policy refuses does not fail a job, it makes the
+      # whole workflow startup_failure: no jobs, so no check runs, so the
+      # commit reads green while nothing ran. This is the only thing that
+      # reports it before a push.
+      - name: "Reject actions the repository policy will not run"
+        run: scripts/check-action-allowlist.sh
 
   migration-shape:
     name: Migration shape

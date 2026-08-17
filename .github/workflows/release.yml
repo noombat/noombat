@@ -224,16 +224,34 @@ jobs:
 
       - name: Attach the manifests and bundles to the release
         if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@3d0d9888cb7fd7b750713d6e236d1fcb99157228 # v3.0.2
-        with:
-          files: |
+        # `gh` rather than an action, because this job holds id-token,
+        # contents and packages write: anything running here can sign as
+        # this repository and push to the registry, so it is the last
+        # place to take a dependency that is not already required. `gh`
+        # is preinstalled on the runner and the checkout is already done.
+        #
+        # Create or upload, because a tag push does not itself make a
+        # release and a re-run finds one already there. `gh` exits
+        # non-zero on a missing file either way, which is the behaviour
+        # being preserved here.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          files="
             assets-manifest.json
             assets-manifest.sigstore.json
             server-image-manifest.json
             server-image-manifest.sigstore.json
             chatmail-image-manifest.json
             chatmail-image-manifest.sigstore.json
-          fail_on_unmatched_files: true
+          "
+          # shellcheck disable=SC2086
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" $files --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --generate-notes $files
+          fi
 
       - name: Upload the manifests as workflow artefacts
         # The only output of a dry run, where no release exists to

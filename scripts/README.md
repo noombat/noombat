@@ -15,6 +15,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `check-unused-deps.sh`       | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
 | `check-image-pins.sh`        | Compare workflow images to compose  | After touching a workflow service or a compose image       |
 | `check-template-comments.sh` | Find unbalanced HTML comments       | After editing an Askama template                           |
+| `check-action-allowlist.sh`  | Reject actions the policy refuses   | After adding or repinning any `uses:` in a workflow        |
 | `chatmail-setup.sh`          | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
@@ -149,6 +150,23 @@ Every `check-*.sh` now has one: `check-inline-scripts.sh` and `check-template-co
 
 When pinning a digest by hand, take the **manifest list** digest and not a platform one.
 `docker manifest inspect --verbose` returns the per-platform descriptor, and pinning that ties the image to a single architecture; `docker buildx imagetools inspect <ref> --format '{{println .Manifest.Digest}}'` returns the list digest, which is also what Dependabot writes.
+
+## `check-action-allowlist.sh`
+
+Asserts that every `uses:` in `.github/workflows/` is one the repository's Actions policy will run, and that each is pinned to a full-length 40-character commit SHA.
+
+```sh
+./scripts/check-action-allowlist.sh
+```
+
+Exit `0` means every reference is permitted, `1` means at least one will be refused, and `2` means it found no `uses:` at all and so proves nothing.
+
+The policy permits actions owned by `noombat` plus a short list of patterns.
+**That list is a GitHub repository setting and is not in this tree**, so the copy in this script is kept in step by hand: adding an entry here is a request to the maintainer to add the same pattern there, and the workflow stays dead until they do.
+
+This exists because the failure is invisible. A refused `uses:` does not fail a job, it makes the whole workflow report `startup_failure`, which creates no jobs and therefore no check runs, so the commit shows every other check green while nothing ran. On 2026-08-17 `ci-e2e.yml` was in that state and all three of its jobs silently did not execute, alongside 35 green checks on the same commit.
+
+`actionlint` does not cover this. It validates the workflow schema and knows nothing about the policy.
 
 ## `check-template-comments.sh`
 

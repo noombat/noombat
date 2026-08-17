@@ -73,6 +73,12 @@ run ./scripts/check-image-pins.sh
 step "Checking template comment balance"
 run ./scripts/check-template-comments.sh
 
+# A `uses:` outside the repository's Actions policy makes the whole
+# workflow startup_failure, which creates no check runs and so leaves the
+# commit reading green while nothing ran.
+step "Checking the GitHub Actions allowlist"
+run ./scripts/check-action-allowlist.sh
+
 # ..... Frontend .....
 
 if [ "$QUICK" = false ]; then
