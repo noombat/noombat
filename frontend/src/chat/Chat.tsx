@@ -808,7 +808,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                 ☰
               </button>
               <span class="text-sm font-semibold truncate">{recipient() || strings().heading}</span>
-              <span class="flex-1"></span>
+              <span class="flex-1" />
               <button
                 type="button"
                 class="noombat-chat__verify-toggle"

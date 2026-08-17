@@ -20,7 +20,7 @@
  * below, and no preview while offline. The editor itself keeps working.
  */
 
-import { createSignal, createEffect, onCleanup, type JSX } from "solid-js";
+import { createSignal, createEffect, onCleanup, Show, type JSX } from "solid-js";
 
 // ..... i18n .....
 
@@ -91,6 +91,12 @@ export default function Editor(props: EditorProps): JSX.Element {
   const [source, setSource] = createSignal(props.initialValue ?? "");
   const [preview, setPreview] = createSignal("");
   const [activeTab, setActiveTab] = createSignal<"edit" | "preview">("edit");
+  // Kept separate from `preview` so that the only thing ever assigned to
+  // `preview` is a response body from the server, which has been through
+  // the same sanitiser as the stored document. The failure message is
+  // rendered as text below instead of being built into an HTML string
+  // here, so nothing this file composes can reach `innerHTML`.
+  const [failed, setFailed] = createSignal(false);
 
   // Debounced server render.
   //
@@ -134,7 +140,10 @@ export default function Editor(props: EditorProps): JSX.Element {
             ? response.text()
             : Promise.reject(new Error(`preview failed: ${String(response.status)}`)),
         )
-        .then(setPreview)
+        .then((html) => {
+          setPreview(html);
+          setFailed(false);
+        })
         .catch((error: unknown) => {
           // A superseded request is not a failure.
           if (error instanceof DOMException && error.name === "AbortError") {
@@ -143,9 +152,8 @@ export default function Editor(props: EditorProps): JSX.Element {
           // Say so rather than leaving stale HTML on screen looking
           // current. The preview is the author's only check before
           // publishing, so a silent stale pane is the worst outcome.
-          setPreview(
-            `<p class="noombat-editor__preview-error">${strings().preview_unavailable}</p>`,
-          );
+          setPreview("");
+          setFailed(true);
         });
     }, 500);
   });
@@ -189,8 +197,26 @@ export default function Editor(props: EditorProps): JSX.Element {
         />
         <div
           class={`noombat-editor__preview ${activeTab() === "preview" ? "" : "noombat-editor__preview--hidden"}`}
-          innerHTML={preview()}
-        />
+        >
+          <Show when={failed()}>
+            <p class="noombat-editor__preview-error">{strings().preview_unavailable}</p>
+          </Show>
+          {/*
+            The one place this application assigns innerHTML, and the
+            rule is right to ask. What makes it safe is not that the
+            string came from our own server, but that it came from
+            `POST /api/v1/preview`, which runs the same
+            `noombat-markup` render and the same ammonia sanitiser as
+            the path that stores and federates the document, under the
+            same `MarkupOptions`. That equivalence is asserted by the
+            parity test in `crates/noombat-api/src/routes/preview.rs`.
+            Nothing composed in this file reaches here: the failure
+            message above is rendered as text, and `preview` is only
+            ever assigned a response body.
+          */}
+          {/* eslint-disable-next-line solid/no-innerhtml */}
+          <div innerHTML={preview()} />
+        </div>
       </div>
     </div>
   );
