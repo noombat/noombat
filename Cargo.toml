@@ -76,7 +76,7 @@ base64 = "0.23"
 # `generate_rsa_keypair`. ed25519-dalek 3 wants rand_core 0.10, and the
 # two cannot be satisfied by one `rand`, so the Ed25519 path takes its
 # entropy straight from the OS via getrandom instead of through `rand`.
-rand = "0.8"
+rand = "0.10"
 getrandom = "0.4"
 
 # HTTP Signatures.
