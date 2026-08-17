@@ -157,8 +157,7 @@ async fn access_token(pool: &PgPool, actor_id: Uuid) -> String {
         actor_id,
         USERNAME,
         noombat_core::actor::InstanceRole::User,
-        None,
-        None,
+        noombat_identity::session::SessionContext::sign_in(),
     )
     .await
     .expect("session created")

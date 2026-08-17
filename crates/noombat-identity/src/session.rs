@@ -71,6 +71,66 @@ impl Default for SessionConfig {
     }
 }
 
+/// Why a session is being issued.
+///
+/// This exists so that `last_sign_in_at`, and therefore the NodeInfo
+/// active-user figures, cannot drift back into meaning something else.
+/// Every caller of [`create_session`] has to say which of these it is,
+/// rather than the distinction living in a comment that a future call
+/// site never reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionOrigin {
+    /// The actor presented credentials and they were accepted. This is a
+    /// sign-in in the sense NodeInfo means, and it is recorded.
+    SignIn,
+    /// An existing session's refresh token was rotated. Nothing is
+    /// recorded: a refresh proves a client still holds a valid token,
+    /// which a background tab can do for the whole thirty-day refresh
+    /// lifetime without the person being there. Counting it would
+    /// reintroduce the over-count that `updated_at` produced.
+    Refresh,
+}
+
+/// What is known about the session being issued.
+///
+/// These three describe the event rather than the actor, and they are
+/// grouped rather than passed separately because adding `origin` as a
+/// further parameter took `create_session` past clippy's argument limit.
+#[derive(Debug, Clone, Copy)]
+pub struct SessionContext<'a> {
+    /// The client's `User-Agent`, when the caller has one to record.
+    pub user_agent: Option<&'a str>,
+    /// The client's address, when the caller has one to record.
+    pub ip_addr: Option<&'a str>,
+    /// Whether this is a fresh sign-in or a rotation of an existing one.
+    pub origin: SessionOrigin,
+}
+
+impl SessionContext<'_> {
+    /// A fresh sign-in, with no client details recorded.
+    ///
+    /// Every caller currently passes `None` for both `user_agent` and
+    /// `ip_addr`, so the `sessions` columns behind them are always NULL.
+    /// They are kept because the schema has them and a session-management
+    /// view would need them, not because anything populates them today.
+    pub fn sign_in() -> Self {
+        Self {
+            user_agent: None,
+            ip_addr: None,
+            origin: SessionOrigin::SignIn,
+        }
+    }
+
+    /// A refresh-token rotation, with no client details recorded.
+    pub fn refresh() -> Self {
+        Self {
+            user_agent: None,
+            ip_addr: None,
+            origin: SessionOrigin::Refresh,
+        }
+    }
+}
+
 /// Issue a new access/refresh token pair for the given actor.
 pub async fn create_session(
     pool: &PgPool,
@@ -78,8 +138,7 @@ pub async fn create_session(
     actor_id: Uuid,
     username: &str,
     role: InstanceRole,
-    user_agent: Option<&str>,
-    ip_addr: Option<&str>,
+    context: SessionContext<'_>,
 ) -> Result<SessionTokens> {
     let now = Utc::now();
     let access_exp = now + TimeDelta::seconds(config.access_ttl_secs);
@@ -116,11 +175,18 @@ pub async fn create_session(
     )
     .bind(actor_id)
     .bind(&refresh_token)
-    .bind(user_agent)
-    .bind(ip_addr)
+    .bind(context.user_agent)
+    .bind(context.ip_addr)
     .bind(refresh_exp)
     .execute(pool)
     .await?;
+
+    if context.origin == SessionOrigin::SignIn {
+        sqlx::query("UPDATE actors SET last_sign_in_at = now() WHERE id = $1")
+            .bind(actor_id)
+            .execute(pool)
+            .await?;
+    }
 
     Ok(SessionTokens {
         access_token,
@@ -181,7 +247,15 @@ pub async fn refresh_session(
         .execute(pool)
         .await?;
 
-    create_session(pool, config, actor_id, &username, role, None, None).await
+    create_session(
+        pool,
+        config,
+        actor_id,
+        &username,
+        role,
+        SessionContext::refresh(),
+    )
+    .await
 }
 
 /// Revoke a session (logout).

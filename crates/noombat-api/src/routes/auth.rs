@@ -64,8 +64,7 @@ async fn register(
         result.actor_id,
         &result.username,
         noombat_core::actor::InstanceRole::User,
-        None,
-        None,
+        noombat_identity::session::SessionContext::sign_in(),
     )
     .await?;
 
@@ -98,8 +97,7 @@ async fn login(
         actor_id,
         &username,
         role,
-        None,
-        None,
+        noombat_identity::session::SessionContext::sign_in(),
     )
     .await?;
 
@@ -293,8 +291,7 @@ async fn mastodon_callback(
         result.actor_id,
         &result.username,
         actor.instance_role,
-        None,
-        None,
+        noombat_identity::session::SessionContext::sign_in(),
     )
     .await?;
 
@@ -379,8 +376,7 @@ async fn orcid_callback(
         result.actor_id,
         &result.username,
         actor.instance_role,
-        None,
-        None,
+        noombat_identity::session::SessionContext::sign_in(),
     )
     .await?;
 

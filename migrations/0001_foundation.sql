@@ -71,6 +71,7 @@ CREATE TABLE actors (
     location                     TEXT, -- free-text location (e.g. "Berlin, Germany")
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
+    last_sign_in_at              TIMESTAMPTZ, -- last accepted credential presentation; NULL = never signed in. NOT updated_at, see below
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -86,6 +87,22 @@ CREATE INDEX idx_actors_chatmail ON actors (chatmail_addr) WHERE chatmail_addr I
 -- policy are the minority; see the note at the head of this file for why it
 -- does not drain to empty.
 CREATE INDEX idx_actors_sanitiser_version ON actors (sanitiser_version) WHERE sanitiser_version = 0;
+
+-- NodeInfo's usage.users.activeMonth and activeHalfyear, which the schema
+-- defines as users who SIGNED IN during the window. Both queries filter on
+-- is_local and a lower bound on last_sign_in_at, so the index carries only
+-- the rows they can return.
+--
+-- last_sign_in_at exists because updated_at cannot answer the question.
+-- trg_actors_updated_at below is BEFORE UPDATE ... FOR EACH ROW, so it moves
+-- on every write to the row whether or not the statement mentions it. Reading
+-- activity from it counted profile edits, moderation actions, deletion
+-- requests and account migrations as sign-ins, and missed anyone who signed
+-- in without changing their row, because posting does not write to actors.
+-- The two columns must not be conflated again: writing a sign-in also bumps
+-- updated_at, which is harmless only because nothing derives activity from it.
+CREATE INDEX idx_actors_last_sign_in ON actors (last_sign_in_at)
+    WHERE is_local AND last_sign_in_at IS NOT NULL;
 
 -- Actor aliases: URIs that this actor has declared as prior identities.
 -- Required by the Move protocol: the target actor must list the source

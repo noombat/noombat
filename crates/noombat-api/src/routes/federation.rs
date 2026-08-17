@@ -91,14 +91,29 @@ async fn nodeinfo_handler(State(state): State<AppState>) -> Result<impl IntoResp
     let (total_users, active_month, active_half_year, local_posts) = tokio::try_join!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM actors WHERE is_local = TRUE")
             .fetch_one(&state.pool),
+        // NodeInfo defines both windows as users who SIGNED IN during
+        // them, so they count `last_sign_in_at` and nothing else. They
+        // used to count `updated_at`, which `trg_actors_updated_at`
+        // bumps on every write to the row: setting `moved_to`, i.e. the
+        // user migrating away, marked them active for another thirty
+        // days, as did requesting deletion and as did a moderator
+        // flagging chat reprovisioning, while a user who signed in daily
+        // and posted was never counted, because posting does not write
+        // to `actors`.
+        //
+        // `last_sign_in_at IS NULL` for anyone who has not signed in
+        // since the column was added, and those rows are excluded by the
+        // comparison. That under-counts a freshly migrated instance
+        // rather than over-counting it, and corrects itself as people
+        // sign in.
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM actors \
-                 WHERE is_local = TRUE AND updated_at > now() - interval '30 days'"
+                 WHERE is_local = TRUE AND last_sign_in_at > now() - interval '30 days'"
         )
         .fetch_one(&state.pool),
         sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM actors \
-                 WHERE is_local = TRUE AND updated_at > now() - interval '180 days'"
+                 WHERE is_local = TRUE AND last_sign_in_at > now() - interval '180 days'"
         )
         .fetch_one(&state.pool),
         sqlx::query_scalar::<_, i64>(
