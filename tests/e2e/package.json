@@ -10,7 +10,8 @@
     "test:webkit": "playwright test --project=webkit",
     "test:a11y": "playwright test accessibility.spec.ts",
     "test:a11y:firefox": "playwright test accessibility.spec.ts --project=firefox",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

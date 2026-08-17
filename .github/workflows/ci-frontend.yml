@@ -97,6 +97,45 @@ jobs:
       - name: Lint (eslint)
         run: pnpm lint
 
+  # The e2e specs were linted and formatted but never type-checked, so a
+  # spec could reference a fixture property that does not exist and only
+  # fail when the suite ran, in the job that needs a browser and a live
+  # stack. `tsc` catches that in seconds without either. It is a separate
+  # job from `typecheck` above because tests/e2e has its own package.json,
+  # lockfile and tsconfig, on a different TypeScript resolution.
+  typecheck-e2e:
+    name: TypeScript (e2e specs)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: tests/e2e
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Node (version from .nvmrc)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Enable corepack (pnpm)
+        run: corepack enable
+
+      - name: Cache pnpm store
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.local/share/pnpm/store
+          key: pnpm-e2e-${{ hashFiles('tests/e2e/pnpm-lock.yaml') }}
+          restore-keys: pnpm-e2e-
+
+      # No browsers needed: this type-checks the specs, it does not run
+      # them. `--ignore-scripts` skips Playwright's browser download,
+      # which is the expensive part of this install.
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Type check (tsc --noEmit)
+        run: pnpm typecheck
+
   lint-e2e:
     name: ESLint (e2e specs)
     runs-on: ubuntu-latest
