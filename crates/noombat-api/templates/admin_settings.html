@@ -19,15 +19,18 @@
         <form hx-patch="/api/v1/admin/settings" hx-swap="none"
               class="space-y-6 max-w-lg">
 
-            <fieldset>
-                <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_registration") }}</legend>
-                <select name="registration_mode"
+            <!-- A label rather than a fieldset and legend: a legend names
+                 the group, not the control, so a single select inside one
+                 has no accessible name of its own. -->
+            <div>
+                <label for="registration-mode" class="block text-lg font-semibold mb-2">{{ i18n.t("admin_settings_registration") }}</label>
+                <select id="registration-mode" name="registration_mode"
                         class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
                     <option value="open" {% if registration_mode == "open" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_open") }}</option>
                     <option value="approval" {% if registration_mode == "approval" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_approval") }}</option>
                     <option value="closed" {% if registration_mode == "closed" %}selected{% endif %}>{{ i18n.t("admin_settings_reg_closed") }}</option>
                 </select>
-            </fieldset>
+            </div>
 
             <fieldset>
                 <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_federation") }}</legend>

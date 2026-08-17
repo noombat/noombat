@@ -59,27 +59,30 @@
                 </label>
             </fieldset>
 
-            <!-- CV download restriction -->
-            <fieldset>
-                <legend class="text-lg font-semibold mb-2">{{ i18n.t("privacy_cv") }}</legend>
-                <select name="cv_download"
+            <!-- CV download restriction.
+                 A label rather than a fieldset and legend: a legend names
+                 the group, not the control, so a single select inside one
+                 has no accessible name of its own. -->
+            <div>
+                <label for="cv-download" class="block text-lg font-semibold mb-2">{{ i18n.t("privacy_cv") }}</label>
+                <select id="cv-download" name="cv_download"
                         class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
                     <option value="public" {% if cv_download == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                     <option value="followers" {% if cv_download == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
                     <option value="self" {% if cv_download == "self" %}selected{% endif %}>{{ i18n.t("privacy_cv_self") }}</option>
                 </select>
-            </fieldset>
+            </div>
 
             <!-- Default post visibility -->
-            <fieldset>
-                <legend class="text-lg font-semibold mb-2">{{ i18n.t("privacy_default_vis") }}</legend>
-                <select name="default_visibility"
+            <div>
+                <label for="default-visibility" class="block text-lg font-semibold mb-2">{{ i18n.t("privacy_default_vis") }}</label>
+                <select id="default-visibility" name="default_visibility"
                         class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
                     <option value="public" {% if default_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                     <option value="unlisted" {% if default_visibility == "unlisted" %}selected{% endif %}>{{ i18n.t("vis_unlisted") }}</option>
                     <option value="followers" {% if default_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
                 </select>
-            </fieldset>
+            </div>
 
             <button type="submit"
                     class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
