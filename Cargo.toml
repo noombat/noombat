@@ -162,7 +162,7 @@ argon2 = "0.5"
 hmac = "0.12"
 
 # JWT (short-lived access tokens).
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
 # TOTP 2FA (RFC 6238).
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
