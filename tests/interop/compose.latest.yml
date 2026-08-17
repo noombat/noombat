@@ -1,0 +1,22 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Interop override: run against whatever GoToSocial ships today.
+#
+# `compose.yml` pins GoToSocial by digest, so a pull request fails only
+# for reasons the pull request caused. That is the right default and it
+# has a cost: a federation change upstream is then invisible until
+# somebody bumps the pin, which is exactly the kind of breakage this
+# suite exists to find.
+#
+# This override restores the floating tag, and `ci-interop-latest.yml`
+# runs it on a schedule rather than on pull requests. Drift is then
+# reported against the calendar instead of against whoever pushed next.
+#
+# Usage:
+#   docker compose -f tests/interop/compose.yml \
+#                  -f tests/interop/compose.latest.yml up -d --build
+
+services:
+  gotosocial:
+    image: docker.io/superseriousbusiness/gotosocial:latest

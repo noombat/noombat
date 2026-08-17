@@ -1,0 +1,101 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Federation interop against whatever GoToSocial ships today.
+#
+# The interop job in ci-e2e.yml runs against a digest-pinned GoToSocial,
+# so a pull request fails only for reasons that pull request caused. That
+# is the right default for the merge path, and it has a cost: a change in
+# the peer implementation becomes invisible until somebody bumps the pin,
+# and a peer changing under you is exactly the breakage a federation suite
+# is for.
+#
+# This runs the same harness with the pin lifted, on a schedule. Drift is
+# then reported against the calendar rather than against whoever pushed
+# next, and a failure here says "upstream moved" rather than "your branch
+# is broken", which are different problems with different owners.
+#
+# A failure is expected to be actionable rather than urgent: read the
+# logs, decide whether Noombat or GoToSocial changed, and either fix
+# Noombat or bump the pin in tests/interop/compose.yml.
+
+name: Interop (GoToSocial latest)
+
+on:
+  schedule:
+    # Mondays, after Dependabot's weekly run, so a pin bump and this
+    # report land in the same review session.
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  interop-latest:
+    name: Federation interop (GoToSocial latest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      - name: Map the interop hostnames
+        run: echo "127.0.0.1 noombat.local gotosocial.local" | sudo tee -a /etc/hosts
+
+      - name: Record which GoToSocial this is
+        run: |
+          docker pull docker.io/superseriousbusiness/gotosocial:latest
+          docker image inspect docker.io/superseriousbusiness/gotosocial:latest \
+            --format 'GoToSocial digest: {{index .RepoDigests 0}}'
+
+      - name: Build the Noombat image
+        run: |
+          docker buildx bake -f tests/interop/compose.yml \
+            --load \
+            --set '*.cache-from=type=gha' \
+            --set '*.cache-to=type=gha,mode=max'
+
+      - name: Start the interop stack against latest
+        run: |
+          docker compose -f tests/interop/compose.yml \
+            -f tests/interop/compose.latest.yml up -d --wait
+
+      - name: Wait for Noombat through Caddy
+        run: |
+          for i in $(seq 1 30); do
+            if curl -ksf https://noombat.local:8443/healthz >/dev/null; then
+              echo "Noombat is ready"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "::error::Noombat did not become ready within 60 seconds"
+          docker compose -f tests/interop/compose.yml \
+            -f tests/interop/compose.latest.yml logs --no-color
+          exit 1
+
+      # Both files, so `compose exec` resolves against the same
+      # configuration the stack was started with rather than relying on
+      # the project name happening to match.
+      - name: Seed the local actor
+        run: |
+          tests/interop/seed.sh \
+            tests/interop/compose.yml tests/interop/compose.latest.yml
+
+      - name: Run interop tests
+        env:
+          CURL_OPTS: "--insecure"
+        run: tests/interop/run.sh https://noombat.local:8443 https://gotosocial.local:8443
+
+      - name: Dump container logs on failure
+        if: failure()
+        run: |
+          docker compose -f tests/interop/compose.yml \
+            -f tests/interop/compose.latest.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: |
+          docker compose -f tests/interop/compose.yml \
+            -f tests/interop/compose.latest.yml down -v

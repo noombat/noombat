@@ -53,7 +53,7 @@ jobs:
       options: "--shm-size=2g --ipc=host"
     services:
       postgres:
-        image: postgres:18-alpine
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_USER: noombat
           POSTGRES_PASSWORD: noombat
@@ -64,7 +64,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
       redis:
-        image: redis:8-alpine
+        image: redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 5s
@@ -218,139 +218,85 @@ jobs:
           path: tests/e2e/playwright-report/
           retention-days: 14
 
+  # Runs the harness the repository documents, rather than a second
+  # topology maintained only here.
+  #
+  # This job used to build the server natively, reach services on
+  # localhost over plain HTTP with `NOOMBAT_DOMAIN: localhost`, and add an
+  # /etc/hosts entry for gotosocial. `tests/interop/compose.yml` describes
+  # something materially different: Noombat containerised as
+  # `noombat-backend` on the `interop` network, behind Caddy terminating
+  # TLS, serving `noombat.local`. For a federation test that difference is
+  # the test. HTTP Signatures cover `(request-target)` and `host`, so a
+  # reverse proxy is part of what is under test. Actor ids are absolute
+  # URLs, and `http://localhost:8443/users/alice` is not a shape any peer
+  # resolves in the wild. Delivery and WebFinger require the peer to fetch
+  # back over the same scheme. None of that was exercised, so proxy header
+  # handling and scheme or port leaking into generated URLs could not fail
+  # here however broken they were.
+  #
+  # `run.sh` already documented both invocations. This runs the second,
+  # the one a developer runs locally.
+  #
+  # The Rust build moves into Docker, so `actions/cache` on `target/` no
+  # longer applies. buildx with a GitHub Actions cache replaces it; the
+  # Dockerfile is already staged so the dependency layers survive a source
+  # change.
   interop:
     name: Federation interop (GotoSocial)
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: noombat
-          POSTGRES_PASSWORD: noombat
-          POSTGRES_DB: noombat
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U noombat"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      redis:
-        image: redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      gotosocial:
-        image: superseriousbusiness/gotosocial:latest
-        env:
-          GTS_HOST: gotosocial
-          GTS_ACCOUNT_DOMAIN: gotosocial
-          GTS_PROTOCOL: http
-          GTS_PORT: "8080"
-          GTS_TLS_MODE: ""
-          GTS_DB_TYPE: sqlite
-          GTS_DB_ADDRESS: /gotosocial/storage/sqlite.db
-          GTS_STORAGE_LOCAL_BASE_PATH: /gotosocial/storage
-          GTS_ACCOUNTS_REGISTRATION_OPEN: "false"
-          GTS_LETSENCRYPT_ENABLED: "false"
-        ports:
-          - 8080:8080
-        options: >-
-          --health-cmd "wget -qO- http://localhost:8080/readyz || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 12
-          --health-start-period 15s
-    env:
-      NOOMBAT_DATABASE_URL: postgres://noombat:noombat@localhost/noombat
-      DATABASE_URL: postgres://noombat:noombat@localhost/noombat
-      NOOMBAT_DOMAIN: localhost
-      NOOMBAT_PORT: "8443"
-      NOOMBAT_ADMIN_TOKEN: interop-test-token
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Map GotoSocial hostname
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+
+      # Caddy serves both names on the published port, so both have to
+      # resolve to the runner.
+      - name: Map the interop hostnames
+        run: echo "127.0.0.1 noombat.local gotosocial.local" | sudo tee -a /etc/hosts
+
+      - name: Build the Noombat image
         run: |
-          echo "127.0.0.1 gotosocial" | sudo tee -a /etc/hosts
+          docker buildx bake -f tests/interop/compose.yml \
+            --load \
+            --set '*.cache-from=type=gha' \
+            --set '*.cache-to=type=gha,mode=max'
 
-      - name: Cache Cargo artefacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-interop-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-interop-
+      - name: Start the interop stack
+        run: docker compose -f tests/interop/compose.yml up -d --wait
 
-      - name: Install sqlx-cli and run migrations
+      # `--wait` returns as soon as the containers are up or healthy, which
+      # is not the same as Noombat having run its migrations and bound its
+      # port behind Caddy. Ask the endpoint the tests will use.
+      - name: Wait for Noombat through Caddy
         run: |
-          command -v sqlx >/dev/null || cargo install sqlx-cli@0.9.0 \
-            --locked --no-default-features --features postgres,rustls
-          sqlx migrate run --source migrations
-
-      - name: Build Noombat server
-        run: cargo build --release --bin noombat
-
-      - name: Build frontend assets
-        working-directory: frontend
-        run: |
-          corepack enable
-          pnpm install --frozen-lockfile
-          pnpm build
-
-      - name: Generate the served asset manifest
-        # Without this, /.well-known/noombat/assets.json 404s and the
-        # asset-provenance test skips silently. A skipped test provides
-        # no protection, and the gap it covers, i.e. a page loading a
-        # script the manifest does not name, is the one the manifest
-        # alone cannot detect.
-        run: scripts/asset-manifest.sh > frontend/dist/assets-manifest.json
-
-      - name: Seed test actor
-        run: |
-          PGPASSWORD=noombat psql -h localhost -U noombat -d noombat -c "
-            INSERT INTO actors
-              (actor_type, ap_id, username, domain, public_key_pem, is_local)
-            VALUES
-              ('individual', 'http://localhost:8443/users/alice',
-               'alice', 'localhost',
-               '-----BEGIN PUBLIC KEY-----
-          MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAngu+UeqfsU3AJHhVHk2k
-          MEjaIOzbOWRPu1TsqUpGq0IX/mhQUC6/mkF9+H27ziERaM+77JB7MQ9q1ITLnukj
-          TlmQhgUrsstMV1ZiU+9WqJ+NmlpdoQ4zVFXEf7IJHmZ+mYxei/qhVrnBDvV4e1KR
-          iOTxUYyqWrI7BFGrA3eR22zb9K5/CwOuTw0uYGGhkxfMalBXd4k1AyYGsHo/riQY
-          xOCucw31jlUavoajo3CPXWXgCi+F6mumsIm7snaFNiCG8d8jqXZ8aSC8JcGImf95
-          Gg3J3oGE9ZiAue0WmYC+oMDzLBJtqN0V/c1OsU7PsP8+8fllvlfBluhuTfR/O19J
-          RQIDAQAB
-          -----END PUBLIC KEY-----',
-               TRUE)
-            ON CONFLICT (ap_id) DO NOTHING;"
-
-      - name: Start Noombat server
-        run: |
-          nohup ./target/release/noombat > /tmp/noombat.log 2>&1 &
           for i in $(seq 1 30); do
-            if curl -sf http://localhost:8443/healthz; then
-              echo "Server is ready"
+            if curl -ksf https://noombat.local:8443/healthz >/dev/null; then
+              echo "Noombat is ready"
               exit 0
             fi
             sleep 2
           done
-          echo "::error::Server failed to start within 60 seconds"
-          cat /tmp/noombat.log
+          echo "::error::Noombat did not become ready within 60 seconds"
+          docker compose -f tests/interop/compose.yml logs --no-color
           exit 1
 
-      - name: Run interop tests
-        run: tests/interop/run.sh http://localhost:8443 http://gotosocial:8080
+      # run.sh asserts against an actor that has to exist first. Seeding
+      # lives in the harness so that the ap_id matches the domain the
+      # server actually serves.
+      - name: Seed the local actor
+        run: tests/interop/seed.sh tests/interop/compose.yml
 
-      - name: Dump server log on failure
+      - name: Run interop tests
+        env:
+          # Caddy issues its own certificate for these names.
+          CURL_OPTS: "--insecure"
+        run: tests/interop/run.sh https://noombat.local:8443 https://gotosocial.local:8443
+
+      - name: Dump container logs on failure
         if: failure()
-        run: cat /tmp/noombat.log
+        run: docker compose -f tests/interop/compose.yml logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose -f tests/interop/compose.yml down -v
