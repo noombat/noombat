@@ -87,12 +87,32 @@ updates:
       # rsa, sha2 and hmac plus the two call-site changes as ONE change,
       # and delete both rules.
       #
+      # TRACKED IN ISSUE #2, "Suppressed RUSTSEC-2023-0071 advisory", which
+      # is the watchpoint for everything waiting on rsa: the advisory
+      # suppression itself, the `rand = "0.8"` pin in Cargo.toml, and these
+      # two rules. Put the upstream state there rather than here. A comment
+      # in this file cannot notice that RustCrypto/RSA#626 has been fixed,
+      # so anything written here about the state of rsa is only true on the
+      # day it is written, whereas the issue can be closed when it changes.
+      #
+      # rand is the third crate waiting on that same release, by a
+      # different route. rsa 0.9 requires `rand_core ^0.6`, which only
+      # rand 0.8 satisfies, and the pin already exists in Cargo.toml with
+      # its reasoning. The rule below stops PR #59 (rand 0.8.7 to 0.10.2)
+      # proposing it every Monday against a manifest that cannot take it.
+      #
+      # It does not remove the duplication and cannot: meilisearch-sdk and
+      # reqwest reach rand 0.9/0.10 through their own rand_core, so the
+      # tree carries both lines until rsa moves. Issue #2 records that.
+      #
       # Note these say `semver-major` and mean a 0.x MINOR: for a `0.y.z`
       # version Dependabot's cargo classifier only ever returns "major" or
       # "patch", which is the same rule documented on the askama group.
       - dependency-name: "sha2"
         update-types: ["version-update:semver-major"]
       - dependency-name: "hmac"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "rand"
         update-types: ["version-update:semver-major"]
     groups:
       # askama and askama_web must land in ONE pull request, for the same
