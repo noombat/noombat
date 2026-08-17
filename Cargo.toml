@@ -147,7 +147,7 @@ tempfile = "3"
 subtle = "2"
 
 # Envelope encryption (AES-256-GCM) for secrets at rest.
-aes-gcm = "0.10"
+aes-gcm = "0.11"
 
 # Scrub key material from memory on drop.
 zeroize = { version = "1", features = ["derive"] }
@@ -162,7 +162,7 @@ argon2 = "0.5"
 hmac = "0.12"
 
 # JWT (short-lived access tokens).
-jsonwebtoken = { version = "10", features = ["rust_crypto"] }
+jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
 # TOTP 2FA (RFC 6238).
 totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
@@ -213,7 +213,7 @@ tiny_http = "0.12"
 ureq = "3"
 
 # ZIP archive creation (GDPR data export).
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "8", default-features = false, features = ["deflate"] }
 
 [profile.dev.package.sqlx-macros]
 opt-level = 2

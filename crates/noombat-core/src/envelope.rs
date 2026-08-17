@@ -19,8 +19,8 @@
 
 use std::sync::OnceLock;
 
-use aes_gcm::aead::{Aead, KeyInit, OsRng};
-use aes_gcm::{AeadCore, Aes256Gcm, Nonce};
+use aes_gcm::aead::{Aead, KeyInit};
+use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use zeroize::{Zeroize, ZeroizeOnDrop};
@@ -93,14 +93,23 @@ pub fn seal(key: &EnvelopeKey, plaintext: &str) -> Result<String> {
     let cipher = Aes256Gcm::new_from_slice(&key.0)
         .map_err(|e| NoombatError::Internal(format!("AES-256-GCM key init failed: {e}")))?;
 
-    let nonce = Aes256Gcm::generate_nonce(&mut OsRng);
+    // An AES-GCM nonce must never repeat under one key, so it comes from
+    // the OS. Taken from getrandom directly, for the same reason
+    // `noombat-identity::keys` does: the workspace `rand` is pinned at
+    // 0.8 for rsa, and aes-gcm 0.11 wants a rand_core 0.9 RNG, which one
+    // `rand` cannot provide alongside it.
+    let mut nonce_bytes = [0u8; 12];
+    getrandom::fill(&mut nonce_bytes)
+        .map_err(|e| NoombatError::Internal(format!("nonce generation failed: {e}")))?;
+    let nonce = Nonce::from(nonce_bytes);
+
     let ciphertext = cipher
         .encrypt(&nonce, plaintext.as_bytes())
         .map_err(|e| NoombatError::Internal(format!("envelope seal failed: {e}")))?;
 
     // nonce (12 bytes) || ciphertext+tag
     let mut blob = Vec::with_capacity(12 + ciphertext.len());
-    blob.extend_from_slice(&nonce);
+    blob.extend_from_slice(&nonce_bytes);
     blob.extend_from_slice(&ciphertext);
 
     Ok(B64.encode(&blob))
@@ -138,12 +147,18 @@ pub fn open(key: &EnvelopeKey, sealed_b64: &str) -> Result<String> {
     }
 
     let (nonce_bytes, ciphertext) = blob.split_at(12);
-    let nonce = Nonce::from_slice(nonce_bytes);
+    // `from_slice` is deprecated in aes-gcm 0.11 in favour of TryFrom.
+    // The length is already guaranteed by the split above, so the error
+    // arm is unreachable rather than merely unlikely; it is mapped
+    // anyway instead of unwrapped, because an unreachable panic in a
+    // decrypt path is still a panic in a decrypt path.
+    let nonce = Nonce::try_from(nonce_bytes)
+        .map_err(|e| NoombatError::Internal(format!("nonce length invalid: {e}")))?;
 
     let cipher = Aes256Gcm::new_from_slice(&key.0)
         .map_err(|e| NoombatError::Internal(format!("AES-256-GCM key init failed: {e}")))?;
 
-    match cipher.decrypt(nonce, ciphertext) {
+    match cipher.decrypt(&nonce, ciphertext) {
         Ok(plaintext) => String::from_utf8(plaintext).map_err(|e| {
             NoombatError::Internal(format!("envelope plaintext is not valid UTF-8: {e}"))
         }),
@@ -224,6 +239,52 @@ mod tests {
         assert_ne!(sealed, plaintext);
         let opened = open(&key, &sealed).unwrap();
         assert_eq!(opened, plaintext);
+    }
+
+    /// Two seals of the same plaintext under the same key differ.
+    ///
+    /// This is about the nonce, not the ciphertext. AES-GCM is broken by
+    /// nonce reuse under one key: two messages sharing a nonce leak the
+    /// XOR of their plaintexts and undermine the authentication tag, so
+    /// "the nonce is fresh every time" is the security property, not a
+    /// detail of the encoding.
+    ///
+    /// Nothing asserted it until 2026-08-17, and nothing would have: a
+    /// hard-coded all-zero nonce round-trips perfectly and passes every
+    /// other test in this module. The gap mattered the moment the nonce
+    /// source was rewritten for aes-gcm 0.11, which took it off the
+    /// crate's own RNG and onto getrandom.
+    #[test]
+    fn each_seal_uses_a_fresh_nonce() {
+        let key = test_key();
+
+        let first = seal(&key, "same plaintext").expect("seals");
+        let second = seal(&key, "same plaintext").expect("seals");
+
+        assert_ne!(
+            first, second,
+            "two seals of one plaintext were identical, so the nonce is not \
+             being regenerated; AES-GCM nonce reuse leaks plaintext"
+        );
+
+        // The nonce is the first 12 bytes, so compare those directly
+        // rather than inferring from the whole blob differing.
+        use base64::Engine as _;
+        let decode = |b: &str| {
+            base64::engine::general_purpose::STANDARD
+                .decode(b)
+                .expect("sealed output is base64")
+        };
+        assert_ne!(
+            decode(&first)[..12],
+            decode(&second)[..12],
+            "the nonce prefix repeated across two seals"
+        );
+
+        // Both must still open, or "different" would be satisfied by
+        // simply corrupting the output.
+        assert_eq!(open(&key, &first).expect("opens"), "same plaintext");
+        assert_eq!(open(&key, &second).expect("opens"), "same plaintext");
     }
 
     #[test]
