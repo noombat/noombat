@@ -53,6 +53,15 @@ services:
     image: docker.io/library/redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
     volumes:
       - redis-data:/data
+    # Present so that `docker compose up --wait` actually waits. A service
+    # with no healthcheck is "ready" the moment it is running, which is
+    # not the same thing, and CI now gates on this instead of on the
+    # equivalent `--health-cmd` it used to repeat in ci.yml.
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   meilisearch:
     image: docker.io/getmeili/meilisearch:v1.53@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
@@ -80,6 +89,20 @@ services:
       # the claim was checked against rather than the one pinned above;
       # re-check it if this setting ever appears not to take effect.
       MEILI_NO_ANALYTICS: "true"
+    # See the note on redis. `/health` is unauthenticated, which is why it
+    # works here without the master key.
+    #
+    # 127.0.0.1 rather than localhost, deliberately. Meilisearch binds
+    # 0.0.0.0:7700 on IPv4 only, while `localhost` inside this image
+    # resolves to ::1 first, so the localhost form fails with "connection
+    # refused" and the container never becomes healthy. Verified by
+    # running both forms inside the container.
+    healthcheck:
+      test:
+        ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:7700/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     volumes:
       - meili-data:/meili_data
 

@@ -243,49 +243,30 @@ jobs:
           restore-keys: cargo-msrv-1.94.0-
       - run: cargo check --workspace
 
+  # The services come from the compose files rather than a `services:`
+  # block, and that is deliberate.
+  #
+  # A `services:` block is the one place an image reference can sit where
+  # no updater will ever propose it: Dependabot's docker ecosystem reads
+  # Dockerfiles, docker-compose reads compose files, and github-actions
+  # reads `uses:`. This job used to repeat postgres, redis and meilisearch
+  # from compose.yml, and PR #48 duly bumped Meilisearch there and left
+  # the copy here behind, which would have had CI asserting against one
+  # Meilisearch while every deployment ran another. The two copies had
+  # also already drifted in a quieter way: compose pinned all three by
+  # digest, while this block ran floating `postgres:18-alpine` and
+  # `redis:8-alpine` tags.
+  #
+  # Naming them in one place removes that, and compose.dev.yml already
+  # publishes exactly the three host ports this job needs. Readiness is
+  # gated by `--wait` against the healthchecks in compose.yml, which is
+  # why redis and meilisearch grew one; postgres always had it.
+  #
+  # `scripts/check-image-pins.sh` enforces what is left: the job container
+  # in ci-e2e.yml cannot come from compose, so it is checked instead.
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:18-alpine
-        env:
-          POSTGRES_USER: noombat
-          POSTGRES_PASSWORD: noombat
-          POSTGRES_DB: noombat
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U noombat"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-      # The posts index is keyed on a document id Meilisearch validates,
-      # and the only way to know it accepts ours is to ask a real one.
-      #
-      # Keep this digest equal to the one in compose.yml. No Dependabot
-      # ecosystem reaches a workflow `services:` block: the docker-compose
-      # ecosystem reads compose files and the github-actions ecosystem
-      # reads `uses:`, so nothing proposes this line. PR #48 bumped
-      # compose.yml from v1.52 to v1.53 and left this behind, which would
-      # have had CI asserting against one Meilisearch while deployments
-      # ran another.
-      meilisearch:
-        image: getmeili/meilisearch:v1.53@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
-        env:
-          MEILI_MASTER_KEY: ci-test-key
-          MEILI_NO_ANALYTICS: "true"
-        ports:
-          - 7700:7700
-      redis:
-        image: redis:8-alpine
-        ports:
-          - 6379:6379
-        options: >-
-          --health-cmd "redis-cli ping"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     env:
       NOOMBAT_DATABASE_URL: postgres://noombat:noombat@localhost/noombat
       DATABASE_URL: postgres://noombat:noombat@localhost/noombat
@@ -296,8 +277,15 @@ jobs:
       # is what makes them run rather than quietly pass.
       MEILI_URL: http://localhost:7700
       MEILI_KEY: ci-test-key
+      # Consumed by compose.yml's `${MEILI_MASTER_KEY:-noombat-dev-key}`,
+      # so the key the services start with is the one MEILI_KEY presents.
+      MEILI_MASTER_KEY: ci-test-key
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Start services (compose.yml, the same images deployments use)
+        run: |
+          docker compose -f compose.yml -f compose.dev.yml \
+            up -d --wait db redis meilisearch
       - name: Cache Cargo artefacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:

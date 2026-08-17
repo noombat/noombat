@@ -61,6 +61,11 @@ else
     run ./scripts/check-unused-deps.sh
 fi
 
+# No Dependabot ecosystem reads a workflow `services:` or `container:`
+# image, so nothing else would notice one drifting from compose.
+step "Checking container image pins"
+run ./scripts/check-image-pins.sh
+
 # ..... Frontend .....
 
 if [ "$QUICK" = false ]; then
