@@ -165,7 +165,7 @@ hmac = "0.12"
 jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 
 # TOTP 2FA (RFC 6238).
-totp-rs = { version = "5", features = ["gen_secret", "otpauth"] }
+totp-rs = { version = "6", features = ["gen_secret", "otpauth"] }
 
 # QR code generation (TOTP enrolment).
 qrcode = { version = "0.14", default-features = false, features = ["svg"] }
