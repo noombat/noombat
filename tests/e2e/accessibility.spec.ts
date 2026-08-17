@@ -10,7 +10,8 @@
 //
 // Prerequisites:
 //   - A running Noombat instance at BASE_URL (default: localhost:8443).
-//   - A seeded test actor "testuser" (see smoke.spec.ts header).
+//   - A seeded test actor "testuser" and its seeded article (see the
+//     smoke.spec.ts header).
 //   - An admin-level bearer token in ADMIN_TOKEN (for authenticated
 //     pages), or a valid session cookie set via the login flow.
 //
@@ -37,6 +38,14 @@ import { test, expect, expectNoViolations } from "./axe-fixture";
 // ..... Configuration .....
 
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+
+// The seeded article, addressed through the human-facing route alias.
+// Public and so reachable unauthenticated; see smoke.spec.ts for what
+// the seed contains and why it must be an article rather than a note.
+const ARTICLE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000001";
+
+// The seeded note, which renders post.html rather than article.html.
+const NOTE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000002";
 
 // Skipping when the token is absent is a convenience for local runs, and a
 // trap in CI: it is silent, and a skipped accessibility suite looks exactly
@@ -98,6 +107,22 @@ test.describe("Accessibility: unauthenticated pages", () => {
 
   test("profile page", async ({ page, axeScan }) => {
     await page.goto("/users/testuser");
+    const results = await axeScan();
+    expectNoViolations(results);
+  });
+
+  test("article permalink", async ({ page, axeScan }) => {
+    const res = await page.goto(ARTICLE_PATH);
+    // axe reports no violations on a 404, so an unseeded fixture would
+    // read as a pass.
+    expect(res?.status(), "the seeded article was not served").toBe(200);
+    const results = await axeScan();
+    expectNoViolations(results);
+  });
+
+  test("note permalink", async ({ page, axeScan }) => {
+    const res = await page.goto(NOTE_PATH);
+    expect(res?.status(), "the seeded note was not served").toBe(200);
     const results = await axeScan();
     expectNoViolations(results);
   });

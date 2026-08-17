@@ -29,9 +29,12 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
+      - "scripts/check-unused-deps.sh"
       - "templates/**"
   pull_request:
     branches: [main]
@@ -44,9 +47,12 @@ on:
       - "rust-toolchain.toml"
       - "deny.toml"
       - "rustfmt.toml"
+      - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
+      - "scripts/check-unused-deps.sh"
       - "templates/**"
   workflow_dispatch:
     inputs:
@@ -116,6 +122,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: "Reject inline script, inline style, and javascript: URLs"
         run: scripts/check-inline-scripts.sh
+      # Askama passes HTML through untouched, so an unterminated <!--
+      # builds clean and swallows whatever follows it in the rendered
+      # page, including markup inherited from the layout.
+      - name: "Reject unbalanced HTML comment delimiters"
+        run: scripts/check-template-comments.sh
+
+  dependency-hygiene:
+    name: Dependency hygiene
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A workflow `services:` or `container:` image is the one image
+      # reference no updater reaches, so this is the only thing that
+      # notices when it drifts from the compose file naming the same
+      # image. Deterministic, and blocking for that reason.
+      - name: "Assert workflow images are pinned and agree with compose"
+        run: scripts/check-image-pins.sh
+      # Advisory: the scan reports candidates, not conclusions, because a
+      # dependency can be load-bearing without being named anywhere, by
+      # enabling a feature or registering a runtime provider. Failing on a
+      # heuristic would eventually block an urgent bump. Drop
+      # `continue-on-error` to make it a gate.
+      - name: "Report dependencies nothing imports"
+        continue-on-error: true
+        run: scripts/check-unused-deps.sh
 
   migration-shape:
     name: Migration shape

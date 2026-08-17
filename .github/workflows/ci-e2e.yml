@@ -139,7 +139,14 @@ jobs:
         # alone cannot detect.
         run: scripts/asset-manifest.sh > frontend/dist/assets-manifest.json
 
-      - name: Seed test actor
+      - name: Seed test actor and article
+        # post_type 'article' is load-bearing. The post route renders
+        # article.html only for that value; a Note permalink takes a
+        # different branch and would leave the article template rendered
+        # by nothing, which is the state that let a broken one ship. The
+        # id is fixed so the specs can address the permalink without
+        # discovering it first; scripts/e2e-stack.sh and
+        # tests/e2e/smoke.spec.ts hard-code the same value.
         run: |
           PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c "
             INSERT INTO actors
@@ -151,7 +158,73 @@ jobs:
           MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
           -----END PUBLIC KEY-----',
                TRUE)
-            ON CONFLICT (ap_id) DO NOTHING;"
+            ON CONFLICT (ap_id) DO NOTHING;
+
+            INSERT INTO posts
+              (id, actor_id, ap_id, post_type, title, content_md, content_html,
+               visibility, ap_object)
+            SELECT
+              '00000000-0000-4000-8000-000000000001',
+              a.id,
+              'http://localhost:8443/users/testuser/posts/00000000-0000-4000-8000-000000000001',
+              'article',
+              'Seeded Test Article',
+              E'## Introduction\n\nThis article is seeded so the permalink has something to render.\n\n## Second section\n\nA second heading, so the table of contents holds more than one entry.',
+              '<h2 id=\"introduction\">Introduction</h2><p>This article is seeded so the permalink has something to render.</p><h2 id=\"second-section\">Second section</h2><p>A second heading, so the table of contents holds more than one entry.</p>',
+              'public',
+              jsonb_build_object(
+                '@context', 'https://www.w3.org/ns/activitystreams',
+                'type', 'Create',
+                'actor', 'http://localhost:8443/users/testuser',
+                'object', jsonb_build_object(
+                  'id', 'http://localhost:8443/users/testuser/posts/00000000-0000-4000-8000-000000000001',
+                  'type', 'Article',
+                  'name', 'Seeded Test Article',
+                  'attributedTo', 'http://localhost:8443/users/testuser',
+                  'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
+            FROM actors a
+            WHERE a.username = 'testuser' AND a.is_local
+            ON CONFLICT DO NOTHING;
+
+            INSERT INTO posts
+              (id, actor_id, ap_id, post_type, content_md, content_html,
+               visibility, ap_object)
+            SELECT
+              '00000000-0000-4000-8000-000000000002',
+              a.id,
+              'http://localhost:8443/users/testuser/posts/00000000-0000-4000-8000-000000000002',
+              'note',
+              E'A seeded note, so post.html is rendered by something.',
+              '<p>A seeded note, so post.html is rendered by something.</p>',
+              'public',
+              jsonb_build_object(
+                '@context', 'https://www.w3.org/ns/activitystreams',
+                'type', 'Create',
+                'actor', 'http://localhost:8443/users/testuser',
+                'object', jsonb_build_object(
+                  'id', 'http://localhost:8443/users/testuser/posts/00000000-0000-4000-8000-000000000002',
+                  'type', 'Note',
+                  'attributedTo', 'http://localhost:8443/users/testuser',
+                  'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
+            FROM actors a
+            WHERE a.username = 'testuser' AND a.is_local
+            ON CONFLICT DO NOTHING;"
+
+          # Confirmed, not assumed: INSERT ... SELECT inserts nothing and
+          # still exits 0 when the actor lookup matches no row.
+          #
+          # Both posts are checked. `post_type` selects the template, so
+          # the article covers article.html and the note covers post.html;
+          # seeding one leaves the other rendered by nothing.
+          seeded=$(PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -tAc \
+            "SELECT count(*) FROM posts
+             WHERE (id = '00000000-0000-4000-8000-000000000001' AND post_type = 'article')
+                OR (id = '00000000-0000-4000-8000-000000000002' AND post_type = 'note');")
+          if [ "$seeded" != "2" ]; then
+            echo "::error::the test posts were not seeded ($seeded of 2); the permalink tests would fail"
+            exit 1
+          fi
+          echo "test actor, article and note seeded"
 
       - name: Start Noombat server
         run: |

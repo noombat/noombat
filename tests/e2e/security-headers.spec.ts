@@ -20,15 +20,32 @@
 //      records a violation, the page still renders, and the defect
 //      survives review.
 //
-// The instance must be running with a seeded test actor; see
+// The instance must be running with a seeded test actor and article; see
 // smoke.spec.ts.
 
 import { test, expect, type Page } from "@playwright/test";
 
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
 
+/**
+ * The seeded permalinks, one per template: the article renders
+ * article.html, the note renders post.html. Held apart from PAGES only
+ * because the ids are long; see smoke.spec.ts for what the seed contains.
+ */
+const ARTICLE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000001";
+const NOTE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000002";
+
 /** Pages that must carry the full header set. */
-const PAGES = ["/", "/auth/login", "/auth/register", "/chat", "/settings/chat", "/compose"];
+const PAGES = [
+  "/",
+  "/auth/login",
+  "/auth/register",
+  "/chat",
+  "/settings/chat",
+  "/compose",
+  ARTICLE_PATH,
+  NOTE_PATH,
+];
 
 /** Headers required on every response, with their exact values. */
 const EXACT_HEADERS: Record<string, string> = {

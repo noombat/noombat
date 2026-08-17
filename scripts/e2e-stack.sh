@@ -18,8 +18,8 @@
 #
 # WHAT IS DELIBERATELY NOT PERSISTENT. Containers and the database
 # volume are torn down by `down`, every time. Migrations run at server
-# boot and the seed below is a single INSERT, so there is nothing in
-# them worth keeping, and an accumulating stack is what filled the
+# boot and the seed below is two INSERTs, so there is nothing in them
+# worth keeping, and an accumulating stack is what filled the
 # maintainer's disk on 2026-08-11. What persists is this file, on the
 # host mount, so it survives a sandbox rebuild.
 #
@@ -44,6 +44,21 @@ LOG_FILE="$RUN_DIR/server.log"
 
 COMPOSE=(docker compose -f "$REPO/compose.yml" -f "$REPO/compose.dev.yml")
 SERVICES=(db redis meilisearch)
+
+# The seeded posts' primary keys, fixed so the specs can address the
+# permalinks without discovering them first.
+#
+# Both values are hard-coded in .github/workflows/ci-e2e.yml, in
+# tests/e2e/smoke.spec.ts, in tests/e2e/accessibility.spec.ts and in
+# tests/e2e/security-headers.spec.ts. Nothing gates the drift, so change
+# them everywhere together.
+#
+# Two posts, not one, because `post_type` selects the template:
+# posts.rs renders article.html for 'article' and post.html for anything
+# else. Seeding only an article leaves post.html rendered by nothing,
+# which is the state that let a broken article.html ship.
+ARTICLE_ID="00000000-0000-4000-8000-000000000001"
+NOTE_ID="00000000-0000-4000-8000-000000000002"
 
 # Matches compose.dev.yml's published ports and ci-e2e.yml's values.
 export NOOMBAT_DATABASE_URL="postgres://noombat:noombat@localhost:5432/noombat"
@@ -123,6 +138,15 @@ up() {
 }
 
 seed() {
+  # All three statements go in one `-c`, so psql wraps them in a single
+  # transaction: the posts select the actor's generated id, and a
+  # half-applied seed would fail the permalink tests for a reason two
+  # steps removed from the cause.
+  #
+  # One post of each type, because post_type selects the template: the
+  # route renders article.html for 'article' and post.html for anything
+  # else. content_md carries headings because the table of contents is
+  # derived from the Markdown, not from content_html.
   "${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
     psql -U noombat -d noombat -q -c "
       INSERT INTO actors
@@ -134,9 +158,76 @@ seed() {
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
 -----END PUBLIC KEY-----',
          TRUE)
-      ON CONFLICT (ap_id) DO NOTHING;" >/dev/null 2>&1 \
-    && say "test actor seeded" \
-    || say "seeding failed (the suite's authenticated groups will not run)"
+      ON CONFLICT (ap_id) DO NOTHING;
+
+      INSERT INTO posts
+        (id, actor_id, ap_id, post_type, title, content_md, content_html,
+         visibility, ap_object)
+      SELECT
+        '$ARTICLE_ID',
+        a.id,
+        'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$ARTICLE_ID',
+        'article',
+        'Seeded Test Article',
+        E'## Introduction\n\nThis article is seeded so the permalink has something to render.\n\n## Second section\n\nA second heading, so the table of contents holds more than one entry.',
+        '<h2 id=\"introduction\">Introduction</h2><p>This article is seeded so the permalink has something to render.</p><h2 id=\"second-section\">Second section</h2><p>A second heading, so the table of contents holds more than one entry.</p>',
+        'public',
+        jsonb_build_object(
+          '@context', 'https://www.w3.org/ns/activitystreams',
+          'type', 'Create',
+          'actor', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+          'object', jsonb_build_object(
+            'id', 'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$ARTICLE_ID',
+            'type', 'Article',
+            'name', 'Seeded Test Article',
+            'attributedTo', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+            'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
+      FROM actors a
+      WHERE a.username = 'testuser' AND a.is_local
+      ON CONFLICT DO NOTHING;
+
+      INSERT INTO posts
+        (id, actor_id, ap_id, post_type, content_md, content_html,
+         visibility, ap_object)
+      SELECT
+        '$NOTE_ID',
+        a.id,
+        'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$NOTE_ID',
+        'note',
+        E'A seeded note, so post.html is rendered by something.',
+        '<p>A seeded note, so post.html is rendered by something.</p>',
+        'public',
+        jsonb_build_object(
+          '@context', 'https://www.w3.org/ns/activitystreams',
+          'type', 'Create',
+          'actor', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+          'object', jsonb_build_object(
+            'id', 'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$NOTE_ID',
+            'type', 'Note',
+            'attributedTo', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+            'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
+      FROM actors a
+      WHERE a.username = 'testuser' AND a.is_local
+      ON CONFLICT DO NOTHING;" >/dev/null 2>&1 \
+    && say "test actor, article and note seeded" \
+    || say "seeding failed (the authenticated groups and the permalink tests will fail)"
+
+  # Confirmed, not assumed. `INSERT ... SELECT` inserts nothing and still
+  # exits 0 when the actor lookup matches no row, so the message above
+  # would report a seed that did not happen.
+  local found
+  found="$("${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
+    psql -U noombat -d noombat -tAc \
+    "SELECT count(*) FROM posts
+      WHERE (id = '$ARTICLE_ID' AND post_type = 'article')
+         OR (id = '$NOTE_ID' AND post_type = 'note');" \
+    2>/dev/null | tr -d '[:space:]')"
+  if [ "$found" = "2" ]; then
+    say "article permalink: /@testuser/posts/$ARTICLE_ID"
+    say "note permalink:    /@testuser/posts/$NOTE_ID"
+  else
+    say "POSTS NOT SEEDED (found $found of 2): the permalink tests will fail"
+  fi
 }
 
 down() {
@@ -172,7 +263,7 @@ down() {
   fi
 
   # -v drops the database volume too. Nothing in it survives a run that
-  # is worth keeping: migrations run at boot and the seed is one INSERT.
+  # is worth keeping: migrations run at boot and `seed` rebuilds its rows.
   "${COMPOSE[@]}" down -v --remove-orphans >/dev/null 2>&1 \
     && say "containers and volumes removed"
 

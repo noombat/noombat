@@ -66,6 +66,13 @@ fi
 step "Checking container image pins"
 run ./scripts/check-image-pins.sh
 
+# ..... Templates .....
+
+# Askama validates only its own syntax, so an unterminated `<!--`
+# compiles clean and swallows the rest of the rendered page.
+step "Checking template comment balance"
+run ./scripts/check-template-comments.sh
+
 # ..... Frontend .....
 
 if [ "$QUICK" = false ]; then

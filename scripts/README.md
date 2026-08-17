@@ -4,17 +4,18 @@ Development and maintenance scripts for the Noombat workspace.
 
 ## Quick Reference
 
-| Script                 | Purpose                             | When to use                                                |
-|------------------------|-------------------------------------|------------------------------------------------------------|
-| `dev-setup.sh`         | First-time onboarding               | Once, after cloning the repository                         |
-| `build.sh`             | Full build pipeline                 | After modifying Rust or frontend source                    |
-| `clean.sh`             | Remove all build artifacts          | Before a clean rebuild or to reclaim disk space            |
-| `test.sh`              | Run all verification checks         | Before committing or pushing                               |
-| `smoke-test.sh`        | Black-box HTTP tests                | After starting the server, to verify it responds correctly |
-| `e2e-stack.sh`         | Raise/tear down the e2e stack       | Before and after a Playwright run (`up`, `down`, `status`) |
-| `check-unused-deps.sh` | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
-| `check-image-pins.sh`  | Compare workflow images to compose  | After touching a workflow service or a compose image       |
-| `chatmail-setup.sh`    | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
+| Script                       | Purpose                             | When to use                                                |
+|------------------------------|-------------------------------------|------------------------------------------------------------|
+| `dev-setup.sh`               | First-time onboarding               | Once, after cloning the repository                         |
+| `build.sh`                   | Full build pipeline                 | After modifying Rust or frontend source                    |
+| `clean.sh`                   | Remove all build artifacts          | Before a clean rebuild or to reclaim disk space            |
+| `test.sh`                    | Run all verification checks         | Before committing or pushing                               |
+| `smoke-test.sh`              | Black-box HTTP tests                | After starting the server, to verify it responds correctly |
+| `e2e-stack.sh`               | Raise/tear down the e2e stack       | Before and after a Playwright run (`up`, `down`, `status`) |
+| `check-unused-deps.sh`       | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
+| `check-image-pins.sh`        | Compare workflow images to compose  | After touching a workflow service or a compose image       |
+| `check-template-comments.sh` | Find unbalanced HTML comments       | After editing an Askama template                           |
+| `chatmail-setup.sh`          | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
 
 ## `dev-setup.sh`
 
@@ -140,12 +141,40 @@ GoToSocial tracks `latest` in both the workflow and `tests/interop/compose.yml`,
 
 It compares what the files say, not what a registry resolves them to; a digest that has been withdrawn upstream passes here and fails at `docker pull`.
 
-**This runs from `test.sh` only, and no workflow runs `test.sh`, so it is a local gate.**
-It will not fail a pull request that reintroduces the drift it exists to catch; someone has to run it, or it needs its own step in a workflow.
-The same is true of `check-unused-deps.sh`, `check-migrations.sh` and the other `check-*.sh` scripts.
+**This runs in CI, in the `dependency-hygiene` job of `ci.yml`, and from `test.sh`.**
+
+No workflow runs `test.sh`, so being listed there gates nothing on its own; a check needs a step in a workflow to fail a pull request.
+Every `check-*.sh` now has one: `check-inline-scripts.sh` and `check-template-comments.sh` in `csp-templates`, `check-migrations.sh` in `migration-shape`, `check-typst-injection.sh` in `typst-injection`, `check-reproducible.sh` in `ci-frontend.yml` and `release.yml`, and this one with `check-unused-deps.sh` in `dependency-hygiene`.
+`check-unused-deps.sh` is the one that does not block: it carries `continue-on-error: true`, because it reports candidates rather than conclusions.
 
 When pinning a digest by hand, take the **manifest list** digest and not a platform one.
 `docker manifest inspect --verbose` returns the per-platform descriptor, and pinning that ties the image to a single architecture; `docker buildx imagetools inspect <ref> --format '{{println .Manifest.Digest}}'` returns the list digest, which is also what Dependabot writes.
+
+## `check-template-comments.sh`
+
+Asserts that every `<!--` in the Askama templates has its own `-->`.
+
+```sh
+./scripts/check-template-comments.sh                        # crates/noombat-api/templates
+./scripts/check-template-comments.sh path/to/other/templates
+```
+
+Exit `0` means balanced, `1` means a violation, and `2` means the directory was missing or held no `.html` file, so the run proves nothing.
+
+Askama compiles templates and validates only its own `{% %}` and `{# #}` syntax; HTML is passed through untouched.
+A comment left open therefore builds green, renders without a warning, and is visible only in a browser.
+Its blast radius is not the file it is in: the comment runs to the next `-->` in the *rendered* page, which is normally in the layout the template extends.
+Commit `01a4e5b` deleted a stylesheet `<link>` from `article.html` and left the opening `<!--` of its comment behind, which swallowed some 1200 characters of `base.html`, i.e. the `main.css` link, the htmx script, `</head>`, the `<body>` tag and the accessibility skip link.
+Every article page rendered unstyled and without htmx, and nothing in the build, the test suite or `check-inline-scripts.sh` failed.
+
+Three faults are reported, the first two at the line where the comment at fault was *opened*.
+Delimiters are matched as occurrences rather than per line, so a line holding several and a comment spanning many are both handled.
+
+1. A `<!--` that reaches end of file with no `-->`.
+2. A `<!--` inside an open comment. HTML has no nested comments, so this is the fault above, and the reason an end-of-file check is not enough on its own: in `article.html` the runaway comment was terminated by the `-->` of the *next* comment down the file, so the file ended outside a comment and read as balanced. What gave it away was the second `<!--` being swallowed as comment text.
+3. A `-->` that closes nothing, reported where it appears.
+
+Unlike `check-image-pins.sh`, this one is not a local-only gate: it runs from `test.sh` and as a step of the `Template CSP compatibility` job in `ci.yml`, over the same directory as `check-inline-scripts.sh`.
 
 ## `chatmail-setup.sh`
 

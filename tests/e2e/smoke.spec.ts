@@ -3,18 +3,28 @@
 
 // Cross-browser smoke tests for the Noombat server.
 //
-// These tests run against a live Noombat instance (default: localhost:8443).
-// The instance must be running with a seeded test actor before execution.
+// These run against a live Noombat instance (default: localhost:8443),
+// seeded by `scripts/e2e-stack.sh up` or by the matching statements in
+// .github/workflows/ci-e2e.yml: an actor `testuser` and two posts it owns,
+// each with a fixed id.
 //
-// Seeding (run once before the test suite):
-//   INSERT INTO actors (actor_type, ap_id, username, domain,
-//     public_key_pem, is_local)
-//   VALUES ('individual', 'http://localhost:8443/users/testuser',
-//     'testuser', 'localhost',
-//     '-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
-//     TRUE);
+// post_type selects the template. The post route renders article.html for
+// 'article' and post.html for anything else, so one post of each type is
+// what keeps both templates covered.
 
 import { test, expect } from "@playwright/test";
+
+// ..... Seeded fixtures .....
+
+const ARTICLE_ID = "00000000-0000-4000-8000-000000000001";
+const ARTICLE_TITLE = "Seeded Test Article";
+const ARTICLE_PATH = `/@testuser/posts/${ARTICLE_ID}`;
+
+/** Both registered routes: `/@{username}` is an alias of `/users/{username}`. */
+const ARTICLE_PATHS = [`/users/testuser/posts/${ARTICLE_ID}`, ARTICLE_PATH];
+
+const NOTE_ID = "00000000-0000-4000-8000-000000000002";
+const NOTE_PATH = `/@testuser/posts/${NOTE_ID}`;
 
 // ..... Health .....
 
@@ -155,6 +165,94 @@ test.describe("Feed page", () => {
     await expect(feedItems).toHaveAttribute("hx-get", /\/feed/);
     await expect(feedItems).toHaveAttribute("hx-trigger", "load");
     await expect(feedItems).toHaveAttribute("hx-swap", "innerHTML");
+  });
+});
+
+// ..... Article permalink .....
+
+test.describe("Article permalink", () => {
+  for (const path of ARTICLE_PATHS) {
+    test(`${path} renders the article template`, async ({ request }) => {
+      const res = await request.get(path);
+      expect(res.status()).toBe(200);
+
+      const body = await res.text();
+      expect(body).toContain(ARTICLE_TITLE);
+
+      // A canonical link and a table of contents come from article.html
+      // and from nowhere else. Their absence means post.html was
+      // rendered instead, which puts article.html back under no
+      // coverage while these tests still pass.
+      expect(body, `${path}: post.html was rendered, not article.html`).toContain(
+        'rel="canonical"',
+      );
+      // The entries are derived from the seeded Markdown, so this covers
+      // heading extraction as well as the template.
+      expect(body, `${path}: no table of contents was rendered`).toContain('href="#introduction"');
+    });
+  }
+
+  test("the article page loads its stylesheet and its script", async ({ page }) => {
+    // Asserted through the parsed DOM, not over the response text: a
+    // runaway comment in the head block leaves all three references in
+    // the bytes while the browser swallows them, so a substring check
+    // passes against the broken page and only a parser tells them apart.
+    await page.goto(ARTICLE_PATH);
+
+    await expect(
+      page.locator('link[rel="stylesheet"][href="/assets/main.css"]'),
+      "the article page loads no stylesheet: <head> is being swallowed",
+    ).toHaveCount(1);
+    await expect(
+      page.locator('script[src="/assets/htmx.js"]'),
+      "the article page loads no htmx: <head> is being swallowed",
+    ).toHaveCount(1);
+    await expect(
+      page.locator("a.skip-link"),
+      "the article page has no skip link: the swallowed span reaches into <body>",
+    ).toHaveCount(1);
+  });
+});
+
+// ..... Note permalink .....
+
+test.describe("Note permalink", () => {
+  // post.html is the other half of the `post_type` branch, and extends
+  // base.html exactly as article.html does, so it carries the same
+  // exposure.
+
+  test("the note permalink renders post.html", async ({ request }) => {
+    const res = await request.get(NOTE_PATH);
+    expect(res.status()).toBe(200);
+
+    const body = await res.text();
+    // `rel="canonical"` is emitted by article.html and by nothing else,
+    // so its ABSENCE is what proves the note took the other branch. If
+    // it appears here, both permalinks render the same template and one
+    // of the two is uncovered again.
+    expect(body, `${NOTE_PATH}: article.html was rendered, not post.html`).not.toContain(
+      'rel="canonical"',
+    );
+  });
+
+  test("the note page loads its stylesheet and its script", async ({ page }) => {
+    // Asserted through the parsed DOM for the same reason as the article
+    // case: the bytes survive inside a runaway comment, so only a parser
+    // distinguishes a served <head> from a swallowed one.
+    await page.goto(NOTE_PATH);
+
+    await expect(
+      page.locator('link[rel="stylesheet"][href="/assets/main.css"]'),
+      "the note page loads no stylesheet: <head> is being swallowed",
+    ).toHaveCount(1);
+    await expect(
+      page.locator('script[src="/assets/htmx.js"]'),
+      "the note page loads no htmx: <head> is being swallowed",
+    ).toHaveCount(1);
+    await expect(
+      page.locator("a.skip-link"),
+      "the note page has no skip link: the swallowed span reaches into <body>",
+    ).toHaveCount(1);
   });
 });
 
