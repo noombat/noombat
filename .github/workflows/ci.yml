@@ -262,8 +262,16 @@ jobs:
           --health-retries 10
       # The posts index is keyed on a document id Meilisearch validates,
       # and the only way to know it accepts ours is to ask a real one.
+      #
+      # Keep this digest equal to the one in compose.yml. No Dependabot
+      # ecosystem reaches a workflow `services:` block: the docker-compose
+      # ecosystem reads compose files and the github-actions ecosystem
+      # reads `uses:`, so nothing proposes this line. PR #48 bumped
+      # compose.yml from v1.52 to v1.53 and left this behind, which would
+      # have had CI asserting against one Meilisearch while deployments
+      # ran another.
       meilisearch:
-        image: getmeili/meilisearch:v1.52@sha256:4b97a53f5a64a5f0228da6d1db2fde016695d287aecb11a83bca368148542f7e
+        image: getmeili/meilisearch:v1.53@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
         env:
           MEILI_MASTER_KEY: ci-test-key
           MEILI_NO_ANALYTICS: "true"

@@ -31,7 +31,7 @@ services:
         condition: service_started
 
   db:
-    image: docker.io/library/postgres:18-alpine@sha256:9a8afca54e7861fd90fab5fdf4c42477a6b1cb7d293595148e674e0a3181de15
+    image: docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
     environment:
       POSTGRES_USER: noombat
       POSTGRES_PASSWORD: noombat
@@ -55,7 +55,7 @@ services:
       - redis-data:/data
 
   meilisearch:
-    image: docker.io/getmeili/meilisearch:v1.52@sha256:4b97a53f5a64a5f0228da6d1db2fde016695d287aecb11a83bca368148542f7e
+    image: docker.io/getmeili/meilisearch:v1.53@sha256:8d6643d86d71fad6ad3cba92cde7ccfce9e4d6c384bda67598eb553571c32431
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
       # Development by default, production selected by compose.prod.yml,
@@ -74,9 +74,11 @@ services:
       # integration job already sets it; no compose file did.
       #
       # Not conditional on MEILI_ENV: analytics/mod.rs branches only on
-      # `opt.no_analytics`, and `Opt::analytics` is `!self.no_analytics`
-      # (meilisearch v1.52.0). MEILI_ENV is reported as a field, never
-      # consulted as a gate.
+      # `opt.no_analytics`, and `Opt::analytics` is `!self.no_analytics`.
+      # MEILI_ENV is reported as a field, never consulted as a gate.
+      # Read in the meilisearch source at v1.52.0, which is the version
+      # the claim was checked against rather than the one pinned above;
+      # re-check it if this setting ever appears not to take effect.
       MEILI_NO_ANALYTICS: "true"
     volumes:
       - meili-data:/meili_data
