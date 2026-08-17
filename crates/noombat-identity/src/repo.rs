@@ -1031,7 +1031,7 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
     // table are what keeps those records legible afterwards.
     sqlx::query("DELETE FROM job_listings WHERE actor_id = $1")
         .bind(actor_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     sqlx::query("DELETE FROM delivery_queue WHERE actor_id = $1")
@@ -1444,5 +1444,166 @@ mod tests {
         assert_eq!(actor.ap_id, ap_id);
         assert!(!actor.is_local);
         assert_eq!(stored_key(&pool, ap_id).await, "BOB-KEY");
+    }
+
+    // ..... Erasure runs in one transaction .....
+
+    /// The source of `tombstone_actor`, from its signature to the closing
+    /// brace in the first column.
+    fn tombstone_actor_source() -> &'static str {
+        const SOURCE: &str = include_str!("repo.rs");
+        let start = SOURCE
+            .find("pub async fn tombstone_actor")
+            .expect("tombstone_actor is defined in this file");
+        let rest = &SOURCE[start..];
+        let end = rest
+            .find("\n}\n")
+            .expect("tombstone_actor has a closing brace in the first column");
+        &rest[..end]
+    }
+
+    /// Every statement in `tombstone_actor` runs on the transaction.
+    ///
+    /// This is a source-level assertion because the type system permits
+    /// the defect: `.execute(pool)` and `.execute(&mut *tx)` both compile
+    /// inside a transaction, and one statement out of twenty-seven took
+    /// the pool for months without a warning from Cargo, clippy or any
+    /// test.
+    ///
+    /// What it costs when it recurs is not a slow query. A statement on
+    /// `pool` runs on a different connection and commits the moment it
+    /// returns, so it is outside the transaction's atomicity: if anything
+    /// later in the erasure fails, the rollback restores every table
+    /// except that one, and the account is left partly deleted with no
+    /// error describing which part. It can also deadlock against its own
+    /// transaction, because the pool statement waits for locks that `tx`
+    /// holds while `tx` waits for the statement to return.
+    ///
+    /// A behavioural test for the same property is
+    /// `a_failed_erasure_leaves_the_job_listings_intact`, which needs a
+    /// database. This one runs on a bare `cargo test`, which is where a
+    /// regression would actually be caught.
+    #[test]
+    fn erasure_runs_entirely_inside_its_transaction() {
+        let body = tombstone_actor_source();
+
+        assert!(
+            body.contains("pool.begin()"),
+            "tombstone_actor no longer opens a transaction, so this guard is \
+             asserting nothing; rewrite it for whatever replaced the transaction"
+        );
+
+        let total = body.matches(".execute(").count();
+        assert!(
+            total >= 20,
+            "found only {total} statements in the extracted body of tombstone_actor. \
+             The function has far more than that, so the slice is wrong and a leaked \
+             statement could sit outside it unseen"
+        );
+
+        let on_transaction = body.matches(".execute(&mut *tx)").count();
+        assert_eq!(
+            on_transaction,
+            total,
+            "{} of {total} statements in tombstone_actor do not run on the transaction. \
+             Each one commits immediately on its own connection, so a later failure \
+             rolls back everything except that statement and the erasure is silently \
+             partial.",
+            total - on_transaction
+        );
+
+        for leaked in [
+            ".execute(pool)",
+            ".fetch_one(pool)",
+            ".fetch_optional(pool)",
+            ".fetch_all(pool)",
+        ] {
+            assert!(
+                !body.contains(leaked),
+                "tombstone_actor uses `{leaked}`, which escapes the transaction"
+            );
+        }
+    }
+
+    /// Insert a local actor that owns one job listing, and return its id.
+    async fn local_actor_with_a_job_listing(pool: &PgPool) -> Uuid {
+        let actor_id = Uuid::new_v4();
+        sqlx::query(
+            r#"INSERT INTO actors
+                   (id, actor_type, ap_id, username, domain, public_key_pem, is_local)
+               VALUES ($1, 'individual', $2, 'recruiter', 'noombat.social', $3, TRUE)"#,
+        )
+        .bind(actor_id)
+        .bind(format!("https://noombat.social/users/recruiter-{actor_id}"))
+        .bind(LOCAL_KEY)
+        .execute(pool)
+        .await
+        .expect("actor fixture inserted");
+
+        sqlx::query(
+            r#"INSERT INTO job_listings
+                   (actor_id, ap_id, title, description_md, description_html)
+               VALUES ($1, $2, 'Postdoctoral Fellow', 'A post.', '<p>A post.</p>')"#,
+        )
+        .bind(actor_id)
+        .bind(format!("https://noombat.social/jobs/{actor_id}"))
+        .execute(pool)
+        .await
+        .expect("job listing fixture inserted");
+
+        actor_id
+    }
+
+    /// A failure part-way through erasure rolls the whole thing back,
+    /// job listings included.
+    ///
+    /// The fault is injected by dropping `hashtag_follows`, which the
+    /// last step of `tombstone_actor` deletes from. That guarantees the
+    /// transaction fails *after* the job listings have been deleted,
+    /// which is the only ordering that can distinguish a statement on the
+    /// transaction from one on the pool. Each `#[sqlx::test]` gets its
+    /// own database, so dropping a table affects nothing else.
+    ///
+    /// Against the old code this fails: the delete had already committed
+    /// on a separate connection, so the rollback could not reach it and
+    /// the listings stayed gone while the actor came back.
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_failed_erasure_leaves_the_job_listings_intact(pool: PgPool) {
+        let actor_id = local_actor_with_a_job_listing(&pool).await;
+
+        sqlx::query("DROP TABLE hashtag_follows CASCADE")
+            .execute(&pool)
+            .await
+            .expect("fault injected");
+
+        let result = tombstone_actor(&pool, actor_id).await;
+        assert!(
+            result.is_err(),
+            "erasure must fail once one of its statements cannot run; if this passes, \
+             the fault injection missed and the test proves nothing"
+        );
+
+        let listings: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM job_listings WHERE actor_id = $1")
+                .bind(actor_id)
+                .fetch_one(&pool)
+                .await
+                .expect("job_listings is readable");
+        assert_eq!(
+            listings, 1,
+            "the job listing was destroyed by an erasure that rolled back, so the \
+             delete ran outside the transaction"
+        );
+
+        let actors: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_one(&pool)
+            .await
+            .expect("actors is readable");
+        assert_eq!(
+            actors, 1,
+            "the actor row must come back with everything else the rollback restored"
+        );
     }
 }
