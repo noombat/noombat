@@ -96,21 +96,21 @@ updates:
 
   # 3a. npm: Frontend assets (SolidJS, Vite, TailwindCSS).
   #
-  #     This directory is deliberately a major behind /tests/e2e on ESLint:
-  #     9 here, 10 there. eslint-plugin-solid 0.14.5 declares its peer range
-  #     as `^6.0.0 || ^7.0.0 || ^8.0.0 || ^9.0.0`, and the package is pinned
-  #     `~0.14.5`, so no patch release can widen it. typescript-eslint is
-  #     not the constraint: 8.67.0 already accepts `^10.0.0`.
+  #     This directory sits a major behind /tests/e2e on ESLint, 9 here
+  #     against 10 there, and the reason it did has now gone away.
+  #     eslint-plugin-solid 0.14.5 declared its peer range as
+  #     `^6.0.0 || ^7.0.0 || ^8.0.0 || ^9.0.0`, so npm resolution could not
+  #     produce a tree with ESLint 10 and Dependabot never proposed one:
+  #     across pull requests #1 to #52 every ESLint major was raised
+  #     against /tests/e2e, which carries no Solid plugin, and not one
+  #     against this directory. typescript-eslint was never the
+  #     constraint; 8.67.0 already accepted `^10.0.0`.
   #
-  #     There is no `ignore` rule holding the major back, and none is
-  #     needed. Dependabot respects the peer range and has never proposed
-  #     the major here: across pull requests #1 to #47 every ESLint major
-  #     was raised against /tests/e2e, which carries no Solid plugin, and
-  #     not one against this directory. This is the
-  #     opposite of the @types/node case below, where the major does get
-  #     proposed and has to be refused explicitly. Do not close the skew by
-  #     hand; it closes itself when eslint-plugin-solid takes ESLint 10 or
-  #     is replaced.
+  #     0.15.0 widens that to `^9.0.0 || ^10.0.0`, which is what PR #52
+  #     brought in. Nothing now blocks moving this directory to ESLint 10
+  #     and closing the skew, and there is still no `ignore` rule to
+  #     remove, because the constraint was always the peer range rather
+  #     than a rule here.
   - package-ecosystem: npm
     directory: /frontend
     schedule:
@@ -151,20 +151,34 @@ updates:
         # majors; here the filter is present and correct and the version
         # scheme is what differs.
         #
-        # Nothing is excluded, because no unconstrained `0.x` dependency
-        # remains in this directory. katex was the one that made the rule
-        # above matter, and it was excluded here until 2026-08-16, when the
-        # move to the math-core crate took katex, @types/katex and
-        # markdown-it out of the frontend entirely; the server now renders
-        # both the published Markdown and the editor preview. Pull request
-        # #45, katex 0.16.47 to 0.18.4, is exactly the bump that exclusion
-        # existed to keep out of the group, and it closed unmerged.
-        # eslint-plugin-solid is `0.x` but pinned `~0.14.5`, so it can only
-        # move by patch and the rule cannot bite it.
+        # katex was the dependency that made the rule above matter, and it
+        # was excluded here until 2026-08-16, when the move to the
+        # math-core crate took katex, @types/katex and markdown-it out of
+        # the frontend entirely; the server now renders both the published
+        # Markdown and the editor preview. Pull request #45, katex 0.16.47
+        # to 0.18.4, is exactly the bump that exclusion existed to keep out
+        # of the group, and it closed unmerged.
         #
-        # Add an `exclude-patterns` entry the next time an unconstrained
-        # `0.x` dependency is added here, or the group will carry its
-        # breaking changes in under a minor-and-patch label.
+        # eslint-plugin-solid takes its place, and the note here was wrong
+        # about it until 2026-08-17. It said the `~0.14.5` pin meant the
+        # package "can only move by patch and the rule cannot bite it".
+        # A tilde range constrains what npm RESOLVES, not what Dependabot
+        # PROPOSES: PR #52 rewrote the manifest itself, `~0.14.5` to
+        # `~0.15.0`, and arrived inside this group because npm classifies a
+        # `0.x` minor as a minor. So a pin is not protection here, and the
+        # only thing that keeps a `0.x` minor out of the group is an
+        # exclusion.
+        #
+        # It matters more for this package than it did for katex. Its rules
+        # became enforced on 2026-08-17, having been silently discarded by
+        # the config beforehand, so a minor bump can now change what CI
+        # rejects rather than only what the bundle contains.
+        #
+        # Add an entry below the next time an unconstrained `0.x`
+        # dependency is added here, or the group will carry its breaking
+        # changes in under a minor-and-patch label.
+        exclude-patterns:
+          - "eslint-plugin-solid"
         update-types:
           - minor
           - patch
