@@ -4,20 +4,24 @@ Development and maintenance scripts for the Noombat workspace.
 
 ## Quick Reference
 
-| Script                       | Purpose                             | When to use                                                |
-|------------------------------|-------------------------------------|------------------------------------------------------------|
-| `dev-setup.sh`               | First-time onboarding               | Once, after cloning the repository                         |
-| `build.sh`                   | Full build pipeline                 | After modifying Rust or frontend source                    |
-| `clean.sh`                   | Remove all build artifacts          | Before a clean rebuild or to reclaim disk space            |
-| `test.sh`                    | Run all verification checks         | Before committing or pushing                               |
-| `smoke-test.sh`              | Black-box HTTP tests                | After starting the server, to verify it responds correctly |
-| `e2e-stack.sh`               | Raise/tear down the e2e stack       | Before and after a Playwright run (`up`, `down`, `status`) |
-| `check-unused-deps.sh`       | Find unused dependency declarations | After removing code, or when a Dependabot bump looks odd   |
-| `check-image-pins.sh`        | Compare workflow images to compose  | After touching a workflow service or a compose image       |
-| `check-template-comments.sh` | Find unbalanced HTML comments       | After editing an Askama template                           |
-| `check-action-allowlist.sh`  | Reject actions the policy refuses   | After adding or repinning any `uses:` in a workflow        |
-| `check-workflow-startup.sh`  | Find workflows rejected before running | After a push, when a workflow seems not to have run     |
-| `chatmail-setup.sh`          | Chatmail DNS verification           | Before deploying a Chatmail relay on a new domain          |
+| Script                       | Purpose                                | When to use                                                |
+|------------------------------|----------------------------------------|------------------------------------------------------------|
+| `dev-setup.sh`               | First-time onboarding                  | Once, after cloning the repository                         |
+| `build.sh`                   | Full build pipeline                    | After modifying Rust or frontend source                    |
+| `build-image.sh`             | Build an image with the standard args  | When building a release image by hand                      |
+| `asset-manifest.sh`          | Hash every built frontend asset        | To inspect what a build produced                           |
+| `image-manifest.sh`          | Hash an image's files and packages     | When comparing two builds of one image                     |
+| `clean.sh`                   | Remove all build artifacts             | Before a clean rebuild or to reclaim disk space            |
+| `test.sh`                    | Run all verification checks            | Before committing or pushing                               |
+| `smoke-test.sh`              | Black-box HTTP tests                   | After starting the server, to verify it responds correctly |
+| `e2e-stack.sh`               | Raise/tear down the e2e stack          | Before and after a Playwright run (`up`, `down`, `status`) |
+| `check-unused-deps.sh`       | Find unused dependency declarations    | After removing code, or when a Dependabot bump looks odd   |
+| `check-image-pins.sh`        | Compare workflow images to compose     | After touching a workflow service or a compose image       |
+| `check-template-comments.sh` | Find unbalanced HTML comments          | After editing an Askama template                           |
+| `check-action-allowlist.sh`  | Reject actions the policy refuses      | After adding or repinning any `uses:` in a workflow        |
+| `check-workflow-startup.sh`  | Find workflows rejected before running | After a push, when a workflow seems not to have run        |
+| `chatmail-setup.sh`          | Chatmail DNS verification              | Before deploying a Chatmail relay on a new domain          |
+| `backup.sh`                  | Back up a Compose deployment           | On a schedule, on a deployed instance                      |
 
 ## `dev-setup.sh`
 
