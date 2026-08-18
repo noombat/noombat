@@ -60,7 +60,58 @@ allow = ["AGPL-3.0"]
 crate = "http-signature-normalization-reqwest"
 
 [bans]
-multiple-versions = "warn"
+# `deny` with the accepted duplicates listed, rather than `warn`. At warn
+# level 32 duplicate findings scrolled past on every run and nothing read
+# them, so a new duplicate arrived invisibly. Each entry below skips the
+# older copy of a pair this workspace cannot currently collapse, and the
+# newest copy is deliberately left unskipped, so a third version fails.
+#
+# Version requirements rather than exact versions: a patch bump to any
+# crate listed would otherwise fail the build until its entry was rewritten.
+#
+# `ed25519-dalek@2` and the three crates under it are the ones worth
+# knowing about. This workspace signs with 3.x; the 2.x copy is pulled by
+# `jsonwebtoken`, which still requires it at 11.0.0. `cargo tree -i
+# ed25519-dalek@2.2.0` shows the path.
+multiple-versions = "deny"
+skip = [
+    { crate = "async-channel@1" },
+    { crate = "base64@0.22" },
+    { crate = "bitflags@1" },
+    { crate = "block-buffer@0.10" },
+    { crate = "cpufeatures@0.2" },
+    { crate = "crypto-common@0.1" },
+    { crate = "curve25519-dalek@4" },
+    { crate = "digest@0.10" },
+    { crate = "ed25519@2" },
+    { crate = "ed25519-dalek@2" },
+    { crate = "event-listener@2" },
+    { crate = "fiat-crypto@0.2" },
+    { crate = "getrandom@0.2" },
+    { crate = "getrandom@0.3" },
+    { crate = "hashbrown@0.14" },
+    { crate = "hashbrown@0.16" },
+    { crate = "hkdf@0.12" },
+    { crate = "hmac@0.12" },
+    { crate = "jsonwebtoken@10" },
+    { crate = "nom@7" },
+    { crate = "r-efi@5" },
+    { crate = "rand@0.8" },
+    { crate = "rand@0.9" },
+    { crate = "rand_chacha@0.3" },
+    { crate = "rand_core@0.6" },
+    { crate = "rand_core@0.9" },
+    { crate = "reqwest@0.12" },
+    { crate = "sha1@0.10" },
+    { crate = "sha2@0.10" },
+    { crate = "signature@2" },
+    { crate = "syn@2" },
+    { crate = "thiserror@1" },
+    { crate = "thiserror-impl@1" },
+    { crate = "tower-http@0.6" },
+    { crate = "windows-sys@0.52" },
+    { crate = "winnow@0.7" },
+]
 wildcards = "deny"
 
 [sources]
