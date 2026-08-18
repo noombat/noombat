@@ -31,25 +31,27 @@ pub type ImapSession = async_imap::Session<tokio_rustls::client::TlsStream<tokio
 /// relay certificate: this one adds, that one replaces.
 pub const EXTRA_CA_ENV: &str = "NOOMBAT_EXTRA_CA_FILE";
 
-/// Add every certificate in `path` to `root_store`, returning how many
-/// were accepted.
+/// Certificates named by [`EXTRA_CA_ENV`], or empty when it is unset.
+fn extra_root_certs() -> Vec<CertificateDer<'static>> {
+    std::env::var_os(EXTRA_CA_ENV)
+        .map(|path| read_extra_roots(&path))
+        .unwrap_or_default()
+}
+
+/// Read every certificate in `path`.
 ///
-/// Reports rather than fails. A connector is built per connection, so a
-/// panic here would take a worker down on every attempt; an unusable
-/// path instead surfaces as a handshake failure against a relay whose
-/// issuer is genuinely untrusted, with these logs naming the cause.
-fn add_extra_roots(root_store: &mut rustls::RootCertStore, path: &std::ffi::OsStr) -> usize {
-    let mut added = 0usize;
+/// Reports rather than fails. Both transports are built per connection, so
+/// a panic here would take a worker down on every attempt; an unusable path
+/// instead surfaces as a handshake failure against a relay whose issuer is
+/// genuinely untrusted, with these logs naming the cause.
+fn read_extra_roots(path: &std::ffi::OsStr) -> Vec<CertificateDer<'static>> {
+    let mut certs = Vec::new();
 
     match CertificateDer::pem_file_iter(path) {
         Ok(certificates) => {
             for certificate in certificates {
                 match certificate {
-                    Ok(certificate) => {
-                        if root_store.add(certificate).is_ok() {
-                            added += 1;
-                        }
-                    }
+                    Ok(certificate) => certs.push(certificate),
                     Err(error) => {
                         error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE holds a certificate that could not be parsed");
                     }
@@ -61,16 +63,20 @@ fn add_extra_roots(root_store: &mut rustls::RootCertStore, path: &std::ffi::OsSt
         }
     }
 
-    if added == 0 {
+    if certs.is_empty() {
         error!(
             ?path,
             "NOOMBAT_EXTRA_CA_FILE added no certificate authorities"
         );
     } else {
-        debug!(?path, added, "trusting extra certificate authorities");
+        debug!(
+            ?path,
+            count = certs.len(),
+            "trusting extra certificate authorities"
+        );
     }
 
-    added
+    certs
 }
 
 /// Build a `tokio-rustls` TLS connector using the Mozilla root
@@ -107,8 +113,10 @@ pub fn build_tls_connector() -> TlsConnector {
     // Additive, unlike `SSL_CERT_FILE`, which replaces the store outright
     // and is read by the federation client too, so using that to trust a
     // private relay CA also drops every public one.
-    if let Some(path) = std::env::var_os(EXTRA_CA_ENV) {
-        add_extra_roots(&mut root_store, &path);
+    for certificate in extra_root_certs() {
+        if let Err(error) = root_store.add(certificate) {
+            warn!(%error, "an extra certificate authority was refused");
+        }
     }
 
     // The provider is named rather than left to `ClientConfig::builder()`,
@@ -251,6 +259,7 @@ pub async fn send_message(
     autocrypt_header_b64: Option<&str>,
 ) -> Result<(), String> {
     use lettre::transport::smtp::authentication::Credentials;
+    use lettre::transport::smtp::client::{Certificate, Tls, TlsParameters};
     use lettre::{AsyncSmtpTransport, AsyncTransport, Tokio1Executor};
 
     let ciphertext = B64
@@ -329,9 +338,23 @@ pub async fn send_message(
 
     let creds = Credentials::new(from_addr.to_owned(), password.to_owned());
 
+    // The same trust set the IMAP connector uses. `relay()` builds its own
+    // parameters from lettre's roots otherwise, so a relay behind a private
+    // authority would provision and fetch but fail to send.
+    let mut tls = TlsParameters::builder(config.smtp_host.to_string());
+    for certificate in extra_root_certs() {
+        let certificate = Certificate::from_der(certificate.to_vec())
+            .map_err(|e| format!("extra certificate authority rejected: {e}"))?;
+        tls = tls.add_root_certificate(certificate);
+    }
+    let tls = tls
+        .build()
+        .map_err(|e| format!("SMTP TLS configuration failed: {e}"))?;
+
     let mailer = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
         .map_err(|e| format!("SMTP relay config failed: {e}"))?
         .port(config.smtp_port)
+        .tls(Tls::Wrapper(tls))
         .credentials(creds)
         .build();
 
@@ -493,9 +516,14 @@ OiIwENmeuWDbN7XsIs/6lqOs7RM0nFKjmA==
         let path = dir.path().join("extra-ca.pem");
         std::fs::write(&path, TEST_CA_PEM).expect("the fixture should write");
 
-        let added = add_extra_roots(&mut store, path.as_os_str());
+        let certs = read_extra_roots(path.as_os_str());
+        assert_eq!(certs.len(), 1, "the fixture holds exactly one certificate");
+        for certificate in certs {
+            store
+                .add(certificate)
+                .expect("the fixture should be accepted");
+        }
 
-        assert_eq!(added, 1, "the fixture holds exactly one certificate");
         assert_eq!(
             store.roots.len(),
             public_roots + 1,
@@ -507,15 +535,31 @@ OiIwENmeuWDbN7XsIs/6lqOs7RM0nFKjmA==
     // panic.
     #[test]
     fn a_missing_extra_root_file_adds_nothing_and_does_not_panic() {
-        let mut store = rustls::RootCertStore::empty();
+        let store = rustls::RootCertStore::empty();
 
-        let added = add_extra_roots(
-            &mut store,
-            std::ffi::OsStr::new("/nonexistent/extra-ca.pem"),
-        );
+        let certs = read_extra_roots(std::ffi::OsStr::new("/nonexistent/extra-ca.pem"));
 
-        assert_eq!(added, 0);
+        assert!(certs.is_empty());
         assert!(store.roots.is_empty());
+    }
+
+    // SMTP reaches the relay through lettre rather than the connector above,
+    // so the same certificates have to survive that conversion. A mismatch
+    // would otherwise appear only when a message was sent.
+    #[test]
+    fn the_same_extra_roots_are_accepted_by_the_smtp_transport() {
+        use lettre::transport::smtp::client::Certificate;
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("extra-ca.pem");
+        std::fs::write(&path, TEST_CA_PEM).expect("the fixture should write");
+
+        let certs = read_extra_roots(path.as_os_str());
+        assert_eq!(certs.len(), 1);
+
+        for certificate in certs {
+            Certificate::from_der(certificate.to_vec()).expect("lettre should accept the same DER");
+        }
     }
 
     // ..... validate_autocrypt_header .....

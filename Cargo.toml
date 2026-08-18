@@ -187,7 +187,10 @@ webpki-roots = "1"
 rustls-native-certs = "0.8"
 
 # SMTP client (Chatmail relay, outbound encrypted messages).
-lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder"] }
+# `rustls-native-certs` so SMTP resolves the same platform roots the chat
+# TLS connector does; without it lettre falls back to webpki-roots and
+# submission ignores the trust configuration the rest of chat honours.
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "rustls-native-certs"] }
 
 # MIME parsing (Autocrypt header extraction from IMAP messages).
 mailparse = "0.16"
