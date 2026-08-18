@@ -51,6 +51,51 @@ export function sessionUsername(workerIndex: number): string {
 }
 
 /**
+ * The seeded administrator, shared by every worker.
+ *
+ * `instance_role` is settable through no API a test can reach, so the
+ * stack seed registers this account and promotes it. Signed in to here
+ * rather than registered, deliberately: an account this file created
+ * would carry the default role, `require_admin` would redirect every
+ * admin page to `/`, and the scans would pass having measured the feed.
+ */
+export const ADMIN_USERNAME = "e2e_admin";
+
+/**
+ * Sign the seeded administrator in.
+ *
+ * Returns null when there is no such account, which off CI usually means
+ * the stack was started without `seed_admin`. Under CI it throws, for the
+ * same reason `sessionToken` does: a skipped group and a passing one look
+ * identical in the summary.
+ */
+export async function adminSessionToken(request: APIRequestContext): Promise<string | null> {
+  const signedIn = await request.post("/api/v1/auth/login", {
+    data: { username: ADMIN_USERNAME, auth_key: AUTH_KEY },
+  });
+  if (signedIn.status() === 200) {
+    return accessToken(await signedIn.text());
+  }
+
+  if (process.env.CI) {
+    throw new Error(
+      `no session could be obtained for ${ADMIN_USERNAME} (login returned ` +
+        `${signedIn.status()}). scripts/e2e-stack.sh and ci-e2e.yml register it and ` +
+        "promote it to admin; without that the admin group scans the feed instead.",
+    );
+  }
+  return null;
+}
+
+/** The administrator's token, or a skip when the account is absent. */
+export async function requireAdminSession(request: APIRequestContext): Promise<string> {
+  const token = await adminSessionToken(request);
+  // eslint-disable-next-line playwright/no-skipped-test -- conditional, and CI cannot reach it
+  test.skip(token === null, `no seeded administrator (${ADMIN_USERNAME}) on this instance`);
+  return token ?? "";
+}
+
+/**
  * Sign the fixture account in, creating it on first use.
  *
  * Returns null when the instance issues no sessions, which is a

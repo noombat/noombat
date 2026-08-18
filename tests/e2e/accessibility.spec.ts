@@ -13,37 +13,27 @@
 //   - A seeded test actor "testuser" and its seeded article (see the
 //     smoke.spec.ts header).
 //   - NOOMBAT_JWT_SECRET set on that instance, which is what lets it
-//     issue the session the authenticated group signs in with.
-//   - An admin-level bearer token in ADMIN_TOKEN, for the admin group.
+//     issue the sessions both authenticated groups sign in with.
+//   - The seeded `e2e_admin` account, promoted to `instance_role =
+//     'admin'` by `scripts/e2e-stack.sh` and by ci-e2e.yml.
 //
 // The tests are grouped by authentication level:
 //   1. Unauthenticated pages (login, register, profile, feed, search).
 //   2. Authenticated pages (settings, compose, chat).
 //   3. Admin pages.
 //
-// The authenticated group signs a fixture account in and carries its
+// Both authenticated groups sign a fixture account in and carry its
 // session cookie; see session.ts for why the admin bearer token cannot
-// stand in for one. Every page in that group is behind `require_auth`
-// or reads the principal's actor id, and both answer a request holding
-// the bearer token with a redirect to /auth/login, which axe scans
+// stand in for one. Every page in group 2 is behind `require_auth` or
+// reads the principal's actor id, and every page in group 3 is behind
+// `require_admin`, which reads `instance_role`. The bearer token
+// satisfies none of them and each redirects instead, to a page axe scans
 // without violations.
-//
-// Two variables are involved for the admin group and they are not
-// interchangeable. The server reads NOOMBAT_ADMIN_TOKEN to decide which
-// token it accepts; this suite reads ADMIN_TOKEN to decide which one to
-// present. CI must set both, to the same value. Locally,
-// `ADMIN_TOKEN=... pnpm test:a11y` is enough.
-//
-// When ADMIN_TOKEN is absent the admin group skips, which is convenient
-// locally and unacceptable under CI, so CI is a hard error instead. See
-// the guard below.
 
 import { test, expect, expectNoViolations } from "./axe-fixture";
-import { authenticateBrowser, requireSession } from "./session";
+import { authenticateBrowser, requireAdminSession, requireSession } from "./session";
 
 // ..... Configuration .....
-
-const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 
 // The seeded article, addressed through the human-facing route alias.
 // Public and so reachable unauthenticated; see smoke.spec.ts for what
@@ -52,20 +42,6 @@ const ARTICLE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000001";
 
 // The seeded note, which renders post.html rather than article.html.
 const NOTE_PATH = "/@testuser/posts/00000000-0000-4000-8000-000000000002";
-
-// Skipping when the token is absent is a convenience for local runs, and a
-// trap in CI: it is silent, and a skipped accessibility suite looks exactly
-// like a passing one. That is not hypothetical. CI set NOOMBAT_ADMIN_TOKEN
-// (which the server reads) while this file read ADMIN_TOKEN, so the admin
-// group never ran there at all. Refuse to start rather than skip. The
-// authenticated group has the same guard, in session.ts.
-if (process.env.CI && ADMIN_TOKEN === "") {
-  throw new Error(
-    "ADMIN_TOKEN is empty under CI. The admin accessibility group would skip " +
-      "silently. Set ADMIN_TOKEN to the same value as NOOMBAT_ADMIN_TOKEN in " +
-      "the workflow.",
-  );
-}
 
 // ..... Helper: wait for HTMX partials to settle .....
 
@@ -282,48 +258,48 @@ test.describe("Accessibility: authenticated pages", () => {
 
 // 3. ADMIN PAGES
 
+// The admin bearer token is not a credential these pages accept. It
+// derives its username from `/users/{name}` or `/@{name}` and sets no
+// `instance_role`, so on an `/admin/*` path `require_admin` answers
+// `Redirect::temporary("/")`. Playwright follows it, the feed has no axe
+// violations, and all five scans passed having measured the feed.
+//
+// Hence a real session, and an assertion on the path actually served:
+// without the second, the next redirect substitutes another page just as
+// quietly as this one did.
 test.describe("Accessibility: admin pages", () => {
-  // As above: local convenience, unreachable under CI.
-  // eslint-disable-next-line playwright/no-skipped-test -- conditional, and CI cannot reach it
-  test.skip(
-    () => ADMIN_TOKEN === "",
-    "ADMIN_TOKEN not set; skipping admin-page accessibility tests",
-  );
-
-  test.use({
-    extraHTTPHeaders: {
-      Authorization: `Bearer ${ADMIN_TOKEN}`,
-    },
+  test.beforeEach(async ({ context, request }) => {
+    await authenticateBrowser(context, await requireAdminSession(request));
   });
 
+  async function scanAdminPage(
+    page: import("@playwright/test").Page,
+    axeScan: () => Promise<import("axe-core").AxeResults>,
+    path: string,
+  ): Promise<void> {
+    await page.goto(path);
+    expect(new URL(page.url()).pathname, `expected to be served ${path}`).toBe(path);
+    expectNoViolations(await axeScan());
+  }
+
   test("moderation queue", async ({ page, axeScan }) => {
-    await page.goto("/admin/moderation");
-    const results = await axeScan();
-    expectNoViolations(results);
+    await scanAdminPage(page, axeScan, "/admin/moderation");
   });
 
   test("user management", async ({ page, axeScan }) => {
-    await page.goto("/admin/users");
-    const results = await axeScan();
-    expectNoViolations(results);
+    await scanAdminPage(page, axeScan, "/admin/users");
   });
 
   test("domain management", async ({ page, axeScan }) => {
-    await page.goto("/admin/domains");
-    const results = await axeScan();
-    expectNoViolations(results);
+    await scanAdminPage(page, axeScan, "/admin/domains");
   });
 
   test("instance settings", async ({ page, axeScan }) => {
-    await page.goto("/admin/settings");
-    const results = await axeScan();
-    expectNoViolations(results);
+    await scanAdminPage(page, axeScan, "/admin/settings");
   });
 
   test("federation health", async ({ page, axeScan }) => {
-    await page.goto("/admin/federation");
-    const results = await axeScan();
-    expectNoViolations(results);
+    await scanAdminPage(page, axeScan, "/admin/federation");
   });
 });
 

@@ -60,6 +60,12 @@ SERVICES=(db redis meilisearch)
 ARTICLE_ID="00000000-0000-4000-8000-000000000001"
 NOTE_ID="00000000-0000-4000-8000-000000000002"
 
+# The administrator the admin accessibility group signs in as. Both
+# values are duplicated in tests/e2e/session.ts and in ci-e2e.yml, and
+# all three have to agree.
+E2E_ADMIN_USER="e2e_admin"
+E2E_AUTH_KEY="e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f"
+
 # Matches compose.dev.yml's published ports and ci-e2e.yml's values.
 export NOOMBAT_DATABASE_URL="postgres://noombat:noombat@localhost:5432/noombat"
 export NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-localhost}"
@@ -136,11 +142,11 @@ up() {
   say "server up (pid $(cat "$PID_FILE"), log $LOG_FILE)"
 
   seed
+  seed_admin
   say "host disk after: $(host_free) free"
   say ""
   say "run the suite with:"
-  say "  cd tests/e2e && CI=true ADMIN_TOKEN=$NOOMBAT_ADMIN_TOKEN \\"
-  say "    pnpm exec playwright test --project=firefox"
+  say "  cd tests/e2e && CI=true pnpm exec playwright test --project=firefox"
 }
 
 seed() {
@@ -233,6 +239,38 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
     say "note permalink:    /@testuser/posts/$NOTE_ID"
   else
     say "POSTS NOT SEEDED (found $found of 2): the permalink tests will fail"
+  fi
+}
+
+# The administrator the admin accessibility group needs.
+#
+# Registered through the API rather than by INSERT, so the auth key is
+# hashed the way the login route expects, then promoted by UPDATE because
+# `instance_role` is settable through no API a test can reach. Without the
+# promotion `require_admin` redirects every admin page to `/`, and the
+# scans pass having measured the feed under five other pages' names.
+seed_admin() {
+  curl -sS -o /dev/null -X POST \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"$E2E_ADMIN_USER\",\"auth_key\":\"$E2E_AUTH_KEY\"}" \
+    "http://localhost:$NOOMBAT_PORT/api/v1/auth/register" 2>/dev/null || true
+
+  "${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
+    psql -U noombat -d noombat -q -c \
+    "UPDATE actors SET instance_role = 'admin'
+       WHERE username = '$E2E_ADMIN_USER' AND is_local;" >/dev/null 2>&1
+
+  # Read back, because the UPDATE reports success against zero rows.
+  local role
+  role="$("${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
+    psql -U noombat -d noombat -tAc \
+    "SELECT instance_role FROM actors
+       WHERE username = '$E2E_ADMIN_USER' AND is_local;" \
+    2>/dev/null | tr -d '[:space:]')"
+  if [ "$role" = "admin" ]; then
+    say "admin fixture seeded ($E2E_ADMIN_USER)"
+  else
+    say "ADMIN FIXTURE NOT SEEDED (role '${role:-none}'): the admin group will fail"
   fi
 }
 

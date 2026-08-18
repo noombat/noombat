@@ -95,14 +95,11 @@ jobs:
       # answer 307 to /auth/login. A fixture for a throwaway instance,
       # not a secret.
       NOOMBAT_JWT_SECRET: ci-e2e-jwt-secret-at-least-32-bytes-long
-      # The server reads NOOMBAT_ADMIN_TOKEN; the Playwright suite presents
-      # ADMIN_TOKEN. Both names are needed and the values must match: the
-      # suite skips its admin group when its own variable is empty, so
-      # setting only the server's silently dropped 21 of the 29
-      # accessibility tests. accessibility.spec.ts now refuses to skip
-      # under CI rather than let that recur.
+      # Read by the server only. No Playwright spec presents it any more:
+      # the admin bearer sets no `instance_role`, so `require_admin`
+      # redirected every admin page and the scans measured the feed. Those
+      # groups sign in as the seeded `e2e_admin` account instead.
       NOOMBAT_ADMIN_TOKEN: ci-test-token
-      ADMIN_TOKEN: ci-test-token
       # Effectively disable per-IP rate limiting for the e2e run.
       # The values mirror the test overlay in compose.test.yml.
       NOOMBAT_RATE_LIMIT: "10000"
@@ -258,6 +255,38 @@ jobs:
           echo "::error::Server failed to start within 60 seconds"
           cat /tmp/noombat.log
           exit 1
+
+      # After the server, not with the seed above: the account is
+      # registered through the API so its auth key is hashed the way the
+      # login route expects, and the API needs the server running.
+      #
+      # It is then promoted by UPDATE, because `instance_role` is settable
+      # through no API the suite can reach. Without the promotion
+      # `require_admin` redirects every admin page to `/` and the five
+      # admin scans measure the feed under other pages' names.
+      #
+      # The username and auth key are duplicated in tests/e2e/session.ts
+      # and scripts/e2e-stack.sh; all three have to agree.
+      - name: Seed the administrator the admin accessibility group uses
+        run: |
+          curl -sS -o /dev/null -X POST \
+            -H 'Content-Type: application/json' \
+            -d '{"username":"e2e_admin","auth_key":"e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f"}' \
+            http://localhost:8443/api/v1/auth/register || true
+
+          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c \
+            "UPDATE actors SET instance_role = 'admin'
+               WHERE username = 'e2e_admin' AND is_local;"
+
+          # Read back: the UPDATE reports success against zero rows.
+          role=$(PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -tAc \
+            "SELECT instance_role FROM actors
+               WHERE username = 'e2e_admin' AND is_local;")
+          if [ "$role" != "admin" ]; then
+            echo "::error::e2e_admin was not promoted (role '${role:-none}'); the admin group would scan the feed"
+            exit 1
+          fi
+          echo "administrator seeded and promoted"
 
       - name: Install Playwright test dependencies
         working-directory: tests/e2e
