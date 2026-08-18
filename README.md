@@ -171,6 +171,20 @@ Environment variables take precedence.
 
 The `CHATMAIL_ALLOWLIST_URL` variable is configured on the Chatmail relay container (not the Noombat application server).
 
+### TLS trust
+
+Outbound TLS, for federation and for the Chatmail connector alike, resolves its roots from the platform trust store, so a default deployment needs no configuration.
+
+| Variable                | Effect                                               |
+|-------------------------|------------------------------------------------------|
+| `NOOMBAT_EXTRA_CA_FILE` | **Adds** a PEM file of roots, for the Chatmail relay |
+| `SSL_CERT_DIR`          | **Adds** a directory of certificates to the roots    |
+| `SSL_CERT_FILE`         | **Replaces** the trust store with a single file      |
+
+To trust a relay certificate issued by your own authority, set `NOOMBAT_EXTRA_CA_FILE`. It adds those roots to the platform store, leaving the public CAs in place.
+
+Do not use `SSL_CERT_FILE` for this. It replaces the trust store rather than extending it, and it governs federation as well as chat, so pointing it at a private relay CA also stops federation with the public fediverse. See [TLS trust](docs/deployment.md#tls-trust-outbound).
+
 ## Endpoints
 
 ### Pages (HTML, server-rendered)
