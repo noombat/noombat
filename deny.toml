@@ -1,4 +1,7 @@
-# cargo-deny configuration (cargo-deny 0.19.x, v2 schema)
+# cargo-deny configuration, v2 schema.
+#
+# Verified against 0.20.2. cargo-deny 0.18.6 rejects the `unsound` key
+# below outright, so which version runs matters, and CI does not pin one.
 # https://embarkstudios.github.io/cargo-deny/
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 # Run: cargo deny check
