@@ -147,11 +147,14 @@ RUN mkdir -p /etc/s6-overlay/s6-rc.d/chatmail-admin
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/chatmail-admin/type
 # `with-contenv` is required: s6-overlay stage0 dumps the container
 # environment to /run/s6/container_environment and runs the supervision
-# tree without it unless S6_KEEP_ENV is set. Without this the sidecar saw
-# no CHATMAIL_ADMIN_SECRET, panicked in Config::from_env, and crash-looped
-# in every image ever shipped, while the IMAP-NOOP healthcheck reported
-# the container healthy.
-RUN printf '#!/command/with-contenv execlineb -P\n/usr/local/bin/noombat-chatmail-admin\n' > /etc/s6-overlay/s6-rc.d/chatmail-admin/run && \
+# tree without it unless S6_KEEP_ENV is set, leaving the sidecar with no
+# CHATMAIL_ADMIN_SECRET to read in `Config::from_env`.
+#
+# It has to be the script's first command, not part of the shebang:
+# Linux passes everything after the interpreter as a single argument, so
+# `#!/command/with-contenv execlineb -P` execs a program named
+# "execlineb -P".
+RUN printf '#!/command/execlineb -P\n/command/with-contenv\n/usr/local/bin/noombat-chatmail-admin\n' > /etc/s6-overlay/s6-rc.d/chatmail-admin/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/chatmail-admin/run
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/chatmail-admin
 
