@@ -88,15 +88,22 @@ The accounts themselves are declared once, in `fixtures.sh`, because `seed.sh` c
 | Shared inbox route                   | ActivityPub S2S | Noombat               |
 | GoToSocial NodeInfo                  | NodeInfo        | GoToSocial (liveness) |
 | Sign-in as the seeded account        | OAuth 2         | GoToSocial            |
+| Follow policy: no approval needed    | Mastodon API    | GoToSocial (setup)    |
+| Follow accepted for delivery (202)   | ActivityPub S2S | Noombat               |
 | Follow appears in the followers list | ActivityPub S2S | **GoToSocial**        |
 | Accept appears in `following`        | ActivityPub S2S | **Noombat**           |
+| GoToSocial resolved `alice`          | WebFinger       | GoToSocial (setup)    |
+| Follow back accepted for delivery    | ActivityPub S2S | GoToSocial (setup)    |
 | Follow back appears in `followers`   | ActivityPub S2S | **Noombat**           |
 | Accept back appears in `following`   | ActivityPub S2S | **GoToSocial**        |
+| Noombat published a Note             | ActivityPub S2S | Noombat               |
 | Note appears in the home timeline    | ActivityPub S2S | **GoToSocial**        |
 | GoToSocial published a status        | Mastodon API    | GoToSocial (setup)    |
 | Note reaches Noombat's feed          | ActivityPub S2S | **Noombat**           |
 
-The bolded rows are the suite. Everything above them would pass identically against any ActivityPub implementation, or against none.
+The bolded rows are the suite: each is a peer reporting a state it could only reach by verifying something the other end signed. The unbolded rows are Noombat's own endpoints, which would pass identically against any ActivityPub implementation or against none, and the preconditions each round trip needs before its assertion can mean anything.
+
+The two `accepted for delivery` rows are deliberately separate from the collection assertions that follow them. A 202 or a 200 says only that the sender queued the activity; the collection says the peer received it, verified the signature and stored it. A regression in signing shows up as the first passing and the second failing, which is the pair that localises it.
 
 The follower assertion is reached only if GoToSocial received a signed `Follow`, resolved `alice` through WebFinger, fetched the actor document over TLS and verified the signature against the key in it. `following` lists accepted follows only, so an entry there is Noombat having received GoToSocial's `Accept` and verified *its* signature, the same exchange in reverse. The timeline assertion is the strongest single check here: the status is in the follower's timeline only if GoToSocial verified the HTTP Signature on a POST Noombat made, parsed the activity and stored the object. The inbound content assertion is its mirror: GoToSocial composes a status of its own, and it is Noombat that has to verify the signature, resolve the actor and store the object for the Note to appear in `alice`'s feed. Without it the suite showed that Noombat could send a Note and never that it could receive one.
 
