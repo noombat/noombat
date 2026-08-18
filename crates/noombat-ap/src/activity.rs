@@ -15,9 +15,17 @@ pub struct Activity {
     pub activity_type: String,
     pub actor: String,
     pub object: Value,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::addressing::one_or_many",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub to: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::addressing::one_or_many",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub cc: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published: Option<String>,

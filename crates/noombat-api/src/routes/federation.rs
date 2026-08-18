@@ -228,9 +228,16 @@ async fn verify_and_process_inbound(
         }
     }
 
+    // A signature that is absent or malformed is the sender's fault, and
+    // the status says so: peers treat 5xx as "retry later" and keep
+    // redelivering. Same status as the digest checks below, which reject
+    // the same class of request.
     let unverified = config
         .begin_verify("POST", path, sig_headers)
-        .map_err(|e| NoombatError::Federation(format!("signature parse/validate: {e}")))?;
+        .map_err(|e| {
+            tracing::debug!(error = %e, "inbound signature parse/validate failed");
+            NoombatError::SignatureVerification
+        })?;
 
     // Verify the body digest.
     let digest_header = headers
@@ -271,7 +278,7 @@ async fn verify_and_process_inbound(
     }
 
     let remote_actor =
-        inbox::resolve_inbound_signer(&state.pool, &state.http_client, actor_uri).await?;
+        inbox::resolve_signer_by_key_id(&state.pool, &state.http_client, &key_id).await?;
 
     // Perform the cryptographic verification.
     //
@@ -367,10 +374,12 @@ async fn verify_and_process_inbound(
         .into());
     }
 
+    // The verified identity is the actor that owns the key, which is not
+    // the `keyId` when a peer serves its keys at their own URLs.
     inbox::process_activity(
         &state.pool,
         &state.http_client,
-        actor_uri,
+        &remote_actor.ap_id,
         &document,
         activity,
     )

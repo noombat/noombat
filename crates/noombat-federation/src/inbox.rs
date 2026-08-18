@@ -220,6 +220,71 @@ pub async fn resolve_inbound_signer(
     Ok(actor)
 }
 
+/// Resolve the actor whose key signed an inbound request, from the
+/// signature's `keyId`.
+///
+/// A `keyId` is a fragment of the actor document in Mastodon
+/// (`.../users/bob#main-key`) but a URL of its own in GoToSocial
+/// (`.../users/bob/main-key`), which serves a document carrying the key
+/// and no `inbox`. Fall back to the actor that document names.
+///
+/// Naming somebody else there gains an attacker nothing: the signature
+/// is checked against the key the actor document itself publishes, so a
+/// forged one resolves an actor whose real key then fails to verify.
+pub async fn resolve_signer_by_key_id(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    key_id: &str,
+) -> Result<Actor> {
+    let stripped = key_id.split('#').next().unwrap_or(key_id);
+
+    let direct = match resolve_inbound_signer(pool, http_client, stripped).await {
+        Ok(actor) => return Ok(actor),
+        Err(e @ (NoombatError::Forbidden | NoombatError::Database(_))) => return Err(e),
+        Err(e) => e,
+    };
+
+    match key_owner(pool, http_client, stripped).await {
+        Ok(owner) => resolve_inbound_signer(pool, http_client, &owner).await,
+        Err(e @ NoombatError::Database(_)) => Err(e),
+        // The URI served something that is neither an actor nor a key.
+        // The first failure describes that better than the second.
+        Err(_) => Err(direct),
+    }
+}
+
+/// The actor named by a document served at a key URL.
+///
+/// GoToSocial answers with a stub actor carrying `publicKey`; a bare key
+/// object carries `owner` at the top level. Both shapes are read.
+async fn key_owner(pool: &PgPool, http_client: &reqwest::Client, key_url: &str) -> Result<String> {
+    let response = match crate::signed_fetch::find_local_signing_actor(pool).await {
+        Ok(signing_actor) => {
+            crate::signed_fetch::signed_get(pool, http_client, key_url, signing_actor).await?
+        }
+        Err(e @ NoombatError::Database(_)) => return Err(e),
+        Err(_) => crate::http::guarded_get(http_client, key_url).await?,
+    };
+
+    if !response.status().is_success() {
+        return Err(NoombatError::Federation(format!(
+            "public key document returned HTTP {}",
+            response.status()
+        )));
+    }
+
+    let document: serde_json::Value =
+        crate::http::json_within_limit(response, "public key document").await?;
+
+    document
+        .get("publicKey")
+        .and_then(|key| key.get("owner"))
+        .or_else(|| document.get("owner"))
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .ok_or_else(|| NoombatError::Federation(format!("{key_url} names no key owner")))
+}
+
 /// Normalise an actor URI for comparison.
 ///
 /// [`Url`] parsing already lowercases the scheme and host and drops a

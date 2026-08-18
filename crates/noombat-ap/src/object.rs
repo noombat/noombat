@@ -96,9 +96,17 @@ pub struct ApNote {
     pub source: Option<ApSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub published: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::addressing::one_or_many",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub to: Option<Vec<String>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "crate::addressing::one_or_many",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub cc: Option<Vec<String>>,
     #[serde(rename = "inReplyTo", skip_serializing_if = "Option::is_none")]
     pub in_reply_to: Option<String>,

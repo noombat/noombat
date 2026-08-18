@@ -5,6 +5,7 @@
 //! ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies.
 
 pub mod activity;
+pub mod addressing;
 pub mod context;
 pub mod error_body;
 pub mod object;
