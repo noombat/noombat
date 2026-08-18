@@ -10,7 +10,7 @@ use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use serde::Serialize;
 use sqlx::PgPool;
-use totp_rs::{Algorithm, Secret, TOTP};
+use totp_rs::{Algorithm, Builder, Secret, Totp};
 use uuid::Uuid;
 
 /// Response body for TOTP enrolment initiation.
@@ -48,11 +48,13 @@ pub async fn enrol_totp(
     }
 
     // Generate a new secret.
-    let secret = Secret::generate_secret();
-    let secret_base32 = secret.to_encoded().to_string();
+    let secret = Secret::generate();
+    let secret_base32 = secret.to_base32();
 
     let totp = build_totp(&secret_base32, username, issuer)?;
-    let otpauth_uri = totp.get_url();
+    let otpauth_uri = totp
+        .to_url()
+        .map_err(|e| NoombatError::Internal(format!("TOTP URL construction failed: {e}")))?;
 
     // Encrypt the secret before writing to the database.
     let sealed_secret = envelope::seal_auto(&secret_base32)?;
@@ -97,9 +99,8 @@ pub async fn verify_totp(pool: &PgPool, actor_id: Uuid, code: &str) -> Result<()
     // code validation).
     let totp = build_totp(&secret_base32, "user", "noombat")?;
 
-    let valid = totp
-        .check_current(code)
-        .map_err(|e| NoombatError::Internal(format!("TOTP system time error: {e}")))?;
+    // `Some` carries the matching timestep, which nothing here needs.
+    let valid = totp.check_current(code).is_some();
 
     if !valid {
         return Err(NoombatError::Forbidden);
@@ -126,22 +127,24 @@ pub async fn disable_totp(pool: &PgPool, actor_id: Uuid) -> Result<()> {
     Ok(())
 }
 
-/// Construct a [`TOTP`] instance from a base32 secret.
-fn build_totp(secret_base32: &str, account_name: &str, issuer: &str) -> Result<TOTP> {
-    let secret_bytes = Secret::Encoded(secret_base32.to_owned())
-        .to_bytes()
+/// Construct a [`Totp`] instance from a base32 secret.
+///
+/// The parameters match what was issued before, so an authenticator
+/// enrolled against an earlier release keeps working.
+fn build_totp(secret_base32: &str, account_name: &str, issuer: &str) -> Result<Totp> {
+    let secret = Secret::try_from_base32(secret_base32)
         .map_err(|e| NoombatError::Internal(format!("invalid TOTP secret: {e}")))?;
 
-    TOTP::new(
-        Algorithm::SHA1,
-        6,  // digits
-        1,  // skew (+/- 1 time step)
-        30, // step (seconds)
-        secret_bytes,
-        Some(issuer.to_owned()),
-        account_name.to_owned(),
-    )
-    .map_err(|e| NoombatError::Internal(format!("TOTP construction failed: {e}")))
+    Builder::new()
+        .with_algorithm(Algorithm::SHA1)
+        .with_digits(6)
+        .with_skew(1)
+        .with_step_duration(30)
+        .with_secret(secret)
+        .with_issuer(Some(issuer))
+        .with_account_name(account_name)
+        .build()
+        .map_err(|e| NoombatError::Internal(format!("TOTP construction failed: {e}")))
 }
 
 /// Render an `otpauth://` URI as an SVG QR code and return a
@@ -163,4 +166,44 @@ pub fn otpauth_to_qr_data_uri(otpauth_uri: &str) -> Result<String> {
 
     let b64 = B64.encode(svg_string.as_bytes());
     Ok(format!("data:image/svg+xml;base64,{b64}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // The RFC 6238 test secret, ASCII "12345678901234567890" in base32.
+    // Its published codes pin the algorithm, the digit count and the step
+    // together: an authenticator enrolled against an earlier release
+    // stops working if any of the three moves.
+    const RFC6238_SECRET_BASE32: &str = "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ";
+
+    #[test]
+    fn the_rfc6238_vectors_still_produce_the_documented_codes() {
+        let totp =
+            build_totp(RFC6238_SECRET_BASE32, "alice", "noombat").expect("the secret should build");
+
+        // The published values are eight digits; this instance issues six.
+        for (time, expected) in [
+            (59_u64, "287082"),
+            (1_111_111_109, "081804"),
+            (1_234_567_890, "005924"),
+        ] {
+            assert_eq!(totp.generate(time).to_string(), expected, "at t={time}");
+        }
+    }
+
+    #[test]
+    fn a_code_this_instance_issues_is_one_it_accepts() {
+        let totp = build_totp(RFC6238_SECRET_BASE32, "alice", "noombat").expect("build");
+
+        let code = totp.generate_current().to_string();
+
+        assert!(totp.check_current(&code).is_some());
+    }
+
+    #[test]
+    fn a_secret_that_is_not_base32_is_rejected_rather_than_panicking() {
+        assert!(build_totp("not base32!", "alice", "noombat").is_err());
+    }
 }
