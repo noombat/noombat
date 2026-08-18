@@ -493,10 +493,13 @@ pub async fn run_worker(pool: PgPool, http_client: reqwest::Client, poll_interva
         // it in a timeout provides the polling fallback.
         match tokio::time::timeout(poll_interval, listener.recv()).await {
             // Notification received: process immediately.
+            //
+            // Nothing drains the remaining notifications first:
+            // `try_recv` waits for the next one rather than returning
+            // when none is buffered, so a drain loop parks here instead
+            // of reaching the queue. `process_queue` claims a batch,
+            // which coalesces rapid inserts anyway.
             Ok(Ok(_notification)) => {
-                // Drain any buffered notifications to coalesce
-                // multiple rapid inserts into a single poll cycle.
-                while listener.try_recv().await.ok().flatten().is_some() {}
                 process_queue(&pool, &http_client).await;
             }
             // Connection error (PgListener will auto-reconnect on
