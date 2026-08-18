@@ -37,6 +37,7 @@ struct ActorRow {
     summary_md: Option<String>,
     summary_html: Option<String>,
     public_key_pem: String,
+    public_key_id: Option<String>,
     private_key_pem: Option<String>,
     ed25519_public_key: Option<String>,
     ed25519_private_key: Option<String>,
@@ -80,6 +81,7 @@ impl ActorRow {
             summary_md: self.summary_md,
             summary_html: self.summary_html,
             public_key_pem: self.public_key_pem,
+            public_key_id: self.public_key_id,
             private_key_pem,
             ed25519_public_key: self.ed25519_public_key,
             ed25519_private_key,
@@ -167,6 +169,9 @@ where
         summary_md: None,
         summary_html: None,
         public_key_pem: params.public_key_pem.clone(),
+        // Local, so the key id is `{ap_id}#main-key` by construction and
+        // the column stays NULL. See the comment on the migration.
+        public_key_id: None,
         private_key_pem: Some(params.private_key_pem.clone()),
         ed25519_public_key: Some(params.ed25519_public_key.clone()),
         ed25519_private_key: Some(params.ed25519_private_key.clone()),
@@ -185,13 +190,37 @@ where
     })
 }
 
+/// Retrieve an actor by the `publicKey.id` it publishes.
+///
+/// Only remote actors carry the column, so this never resolves a local
+/// actor, which is the same restriction the inbound signer path wants.
+pub async fn find_by_public_key_id(pool: &PgPool, public_key_id: &str) -> Result<Option<Actor>> {
+    let row = sqlx::query_as::<_, ActorRow>(
+        r#"SELECT
+               id, actor_type, ap_id, username, display_name,
+               headline, location, avatar_url, header_url, summary_md, summary_html,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               inbox_url, instance_role, actor_status,
+               chat_requires_reprovisioning,
+               chatmail_addr, orcid, moved_to, actor_privacy,
+               created_at, updated_at
+           FROM actors
+           WHERE public_key_id = $1"#,
+    )
+    .bind(public_key_id)
+    .fetch_optional(pool)
+    .await?;
+
+    row.map(ActorRow::into_actor).transpose()
+}
+
 /// Retrieve a local actor by username.
 pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Actor> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -251,7 +280,7 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -398,6 +427,10 @@ pub struct RemoteActor {
     /// The sanitiser policy version that produced `summary_html`.
     pub sanitiser_version: i16,
     pub public_key_pem: String,
+    /// The `publicKey.id` the actor publishes. Peers that serve their
+    /// keys at their own URLs are resolved by it, so it is stored rather
+    /// than derived from `ap_id`.
+    pub public_key_id: Option<String>,
     pub actor_type: String,
     pub inbox_url: String,
     /// The `endpoints.sharedInbox` URI, if declared by the remote actor.
@@ -432,11 +465,12 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     sqlx::query(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
-                sanitiser_version, domain, public_key_pem, inbox_url,
+                sanitiser_version, domain, public_key_pem, public_key_id, inbox_url,
                 shared_inbox_url, ed25519_public_key, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, FALSE, $13)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, FALSE, $14)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
+               public_key_id = EXCLUDED.public_key_id,
                display_name = EXCLUDED.display_name,
                summary_html = EXCLUDED.summary_html,
                sanitiser_version = EXCLUDED.sanitiser_version,
@@ -454,6 +488,7 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(remote.sanitiser_version)
     .bind(&remote.domain)
     .bind(&remote.public_key_pem)
+    .bind(&remote.public_key_id)
     .bind(&remote.inbox_url)
     .bind(&remote.shared_inbox_url)
     .bind(&remote.ed25519_public_key)
@@ -768,7 +803,7 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
         r#"SELECT
                id, actor_type, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -1198,6 +1233,7 @@ mod tests {
             summary_html: None,
             sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
             public_key_pem: key_pem.to_owned(),
+            public_key_id: Some(format!("{ap_id}#main-key")),
             actor_type: "individual".to_owned(),
             inbox_url: "https://remote.example/inbox".to_owned(),
             shared_inbox_url: None,
@@ -1236,6 +1272,61 @@ mod tests {
 
         assert!(!actor.is_local);
         assert_eq!(stored_key(&pool, ap_id).await, "NEW-KEY");
+    }
+
+    // ..... KEY ID LOOKUP .....
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_remote_actor_is_found_by_the_key_id_it_publishes(pool: PgPool) {
+        // GoToSocial's shape: the key id is a URL of its own, so it is
+        // not reachable by `ap_id` and the column is the only route to it.
+        let ap_id = "https://remote.example/users/alice";
+        let key_id = "https://remote.example/users/alice/main-key";
+
+        let mut remote = remote_claiming(ap_id, "KEY");
+        remote.public_key_id = Some(key_id.to_owned());
+        upsert_remote_actor(&pool, &remote)
+            .await
+            .expect("the remote actor is stored");
+
+        let found = find_by_public_key_id(&pool, key_id)
+            .await
+            .expect("the lookup runs")
+            .expect("the key id resolves to its actor");
+
+        assert_eq!(found.ap_id, ap_id);
+        assert!(!found.is_local);
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn two_actors_cannot_claim_one_key_id(pool: PgPool) {
+        // This lookup decides which actor a signature is verified
+        // against, so a second claimant would make that ambiguous. The
+        // unique index is what refuses it.
+        let key_id = "https://remote.example/users/alice/main-key";
+
+        let mut first = remote_claiming("https://remote.example/users/alice", "KEY");
+        first.public_key_id = Some(key_id.to_owned());
+        upsert_remote_actor(&pool, &first)
+            .await
+            .expect("the first claim is stored");
+
+        let mut impostor = remote_claiming("https://remote.example/users/mallory", "OTHER");
+        impostor.public_key_id = Some(key_id.to_owned());
+        let result = upsert_remote_actor(&pool, &impostor).await;
+
+        assert!(
+            result.is_err(),
+            "a second actor claiming the same key id must be refused, got {result:?}"
+        );
+
+        let still = find_by_public_key_id(&pool, key_id)
+            .await
+            .expect("the lookup runs")
+            .expect("the original claimant is still there");
+        assert_eq!(still.ap_id, "https://remote.example/users/alice");
     }
 
     // ..... REMOTE POST PERSISTENCE .....

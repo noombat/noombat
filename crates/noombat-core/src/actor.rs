@@ -77,6 +77,10 @@ pub struct Actor {
     /// Pre-rendered HTML for the profile summary.
     pub summary_html: Option<String>,
     pub public_key_pem: String,
+    /// The `publicKey.id` a remote actor publishes, which a peer may
+    /// serve at its own URL rather than as a fragment of the actor
+    /// document. `None` for local actors, whose key id is derived.
+    pub public_key_id: Option<String>,
     /// `None` for remote actors. Never serialised to API responses.
     #[serde(skip_serializing)]
     pub private_key_pem: Option<String>,

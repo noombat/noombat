@@ -267,6 +267,7 @@ mod tests {
             summary_md: None,
             summary_html: None,
             public_key_pem: String::new(),
+            public_key_id: None,
             private_key_pem: None,
             ed25519_public_key: None,
             ed25519_private_key: None,

@@ -236,6 +236,15 @@ pub async fn resolve_signer_by_key_id(
     http_client: &reqwest::Client,
     key_id: &str,
 ) -> Result<Actor> {
+    // A peer that serves its key at its own URL is not reachable by
+    // `ap_id`, so without this the first attempt below misses the cache
+    // on every single delivery, not merely the first.
+    if let Some(cached) = repo::find_by_public_key_id(pool, key_id).await?
+        && !cached.is_local
+    {
+        return Ok(cached);
+    }
+
     let stripped = key_id.split('#').next().unwrap_or(key_id);
 
     let direct = match resolve_inbound_signer(pool, http_client, stripped).await {
@@ -497,6 +506,7 @@ fn ap_actor_to_remote(
         summary_html: ap_actor.summary.as_deref().map(sanitise_remote_html),
         sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
         public_key_pem: ap_actor.public_key.public_key_pem.clone(),
+        public_key_id: Some(ap_actor.public_key.id.clone()),
         actor_type: match ap_actor.actor_type.as_str() {
             "Person" => "individual".to_owned(),
             "Organization" => "company".to_owned(),

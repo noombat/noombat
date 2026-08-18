@@ -52,6 +52,7 @@ CREATE TABLE actors (
     summary_html                 TEXT,
     sanitiser_version            SMALLINT NOT NULL DEFAULT 0, -- policy that produced summary_html; 0 = not the ingestion sanitiser
     public_key_pem               TEXT NOT NULL,
+    public_key_id                TEXT, -- the `publicKey.id` a REMOTE actor publishes, used to resolve an inbound signer whose keyId is a URL of its own rather than a fragment; NULL for local actors, whose key id is always `{ap_id}#main-key` and is derived, never looked up
     private_key_pem              TEXT,
     ed25519_public_key           TEXT, -- multibase-encoded Ed25519 public key; NOT NULL for local actors (generated at creation); nullable for remote actors
     ed25519_private_key          TEXT, -- Ed25519 private key; NOT NULL for local actors; NULL for remote actors
@@ -78,6 +79,10 @@ CREATE TABLE actors (
 
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
 CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain) WHERE is_local = TRUE;
+-- Unique, because it decides which actor a signature is verified against:
+-- two rows claiming one key id would make that ambiguous. Partial, so the
+-- local rows that leave it NULL do not collide with one another.
+CREATE UNIQUE INDEX idx_actors_public_key_id ON actors (public_key_id) WHERE public_key_id IS NOT NULL;
 CREATE INDEX idx_actors_domain ON actors (domain);
 CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
 CREATE INDEX idx_actors_orcid ON actors (orcid) WHERE orcid IS NOT NULL;

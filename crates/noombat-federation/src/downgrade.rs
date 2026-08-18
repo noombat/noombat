@@ -523,6 +523,7 @@ mod tests {
             summary_md: None,
             summary_html: Some("<p>Hello</p>".into()),
             public_key_pem: "-----BEGIN PUBLIC KEY-----\ntest\n-----END PUBLIC KEY-----".into(),
+            public_key_id: None,
             private_key_pem: None,
             ed25519_public_key: Some("z6MkhaXgBZDvotDkL5257faiztiGiC2QtKLGpbnnEGta2doK".into()),
             ed25519_private_key: None,
