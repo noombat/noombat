@@ -222,10 +222,18 @@ jobs:
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-          key: cargo-deny-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-deny-
+          key: cargo-deny-0.20.2-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-deny-0.20.2-
+      # Pinned, and asserted rather than assumed. cargo-deny releases
+      # change what deny.toml may contain: 0.18.6 rejects its `unsound`
+      # key outright while 0.20.2 accepts it, so an unpinned install is a
+      # job that can fail on configuration rather than on a finding.
+      # Testing the version rather than the binary's presence matters
+      # because the cache restores whatever it last held.
       - name: Install cargo-deny
-        run: command -v cargo-deny >/dev/null || cargo install cargo-deny --locked
+        run: |
+          cargo deny --version 2>/dev/null | grep -qx 'cargo-deny 0.20.2' \
+            || cargo install cargo-deny --locked --version 0.20.2 --force
       - run: cargo deny check
 
   clippy:
