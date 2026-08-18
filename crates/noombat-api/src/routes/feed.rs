@@ -128,6 +128,24 @@ async fn feed_partial(
         }
     }
 
+    // With no viewer identified, the feed is the public timeline.
+    // `unlisted` is excluded by definition: it is the visibility that
+    // means "not on public timelines".
+    if viewer_actor_id.is_none()
+        && let Ok(ids) = sqlx::query_scalar::<_, uuid::Uuid>(
+            r#"SELECT p.id FROM posts p
+               WHERE p.visibility = 'public'
+               ORDER BY p.created_at DESC
+               LIMIT $1 OFFSET $2"#,
+        )
+        .bind(PAGE_SIZE)
+        .bind(offset)
+        .fetch_all(&state.pool)
+        .await
+    {
+        post_ids.extend(ids);
+    }
+
     // Collect the IDs of actors the viewer explicitly follows.
     // Posts by silenced actors are excluded from public timelines
     // unless the viewer follows them.
