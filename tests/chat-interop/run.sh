@@ -256,17 +256,44 @@ else
     skip "Closed federation allowlist test: no token"
 fi
 
-# 11. Chatmail domain configured on the instance.
+# 11. Chatmail configuration, read from NodeInfo.
+#
+# NodeInfo carries it whatever the viewer's state. The credential page
+# does not: `chat_credentials.html` names the domain only in the branch
+# for an account that already has credentials, and nothing in this suite
+# provisions one, so asking that page for the domain asserted a state the
+# suite never creates and could only ever fail.
+CHATMAIL_DOMAIN="${CHATMAIL_DOMAIN:-chat.test.local}"
+NODEINFO=$(curl $CURL_OPTS -sf "$NOOMBAT/nodeinfo/2.1" 2>/dev/null) || NODEINFO=""
+
+if echo "$NODEINFO" | grep -q '"noombat:chatmailAvailable":true'; then
+    pass "NodeInfo advertises Chatmail as available"
+else
+    fail "NodeInfo does not advertise Chatmail as available"
+fi
+
+if echo "$NODEINFO" | grep -q "\"noombat:chatmailDomain\":\"$CHATMAIL_DOMAIN\""; then
+    pass "NodeInfo names the configured Chatmail domain ($CHATMAIL_DOMAIN)"
+else
+    fail "NodeInfo does not name $CHATMAIL_DOMAIN as the Chatmail domain"
+fi
+
+# 12. The credential page serves for an authenticated account.
+#
+# Asserted on the status alone, deliberately: an account with no
+# credentials gets the unprovisioned branch, whose only distinguishing
+# text is translated and so is not a stable thing to match on.
 if [ -n "$ALICE_TOKEN" ]; then
-    CHATMAIL_CHECK=$(curl $CURL_OPTS -sf "$NOOMBAT/settings/chat" \
-      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null | grep -c "chat\.test\.local") || CHATMAIL_CHECK="0"
-    if [ "$CHATMAIL_CHECK" -gt 0 ]; then
-        pass "Chatmail domain configured (full relay rejection requires SMTP-level test)"
+    CRED_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
+      "$NOOMBAT/settings/chat" \
+      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || CRED_CODE="000"
+    if [ "$CRED_CODE" = "200" ]; then
+        pass "Credential page serves for an authenticated user (HTTP 200)"
     else
-        fail "Chatmail domain not found in credential page"
+        fail "Credential page returned $CRED_CODE (expected 200)"
     fi
 else
-    skip "Chatmail domain check: no token"
+    skip "Credential page check: no token"
 fi
 
 # ..... Summary .....
