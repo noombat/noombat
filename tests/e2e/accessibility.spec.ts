@@ -272,7 +272,7 @@ test.describe("Accessibility: admin pages", () => {
     await authenticateBrowser(context, await requireAdminSession(request));
   });
 
-  async function scanAdminPage(
+  async function expectAdminPageAccessible(
     page: import("@playwright/test").Page,
     axeScan: () => Promise<import("axe-core").AxeResults>,
     path: string,
@@ -283,23 +283,23 @@ test.describe("Accessibility: admin pages", () => {
   }
 
   test("moderation queue", async ({ page, axeScan }) => {
-    await scanAdminPage(page, axeScan, "/admin/moderation");
+    await expectAdminPageAccessible(page, axeScan, "/admin/moderation");
   });
 
   test("user management", async ({ page, axeScan }) => {
-    await scanAdminPage(page, axeScan, "/admin/users");
+    await expectAdminPageAccessible(page, axeScan, "/admin/users");
   });
 
   test("domain management", async ({ page, axeScan }) => {
-    await scanAdminPage(page, axeScan, "/admin/domains");
+    await expectAdminPageAccessible(page, axeScan, "/admin/domains");
   });
 
   test("instance settings", async ({ page, axeScan }) => {
-    await scanAdminPage(page, axeScan, "/admin/settings");
+    await expectAdminPageAccessible(page, axeScan, "/admin/settings");
   });
 
   test("federation health", async ({ page, axeScan }) => {
-    await scanAdminPage(page, axeScan, "/admin/federation");
+    await expectAdminPageAccessible(page, axeScan, "/admin/federation");
   });
 });
 
