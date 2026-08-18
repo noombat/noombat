@@ -5,7 +5,7 @@ Playwright suite driving real browsers against a running Noombat stack. It cover
 ## Components
 
 | File                       | Purpose                                              |
-|----------------------------|------------------------------------------------------|
+| -------------------------- | ---------------------------------------------------- |
 | `smoke.spec.ts`            | Pages render and permalinks resolve                  |
 | `accessibility.spec.ts`    | WCAG 2.2 AA, asserted with axe-core                  |
 | `security-headers.spec.ts` | Response headers and the CSP                         |
@@ -39,7 +39,7 @@ scripts/e2e-stack.sh down
 The suite does not create its own data. `scripts/e2e-stack.sh` seeds it and the specs address it by hard-coded value, so changing one place and not the others breaks the run as a timeout or a missing element rather than as a visible mismatch.
 
 | Fixture                      | Also hard-coded in                                                    |
-|------------------------------|-----------------------------------------------------------------------|
+| ---------------------------- | --------------------------------------------------------------------- |
 | `e2e_admin` and its auth key | `session.ts`, `scripts/e2e-stack.sh`, and the workflow's seeding step |
 | The article permalink id     | `smoke.spec.ts`, `scripts/e2e-stack.sh`                               |
 | The note permalink id        | `smoke.spec.ts`, `scripts/e2e-stack.sh`                               |
