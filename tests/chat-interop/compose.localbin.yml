@@ -1,0 +1,42 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Local verification loop for the chat stack. Layer it over compose.yml:
+#
+#   tests/chat-interop/build-local.sh
+#   docker compose -p chat-interop \
+#       -f tests/chat-interop/compose.yml \
+#       -f tests/chat-interop/compose.localbin.yml up -d --wait
+#
+# Mounts the locally built binary and the Chatmail scripts over the image,
+# so a source change costs no image build. Templates, migrations and the
+# built frontend still come from the image: if one of those changes, this
+# loop is invalid and the image has to be rebuilt.
+#
+# CI builds the Dockerfile, not this, so confirm any fix with a real build.
+
+services:
+  chatmail:
+    # `sed -i` cannot rewrite a bind-mounted file and the entrypoint runs it
+    # on dovecot.conf, so that file is mounted beside its destination and
+    # copied into place.
+    entrypoint:
+      ["/bin/sh", "-c",
+       "cp /etc/dovecot/dovecot.conf.local /etc/dovecot/dovecot.conf; exec /entrypoint.sh"]
+    volumes:
+      - ../../chatmail-config/entrypoint.sh:/entrypoint.sh:ro
+      - ../../chatmail-config/noombat-doveauth:/usr/local/bin/noombat-doveauth:ro
+      - ../../chatmail-config/dovecot.conf:/etc/dovecot/dovecot.conf.local:ro
+    # Keep in step with the HEALTHCHECK in Dockerfile.chatmail, which this
+    # replaces: Noombat waits on this container reporting healthy.
+    healthcheck:
+      test: ["CMD-SHELL", "doveadm service status imap || exit 1"]
+      start_period: 10s
+      interval: 5s
+      timeout: 5s
+
+  noombat:
+    volumes:
+      # Built by build-local.sh. Compose silently creates a directory here
+      # if the file is missing, so run that first.
+      - ../../target/bookworm/release/noombat:/usr/local/bin/noombat:ro
