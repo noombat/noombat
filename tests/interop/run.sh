@@ -529,6 +529,46 @@ else
         else
             fail "the Note never reached ${GTS_ACTOR}'s home timeline"
         fi
+
+        # 14. Create { Note }, the other direction.
+        #
+        # Everything above exercises Noombat's *outbound* path or its
+        # handling of Follow and Accept. Nothing GoToSocial authored had
+        # ever reached Noombat's ingestion, which is where three separate
+        # defects were sitting until 2026-08-18. This is the only
+        # assertion in the suite that drives it.
+        #
+        # It works because ${NOOMBAT_ACTOR} follows ${GTS_ACTOR} above, so
+        # a public status by ${GTS_ACTOR} is delivered here unprompted.
+        echo "Create { Note } (GoToSocial -> Noombat):"
+        INBOUND_MARKER="interop-inbound-$(date +%s)-$$"
+        GTS_STATUS=$(curl $CURL_OPTS -s -X POST \
+            -H "Authorization: Bearer $GTS_TOKEN" \
+            -H 'Content-Type: application/json' \
+            -d "{\"status\":\"$INBOUND_MARKER\",\"visibility\":\"public\"}" \
+            "$GOTOSOCIAL/api/v1/statuses" 2>/dev/null)
+        GTS_STATUS_URI=$(jstr "$GTS_STATUS" "uri")
+        if [ -n "$GTS_STATUS_URI" ]; then
+            pass "GoToSocial published a status ($GTS_STATUS_URI)"
+        else
+            fail "GoToSocial did not return a status uri: $(echo "$GTS_STATUS" | head -c 200)"
+        fi
+
+        # Asserted through the feed ${NOOMBAT_ACTOR} would actually be
+        # served. Reaching it means Noombat verified the HTTP Signature on
+        # a delivery GoToSocial made, resolved the signer from a keyId
+        # that is a URL rather than a fragment, accepted addressing sent
+        # as a single string, stored the post and rendered it.
+        noombat_feed_has_inbound() {
+            [ -n "$INBOUND_MARKER" ] || return 1
+            curl $CURL_OPTS -s "$NOOMBAT/feed?page=1&user=$NOOMBAT_ACTOR" \
+                2>/dev/null | grep -qF "$INBOUND_MARKER"
+        }
+        if poll "$CROSS_TIMEOUT" noombat_feed_has_inbound; then
+            pass "Noombat holds ${GTS_ACTOR}'s Note in ${NOOMBAT_ACTOR}'s feed"
+        else
+            fail "${GTS_ACTOR}'s Note never reached ${NOOMBAT_ACTOR}'s feed"
+        fi
     fi
 fi
 
