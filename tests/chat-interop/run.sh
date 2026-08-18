@@ -278,22 +278,35 @@ else
     fail "NodeInfo does not name $CHATMAIL_DOMAIN as the Chatmail domain"
 fi
 
-# 12. The credential page serves for an authenticated account.
+# 12. Provisioning against the relay, which is the integration this suite
+# is named for and the one thing it never used to do.
 #
-# Asserted on the status alone, deliberately: an account with no
-# credentials gets the unprovisioned branch, whose only distinguishing
-# text is translated and so is not a stable thing to match on.
+# It reaches the relay over IMAP with implicit TLS, so it passes only if
+# the certificate the relay serves verifies: the chatmail container signs
+# a leaf with a CA it generates at boot, the compose file shares that CA,
+# and Noombat trusts it through SSL_CERT_FILE.
 if [ -n "$ALICE_TOKEN" ]; then
-    CRED_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
-      "$NOOMBAT/settings/chat" \
-      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || CRED_CODE="000"
-    if [ "$CRED_CODE" = "200" ]; then
-        pass "Credential page serves for an authenticated user (HTTP 200)"
+    PROV_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
+      -X POST -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROV_CODE="000"
+    if [ "$PROV_CODE" = "200" ]; then
+        pass "Chat provisioned against the relay (HTTP 200)"
     else
-        fail "Credential page returned $CRED_CODE (expected 200)"
+        fail "Chat provisioning returned $PROV_CODE (expected 200)"
+    fi
+
+    # The credential page names the domain only for an account that has
+    # credentials, so this asserts that provisioning actually happened,
+    # rather than that the instance is configured.
+    CRED_PAGE=$(curl $CURL_OPTS -sf "$NOOMBAT/settings/chat" \
+      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || CRED_PAGE=""
+    if echo "$CRED_PAGE" | grep -q "$CHATMAIL_DOMAIN"; then
+        pass "Credential page names $CHATMAIL_DOMAIN for the provisioned account"
+    else
+        fail "Credential page does not name $CHATMAIL_DOMAIN after provisioning"
     fi
 else
-    skip "Credential page check: no token"
+    skip "Chat provisioning: no token"
 fi
 
 # ..... Summary .....

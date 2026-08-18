@@ -165,7 +165,10 @@ EXPOSE 25 465 993 9100
 VOLUME ["/home/vmail"]
 
 # Health check: IMAP NOOP.
-HEALTHCHECK --interval=30s --timeout=5s \
+# `start-period` and a short interval because readiness is a dependency,
+# not just a monitor: Noombat waits for this container to report healthy
+# before it starts, since it reads the CA this one writes.
+HEALTHCHECK --start-period=10s --interval=5s --timeout=5s \
     CMD doveadm service status imap || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]

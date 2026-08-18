@@ -58,6 +58,10 @@ services:
     # assert the admin sidecar is actually serving.
     ports:
       - "9100:9100"
+    # The entrypoint writes the CA it signs the relay certificate with
+    # here, and Noombat mounts the same volume read-only to trust it.
+    volumes:
+      - chatmail-ca:/etc/ssl/chatmail-ca
     networks:
       chattest:
         aliases: [chat.test.local]
@@ -89,15 +93,34 @@ services:
       NOOMBAT_CHATMAIL_AVAILABLE: "true"
       NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
       NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
+      # Provisioning speaks IMAP over TLS to the relay, whose certificate
+      # is signed by the CA the chatmail container generates at boot, so
+      # that CA is what has to be trusted. `rustls-native-certs` reads
+      # this variable and the chat connector resolves its roots through
+      # it, which is the same mechanism tests/interop/compose.yml uses to
+      # trust Caddy's internal CA for federation.
+      SSL_CERT_FILE: /chatmail-ca/ca.crt
+    volumes:
+      - chatmail-ca:/chatmail-ca:ro
     ports:
       - "8443:8443"
     depends_on:
       db: { condition: service_healthy }
       redis: { condition: service_started }
-      chatmail: { condition: service_started }
+      # Healthy, not merely started: the CA has to exist before Noombat
+      # builds its HTTP client, because `SSL_CERT_FILE` is read once at
+      # startup and a path that is not there yet aborts the process with
+      # "No CA certificates were loaded from the system". The container
+      # reports healthy only once its entrypoint has finished, which is
+      # after the certificate is written.
+      chatmail: { condition: service_healthy }
     networks: [chattest]
 
-volumes: {}
+volumes:
+  # Carries the relay CA from the chatmail container to Noombat. Named
+  # rather than a bind mount, because the file is generated at boot and
+  # has no source on the host.
+  chatmail-ca: {}
 
 networks:
   chattest:
