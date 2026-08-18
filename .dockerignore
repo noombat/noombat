@@ -7,8 +7,10 @@ target/
 frontend/dist/
 frontend/node_modules/
 
-# Version control and editor files.
+# Version control and editor files. The glob as well as the top-level
+# entry, because nested repositories exist and are not covered by `.git/`.
 .git/
+**/.git/
 .gitignore
 *.swp
 *.swo
@@ -27,3 +29,10 @@ tests/
 
 # SQLx offline cache.
 .sqlx/
+
+# Private, and its own repository. Never part of a build context or an
+# image layer.
+docs-extra/
+
+# Agent tooling, kept out of git and out of images alike.
+.scratch/
