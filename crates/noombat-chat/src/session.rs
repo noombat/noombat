@@ -33,9 +33,17 @@ pub fn build_tls_connector() -> TlsConnector {
     let mut root_store = rustls::RootCertStore::empty();
     root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
 
-    let config = ClientConfig::builder()
-        .with_root_certificates(root_store)
-        .with_no_client_auth();
+    // The provider is named rather than left to `ClientConfig::builder()`,
+    // which resolves a process-wide default and panics outright when the
+    // dependency tree carries both rustls backends. Both are present
+    // here, so there is no default for it to find.
+    let config = ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::aws_lc_rs::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .expect("the bundled provider supports the default protocol versions")
+    .with_root_certificates(root_store)
+    .with_no_client_auth();
 
     TlsConnector::from(Arc::new(config))
 }
@@ -354,6 +362,21 @@ fn fold_header_value(name: &str, value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ..... build_tls_connector .....
+
+    // Building the connector is the whole assertion: the failure mode is
+    // a panic, not a wrong value. `ClientConfig::builder()` resolves a
+    // process-wide default provider and aborts when the tree carries both
+    // rustls backends, which took down every chat provisioning attempt
+    // with a dropped connection and no response.
+    //
+    // Nothing installs a default provider in this process, so a
+    // regression reaches the panic here exactly as it did in the server.
+    #[test]
+    fn the_tls_connector_names_its_crypto_provider() {
+        let _connector = build_tls_connector();
+    }
 
     // ..... validate_autocrypt_header .....
 
