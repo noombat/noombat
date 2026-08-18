@@ -2546,6 +2546,7 @@ dependencies = [
  "rand 0.8.7",
  "reqwest 0.13.4",
  "rustls",
+ "rustls-native-certs",
  "rustls-pki-types",
  "serde",
  "sqlx",

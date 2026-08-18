@@ -31,7 +31,29 @@ pub type ImapSession = async_imap::Session<tokio_rustls::client::TlsStream<tokio
 /// the relay session established here.
 pub fn build_tls_connector() -> TlsConnector {
     let mut root_store = rustls::RootCertStore::empty();
-    root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+
+    // The platform trust store first, because that is what reads
+    // `SSL_CERT_FILE`. An operator running their own Chatmail relay
+    // behind an internal CA is otherwise refused here while the same
+    // instance federates with it happily: the federation client reaches
+    // those certificates through `rustls-platform-verifier`.
+    let native = rustls_native_certs::load_native_certs();
+    let mut trusted = 0usize;
+    for certificate in native.certs {
+        if root_store.add(certificate).is_ok() {
+            trusted += 1;
+        }
+    }
+
+    // Fall back to the bundled Mozilla set rather than to an empty store,
+    // which would refuse every relay including the public ones.
+    if trusted == 0 {
+        warn!(
+            errors = native.errors.len(),
+            "no platform trust store; falling back to the bundled roots"
+        );
+        root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
 
     // The provider is named rather than left to `ClientConfig::builder()`,
     // which resolves a process-wide default and panics outright when the
