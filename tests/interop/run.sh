@@ -270,11 +270,12 @@ echo "Shared inbox:"
 STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
     -X POST -H "Content-Type: application/activity+json" \
     -d '{}' "$NOOMBAT/inbox" 2>/dev/null)
-# Expect 400 or 401 (bad signature), not 404 (route missing).
-if [ "$STATUS" != "404" ] && [ "$STATUS" != "000" ]; then
-    pass "Shared inbox route exists (HTTP $STATUS)"
+# An unsigned delivery has to be refused as a client error: 5xx tells the
+# peer the fault is ours and to keep redelivering.
+if [ "$STATUS" = "401" ] || [ "$STATUS" = "400" ]; then
+    pass "Shared inbox refuses an unsigned delivery (HTTP $STATUS)"
 else
-    fail "Shared inbox route returned $STATUS (expected non-404)"
+    fail "Shared inbox returned $STATUS for an unsigned delivery (expected 400 or 401)"
 fi
 
 # ..... Cross-instance federation .....
