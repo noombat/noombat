@@ -27,13 +27,6 @@ services:
       - ../../chatmail-config/entrypoint.sh:/entrypoint.sh:ro
       - ../../chatmail-config/noombat-doveauth:/usr/local/bin/noombat-doveauth:ro
       - ../../chatmail-config/dovecot.conf:/etc/dovecot/dovecot.conf.local:ro
-    # Keep in step with the HEALTHCHECK in Dockerfile.chatmail, which this
-    # replaces: Noombat waits on this container reporting healthy.
-    healthcheck:
-      test: ["CMD-SHELL", "doveadm service status imap || exit 1"]
-      start_period: 10s
-      interval: 5s
-      timeout: 5s
 
   noombat:
     volumes:
