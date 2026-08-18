@@ -16,6 +16,7 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::i18n::I18n;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -39,9 +40,26 @@ fn default_page() -> u32 {
 
 const PAGE_SIZE: i64 = 20;
 
+/// The URL the container fetches for a page of the feed.
+///
+/// The viewer travels in the query string, so page two stays on the
+/// timeline page one showed. Built here rather than in the template:
+/// a username is user input, and this is the only place that encodes it.
+fn feed_url(page: u32, viewer: Option<&str>) -> String {
+    match viewer {
+        Some(username) => format!("/feed?page={page}&user={}", urlencoding::encode(username)),
+        None => format!("/feed?page={page}"),
+    }
+}
+
 /// Full feed page (initial load).
-async fn feed_page(i18n: I18n) -> impl IntoResponse {
-    FeedPage { i18n }
+async fn feed_page(i18n: I18n, principal: Option<axum::Extension<Principal>>) -> impl IntoResponse {
+    let viewer = principal.as_ref().and_then(|p| p.username.clone());
+
+    FeedPage {
+        feed_url: feed_url(1, viewer.as_deref()),
+        i18n,
+    }
 }
 
 /// HTMX partial: returns only the feed items fragment.
@@ -128,10 +146,16 @@ async fn feed_partial(
         }
     }
 
-    // With no viewer identified, the feed is the public timeline.
+    // With no viewer identified, the feed is the public timeline, and a
+    // signed-in viewer who follows nobody sees it as well rather than an
+    // empty page. First page only: falling back further in would switch
+    // timelines mid-scroll and repeat posts already shown.
+    //
     // `unlisted` is excluded by definition: it is the visibility that
     // means "not on public timelines".
-    if viewer_actor_id.is_none()
+    let public_timeline = viewer_actor_id.is_none() || (post_ids.is_empty() && query.page <= 1);
+
+    if public_timeline
         && let Ok(ids) = sqlx::query_scalar::<_, uuid::Uuid>(
             r#"SELECT p.id FROM posts p
                WHERE p.visibility = 'public'
@@ -265,7 +289,7 @@ async fn feed_partial(
         status_announcement,
         posts,
         has_next,
-        next_page: query.page + 1,
+        next_url: feed_url(query.page + 1, query.user.as_deref()),
     }
 }
 
@@ -291,6 +315,7 @@ struct PostRow {
 #[template(path = "feed.html")]
 struct FeedPage {
     i18n: I18n,
+    feed_url: String,
 }
 
 /// A single post in the feed, passed to the template.
@@ -320,7 +345,7 @@ pub struct FeedPost {
 struct FeedPartial {
     posts: Vec<FeedPost>,
     has_next: bool,
-    next_page: u32,
+    next_url: String,
     /// Text swapped out of band into the `#a11y-status` live region in
     /// `base.html`, so assistive technology learns that items arrived.
     ///
