@@ -38,6 +38,9 @@ impl IntoResponse for ApiError {
                 ApError::bad_request(format!("actor already exists: {detail}")),
             ),
             NoombatError::BadRequest(detail) => {
+                // Only the peer is told why, and peers do not always log
+                // the body. An inbox rejection is unreadable without it.
+                tracing::debug!(%detail, "request rejected");
                 (StatusCode::BAD_REQUEST, ApError::bad_request(detail))
             }
             NoombatError::SignatureVerification => {
@@ -47,10 +50,15 @@ impl IntoResponse for ApiError {
             NoombatError::ServiceUnavailable(detail) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ApError::internal(detail))
             }
-            _ => (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                ApError::internal("an internal error occurred"),
-            ),
+            _ => {
+                // The peer is told nothing, deliberately. Log the cause
+                // here or a 500 leaves no trace of what failed.
+                tracing::error!(error = %self.0, "request failed");
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    ApError::internal("an internal error occurred"),
+                )
+            }
         };
 
         (status, Json(body)).into_response()
