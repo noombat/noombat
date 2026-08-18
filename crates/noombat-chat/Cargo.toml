@@ -11,7 +11,9 @@ noombat-core = { workspace = true }
 async-imap = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }
-rustls-pki-types = { workspace = true }
+# `std` for `PemObject::pem_file_iter`, which reads NOOMBAT_EXTRA_CA_FILE.
+# Declared rather than relied on from another crate's unification.
+rustls-pki-types = { workspace = true, features = ["std"] }
 webpki-roots = { workspace = true }
 rustls-native-certs = { workspace = true }
 base64 = { workspace = true }
@@ -26,3 +28,6 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 futures-lite = "2"
+
+[dev-dependencies]
+tempfile = { workspace = true }

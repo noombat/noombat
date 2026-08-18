@@ -2550,6 +2550,7 @@ dependencies = [
  "rustls-pki-types",
  "serde",
  "sqlx",
+ "tempfile",
  "tokio",
  "tokio-rustls",
  "tracing",

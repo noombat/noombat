@@ -14,15 +14,64 @@ use std::sync::Arc;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use rustls::ClientConfig;
-use rustls_pki_types::ServerName;
+use rustls_pki_types::{CertificateDer, ServerName, pem::PemObject};
 use tokio_rustls::TlsConnector;
-use tracing::warn;
+use tracing::{debug, error, warn};
 
 use crate::mime_bridge;
 use crate::relay::{RelayConfig, ServerMessage};
 
 /// Type alias for the IMAP session over TLS.
 pub type ImapSession = async_imap::Session<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>;
+
+/// Environment variable naming a PEM file of additional certificate
+/// authorities to trust for the relay, on top of the platform store.
+///
+/// Use this rather than `SSL_CERT_FILE` to trust a privately issued
+/// relay certificate: this one adds, that one replaces.
+pub const EXTRA_CA_ENV: &str = "NOOMBAT_EXTRA_CA_FILE";
+
+/// Add every certificate in `path` to `root_store`, returning how many
+/// were accepted.
+///
+/// Reports rather than fails. A connector is built per connection, so a
+/// panic here would take a worker down on every attempt; an unusable
+/// path instead surfaces as a handshake failure against a relay whose
+/// issuer is genuinely untrusted, with these logs naming the cause.
+fn add_extra_roots(root_store: &mut rustls::RootCertStore, path: &std::ffi::OsStr) -> usize {
+    let mut added = 0usize;
+
+    match CertificateDer::pem_file_iter(path) {
+        Ok(certificates) => {
+            for certificate in certificates {
+                match certificate {
+                    Ok(certificate) => {
+                        if root_store.add(certificate).is_ok() {
+                            added += 1;
+                        }
+                    }
+                    Err(error) => {
+                        error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE holds a certificate that could not be parsed");
+                    }
+                }
+            }
+        }
+        Err(error) => {
+            error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE could not be read");
+        }
+    }
+
+    if added == 0 {
+        error!(
+            ?path,
+            "NOOMBAT_EXTRA_CA_FILE added no certificate authorities"
+        );
+    } else {
+        debug!(?path, added, "trusting extra certificate authorities");
+    }
+
+    added
+}
 
 /// Build a `tokio-rustls` TLS connector using the Mozilla root
 /// certificates (via `webpki-roots`).
@@ -53,6 +102,13 @@ pub fn build_tls_connector() -> TlsConnector {
             "no platform trust store; falling back to the bundled roots"
         );
         root_store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    }
+
+    // Additive, unlike `SSL_CERT_FILE`, which replaces the store outright
+    // and is read by the federation client too, so using that to trust a
+    // private relay CA also drops every public one.
+    if let Some(path) = std::env::var_os(EXTRA_CA_ENV) {
+        add_extra_roots(&mut root_store, &path);
     }
 
     // The provider is named rather than left to `ClientConfig::builder()`,
@@ -398,6 +454,68 @@ mod tests {
     #[test]
     fn the_tls_connector_names_its_crypto_provider() {
         let _connector = build_tls_connector();
+    }
+
+    // ..... add_extra_roots .....
+
+    // A self-signed CA generated once for this test. Any certificate
+    // parses; what matters is where it ends up.
+    const TEST_CA_PEM: &str = "-----BEGIN CERTIFICATE-----
+MIIDFTCCAf2gAwIBAgIUTVXsSb3y8cVn8eKHg8IDsXjmRoswDQYJKoZIhvcNAQEL
+BQAwGjEYMBYGA1UEAwwPTm9vbWJhdCB0ZXN0IENBMB4XDTI2MDgxODIyMjIxNloX
+DTM2MDgxNTIyMjIxNlowGjEYMBYGA1UEAwwPTm9vbWJhdCB0ZXN0IENBMIIBIjAN
+BgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAqV9AlHrbs13ZOuWhkgJ3JAnszcR4
+kCVTbR+PvFJ4aMOgpHHL9DIE+de0ZLBsabUpexYXdZEAVKDVhpesiDQrBWT2rUpD
+wi4eJSJmCa8716P8sOzHN4J4I4jCyAOsw8xWNL5Cwbwqg0dT1ekaJ7Qqw4diGlw/
+AVAWadoiKRyYUFTnoHf3+HWw6GzRf3/sR7OLikHeDusCWsM4L8loFw+Stuulf/CV
+ZvHttMJHbSTmKqAtF5FHu4nnGuEt5gPv/UZh+w4SfAM+puJGFbq3pyJp085wRVLz
+chV//2HxbRorKMMuMB8R35rzVMveGZ/79bQXaiNUXb0+P3pvH0ZTVt9iEQIDAQAB
+o1MwUTAdBgNVHQ4EFgQUpeHhrL5KfoSPr1EWVSF3fEy0tcEwHwYDVR0jBBgwFoAU
+peHhrL5KfoSPr1EWVSF3fEy0tcEwDwYDVR0TAQH/BAUwAwEB/zANBgkqhkiG9w0B
+AQsFAAOCAQEAQt539m7cOpSO/FBA+GcFJbYZlTMaImTT0ichT7f/7X25pvRNhrWQ
+0bSKZQGeDQ4z+PdsI9lSonOGtPYORbwgGf7Da+7E7eu7IRcY9dV/j6gUVO//1eMj
+NRCQ3oTm0Pkf8nq3mFizSzpgBfDjPiacKl3wtQu+2LKZtRocYjAzwN8sv+wFp8kX
+NhZh+z/DtsHMHd4sH6aCP48aEeEGnxXwwdzTtskS7LZ5XTMncW8q1kZBVmYZ640G
+4h9KgFwmpT+N2CYjfeUDtuXTkF8Xk5h+5tf3G/Kij6kfWlIhSWqpF+rtvIJD1Ign
+OiIwENmeuWDbN7XsIs/6lqOs7RM0nFKjmA==
+-----END CERTIFICATE-----\n";
+
+    // The guarantee the setting exists for: an implementation that
+    // replaced the roots rather than adding to them would fail this.
+    #[test]
+    fn an_extra_root_is_added_to_the_public_roots_rather_than_replacing_them() {
+        let mut store = rustls::RootCertStore::empty();
+        store.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+        let public_roots = store.roots.len();
+        assert!(public_roots > 0, "the bundled roots should not be empty");
+
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("extra-ca.pem");
+        std::fs::write(&path, TEST_CA_PEM).expect("the fixture should write");
+
+        let added = add_extra_roots(&mut store, path.as_os_str());
+
+        assert_eq!(added, 1, "the fixture holds exactly one certificate");
+        assert_eq!(
+            store.roots.len(),
+            public_roots + 1,
+            "the private CA must be added to the public roots, not substituted for them"
+        );
+    }
+
+    // A connector is built per connection, so an unusable path must not
+    // panic.
+    #[test]
+    fn a_missing_extra_root_file_adds_nothing_and_does_not_panic() {
+        let mut store = rustls::RootCertStore::empty();
+
+        let added = add_extra_roots(
+            &mut store,
+            std::ffi::OsStr::new("/nonexistent/extra-ca.pem"),
+        );
+
+        assert_eq!(added, 0);
+        assert!(store.roots.is_empty());
     }
 
     // ..... validate_autocrypt_header .....
