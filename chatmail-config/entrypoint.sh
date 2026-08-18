@@ -46,17 +46,52 @@ done
 
 # ..... TLS CERTIFICATES .....
 
-# If no certificate is mounted, generate a self-signed one for
-# development. Production deployments should mount a real certificate.
+# If no certificate is mounted, generate one for development. Production
+# deployments should mount a real certificate.
+#
+# A local CA and a leaf signed by it, not one self-signed certificate.
+# `openssl req -x509` marks what it produces `CA:TRUE`, and a client
+# offered a CA certificate as the server's own rejects it: rustls calls
+# that `CaUsedAsEndEntity`, and no amount of trusting it helps, because a
+# CA certificate cannot be the leaf. The CA goes where the compose file
+# shares it with Noombat, which trusts it through `SSL_CERT_FILE` exactly
+# as the federation stack trusts Caddy's internal CA.
+CHATMAIL_CA_DIR=/etc/ssl/chatmail-ca
 if [ ! -f /etc/ssl/certs/chatmail.pem ]; then
-    echo "[entrypoint] generating self-signed TLS certificate"
-    mkdir -p /etc/ssl/certs /etc/ssl/private
+    echo "[entrypoint] generating a local CA and a leaf certificate for ${MAIL_DOMAIN}"
+    mkdir -p /etc/ssl/certs /etc/ssl/private "$CHATMAIL_CA_DIR"
+
     openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout /etc/ssl/private/chatmail-ca.key \
+        -out "$CHATMAIL_CA_DIR/ca.crt" \
+        -days 365 \
+        -subj "/CN=Chatmail local CA (${MAIL_DOMAIN})" 2>/dev/null
+
+    # `subjectAltName` and not the common name alone: a modern TLS client
+    # matches the hostname against the SAN and ignores CN entirely.
+    printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' \
+        "${MAIL_DOMAIN}" > /tmp/chatmail-leaf.ext
+
+    openssl req -newkey rsa:2048 -nodes \
         -keyout /etc/ssl/private/chatmail.key \
+        -out /tmp/chatmail.csr \
+        -subj "/CN=${MAIL_DOMAIN}" 2>/dev/null
+
+    openssl x509 -req -in /tmp/chatmail.csr \
+        -CA "$CHATMAIL_CA_DIR/ca.crt" \
+        -CAkey /etc/ssl/private/chatmail-ca.key \
+        -CAcreateserial \
         -out /etc/ssl/certs/chatmail.pem \
         -days 365 \
-        -subj "/CN=${MAIL_DOMAIN}" 2>/dev/null
-    chmod 640 /etc/ssl/private/chatmail.key
+        -extfile /tmp/chatmail-leaf.ext 2>/dev/null
+
+    # Serve the chain, so a client holding only the CA still builds a path.
+    cat "$CHATMAIL_CA_DIR/ca.crt" >> /etc/ssl/certs/chatmail.pem
+
+    rm -f /tmp/chatmail.csr /tmp/chatmail-leaf.ext
+    chmod 640 /etc/ssl/private/chatmail.key /etc/ssl/private/chatmail-ca.key
+    # World-readable: Noombat reads it from a shared volume as non-root.
+    chmod 644 "$CHATMAIL_CA_DIR/ca.crt"
 fi
 
 # ..... DKIM .....
