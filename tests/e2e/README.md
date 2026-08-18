@@ -48,6 +48,16 @@ The ids are fixed so that a spec can address a permalink without discovering it 
 
 The administrator exists because `require_admin` redirects every admin page to `/`, so without it the admin accessibility group would measure the feed under other pages' names and still pass.
 
+## Two rules this directory enforces through CI
+
+**Markdown here is Prettier-governed.** `.prettierignore` excludes everything, then adds `/frontend` and `/tests/e2e` back, so this README is checked by `prettier --check` while the READMEs in `tests/interop` and `tests/chat-interop` are not. After editing it, run:
+
+```sh
+pnpm --dir frontend exec prettier --write --ignore-path ../.prettierignore ../tests/e2e/README.md
+```
+
+**An assertion helper must be named `expectSomething`.** `playwright/expect-expect` is configured with `assertFunctionPatterns: ["^expect[A-Z]"]` and does not look inside a callee, so a helper named anything else makes every test that delegates to it report as having no assertions. The lint then fails on tests that do assert.
+
 ## CI
 
 The `e2e` job in `.github/workflows/ci-e2e.yml` runs `security-headers.spec.ts` on Firefox first and on its own, then the full cross-browser matrix, which includes that spec again. Reporting it separately keeps a header or CSP regression from being buried in the matrix.
