@@ -343,12 +343,9 @@ where
 mod tests {
     use super::*;
 
-    #[test]
-    fn is_accepted_follower_query_compiles() {
-        // Smoke test: the SQL string is syntactically valid.
-        // Full integration tests require a database.
-        let _ = is_accepted_follower;
-    }
+    // `is_accepted_follower` is covered where it is used, by the
+    // database-backed CV access tests in routes/cv.rs, which exercise
+    // both an accepted and a pending follow.
 
     // ..... Security headers .....
 

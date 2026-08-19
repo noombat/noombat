@@ -342,7 +342,20 @@ test.describe("Policy compliance: authenticated pages", () => {
  */
 async function servedManifest(request: APIRequestContext): Promise<Set<string> | null> {
   const res = await request.get("/.well-known/noombat/assets.json");
-  if (!res.ok()) return null;
+  if (!res.ok()) {
+    // A deployment may legitimately serve no manifest, so this is a skip
+    // locally. CI always serves one, because ci-e2e.yml generates it
+    // before starting the server, so an absent manifest there means that
+    // step regressed. Skipping would report that as a pass.
+    if (process.env.CI) {
+      throw new Error(
+        `no asset manifest at /.well-known/noombat/assets.json (${res.status()}). ` +
+          "ci-e2e.yml generates it before starting the server; without it the " +
+          "provenance assertions below inspect nothing.",
+      );
+    }
+    return null;
+  }
 
   const manifest = (await res.json()) as { assets?: Record<string, string> };
   return new Set(Object.keys(manifest.assets ?? {}));
@@ -399,10 +412,7 @@ test.describe("Asset provenance", () => {
     request,
   }) => {
     const known = await servedManifest(request);
-    // A deployment may legitimately serve no manifest. CI always does,
-    // because ci-e2e.yml generates it before starting the server, so a
-    // skip here means that step regressed rather than that the feature
-    // is absent.
+    // Unreachable under CI, where servedManifest throws instead.
     // eslint-disable-next-line playwright/no-skipped-test -- deployment-conditional
     test.skip(known === null, "this deployment serves no asset manifest");
     expect(known?.size, "manifest lists no assets").toBeGreaterThan(0);
@@ -422,6 +432,7 @@ test.describe("Asset provenance", () => {
       await authenticateBrowser(context, await requireSession(request, testInfo.workerIndex));
 
       const known = await servedManifest(request);
+      // Unreachable under CI, where servedManifest throws instead.
       // eslint-disable-next-line playwright/no-skipped-test -- deployment-conditional
       test.skip(known === null, "this deployment serves no asset manifest");
       expect(known?.size, "manifest lists no assets").toBeGreaterThan(0);
