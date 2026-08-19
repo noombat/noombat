@@ -4,24 +4,26 @@ Development and maintenance scripts for the Noombat workspace.
 
 ## Quick Reference
 
-| Script                       | Purpose                                | When to use                                                |
-|------------------------------|----------------------------------------|------------------------------------------------------------|
-| `dev-setup.sh`               | First-time onboarding                  | Once, after cloning the repository                         |
-| `build.sh`                   | Full build pipeline                    | After modifying Rust or frontend source                    |
-| `build-image.sh`             | Build an image with the standard args  | When building a release image by hand                      |
-| `asset-manifest.sh`          | Hash every built frontend asset        | To inspect what a build produced                           |
-| `image-manifest.sh`          | Hash an image's files and packages     | When comparing two builds of one image                     |
-| `clean.sh`                   | Remove all build artifacts             | Before a clean rebuild or to reclaim disk space            |
-| `test.sh`                    | Run all verification checks            | Before committing or pushing                               |
-| `smoke-test.sh`              | Black-box HTTP tests                   | After starting the server, to verify it responds correctly |
-| `e2e-stack.sh`               | Raise/tear down the e2e stack          | Before and after a Playwright run (`up`, `down`, `status`) |
-| `check-unused-deps.sh`       | Find unused dependency declarations    | After removing code, or when a Dependabot bump looks odd   |
-| `check-image-pins.sh`        | Compare workflow images to compose     | After touching a workflow service or a compose image       |
-| `check-template-comments.sh` | Find unbalanced HTML comments          | After editing an Askama template                           |
-| `check-action-allowlist.sh`  | Reject actions the policy refuses      | After adding or repinning any `uses:` in a workflow        |
-| `check-workflow-startup.sh`  | Find workflows rejected before running | After a push, when a workflow seems not to have run        |
-| `chatmail-setup.sh`          | Chatmail DNS verification              | Before deploying a Chatmail relay on a new domain          |
-| `backup.sh`                  | Back up a Compose deployment           | On a schedule, on a deployed instance                      |
+| Script                        | Purpose                                | When to use                                                |
+|-------------------------------|----------------------------------------|------------------------------------------------------------|
+| `dev-setup.sh`                | First-time onboarding                  | Once, after cloning the repository                         |
+| `build.sh`                    | Full build pipeline                    | After modifying Rust or frontend source                    |
+| `build-image.sh`              | Build an image with the standard args  | When building a release image by hand                      |
+| `asset-manifest.sh`           | Hash every built frontend asset        | To inspect what a build produced                           |
+| `image-manifest.sh`           | Hash an image's files and packages     | When comparing two builds of one image                     |
+| `clean.sh`                    | Remove all build artifacts             | Before a clean rebuild or to reclaim disk space            |
+| `test.sh`                     | Run all verification checks            | Before committing or pushing                               |
+| `smoke-test.sh`               | Black-box HTTP tests                   | After starting the server, to verify it responds correctly |
+| `e2e-stack.sh`                | Raise/tear down the e2e stack          | Before and after a Playwright run (`up`, `down`, `status`) |
+| `check-unused-deps.sh`        | Find unused dependency declarations    | After removing code, or when a Dependabot bump looks odd   |
+| `check-image-pins.sh`         | Compare workflow images to compose     | After touching a workflow service or a compose image       |
+| `check-template-comments.sh`  | Find unbalanced HTML comments          | After editing an Askama template                           |
+| `check-logical-properties.sh` | Reject physical-direction utilities    | After writing markup that positions anything               |
+| `check-contrast.py`           | Measure every semantic colour pair     | After changing any colour token                            |
+| `check-action-allowlist.sh`   | Reject actions the policy refuses      | After adding or repinning any `uses:` in a workflow        |
+| `check-workflow-startup.sh`   | Find workflows rejected before running | After a push, when a workflow seems not to have run        |
+| `chatmail-setup.sh`           | Chatmail DNS verification              | Before deploying a Chatmail relay on a new domain          |
+| `backup.sh`                   | Back up a Compose deployment           | On a schedule, on a deployed instance                      |
 
 ## `dev-setup.sh`
 
@@ -150,7 +152,7 @@ It compares what the files say, not what a registry resolves them to; a digest t
 **This runs in CI, in the `dependency-hygiene` job of `ci.yml`, and from `test.sh`.**
 
 No workflow runs `test.sh`, so being listed there gates nothing on its own; a check needs a step in a workflow to fail a pull request.
-Every `check-*.sh` now has one: `check-inline-scripts.sh` and `check-template-comments.sh` in `csp-templates`, `check-migrations.sh` in `migration-shape`, `check-typst-injection.sh` in `typst-injection`, `check-reproducible.sh` in `ci-frontend.yml` and `release.yml`, and this one with `check-unused-deps.sh` in `dependency-hygiene`.
+Every check now has one: `check-inline-scripts.sh`, `check-template-comments.sh` and `check-logical-properties.sh` in `markup-conventions`, `check-contrast.py` in `contrast`, `check-migrations.sh` in `migration-shape`, `check-typst-injection.sh` in `typst-injection`, `check-reproducible.sh` in `ci-frontend.yml` and `release.yml`, and this one with `check-unused-deps.sh` in `dependency-hygiene`.
 `check-unused-deps.sh` is the one that does not block: it carries `continue-on-error: true`, because it reports candidates rather than conclusions.
 
 When pinning a digest by hand, take the **manifest list** digest and not a platform one.
@@ -223,7 +225,7 @@ Blind spot worth knowing before trusting a green run: the check counts delimiter
 A comment left open and a later stray `-->` cancel out and read as one long deliberate comment, which is the shape of the `article.html` defect minus the second `<!--` that gave it away.
 Branches are checked for `{% if %}` only, not `{% for %}` bodies or `{% match %}` arms.
 
-Unlike `check-image-pins.sh`, this one is not a local-only gate: it runs from `test.sh` and as a step of the `Template CSP compatibility` job in `ci.yml`, over the same directory as `check-inline-scripts.sh`.
+Unlike `check-image-pins.sh`, this one is not a local-only gate: it runs from `test.sh` and as a step of the `Markup conventions` job in `ci.yml`, over the same directory as `check-inline-scripts.sh`.
 
 ## `chatmail-setup.sh`
 

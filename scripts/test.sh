@@ -26,12 +26,15 @@ done
 
 step() { echo ""; echo "==> $1"; }
 
+# Records a failure and returns 0 regardless.
+#
+# Returning non-zero would end the run: `set -e` exits on a bare call
+# whose status it can see, so the first failing gate would take the
+# summary, the exit code built from FAIL, and every later gate with it.
+# One failure at a time is the slowest way to learn what is broken.
 run() {
-    if "$@"; then
-        return 0
-    else
+    if ! "$@"; then
         FAIL=$((FAIL + 1))
-        return 1
     fi
 }
 
@@ -72,6 +75,18 @@ run ./scripts/check-image-pins.sh
 # compiles clean and swallows the rest of the rendered page.
 step "Checking template comment balance"
 run ./scripts/check-template-comments.sh
+
+# Both spellings compile and render, so nothing else distinguishes a page
+# that will follow the reading direction from one that will not.
+step "Checking direction is expressed logically"
+run ./scripts/check-logical-properties.sh
+
+# ..... Design system .....
+
+# Colours that resolve are not the same as colours that can be read, and
+# the high-contrast mode is a WCAG claim rather than a preference.
+step "Checking colour contrast"
+run python3 ./scripts/check-contrast.py
 
 # A `uses:` outside the repository's Actions policy makes the whole
 # workflow startup_failure, which creates no check runs and so leaves the
