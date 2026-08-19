@@ -59,6 +59,7 @@
   /* Eucalyptus: the habitat, and the secondary accent. */
   --euc-300: #86a884;
   --euc-500: #5c7a5a;
+  --euc-700: #3d5a3b;
 
   /* Sunset: highlights and badges, never a surface. */
   --sun-300: #f0b968;
@@ -135,7 +136,7 @@
   --color-text-secondary: light-dark(var(--ink-400), var(--ink-200));
   --color-text-brand: light-dark(var(--bark-700), var(--bark-300));
   --color-text-on-brand: light-dark(var(--cream-50), var(--ink-800));
-  --color-text-accent: light-dark(var(--euc-500), var(--euc-300));
+  --color-text-accent: light-dark(var(--euc-700), var(--euc-300));
   --color-text-success: light-dark(var(--signal-success-text), var(--signal-success-text-dark));
   --color-text-warning: light-dark(var(--signal-warning-text), var(--signal-warning-text-dark));
   --color-text-danger: light-dark(var(--signal-danger-text), var(--signal-danger-text-dark));
@@ -167,11 +168,19 @@
   /* Warm ink at low opacity rather than a grey, so borders sit in the
      same family as the surfaces they divide. */
   --color-border-default: light-dark(rgb(31 27 22 / 0.12), rgb(248 242 229 / 0.1));
-  --color-border-strong: light-dark(rgb(31 27 22 / 0.22), rgb(248 242 229 / 0.18));
+
+  /* Strong is the border of a control, which WCAG asks to reach 3:1 of
+     its surface; default divides regions and carries no such duty. The
+     two are not a light and a heavy version of one thing. */
+  --color-border-strong: light-dark(rgb(31 27 22 / 0.62), rgb(248 242 229 / 0.56));
+
   --color-border-focus: light-dark(var(--bark-500), var(--bark-300));
-  --color-border-success: light-dark(var(--signal-success), var(--signal-success-dark));
-  --color-border-warning: light-dark(var(--signal-warning), var(--signal-warning-dark));
-  --color-border-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
+
+  /* A banner's border is set at the weight of its text: the mid-tone
+     fills are too light to reach 3:1 of their own tints. */
+  --color-border-success: light-dark(var(--signal-success-text), var(--signal-success-text-dark));
+  --color-border-warning: light-dark(var(--signal-warning-text), var(--signal-warning-text-dark));
+  --color-border-danger: light-dark(var(--signal-danger-text), var(--signal-danger-text-dark));
 
   /* The halo drawn outside --color-border-focus by the focus rule. Pinned
      rather than derived from the accent, so focus visibility does not
@@ -201,6 +210,52 @@
   --radius-pill: 9999px;
 
   --font-sans: system-ui, -apple-system, sans-serif;
+}
+
+/*
+ * High contrast, re-pointing the same semantic names so no template
+ * carries a second set of classes.
+ *
+ * The warm-tint rule is suspended here and only here: pure white and
+ * pure black are what buy the extra ratio.
+ *
+ * scripts/check-contrast.py measures every pair below and fails under
+ * 7:1 for body text. Changing a value here without running it is how the
+ * mode becomes a claim rather than a fact.
+ */
+:root[data-contrast="high"] {
+  --color-text-primary: light-dark(#000000, #ffffff);
+  --color-text-secondary: light-dark(#2f2a20, #ddd7cd);
+  --color-text-brand: light-dark(#57291a, #f2bb96);
+  --color-text-on-brand: light-dark(#ffffff, #000000);
+  --color-text-accent: light-dark(#22351f, #b8dab6);
+  --color-text-success: light-dark(#17400f, #a8e0a3);
+  --color-text-warning: light-dark(#4a3105, #ffd479);
+  --color-text-danger: light-dark(#7a1f12, #ffab9e);
+  --color-text-info: light-dark(#123554, #a9cdea);
+
+  --color-bg-primary: light-dark(#ffffff, #000000);
+  --color-bg-raised: light-dark(#ffffff, #12100c);
+  --color-bg-sunken: light-dark(#f2ece0, #000000);
+  --color-bg-brand: light-dark(#6b3a20, #e0895a);
+  --color-bg-brand-hover: light-dark(#57291a, #f2bb96);
+  --color-bg-brand-press: light-dark(#3d1c10, #f8d6c0);
+  --color-bg-accent: light-dark(#22351f, #b8dab6);
+  --color-bg-highlight: light-dark(#7a5410, #ffd479);
+  --color-bg-danger: light-dark(#7a1f12, #ffab9e);
+  --color-text-on-danger: light-dark(#ffffff, #000000);
+  --color-bg-danger-subtle: light-dark(#fdeeea, #2a0f0a);
+  --color-bg-warning-subtle: light-dark(#fdf3e0, #2a2208);
+  --color-bg-success-subtle: light-dark(#eef4ea, #0f2410);
+
+  --color-border-default: light-dark(rgb(31 27 22 / 0.7), rgb(248 242 229 / 0.7));
+  --color-border-strong: light-dark(rgb(31 27 22 / 0.95), rgb(248 242 229 / 0.95));
+  --color-border-focus: light-dark(#000000, #ffffff);
+  --color-border-success: light-dark(#17400f, #a8e0a3);
+  --color-border-warning: light-dark(#4a3105, #ffd479);
+  --color-border-danger: light-dark(#7a1f12, #ffab9e);
+
+  --color-focus-halo: light-dark(#ffd479, #7a5410);
 }
 
 /* ..... Focus ..... */

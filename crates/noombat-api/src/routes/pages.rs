@@ -16,7 +16,7 @@ use axum::routing::{get, post};
 use crate::i18n::I18n;
 use crate::middleware::Principal;
 use crate::state::AppState;
-use crate::theme::Theme;
+use crate::theme::{Contrast, Theme};
 
 // ..... Helper .....
 
@@ -142,6 +142,7 @@ async fn save_privacy_settings(
 struct LoginPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     error: Option<String>,
     orcid_enabled: bool,
 }
@@ -151,6 +152,7 @@ struct LoginPage {
 struct RegisterPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     error: Option<String>,
     open_registrations: bool,
 }
@@ -160,6 +162,7 @@ struct RegisterPage {
 struct TotpPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     totp_enabled: bool,
     qr_data_uri: Option<String>,
@@ -171,6 +174,7 @@ struct TotpPage {
 struct ChatPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     ws_url: String,
     chatmail_addr: String,
@@ -185,6 +189,7 @@ struct ChatPage {
 struct UpgradePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
 }
 
@@ -193,6 +198,7 @@ struct UpgradePage {
 struct ChatCredentialsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     chatmail_addr: String,
@@ -205,6 +211,7 @@ struct ChatCredentialsPage {
 struct SettingsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
 }
 
@@ -213,6 +220,7 @@ struct SettingsPage {
 struct EditProfilePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     display_name: String,
@@ -227,6 +235,7 @@ struct EditProfilePage {
 struct EditExperiencePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     title: String,
@@ -242,6 +251,7 @@ struct EditExperiencePage {
 struct EditEducationPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     institution: String,
@@ -263,6 +273,7 @@ struct SkillEntry {
 struct EditSkillsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     skills: Vec<SkillEntry>,
@@ -273,6 +284,7 @@ struct EditSkillsPage {
 struct EditPublicationPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
 }
@@ -289,6 +301,7 @@ struct LinkEntry {
 struct EditLinksPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     domain: String,
@@ -300,6 +313,7 @@ struct EditLinksPage {
 struct EditJobPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
 }
@@ -309,6 +323,7 @@ struct EditJobPage {
 struct ComposePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
 }
@@ -325,6 +340,7 @@ struct SearchResultEntry {
 struct SearchPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     query: String,
     index: String,
     results: Vec<SearchResultEntry>,
@@ -342,6 +358,7 @@ struct FollowRequestEntry {
 struct FollowRequestsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     requests: Vec<FollowRequestEntry>,
@@ -363,6 +380,7 @@ struct MuteEntry {
 struct BlockedMutedPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     blocked: Vec<BlockEntry>,
@@ -382,6 +400,7 @@ struct SectionVisibilityRow {
 struct PrivacyPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     discoverable: bool,
     indexable: bool,
@@ -405,6 +424,7 @@ struct AliasEntry {
 struct MigratePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     username: String,
     aliases: Vec<AliasEntry>,
@@ -440,9 +460,10 @@ pub fn router() -> Router<AppState> {
         .route("/settings/follow-requests", get(follow_requests_page))
         .route("/settings/chat", get(chat_credentials_page))
         .route("/settings/migrate", get(migrate_page))
-        // Deliberately not behind require_auth: the theme is a property
+        // Deliberately not behind require_auth: appearance is a property
         // of the browser, not of an account.
         .route("/settings/theme", post(set_theme))
+        .route("/settings/contrast", post(set_contrast))
         // Compose.
         .route("/compose", get(compose_page))
         // HTML search results.
@@ -451,10 +472,16 @@ pub fn router() -> Router<AppState> {
 
 // ..... Handlers .....
 
-async fn login_page(State(state): State<AppState>, i18n: I18n, theme: Theme) -> impl IntoResponse {
+async fn login_page(
+    State(state): State<AppState>,
+    i18n: I18n,
+    theme: Theme,
+    contrast: Contrast,
+) -> impl IntoResponse {
     LoginPage {
         i18n,
         theme,
+        contrast,
         error: None,
         orcid_enabled: state.orcid_config.is_some(),
     }
@@ -464,10 +491,12 @@ async fn register_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
 ) -> impl IntoResponse {
     RegisterPage {
         i18n,
         theme,
+        contrast,
         error: None,
         open_registrations: state.open_registrations,
     }
@@ -477,6 +506,7 @@ async fn totp_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> impl IntoResponse {
     let mut totp_enabled = false;
@@ -508,6 +538,7 @@ async fn totp_page(
     TotpPage {
         i18n,
         theme,
+        contrast,
         nav_username: nav_username(&principal),
         totp_enabled,
         qr_data_uri,
@@ -519,6 +550,7 @@ async fn chat_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -544,6 +576,7 @@ async fn chat_page(
     ChatPage {
         i18n,
         theme,
+        contrast,
         nav_username: username.clone(),
         ws_url,
         chatmail_addr,
@@ -557,12 +590,14 @@ async fn upgrade_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     match require_auth(&principal) {
         Ok(uname) => UpgradePage {
             i18n,
             theme,
+            contrast,
             nav_username: uname,
         }
         .into_response(),
@@ -574,6 +609,7 @@ async fn chat_credentials_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -599,6 +635,7 @@ async fn chat_credentials_page(
     ChatCredentialsPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         chatmail_addr,
@@ -611,6 +648,11 @@ async fn chat_credentials_page(
 #[derive(Debug, serde::Deserialize)]
 struct ThemeForm {
     theme: String,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct ContrastForm {
+    contrast: String,
 }
 
 /// The path of `referer` when it addresses `origin`, and nothing when it
@@ -637,6 +679,27 @@ async fn set_theme(
     headers: axum::http::HeaderMap,
     axum::Form(form): axum::Form<ThemeForm>,
 ) -> Response {
+    let cookie = crate::theme::set_theme_cookie(Theme::parse(&form.theme), &state.domain);
+    redirect_back_with(&state, &headers, cookie)
+}
+
+/// Record the contrast setting and return the reader to the page they
+/// were on.
+async fn set_contrast(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::Form(form): axum::Form<ContrastForm>,
+) -> Response {
+    let cookie = crate::theme::set_contrast_cookie(Contrast::parse(&form.contrast), &state.domain);
+    redirect_back_with(&state, &headers, cookie)
+}
+
+/// Send the reader back where they came from, carrying one `Set-Cookie`.
+fn redirect_back_with(
+    state: &AppState,
+    headers: &axum::http::HeaderMap,
+    cookie: axum::http::HeaderValue,
+) -> Response {
     let origin = crate::middleware::http_origin(&state.domain, state.public_port);
     let back = headers
         .get(axum::http::header::REFERER)
@@ -645,10 +708,9 @@ async fn set_theme(
         .unwrap_or("/");
 
     let mut response = Redirect::to(back).into_response();
-    response.headers_mut().insert(
-        axum::http::header::SET_COOKIE,
-        crate::theme::set_theme_cookie(Theme::parse(&form.theme), &state.domain),
-    );
+    response
+        .headers_mut()
+        .insert(axum::http::header::SET_COOKIE, cookie);
     response
 }
 
@@ -656,12 +718,14 @@ async fn settings_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     match require_auth(&principal) {
         Ok(uname) => SettingsPage {
             i18n,
             theme,
+            contrast,
             nav_username: uname,
         }
         .into_response(),
@@ -673,6 +737,7 @@ async fn edit_profile_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -698,6 +763,7 @@ async fn edit_profile_page(
     EditProfilePage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         display_name: row.0.unwrap_or_default(),
@@ -713,6 +779,7 @@ async fn edit_experience_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -722,6 +789,7 @@ async fn edit_experience_page(
     EditExperiencePage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         title: String::new(),
@@ -738,6 +806,7 @@ async fn edit_education_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -747,6 +816,7 @@ async fn edit_education_page(
     EditEducationPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         institution: String::new(),
@@ -763,6 +833,7 @@ async fn edit_skills_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -786,6 +857,7 @@ async fn edit_skills_page(
     EditSkillsPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         skills,
@@ -797,6 +869,7 @@ async fn edit_publication_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -806,6 +879,7 @@ async fn edit_publication_page(
     EditPublicationPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -816,6 +890,7 @@ async fn edit_links_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -840,6 +915,7 @@ async fn edit_links_page(
     EditLinksPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         domain: state.domain.clone(),
@@ -852,6 +928,7 @@ async fn edit_job_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -861,6 +938,7 @@ async fn edit_job_page(
     EditJobPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -871,6 +949,7 @@ async fn compose_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -880,6 +959,7 @@ async fn compose_page(
     ComposePage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -890,6 +970,7 @@ async fn privacy_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -987,6 +1068,7 @@ async fn privacy_page(
     PrivacyPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         discoverable: privacy["discoverable"].as_bool().unwrap_or(true),
         indexable: privacy["indexable"].as_bool().unwrap_or(true),
@@ -1106,6 +1188,7 @@ async fn privacy_preview_partial(
 struct AccountSettingsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     deletion_pending: bool,
 }
@@ -1114,6 +1197,7 @@ async fn account_settings_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1131,6 +1215,7 @@ async fn account_settings_page(
     AccountSettingsPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         deletion_pending: deletion_requested.is_some(),
     }
@@ -1141,6 +1226,7 @@ async fn blocked_muted_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1199,6 +1285,7 @@ async fn blocked_muted_page(
     BlockedMutedPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         blocked,
@@ -1211,6 +1298,7 @@ async fn follow_requests_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1243,6 +1331,7 @@ async fn follow_requests_page(
     FollowRequestsPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         requests,
@@ -1254,6 +1343,7 @@ async fn migrate_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1279,6 +1369,7 @@ async fn migrate_page(
     MigratePage {
         i18n,
         theme,
+        contrast,
         nav_username: uname.clone(),
         username: uname,
         aliases,
@@ -1290,6 +1381,7 @@ async fn search_html_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     axum::extract::Query(params): axum::extract::Query<SearchQueryParams>,
 ) -> impl IntoResponse {
     let query = params.q.clone().unwrap_or_default();
@@ -1342,6 +1434,7 @@ async fn search_html_page(
     SearchPage {
         i18n,
         theme,
+        contrast,
         query,
         index,
         results,
@@ -1413,17 +1506,22 @@ mod tests {
 
     // ..... Theme rendering .....
 
-    fn render_with_theme(theme: Theme) -> String {
+    fn render_with(theme: Theme, contrast: Contrast) -> String {
         LoginPage {
             i18n: I18n {
                 locale: DEFAULT_LOCALE.to_owned(),
             },
             theme,
+            contrast,
             error: None,
             orcid_enabled: false,
         }
         .render()
         .expect("login.html renders")
+    }
+
+    fn render_with_theme(theme: Theme) -> String {
+        render_with(theme, Contrast::Standard)
     }
 
     /// The theme reaches the root element, which is the whole mechanism:
@@ -1440,33 +1538,81 @@ mod tests {
         }
     }
 
+    /// The contrast setting reaches the root element, and does so
+    /// independently of the theme: the stylesheet keys the high-contrast
+    /// palette off `data-contrast` alone, so a page that renders one
+    /// attribute correctly says nothing about the other.
+    #[test]
+    fn the_contrast_setting_reaches_the_root_element_under_every_theme() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark] {
+            for contrast in [Contrast::Standard, Contrast::High] {
+                let html = render_with(theme, contrast);
+                let expected = format!(r#"data-contrast="{}""#, contrast.as_str());
+                assert!(
+                    html.contains(&expected),
+                    "{expected} absent with theme {}",
+                    theme.as_str()
+                );
+                assert!(html.contains(&format!(r#"data-theme="{}""#, theme.as_str())));
+            }
+        }
+    }
+
+    /// The value of the one marked control in `group`, where a group is
+    /// the markup of a single form.
+    fn marked_value(group: &str) -> &str {
+        assert_eq!(
+            group.matches(r#"aria-pressed="true""#).count(),
+            1,
+            "expected exactly one marked control in:\n{group}"
+        );
+        group
+            .split_once(r#"aria-pressed="true""#)
+            .expect("a marked control")
+            .0
+            .rsplit_once(r#"value=""#)
+            .expect("a value attribute on the marked control")
+            .1
+            .split('"')
+            .next()
+            .expect("a closing quote")
+    }
+
+    /// Split the rendered page at the boundary between the two forms, so
+    /// each group is counted on its own. Counting across the page would
+    /// pass while both controls marked the same thing.
+    fn appearance_groups(html: &str) -> (&str, &str) {
+        html.split_once(r#"action="/settings/contrast""#)
+            .expect("the contrast form")
+    }
+
     /// Exactly one control is marked, and it is the current theme.
     #[test]
     fn the_control_marks_the_current_theme_and_only_that_one() {
         for theme in [Theme::System, Theme::Light, Theme::Dark] {
             let html = render_with_theme(theme);
-            assert_eq!(
-                html.matches(r#"aria-pressed="true""#).count(),
-                1,
-                "expected exactly one marked control for {}",
-                theme.as_str()
-            );
-            assert_eq!(html.matches(r#"aria-pressed="false""#).count(), 2);
-
-            // The marked button is the one whose `value` is the last to
-            // appear before the mark.
-            let marked = html
-                .split_once(r#"aria-pressed="true""#)
-                .expect("a marked control")
-                .0
-                .rsplit_once(r#"value=""#)
-                .expect("a value attribute on the marked control")
-                .1
-                .split('"')
-                .next()
-                .expect("a closing quote");
-            assert_eq!(marked, theme.as_str());
+            let (theme_group, _) = appearance_groups(&html);
+            assert_eq!(marked_value(theme_group), theme.as_str());
         }
+    }
+
+    #[test]
+    fn the_control_marks_the_current_contrast_and_only_that_one() {
+        for contrast in [Contrast::Standard, Contrast::High] {
+            let html = render_with(Theme::System, contrast);
+            let (_, contrast_group) = appearance_groups(&html);
+            assert_eq!(marked_value(contrast_group), contrast.as_str());
+        }
+    }
+
+    /// The two groups are marked independently. A single shared variable
+    /// behind both would satisfy each group's own assertion.
+    #[test]
+    fn the_two_controls_do_not_track_each_other() {
+        let html = render_with(Theme::Dark, Contrast::Standard);
+        let (theme_group, contrast_group) = appearance_groups(&html);
+        assert_eq!(marked_value(theme_group), "dark");
+        assert_eq!(marked_value(contrast_group), "standard");
     }
 
     /// Every character HTML escaping exists for, in one string.
@@ -1499,6 +1645,7 @@ mod tests {
                 locale: DEFAULT_LOCALE.to_owned(),
             },
             theme: Theme::System,
+            contrast: Contrast::Standard,
             error: Some(HOSTILE.to_owned()),
             orcid_enabled: false,
         };

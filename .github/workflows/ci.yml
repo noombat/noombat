@@ -131,6 +131,23 @@ jobs:
       # page, including markup inherited from the layout.
       - name: "Reject unbalanced HTML comment delimiters"
         run: scripts/check-template-comments.sh
+      # Both forms compile and render, so nothing but this step keeps a
+      # page from being written left-to-right while its locale runs the
+      # other way.
+      - name: "Reject physical-direction utilities"
+        run: scripts/check-logical-properties.sh
+
+  contrast:
+    name: Colour contrast
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # In ci.yml rather than the path-filtered frontend workflow: the
+      # high-contrast mode is an accessibility claim, and a claim that is
+      # only checked when someone happens to touch a matching path is not
+      # checked.
+      - name: "Assert every semantic colour pair meets WCAG"
+        run: python3 scripts/check-contrast.py
 
   dependency-hygiene:
     name: Dependency hygiene

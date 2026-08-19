@@ -18,7 +18,7 @@ use serde::Deserialize;
 use crate::i18n::I18n;
 use crate::middleware::Principal;
 use crate::state::AppState;
-use crate::theme::Theme;
+use crate::theme::{Contrast, Theme};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -57,6 +57,7 @@ fn feed_url(page: u32, viewer: Option<&str>) -> String {
 async fn feed_page(
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> impl IntoResponse {
     let viewer = principal.as_ref().and_then(|p| p.username.clone());
@@ -65,6 +66,7 @@ async fn feed_page(
         feed_url: feed_url(1, viewer.as_deref()),
         i18n,
         theme,
+        contrast,
     }
 }
 
@@ -77,6 +79,7 @@ async fn feed_partial(
     Query(query): Query<FeedQuery>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
 ) -> impl IntoResponse {
     let offset = (query.page.saturating_sub(1) as i64) * PAGE_SIZE;
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
@@ -323,6 +326,7 @@ struct PostRow {
 struct FeedPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     feed_url: String,
 }
 

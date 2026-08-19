@@ -1,18 +1,25 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Colour theme selection.
+//! Appearance preferences: colour theme, and contrast.
 //!
-//! The choice is carried in a cookie and rendered onto the root element
-//! as `data-theme`, which the stylesheet resolves with no script, so the
-//! first paint is already the chosen palette.
+//! Each is carried in a cookie and rendered onto the root element as a
+//! `data-` attribute, which the stylesheet resolves with no script, so
+//! the first paint is already the chosen palette.
 //!
-//! It belongs to a browser rather than to an account, so it is readable
-//! without a session and is never stored against an actor.
+//! They belong to a browser rather than to an account, so they are
+//! readable without a session and are never stored against an actor.
+//!
+//! The two are separate axes: high contrast applies to light and dark
+//! alike, so folding them into one setting would make four of the six
+//! combinations unreachable.
 
 use axum::http::{HeaderMap, HeaderValue};
 
 /// Cookie carrying the chosen theme.
 pub const COOKIE_NAME: &str = "noombat_theme";
+
+/// Cookie carrying the chosen contrast.
+pub const CONTRAST_COOKIE_NAME: &str = "noombat_contrast";
 
 /// One year, so the choice outlives a browsing session.
 const MAX_AGE_SECONDS: u32 = 31_536_000;
@@ -51,19 +58,58 @@ impl Theme {
     }
 }
 
-/// Read the theme from a request's `Cookie` header.
-pub fn from_headers(headers: &HeaderMap) -> Theme {
-    let Some(header) = headers.get(axum::http::header::COOKIE) else {
-        return Theme::System;
-    };
-    let Ok(header) = header.to_str() else {
-        return Theme::System;
-    };
-    header
+/// A reader's contrast setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Contrast {
+    #[default]
+    Standard,
+    /// The palette tuned for WCAG AAA, which
+    /// `scripts/check-contrast.py` measures on every run.
+    High,
+}
+
+impl Contrast {
+    /// The value rendered into the `data-contrast` attribute, and the
+    /// value stored in the cookie.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Contrast::Standard => "standard",
+            Contrast::High => "high",
+        }
+    }
+
+    /// Anything unrecognised is [`Contrast::Standard`].
+    pub fn parse(value: &str) -> Self {
+        match value {
+            "high" => Contrast::High,
+            _ => Contrast::Standard,
+        }
+    }
+}
+
+/// The value of `name` among a request's cookies.
+fn cookie_value<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get(axum::http::header::COOKIE)?
+        .to_str()
+        .ok()?
         .split(';')
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(name, _)| *name == COOKIE_NAME)
-        .map(|(_, value)| Theme::parse(value))
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, value)| value)
+}
+
+/// Read the theme from a request's `Cookie` header.
+pub fn from_headers(headers: &HeaderMap) -> Theme {
+    cookie_value(headers, COOKIE_NAME)
+        .map(Theme::parse)
+        .unwrap_or_default()
+}
+
+/// Read the contrast setting from a request's `Cookie` header.
+pub fn contrast_from_headers(headers: &HeaderMap) -> Contrast {
+    cookie_value(headers, CONTRAST_COOKIE_NAME)
+        .map(Contrast::parse)
         .unwrap_or_default()
 }
 
@@ -73,16 +119,24 @@ pub fn from_headers(headers: &HeaderMap) -> Theme {
 /// cross-site form cannot change it, and `Secure` off for `localhost`
 /// alone, matching the session cookie.
 pub fn set_theme_cookie(theme: Theme, domain: &str) -> HeaderValue {
+    preference_cookie(COOKIE_NAME, theme.as_str(), domain)
+}
+
+/// Build a `Set-Cookie` header value recording the contrast setting.
+pub fn set_contrast_cookie(contrast: Contrast, domain: &str) -> HeaderValue {
+    preference_cookie(CONTRAST_COOKIE_NAME, contrast.as_str(), domain)
+}
+
+fn preference_cookie(name: &str, value: &str, domain: &str) -> HeaderValue {
     let secure = if domain == "localhost" {
         ""
     } else {
         "; Secure"
     };
-    let value = format!(
-        "{COOKIE_NAME}={}; HttpOnly; SameSite=Lax; Path=/; Max-Age={MAX_AGE_SECONDS}{secure}",
-        theme.as_str(),
+    let cookie = format!(
+        "{name}={value}; HttpOnly; SameSite=Lax; Path=/; Max-Age={MAX_AGE_SECONDS}{secure}"
     );
-    HeaderValue::from_str(&value).unwrap_or_else(|_| HeaderValue::from_static(""))
+    HeaderValue::from_str(&cookie).unwrap_or_else(|_| HeaderValue::from_static(""))
 }
 
 impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Theme {
@@ -93,6 +147,17 @@ impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Theme {
         _state: &S,
     ) -> Result<Self, Self::Rejection> {
         Ok(from_headers(&parts.headers))
+    }
+}
+
+impl<S: Send + Sync> axum::extract::FromRequestParts<S> for Contrast {
+    type Rejection = std::convert::Infallible;
+
+    async fn from_request_parts(
+        parts: &mut axum::http::request::Parts,
+        _state: &S,
+    ) -> Result<Self, Self::Rejection> {
+        Ok(contrast_from_headers(&parts.headers))
     }
 }
 
@@ -163,6 +228,50 @@ mod tests {
     fn localhost_drops_secure_so_development_over_http_works() {
         let cookie = set_theme_cookie(Theme::Light, "localhost");
         assert!(!cookie.to_str().unwrap().contains("Secure"));
+    }
+
+    #[test]
+    fn contrast_parse_round_trips_every_variant() {
+        for contrast in [Contrast::Standard, Contrast::High] {
+            assert_eq!(Contrast::parse(contrast.as_str()), contrast);
+        }
+    }
+
+    #[test]
+    fn unrecognised_contrast_values_fall_back_to_standard() {
+        for value in ["", "High", "higher", "aaa"] {
+            assert_eq!(Contrast::parse(value), Contrast::Standard, "{value:?}");
+        }
+    }
+
+    /// The two preferences are independent, and a reader who has set
+    /// both must get both.
+    #[test]
+    fn theme_and_contrast_are_read_from_the_same_header_without_colliding() {
+        let headers =
+            headers_with_cookie("noombat_theme=dark; noombat_session=x; noombat_contrast=high");
+        assert_eq!(from_headers(&headers), Theme::Dark);
+        assert_eq!(contrast_from_headers(&headers), Contrast::High);
+    }
+
+    #[test]
+    fn one_preference_set_does_not_imply_the_other() {
+        let headers = headers_with_cookie("noombat_contrast=high");
+        assert_eq!(from_headers(&headers), Theme::System);
+        assert_eq!(contrast_from_headers(&headers), Contrast::High);
+    }
+
+    #[test]
+    fn the_contrast_cookie_carries_the_same_hardening_as_the_theme_cookie() {
+        let cookie = set_contrast_cookie(Contrast::High, "example.org");
+        let cookie = cookie.to_str().unwrap();
+        assert!(cookie.starts_with("noombat_contrast=high;"), "{cookie}");
+        for attribute in ["HttpOnly", "SameSite=Lax", "Path=/", "; Secure"] {
+            assert!(
+                cookie.contains(attribute),
+                "{attribute} missing from {cookie}"
+            );
+        }
     }
 
     #[test]

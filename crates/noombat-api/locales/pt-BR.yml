@@ -9,6 +9,9 @@ theme_group_label: "Tema"
 theme_light: "Claro"
 theme_dark: "Escuro"
 theme_system: "Sistema"
+contrast_group_label: "Contraste"
+contrast_standard: "Padrão"
+contrast_high: "Alto"
 
 # Feed.
 feed_title: "Feed"

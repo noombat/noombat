@@ -10,6 +10,7 @@
 -->
 <html lang="{{ i18n.lang_attr() }}" dir="ltr"
       data-theme="{{ theme.as_str() }}"
+      data-contrast="{{ contrast.as_str() }}"
       data-password-mismatch="{{ i18n.t("auth_password_mismatch") }}"
       data-network-error="{{ i18n.t("error_network") }}"
       data-upgrade-password-failed="{{ i18n.t("auth_upgrade_password_failed") }}">
@@ -91,6 +92,21 @@
                     aria-pressed="{% if theme.as_str() == "system" %}true{% else %}false{% endif %}"
                     class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
                 {{ i18n.t("theme_system") }}
+            </button>
+        </form>
+        <!-- A second axis, not a fourth theme, so a control of its own. -->
+        <form method="post" action="/settings/contrast"
+              class="flex items-center gap-2"
+              aria-label="{{ i18n.t("contrast_group_label") }}">
+            <button type="submit" name="contrast" value="standard"
+                    aria-pressed="{% if contrast.as_str() == "standard" %}true{% else %}false{% endif %}"
+                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                {{ i18n.t("contrast_standard") }}
+            </button>
+            <button type="submit" name="contrast" value="high"
+                    aria-pressed="{% if contrast.as_str() == "high" %}true{% else %}false{% endif %}"
+                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                {{ i18n.t("contrast_high") }}
             </button>
         </form>
     </nav>

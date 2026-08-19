@@ -25,7 +25,7 @@ use crate::error::ApiError;
 use crate::i18n::I18n;
 use crate::middleware::Principal;
 use crate::state::AppState;
-use crate::theme::Theme;
+use crate::theme::{Contrast, Theme};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -41,6 +41,7 @@ async fn get_post(
     headers: HeaderMap,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
@@ -202,6 +203,7 @@ async fn get_post(
         let page = ArticlePage {
             i18n,
             theme,
+            contrast,
             article_title,
             aria_article_label,
             canonical_url,
@@ -222,6 +224,7 @@ async fn get_post(
     let page = PostPage {
         i18n,
         theme,
+        contrast,
         page_title,
         aria_post_label,
         post_id: row.id.to_string(),
@@ -258,6 +261,7 @@ struct PostRow {
 struct PostPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     page_title: String,
     aria_post_label: String,
     post_id: String,
@@ -272,6 +276,7 @@ struct PostPage {
 struct ArticlePage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     article_title: String,
     aria_article_label: String,
     canonical_url: String,

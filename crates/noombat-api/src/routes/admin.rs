@@ -38,7 +38,7 @@ use crate::error::ApiError;
 use crate::i18n::I18n;
 use crate::middleware::Principal;
 use crate::state::AppState;
-use crate::theme::Theme;
+use crate::theme::{Contrast, Theme};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -168,6 +168,7 @@ struct ChatReportRow {
 struct ModerationPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     reports: Vec<UnifiedReportEntry>,
 }
@@ -176,6 +177,7 @@ async fn moderation_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     if let Err(r) = require_moderator(&principal) {
@@ -269,6 +271,7 @@ async fn moderation_page(
     ModerationPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         reports,
     }
@@ -291,6 +294,7 @@ struct UserEntry {
 struct UsersPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     users: Vec<UserEntry>,
     filter_role: String,
@@ -318,6 +322,7 @@ async fn users_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
     axum::extract::Query(params): axum::extract::Query<UsersQuery>,
 ) -> Response {
@@ -370,6 +375,7 @@ async fn users_page(
     UsersPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         users,
         filter_role,
@@ -394,6 +400,7 @@ struct DomainEntry {
 struct DomainsPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     domains: Vec<DomainEntry>,
 }
@@ -413,6 +420,7 @@ async fn domains_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     if let Err(r) = require_moderator(&principal) {
@@ -447,6 +455,7 @@ async fn domains_page(
     DomainsPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         domains,
     }
@@ -522,6 +531,7 @@ async fn remove_domain_restriction(
 struct SettingsAdminPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     registration_mode: String,
     default_job_approval: bool,
@@ -540,6 +550,7 @@ async fn settings_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     if let Err(r) = require_admin(&principal) {
@@ -580,6 +591,7 @@ async fn settings_page(
     SettingsAdminPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         registration_mode,
         default_job_approval,
@@ -675,6 +687,7 @@ struct FailedDomainEntry {
 struct FederationPage {
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     nav_username: String,
     queue_depth: i64,
     failed_domains: Vec<FailedDomainEntry>,
@@ -685,6 +698,7 @@ async fn federation_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
+    contrast: Contrast,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     if let Err(r) = require_admin(&principal) {
@@ -728,6 +742,7 @@ async fn federation_page(
     FederationPage {
         i18n,
         theme,
+        contrast,
         nav_username: uname,
         queue_depth,
         failed_domains,
