@@ -85,9 +85,11 @@ pub fn start_polling(state: Arc<AppState>) {
                         match (outbound, inbound) {
                             (Ok(()), Ok(())) => {
                                 for path in [&transport_maps_path, &sender_domains_path] {
-                                    let _ = std::process::Command::new("postmap").arg(path).status();
+                                    let _ =
+                                        std::process::Command::new("postmap").arg(path).status();
                                 }
-                                let _ = std::process::Command::new("postfix").arg("reload").status();
+                                let _ =
+                                    std::process::Command::new("postfix").arg("reload").status();
                                 info!("allowlist maps regenerated and postfix reloaded");
                             }
                             (a, b) => {
