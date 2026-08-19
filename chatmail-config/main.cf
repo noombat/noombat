@@ -90,9 +90,24 @@ smtpd_recipient_restrictions =
     reject_unauth_destination
 
 # check_sender_access: reject mail from blocked senders (per-pair
-# moderation). Managed by the noombat-chatmail-admin sidecar.
+# moderation), then close the inbound half of the federation policy.
+#
+# transport_maps decides where this relay sends; the sender-domain map
+# decides who it accepts from. With only the first, an unlisted domain can
+# deliver here and the reply is refused, which is a dead end rather than a
+# closed federation.
+#
+# Unconditional, to match `default_transport` above: with no allowlist
+# both maps are empty and the relay is closed in both directions rather
+# than accepting mail it could never answer. Local chat is unaffected,
+# because submission is authenticated and re-injection overrides these
+# restrictions.
 smtpd_sender_restrictions =
-    check_sender_access hash:/etc/postfix/noombat_sender_access
+    check_sender_access hash:/etc/postfix/noombat_sender_access,
+    permit_mynetworks,
+    permit_sasl_authenticated,
+    check_sender_access hash:/etc/postfix/noombat_sender_domains,
+    reject
 
 # ..... INBOUND FEDERATION .....
 

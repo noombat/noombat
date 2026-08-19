@@ -38,6 +38,12 @@ pub struct Config {
     /// Path to the Postfix `transport_maps` file
     /// (default `/etc/postfix/noombat_transport_maps`).
     pub transport_maps_path: String,
+    /// Path to the inbound sender-domain allowlist
+    /// (default `/etc/postfix/noombat_sender_domains`).
+    ///
+    /// `transport_maps` closes the outbound direction; this closes the
+    /// inbound one. Both are generated from the same allowlist.
+    pub sender_domains_path: String,
 }
 
 impl Config {
@@ -84,6 +90,8 @@ impl Config {
                 .unwrap_or(21_600),
             transport_maps_path: env::var("CHATMAIL_TRANSPORT_MAPS_PATH")
                 .unwrap_or_else(|_| "/etc/postfix/noombat_transport_maps".into()),
+            sender_domains_path: env::var("CHATMAIL_SENDER_DOMAINS_PATH")
+                .unwrap_or_else(|_| "/etc/postfix/noombat_sender_domains".into()),
         };
         config.validate();
         config
@@ -102,6 +110,7 @@ impl Config {
             ),
             ("CHATMAIL_SENDER_ACCESS_PATH", &self.sender_access_path),
             ("CHATMAIL_TRANSPORT_MAPS_PATH", &self.transport_maps_path),
+            ("CHATMAIL_SENDER_DOMAINS_PATH", &self.sender_domains_path),
         ] {
             assert!(
                 std::path::Path::new(path).is_absolute(),

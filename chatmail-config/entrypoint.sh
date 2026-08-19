@@ -18,6 +18,7 @@ echo "[entrypoint] configuring for domain: ${MAIL_DOMAIN}"
 # ..... SUBSTITUTE MAIL_DOMAIN .....
 
 sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/postfix/main.cf
+
 sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/dovecot/dovecot.conf
 
 # ..... FILTERMAIL CONTENT FILTER .....
@@ -37,7 +38,8 @@ fi
 for mapfile in \
     /etc/postfix/noombat_recipient_access \
     /etc/postfix/noombat_sender_access \
-    /etc/postfix/noombat_transport_maps; do
+    /etc/postfix/noombat_transport_maps \
+    /etc/postfix/noombat_sender_domains; do
     if [ ! -f "${mapfile}" ]; then
         touch "${mapfile}"
     fi
