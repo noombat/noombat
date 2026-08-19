@@ -36,6 +36,13 @@ if [ ! -d "$DIR" ]; then
     exit 1
 fi
 
+# A scan that reaches no file would otherwise read as a clean tree.
+COUNT=$(find "$DIR" -type f -name '*.html' -print | wc -l)
+if [ "$COUNT" -eq 0 ]; then
+    echo "::error::no .html templates found under $DIR, so this check proves nothing" >&2
+    exit 2
+fi
+
 # Emit every template line as `path:lineno:content` with HTML
 # comments blanked out.
 stripped() {
@@ -109,4 +116,4 @@ if [ "$FAIL" -gt 0 ]; then
 fi
 
 echo ""
-echo "All templates are compatible with script-src 'self'; style-src 'self'."
+echo "Scanned $COUNT template(s) under $DIR: all compatible with script-src 'self'; style-src 'self'."
