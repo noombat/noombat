@@ -7,6 +7,10 @@ target/
 frontend/dist/
 frontend/node_modules/
 
+# pnpm's content-addressed store, when pnpm is pointed at the repository.
+# Nothing copies from it, so in a build context it is walk cost only.
+.pnpm-store/
+
 # Version control and editor files. The glob as well as the top-level
 # entry, because nested repositories exist and are not covered by `.git/`.
 .git/
