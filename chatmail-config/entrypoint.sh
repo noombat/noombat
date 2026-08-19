@@ -115,6 +115,15 @@ if [ ! -f "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private" ]; then
         --domain="${MAIL_DOMAIN}" \
         --bits=2048
 
+    # opendkim-genkey writes PKCS#8 when built against OpenSSL 3, and
+    # OpenDKIM 2.11 loads only PKCS#1. Left unconverted every message
+    # fails to sign, the milter reports an internal error, and Postfix
+    # turns that into `4.7.1 Service unavailable` on submission. The
+    # public key is unchanged, so the TXT record below still matches.
+    DKIM_KEY="${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
+    openssl rsa -in "${DKIM_KEY}" -out "${DKIM_KEY}.pkcs1" -traditional 2>/dev/null
+    mv "${DKIM_KEY}.pkcs1" "${DKIM_KEY}"
+
     printf '%s._domainkey.%s %s:%s:%s\n' \
         "${DKIM_SELECTOR}" "${MAIL_DOMAIN}" \
         "${MAIL_DOMAIN}" "${DKIM_SELECTOR}" \
@@ -140,6 +149,34 @@ chmod 600 "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
 # ..... PERMISSIONS .....
 
 chown -R vmail:vmail /home/vmail
+
+# ..... SYSLOG .....
+
+# Nothing in this image creates /dev/log, so every daemon that logs
+# through syslog logs into nothing. Postfix is configured around it with
+# `maillog_file`, but OpenDKIM has no such option, and its refusals were
+# invisible: a message tempfailed with `4.7.1 Service unavailable` and no
+# record of why anywhere in the container.
+#
+# A collector rather than a syslog daemon because the image has neither,
+# and perl is already here. Backgrounded before the s6 handoff so it
+# inherits the container's stdout.
+perl -e '
+use Socket; use IO::Handle;
+unlink "/dev/log";
+socket(my $sock, PF_UNIX, SOCK_DGRAM, 0) or die "socket: $!";
+bind($sock, sockaddr_un("/dev/log")) or die "bind: $!";
+chmod 0666, "/dev/log";
+STDOUT->autoflush(1);
+while (1) {
+    next unless defined recv($sock, my $line, 8192, 0);
+    $line =~ s/\0+$//;
+    print "$line\n";
+}
+' &
+
+# Give the socket a moment to exist before any daemon opens it.
+sleep 1
 
 # ..... HAND OFF TO S6-OVERLAY .....
 

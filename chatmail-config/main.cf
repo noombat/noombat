@@ -32,6 +32,13 @@ smtpd_relay_restrictions =
     permit_sasl_authenticated,
     reject_unauth_destination
 
+# ..... LOGGING .....
+
+# Postfix logs through syslog by default and this image runs no syslog
+# daemon, so without this every rejection, deferral and TLS error is
+# discarded. A 451 then reaches the client with no way to find its cause.
+maillog_file = /dev/stdout
+
 # ..... TLS .....
 
 # TLS certificate paths (populated by the container entrypoint or
