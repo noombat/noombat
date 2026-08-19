@@ -21,6 +21,7 @@ use noombat_core::error::NoombatError;
 use crate::error::ApiError;
 use crate::i18n::I18n;
 use crate::state::AppState;
+use crate::theme::Theme;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -103,6 +104,7 @@ async fn get_actor(
     headers: HeaderMap,
     principal: Option<axum::Extension<crate::middleware::Principal>>,
     i18n: I18n,
+    theme: Theme,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
@@ -244,6 +246,7 @@ async fn get_actor(
 
     let page = ProfilePage {
         i18n,
+        theme,
         page_title,
         username: actor.username.clone(),
         display_name,
@@ -284,8 +287,9 @@ async fn get_actor_human(
     headers: HeaderMap,
     principal: Option<axum::Extension<crate::middleware::Principal>>,
     i18n: I18n,
+    theme: Theme,
 ) -> Result<impl IntoResponse, ApiError> {
-    get_actor(state, path, headers, principal, i18n).await
+    get_actor(state, path, headers, principal, i18n, theme).await
 }
 
 // ..... GET /users/{username}/outbox .......
@@ -810,6 +814,7 @@ async fn get_following(
 #[template(path = "profile.html")]
 struct ProfilePage {
     i18n: I18n,
+    theme: Theme,
     page_title: String,
     username: String,
     display_name: String,

@@ -17,6 +17,7 @@ pub mod rate_limit;
 pub mod routes;
 pub mod search_sync;
 pub mod state;
+pub mod theme;
 pub mod trending;
 
 use axum::Router;

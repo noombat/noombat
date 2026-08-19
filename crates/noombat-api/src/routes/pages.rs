@@ -11,11 +11,12 @@ use askama_web::WebTemplate;
 use axum::Router;
 use axum::extract::State;
 use axum::response::{IntoResponse, Redirect, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 
 use crate::i18n::I18n;
 use crate::middleware::Principal;
 use crate::state::AppState;
+use crate::theme::Theme;
 
 // ..... Helper .....
 
@@ -140,6 +141,7 @@ async fn save_privacy_settings(
 #[template(path = "login.html")]
 struct LoginPage {
     i18n: I18n,
+    theme: Theme,
     error: Option<String>,
     orcid_enabled: bool,
 }
@@ -148,6 +150,7 @@ struct LoginPage {
 #[template(path = "register.html")]
 struct RegisterPage {
     i18n: I18n,
+    theme: Theme,
     error: Option<String>,
     open_registrations: bool,
 }
@@ -156,6 +159,7 @@ struct RegisterPage {
 #[template(path = "totp.html")]
 struct TotpPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     totp_enabled: bool,
     qr_data_uri: Option<String>,
@@ -166,6 +170,7 @@ struct TotpPage {
 #[template(path = "chat.html")]
 struct ChatPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     ws_url: String,
     chatmail_addr: String,
@@ -179,6 +184,7 @@ struct ChatPage {
 #[template(path = "upgrade.html")]
 struct UpgradePage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
 }
 
@@ -186,6 +192,7 @@ struct UpgradePage {
 #[template(path = "chat_credentials.html")]
 struct ChatCredentialsPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     chatmail_addr: String,
@@ -197,6 +204,7 @@ struct ChatCredentialsPage {
 #[template(path = "settings.html")]
 struct SettingsPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
 }
 
@@ -204,6 +212,7 @@ struct SettingsPage {
 #[template(path = "edit_profile.html")]
 struct EditProfilePage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     display_name: String,
@@ -217,6 +226,7 @@ struct EditProfilePage {
 #[template(path = "edit_experience.html")]
 struct EditExperiencePage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     title: String,
@@ -231,6 +241,7 @@ struct EditExperiencePage {
 #[template(path = "edit_education.html")]
 struct EditEducationPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     institution: String,
@@ -251,6 +262,7 @@ struct SkillEntry {
 #[template(path = "edit_skills.html")]
 struct EditSkillsPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     skills: Vec<SkillEntry>,
@@ -260,6 +272,7 @@ struct EditSkillsPage {
 #[template(path = "edit_publication.html")]
 struct EditPublicationPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
 }
@@ -275,6 +288,7 @@ struct LinkEntry {
 #[template(path = "edit_links.html")]
 struct EditLinksPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     domain: String,
@@ -285,6 +299,7 @@ struct EditLinksPage {
 #[template(path = "edit_job.html")]
 struct EditJobPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
 }
@@ -293,6 +308,7 @@ struct EditJobPage {
 #[template(path = "compose.html")]
 struct ComposePage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
 }
@@ -308,6 +324,7 @@ struct SearchResultEntry {
 #[template(path = "search.html")]
 struct SearchPage {
     i18n: I18n,
+    theme: Theme,
     query: String,
     index: String,
     results: Vec<SearchResultEntry>,
@@ -324,6 +341,7 @@ struct FollowRequestEntry {
 #[template(path = "follow_requests.html")]
 struct FollowRequestsPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     requests: Vec<FollowRequestEntry>,
@@ -344,6 +362,7 @@ struct MuteEntry {
 #[template(path = "blocked_muted.html")]
 struct BlockedMutedPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     blocked: Vec<BlockEntry>,
@@ -362,6 +381,7 @@ struct SectionVisibilityRow {
 #[template(path = "settings_privacy.html")]
 struct PrivacyPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     discoverable: bool,
     indexable: bool,
@@ -384,6 +404,7 @@ struct AliasEntry {
 #[template(path = "migrate.html")]
 struct MigratePage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     username: String,
     aliases: Vec<AliasEntry>,
@@ -419,6 +440,9 @@ pub fn router() -> Router<AppState> {
         .route("/settings/follow-requests", get(follow_requests_page))
         .route("/settings/chat", get(chat_credentials_page))
         .route("/settings/migrate", get(migrate_page))
+        // Deliberately not behind require_auth: the theme is a property
+        // of the browser, not of an account.
+        .route("/settings/theme", post(set_theme))
         // Compose.
         .route("/compose", get(compose_page))
         // HTML search results.
@@ -427,17 +451,23 @@ pub fn router() -> Router<AppState> {
 
 // ..... Handlers .....
 
-async fn login_page(State(state): State<AppState>, i18n: I18n) -> impl IntoResponse {
+async fn login_page(State(state): State<AppState>, i18n: I18n, theme: Theme) -> impl IntoResponse {
     LoginPage {
         i18n,
+        theme,
         error: None,
         orcid_enabled: state.orcid_config.is_some(),
     }
 }
 
-async fn register_page(State(state): State<AppState>, i18n: I18n) -> impl IntoResponse {
+async fn register_page(
+    State(state): State<AppState>,
+    i18n: I18n,
+    theme: Theme,
+) -> impl IntoResponse {
     RegisterPage {
         i18n,
+        theme,
         error: None,
         open_registrations: state.open_registrations,
     }
@@ -446,6 +476,7 @@ async fn register_page(State(state): State<AppState>, i18n: I18n) -> impl IntoRe
 async fn totp_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> impl IntoResponse {
     let mut totp_enabled = false;
@@ -476,6 +507,7 @@ async fn totp_page(
 
     TotpPage {
         i18n,
+        theme,
         nav_username: nav_username(&principal),
         totp_enabled,
         qr_data_uri,
@@ -486,6 +518,7 @@ async fn totp_page(
 async fn chat_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -510,6 +543,7 @@ async fn chat_page(
     let username = nav_username(&principal);
     ChatPage {
         i18n,
+        theme,
         nav_username: username.clone(),
         ws_url,
         chatmail_addr,
@@ -522,11 +556,13 @@ async fn chat_page(
 async fn upgrade_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     match require_auth(&principal) {
         Ok(uname) => UpgradePage {
             i18n,
+            theme,
             nav_username: uname,
         }
         .into_response(),
@@ -537,6 +573,7 @@ async fn upgrade_page(
 async fn chat_credentials_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -561,6 +598,7 @@ async fn chat_credentials_page(
     let uname = nav_username(&principal);
     ChatCredentialsPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         chatmail_addr,
@@ -570,14 +608,60 @@ async fn chat_credentials_page(
     .into_response()
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct ThemeForm {
+    theme: String,
+}
+
+/// The path of `referer` when it addresses `origin`, and nothing when it
+/// addresses anywhere else.
+///
+/// The whole origin must match and the remainder must begin with a
+/// slash. Both halves are load-bearing: `//evil.example/x` satisfies a
+/// leading-slash test, and `https://example.org.evil.example/x`
+/// satisfies a host comparison.
+fn same_origin_path<'a>(referer: &'a str, origin: &str) -> Option<&'a str> {
+    referer
+        .strip_prefix(origin)
+        .filter(|path| path.starts_with('/'))
+}
+
+/// Record the chosen theme and return the reader to the page they were on.
+///
+/// A same-origin form post carries the full URL in `Referer`, which the
+/// response referrer policy permits, so it is enough to get back.
+/// Anything not addressed to this instance is discarded rather than
+/// followed.
+async fn set_theme(
+    State(state): State<AppState>,
+    headers: axum::http::HeaderMap,
+    axum::Form(form): axum::Form<ThemeForm>,
+) -> Response {
+    let origin = crate::middleware::http_origin(&state.domain, state.public_port);
+    let back = headers
+        .get(axum::http::header::REFERER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|referer| same_origin_path(referer, &origin))
+        .unwrap_or("/");
+
+    let mut response = Redirect::to(back).into_response();
+    response.headers_mut().insert(
+        axum::http::header::SET_COOKIE,
+        crate::theme::set_theme_cookie(Theme::parse(&form.theme), &state.domain),
+    );
+    response
+}
+
 async fn settings_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     match require_auth(&principal) {
         Ok(uname) => SettingsPage {
             i18n,
+            theme,
             nav_username: uname,
         }
         .into_response(),
@@ -588,6 +672,7 @@ async fn settings_page(
 async fn edit_profile_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -612,6 +697,7 @@ async fn edit_profile_page(
     .unwrap_or_default();
     EditProfilePage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         display_name: row.0.unwrap_or_default(),
@@ -626,6 +712,7 @@ async fn edit_profile_page(
 async fn edit_experience_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -634,6 +721,7 @@ async fn edit_experience_page(
     };
     EditExperiencePage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         title: String::new(),
@@ -649,6 +737,7 @@ async fn edit_experience_page(
 async fn edit_education_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -657,6 +746,7 @@ async fn edit_education_page(
     };
     EditEducationPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         institution: String::new(),
@@ -672,6 +762,7 @@ async fn edit_education_page(
 async fn edit_skills_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -694,6 +785,7 @@ async fn edit_skills_page(
         .collect();
     EditSkillsPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         skills,
@@ -704,6 +796,7 @@ async fn edit_skills_page(
 async fn edit_publication_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -712,6 +805,7 @@ async fn edit_publication_page(
     };
     EditPublicationPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -721,6 +815,7 @@ async fn edit_publication_page(
 async fn edit_links_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -744,6 +839,7 @@ async fn edit_links_page(
         .collect();
     EditLinksPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         domain: state.domain.clone(),
@@ -755,6 +851,7 @@ async fn edit_links_page(
 async fn edit_job_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -763,6 +860,7 @@ async fn edit_job_page(
     };
     EditJobPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -772,6 +870,7 @@ async fn edit_job_page(
 async fn compose_page(
     _state: State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let uname = match require_auth(&principal) {
@@ -780,6 +879,7 @@ async fn compose_page(
     };
     ComposePage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -789,6 +889,7 @@ async fn compose_page(
 async fn privacy_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -885,6 +986,7 @@ async fn privacy_page(
 
     PrivacyPage {
         i18n,
+        theme,
         nav_username: uname,
         discoverable: privacy["discoverable"].as_bool().unwrap_or(true),
         indexable: privacy["indexable"].as_bool().unwrap_or(true),
@@ -1003,6 +1105,7 @@ async fn privacy_preview_partial(
 #[template(path = "account_settings.html")]
 struct AccountSettingsPage {
     i18n: I18n,
+    theme: Theme,
     nav_username: String,
     deletion_pending: bool,
 }
@@ -1010,6 +1113,7 @@ struct AccountSettingsPage {
 async fn account_settings_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1026,6 +1130,7 @@ async fn account_settings_page(
 
     AccountSettingsPage {
         i18n,
+        theme,
         nav_username: uname,
         deletion_pending: deletion_requested.is_some(),
     }
@@ -1035,6 +1140,7 @@ async fn account_settings_page(
 async fn blocked_muted_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1092,6 +1198,7 @@ async fn blocked_muted_page(
 
     BlockedMutedPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         blocked,
@@ -1103,6 +1210,7 @@ async fn blocked_muted_page(
 async fn follow_requests_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1134,6 +1242,7 @@ async fn follow_requests_page(
 
     FollowRequestsPage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         requests,
@@ -1144,6 +1253,7 @@ async fn follow_requests_page(
 async fn migrate_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     principal: Option<axum::Extension<Principal>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&principal) else {
@@ -1168,6 +1278,7 @@ async fn migrate_page(
 
     MigratePage {
         i18n,
+        theme,
         nav_username: uname.clone(),
         username: uname,
         aliases,
@@ -1178,6 +1289,7 @@ async fn migrate_page(
 async fn search_html_page(
     State(state): State<AppState>,
     i18n: I18n,
+    theme: Theme,
     axum::extract::Query(params): axum::extract::Query<SearchQueryParams>,
 ) -> impl IntoResponse {
     let query = params.q.clone().unwrap_or_default();
@@ -1229,6 +1341,7 @@ async fn search_html_page(
 
     SearchPage {
         i18n,
+        theme,
         query,
         index,
         results,
@@ -1247,6 +1360,114 @@ struct SearchQueryParams {
 mod tests {
     use super::*;
     use crate::i18n::DEFAULT_LOCALE;
+
+    // ..... Theme return path .....
+
+    const ORIGIN: &str = "https://noombat.social";
+
+    #[test]
+    fn a_same_origin_referer_yields_its_path() {
+        assert_eq!(
+            same_origin_path("https://noombat.social/feed", ORIGIN),
+            Some("/feed")
+        );
+    }
+
+    #[test]
+    fn the_query_string_survives_so_the_reader_returns_to_the_same_page() {
+        assert_eq!(
+            same_origin_path("https://noombat.social/feed?page=3&user=ada", ORIGIN),
+            Some("/feed?page=3&user=ada")
+        );
+    }
+
+    #[test]
+    fn a_foreign_origin_is_refused() {
+        assert_eq!(same_origin_path("https://evil.example/feed", ORIGIN), None);
+    }
+
+    /// The reason the check is a whole-origin prefix rather than a host
+    /// comparison or a leading-slash test. Each of these passes a weaker
+    /// check and is an open redirect.
+    #[test]
+    fn near_misses_are_refused() {
+        for referer in [
+            "https://noombat.social.evil.example/feed",
+            "https://noombat.socialevil.example/",
+            "http://noombat.social/feed",
+            "//evil.example/feed",
+            "/feed",
+            "https://noombat.social",
+        ] {
+            assert_eq!(same_origin_path(referer, ORIGIN), None, "{referer}");
+        }
+    }
+
+    #[test]
+    fn the_origin_itself_with_a_trailing_slash_is_the_root() {
+        assert_eq!(
+            same_origin_path("https://noombat.social/", ORIGIN),
+            Some("/")
+        );
+    }
+
+    // ..... Theme rendering .....
+
+    fn render_with_theme(theme: Theme) -> String {
+        LoginPage {
+            i18n: I18n {
+                locale: DEFAULT_LOCALE.to_owned(),
+            },
+            theme,
+            error: None,
+            orcid_enabled: false,
+        }
+        .render()
+        .expect("login.html renders")
+    }
+
+    /// The theme reaches the root element, which is the whole mechanism:
+    /// the stylesheet resolves `data-theme` and nothing else consults the
+    /// preference. A `Theme` that is read from the cookie, threaded
+    /// through every handler and never rendered would satisfy every other
+    /// test here.
+    #[test]
+    fn the_chosen_theme_reaches_the_root_element() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark] {
+            let html = render_with_theme(theme);
+            let expected = format!(r#"data-theme="{}""#, theme.as_str());
+            assert!(html.contains(&expected), "{expected} absent from:\n{html}");
+        }
+    }
+
+    /// Exactly one control is marked, and it is the current theme.
+    #[test]
+    fn the_control_marks_the_current_theme_and_only_that_one() {
+        for theme in [Theme::System, Theme::Light, Theme::Dark] {
+            let html = render_with_theme(theme);
+            assert_eq!(
+                html.matches(r#"aria-pressed="true""#).count(),
+                1,
+                "expected exactly one marked control for {}",
+                theme.as_str()
+            );
+            assert_eq!(html.matches(r#"aria-pressed="false""#).count(), 2);
+
+            // The marked button is the one whose `value` is the last to
+            // appear before the mark.
+            let marked = html
+                .split_once(r#"aria-pressed="true""#)
+                .expect("a marked control")
+                .0
+                .rsplit_once(r#"value=""#)
+                .expect("a value attribute on the marked control")
+                .1
+                .split('"')
+                .next()
+                .expect("a closing quote");
+            assert_eq!(marked, theme.as_str());
+        }
+    }
 
     /// Every character HTML escaping exists for, in one string.
     const HOSTILE: &str = r#"<script>alert('xss') & "quoted"</script>"#;
@@ -1277,6 +1498,7 @@ mod tests {
             i18n: I18n {
                 locale: DEFAULT_LOCALE.to_owned(),
             },
+            theme: Theme::System,
             error: Some(HOSTILE.to_owned()),
             orcid_enabled: false,
         };

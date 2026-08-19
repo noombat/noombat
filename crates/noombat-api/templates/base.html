@@ -9,6 +9,7 @@
   conflict with a `script-src 'self'` Content-Security-Policy.
 -->
 <html lang="{{ i18n.lang_attr() }}" dir="ltr"
+      data-theme="{{ theme.as_str() }}"
       data-password-mismatch="{{ i18n.t("auth_password_mismatch") }}"
       data-network-error="{{ i18n.t("error_network") }}"
       data-upgrade-password-failed="{{ i18n.t("auth_upgrade_password_failed") }}">
@@ -66,6 +67,32 @@
             {{ i18n.t("auth_login_title") }}
         </a>
         {% endblock %}
+        <!--
+          Theme control. A form, so it works with no script at all: the
+          server records the choice and redirects back.
+
+          These are three states of one setting and exactly one is on,
+          which is aria-pressed rather than aria-current.
+        -->
+        <form method="post" action="/settings/theme"
+              class="flex items-center gap-2"
+              aria-label="{{ i18n.t("theme_group_label") }}">
+            <button type="submit" name="theme" value="light"
+                    aria-pressed="{% if theme.as_str() == "light" %}true{% else %}false{% endif %}"
+                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                {{ i18n.t("theme_light") }}
+            </button>
+            <button type="submit" name="theme" value="dark"
+                    aria-pressed="{% if theme.as_str() == "dark" %}true{% else %}false{% endif %}"
+                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                {{ i18n.t("theme_dark") }}
+            </button>
+            <button type="submit" name="theme" value="system"
+                    aria-pressed="{% if theme.as_str() == "system" %}true{% else %}false{% endif %}"
+                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                {{ i18n.t("theme_system") }}
+            </button>
+        </form>
     </nav>
     <main id="main-content" role="main"
           class="max-w-2xl mx-auto px-4 py-8">

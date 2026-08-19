@@ -5,6 +5,10 @@
 skip_to_content: "Pular para o conteúdo"
 nav_brand: "Noombat"
 nav_settings: "Configurações"
+theme_group_label: "Tema"
+theme_light: "Claro"
+theme_dark: "Escuro"
+theme_system: "Sistema"
 
 # Feed.
 feed_title: "Feed"

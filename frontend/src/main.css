@@ -5,51 +5,186 @@
  * TailwindCSS v4 entry point for Noombat.
  *
  * Theme tokens defined in @theme become Tailwind utility classes
- * (e.g. bg-surface, text-muted, font-sans, border-border).
+ * (e.g. bg-bg-raised, text-text-secondary, border-border-default).
  *
  * @source tells Tailwind to scan the Askama templates (which live
  * outside the frontend/ tree) for class names.
+ *
+ * Two layers, and the split is the point. Primitives below name colours
+ * and nothing else; the semantic tokens in @theme name roles and are the
+ * only ones a template may use. A template that reaches for a primitive,
+ * or for a raw Tailwind palette class, puts a colour decision somewhere a
+ * theme cannot reach it.
  */
 
 @import "tailwindcss";
 @import "./math.css";
 @source "../../crates/noombat-api/templates/**/*.html";
 
-@theme {
-  --color-bg: #fafafa;
-  --color-fg: #1a1a1a;
-  --color-muted: #666666;
-  --color-accent: #4a6fa5;
-  --color-focus: #2563eb;
-  --color-surface: #ffffff;
-  --color-border: #e0e0e0;
+/*
+ * Primitives. Referenced by the semantic tokens and by nothing else.
+ * Warm throughout: no cool greys, no pure white, no pure black.
+ */
+:root {
+  /* Bark: the numbat's fur, and the action colour. */
+  --bark-50: #fbf2ec;
+  --bark-100: #f4ddcd;
+  --bark-200: #e8bb9e;
+  --bark-300: #d9986c;
+  --bark-400: #c5703f;
+  --bark-500: #885c38;
+  --bark-600: #9a4a2c;
+  --bark-700: #7a3a23;
+  --bark-800: #582a19;
+  --bark-900: #371a0f;
 
-  --font-sans: system-ui, -apple-system, sans-serif;
+  /* Cream: the numbat's stripes, and every light surface. */
+  --cream-50: #fdfbf6;
+  --cream-100: #f8f2e5;
+  --cream-200: #f0e7d2;
+  --cream-300: #e5dbb8;
+  --cream-400: #d4c293;
+
+  /* Ink: text, and every dark surface. */
+  --ink-100: #dcd6cc;
+  --ink-200: #b5ac9c;
+  --ink-400: #57503f;
+  --ink-600: #2a251c;
+  --ink-800: #14110d;
+  --ink-900: #0d0b08;
+
+  /* Eucalyptus: the habitat, and the secondary accent. */
+  --euc-300: #86a884;
+  --euc-500: #5c7a5a;
+
+  /* Sunset: highlights and badges, never a surface. */
+  --sun-300: #f0b968;
+  --sun-500: #e8a04a;
+
+  /* Signals. Used to report state, never as decoration. The `-dark`
+     halves are the same four hues lifted for legibility on ink. */
+  --signal-success: #4e7a4a;
+  --signal-warning: #c98a1f;
+  --signal-danger: #b23e2a;
+  --signal-info: #4a6b8a;
+  --signal-success-dark: #6b9e68;
+  --signal-warning-dark: #e0a832;
+  --signal-danger-dark: #d4584a;
+  --signal-info-dark: #6b8fb0;
+
+  /* One step lighter than --cream-100, so it has no place in the ramp. */
+  --raised-light: #fffcf5;
 }
 
 /*
- * Dark mode: override the CSS custom properties that @theme generated.
- * Tailwind utilities (bg-bg, text-fg, etc.) reference these properties,
- * so the palette switches automatically.
+ * Which of the two palettes light-dark() resolves to.
+ *
+ * `light dark` means "follow the system", so it is the System setting and
+ * also what an unset attribute gives. The two explicit values pin the
+ * choice in both directions, which is what makes Light usable on a dark
+ * system. color-scheme also themes form controls and scrollbars, which
+ * no custom property reaches.
  */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #1a1a1a;
-    --color-fg: #e0e0e0;
-    --color-muted: #999999;
-    --color-accent: #7ba4d4;
-    --color-focus: #60a5fa;
-    --color-surface: #2a2a2a;
-    --color-border: #444444;
-  }
+:root {
+  color-scheme: light dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+}
+
+@theme {
+  /*
+   * Semantic tokens: the palette templates name, each stated once as
+   * light-dark(light, dark).
+   *
+   * Cream and Ink swap roles in dark. Bark, Eucalyptus and Sunset move to
+   * lighter steps, because a mid-tone that reads as an action on cream
+   * disappears on ink.
+   */
+
+  --color-text-primary: light-dark(var(--ink-800), var(--cream-100));
+  --color-text-secondary: light-dark(var(--ink-400), var(--ink-200));
+  --color-text-brand: light-dark(var(--bark-700), var(--bark-300));
+  --color-text-on-brand: light-dark(var(--cream-50), var(--ink-800));
+  --color-text-accent: light-dark(var(--euc-500), var(--euc-300));
+  --color-text-success: light-dark(var(--signal-success), var(--signal-success-dark));
+  --color-text-warning: light-dark(var(--signal-warning), var(--signal-warning-dark));
+  --color-text-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
+  --color-text-info: light-dark(var(--signal-info), var(--signal-info-dark));
+
+  --color-bg-primary: light-dark(var(--cream-100), var(--ink-800));
+  --color-bg-raised: light-dark(var(--raised-light), var(--ink-600));
+  --color-bg-sunken: light-dark(var(--cream-200), var(--ink-900));
+  --color-bg-brand: light-dark(var(--bark-500), var(--bark-400));
+  --color-bg-brand-hover: light-dark(var(--bark-600), var(--bark-300));
+  --color-bg-brand-press: light-dark(var(--bark-700), var(--bark-200));
+  --color-bg-accent: light-dark(var(--euc-500), var(--euc-300));
+  --color-bg-highlight: light-dark(var(--sun-500), var(--sun-300));
+
+  /* Warm ink at low opacity rather than a grey, so borders sit in the
+     same family as the surfaces they divide. */
+  --color-border-default: light-dark(rgb(31 27 22 / 0.12), rgb(248 242 229 / 0.1));
+  --color-border-strong: light-dark(rgb(31 27 22 / 0.22), rgb(248 242 229 / 0.18));
+  --color-border-focus: light-dark(var(--bark-500), var(--bark-300));
+  --color-border-success: light-dark(var(--signal-success), var(--signal-success-dark));
+  --color-border-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
+
+  /* The halo drawn outside --color-border-focus by the focus rule. Pinned
+     rather than derived from the accent, so focus visibility does not
+     follow the accent if that is ever retuned. */
+  --color-focus-halo: light-dark(var(--bark-100), rgb(217 152 108 / 0.25));
+
+  /* Spacing, 4 px base. Stated here, not inherited from Tailwind's
+     numeric scale, which they coincide with. */
+  --spacing-1: 4px;
+  --spacing-2: 8px;
+  --spacing-3: 12px;
+  --spacing-4: 16px;
+  --spacing-6: 24px;
+  --spacing-8: 32px;
+  --spacing-12: 48px;
+  --spacing-16: 64px;
+  --spacing-24: 96px;
+
+  /* Cards --radius-lg, inputs and buttons --radius-md, chips
+     --radius-pill, avatars a full circle. */
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+  --radius-xl: 20px;
+  --radius-2xl: 28px;
+  --radius-pill: 9999px;
+
+  --font-sans: system-ui, -apple-system, sans-serif;
+
+  /*
+   * Names the templates still use, mapped onto the semantic tokens.
+   * Delete each one with the last template class that references it.
+   */
+  --color-bg: var(--color-bg-primary);
+  --color-fg: var(--color-text-primary);
+  --color-muted: var(--color-text-secondary);
+  --color-accent: var(--color-text-brand);
+  --color-focus: var(--color-border-focus);
+  --color-surface: var(--color-bg-raised);
+  --color-border: var(--color-border-default);
 }
 
 /* ..... Focus ..... */
 
 @layer base {
+  /* The halo carries the indicator across backgrounds the outline colour
+     alone is close to. */
   :focus-visible {
-    outline: 2px solid var(--color-focus);
+    outline: 2px solid var(--color-border-focus);
     outline-offset: 2px;
+    box-shadow: 0 0 0 3px var(--color-focus-halo);
   }
 
   a:focus-visible {
@@ -64,11 +199,11 @@
   top: -100%;
   left: 1rem;
   padding: 0.5rem 1rem;
-  background: var(--color-accent);
-  color: #fff;
+  background: var(--color-bg-brand);
+  color: var(--color-text-on-brand);
   text-decoration: none;
   z-index: 100;
-  border-radius: 0 0 4px 4px;
+  border-radius: 0 0 var(--radius-sm) var(--radius-sm);
 }
 
 .skip-link:focus {

@@ -236,19 +236,36 @@ pub fn is_local_domain(domain: &str) -> bool {
 /// alone: a development instance on 8443 had its WebSocket blocked by
 /// its own policy, and the URL on the page named the wrong port too.
 pub fn websocket_origin(domain: &str, public_port: u16) -> String {
-    if !is_local_domain(domain) {
-        // Behind a TLS terminator on 443, where the default port is
-        // correct and naming it would only add noise.
-        return format!("wss://{domain}");
-    }
+    let scheme = if is_local_domain(domain) { "ws" } else { "wss" };
+    format!("{scheme}://{}", origin_authority(domain, public_port))
+}
 
-    // A local deployment is reached directly on its listening port. A
-    // port already in the domain wins: an operator who wrote
-    // `localhost:9000` meant it.
-    if domain.contains(':') {
-        format!("ws://{domain}")
+/// Build the HTTP origin a browser addresses this instance by.
+///
+/// Differs from [`websocket_origin`] in scheme alone, and shares the host
+/// and port reasoning with it so the two can never disagree about which
+/// requests are same-origin.
+pub fn http_origin(domain: &str, public_port: u16) -> String {
+    let scheme = if is_local_domain(domain) {
+        "http"
     } else {
-        format!("ws://{domain}:{public_port}")
+        "https"
+    };
+    format!("{scheme}://{}", origin_authority(domain, public_port))
+}
+
+/// The `host[:port]` half of this instance's origin.
+///
+/// A remote deployment sits behind a TLS terminator on 443, where the
+/// default port is correct and naming it would only add noise. A local
+/// one is reached directly on its listening port, except that a port
+/// already in the domain wins: an operator who wrote `localhost:9000`
+/// meant it.
+fn origin_authority(domain: &str, public_port: u16) -> String {
+    if !is_local_domain(domain) || domain.contains(':') {
+        domain.to_owned()
+    } else {
+        format!("{domain}:{public_port}")
     }
 }
 
