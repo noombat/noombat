@@ -286,9 +286,12 @@ fi
 # a leaf with a CA it generates at boot, the compose file shares that CA,
 # and Noombat trusts it through SSL_CERT_FILE.
 if [ -n "$ALICE_TOKEN" ]; then
-    PROV_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
+    PROV_BODY=$(curl $CURL_OPTS -s -w '\n%{http_code}' \
       -X POST -H "Cookie: noombat_session=${ALICE_TOKEN}" \
-      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROV_CODE="000"
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROV_BODY=""
+    PROV_CODE=$(printf '%s' "$PROV_BODY" | tail -n1)
+    ALICE_CHATMAIL_PASSWORD=$(printf '%s' "$PROV_BODY" \
+      | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
     if [ "$PROV_CODE" = "200" ]; then
         pass "Chat provisioned against the relay (HTTP 200)"
     else
@@ -307,6 +310,37 @@ if [ -n "$ALICE_TOKEN" ]; then
     fi
 else
     skip "Chat provisioning: no token"
+fi
+
+# 13. Sending, which is the only assertion that leaves over SMTP.
+#
+# SMTP resolves its TLS roots through lettre and IMAP through the chat
+# connector, so the two can disagree: provisioning and fetching succeed
+# while submission fails against the same relay. Everything above passed
+# for a full day with submission broken, because nothing sent.
+#
+# bob is provisioned first so the recipient mailbox exists, which also
+# exercises provisioning for a second account.
+if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "$ALICE_CHATMAIL_PASSWORD" ]; then
+    curl $CURL_OPTS -s -o /dev/null -X POST \
+      -H "Cookie: noombat_session=${BOB_TOKEN}" \
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null || true
+
+    if ! command -v python3 >/dev/null 2>&1; then
+        skip "Chat send: python3 is needed to drive the relay WebSocket"
+    else
+        SEND_OUT=$("$(dirname "$0")/send-probe.py" \
+          "$NOOMBAT" "$ALICE_TOKEN" "$ALICE_CHATMAIL_PASSWORD" \
+          "bob@${CHATMAIL_DOMAIN}" 2>&1)
+        SEND_CODE=$?
+        if [ "$SEND_CODE" = "0" ]; then
+            pass "Message sent to bob@${CHATMAIL_DOMAIN} over SMTP"
+        else
+            fail "Sending to bob@${CHATMAIL_DOMAIN} failed: $SEND_OUT"
+        fi
+    fi
+else
+    skip "Chat send: no token or no provisioned credential"
 fi
 
 # ..... Summary .....

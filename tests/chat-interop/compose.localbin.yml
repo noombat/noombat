@@ -22,11 +22,14 @@ services:
     # copied into place.
     entrypoint:
       ["/bin/sh", "-c",
-       "cp /etc/dovecot/dovecot.conf.local /etc/dovecot/dovecot.conf; exec /entrypoint.sh"]
+       "cp /etc/dovecot/dovecot.conf.local /etc/dovecot/dovecot.conf; cp /etc/postfix/main.cf.local /etc/postfix/main.cf; exec /entrypoint.sh"]
     volumes:
       - ../../chatmail-config/entrypoint.sh:/entrypoint.sh:ro
       - ../../chatmail-config/noombat-doveauth:/usr/local/bin/noombat-doveauth:ro
       - ../../chatmail-config/dovecot.conf:/etc/dovecot/dovecot.conf.local:ro
+      - ../../chatmail-config/master.cf.filtermail:/etc/postfix/master.cf.filtermail:ro
+      - ../../chatmail-config/main.cf:/etc/postfix/main.cf.local:ro
+      - ../../chatmail-config/opendkim.conf:/etc/opendkim.conf:ro
 
   noombat:
     volumes:
