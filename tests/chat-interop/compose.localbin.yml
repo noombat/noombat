@@ -8,8 +8,9 @@
 #       -f tests/chat-interop/compose.yml \
 #       -f tests/chat-interop/compose.localbin.yml up -d --wait
 #
-# Mounts the locally built binary and the Chatmail scripts over the image,
-# so a source change costs no image build. Templates, migrations and the
+# Mounts the locally built binary, and the relay's scripts and
+# configuration, over the image, so a change to any of them costs no image
+# build. Templates, migrations and the
 # built frontend still come from the image: if one of those changes, this
 # loop is invalid and the image has to be rebuilt.
 #
@@ -17,9 +18,9 @@
 
 services:
   chatmail:
-    # `sed -i` cannot rewrite a bind-mounted file and the entrypoint runs it
-    # on dovecot.conf, so that file is mounted beside its destination and
-    # copied into place.
+    # `sed -i` cannot rewrite a bind-mounted file, and the entrypoint runs
+    # it on both dovecot.conf and main.cf, so those two are mounted beside
+    # their destinations and copied into place. The rest mount directly.
     entrypoint:
       ["/bin/sh", "-c",
        "cp /etc/dovecot/dovecot.conf.local /etc/dovecot/dovecot.conf; cp /etc/postfix/main.cf.local /etc/postfix/main.cf; exec /entrypoint.sh"]
