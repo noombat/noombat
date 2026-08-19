@@ -25,7 +25,10 @@ on:
   schedule:
     # Mondays, after Dependabot's weekly run, so a pin bump and this
     # report land in the same review session.
-    - cron: "0 6 * * 1"
+    # Minute 23 rather than 0: GitHub drops scheduled runs under load and
+    # the top of the hour is the most contended. This workflow missed its
+    # first window at minute 0 while startup-watch fired at minute 17.
+    - cron: "23 6 * * 1"
   workflow_dispatch:
 
 permissions:
