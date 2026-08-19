@@ -8,7 +8,7 @@
   which keeps translated text out of inline <script> bodies and so out of
   conflict with a `script-src 'self'` Content-Security-Policy.
 -->
-<html lang="{{ i18n.lang_attr() }}" dir="ltr"
+<html lang="{{ i18n.lang_attr() }}" dir="{{ i18n.dir_attr() }}"
       data-theme="{{ theme.as_str() }}"
       data-contrast="{{ contrast.as_str() }}"
       data-password-mismatch="{{ i18n.t("auth_password_mismatch") }}"

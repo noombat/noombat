@@ -1524,6 +1524,29 @@ mod tests {
         render_with(theme, Contrast::Standard)
     }
 
+    fn render_in_locale(locale: &str) -> String {
+        LoginPage {
+            i18n: I18n {
+                locale: locale.to_owned(),
+            },
+            theme: Theme::System,
+            contrast: Contrast::Standard,
+            error: None,
+            orcid_enabled: false,
+        }
+        .render()
+        .expect("login.html renders")
+    }
+
+    /// `dir` is served from the locale, not from a literal. The second
+    /// case is the whole assertion: the first passes against a hardcoded
+    /// `dir="ltr"` just as well.
+    #[test]
+    fn the_direction_attribute_follows_the_locale() {
+        assert!(render_in_locale(DEFAULT_LOCALE).contains(r#"dir="ltr""#));
+        assert!(render_in_locale("ar-EG").contains(r#"dir="rtl""#));
+    }
+
     /// The theme reaches the root element, which is the whole mechanism:
     /// the stylesheet resolves `data-theme` and nothing else consults the
     /// preference. A `Theme` that is read from the cookie, threaded

@@ -75,6 +75,40 @@ impl I18n {
     pub fn lang_attr(&self) -> &str {
         &self.locale
     }
+
+    /// The value for the HTML `dir` attribute.
+    ///
+    /// Templates pair this with logical-property utilities (`ms-`, `pe-`,
+    /// `text-start`), which follow it; a physical `ml-` would not.
+    ///
+    /// Every locale in [`AVAILABLE_LOCALES`] is left-to-right, so this
+    /// returns `ltr` for anything the instance currently serves.
+    pub fn dir_attr(&self) -> &'static str {
+        if is_rtl(&self.locale) { "rtl" } else { "ltr" }
+    }
+}
+
+/// Whether a BCP 47 tag names a right-to-left script.
+///
+/// Decided on the primary language subtag, which is what a tag like
+/// `ar-EG` or `he` carries. An explicit script subtag wins where one is
+/// present, because `uz-Arab` is right-to-left while `uz` is not.
+fn is_rtl(tag: &str) -> bool {
+    const RTL_LANGUAGES: &[&str] = &[
+        "ar", "arc", "ckb", "dv", "fa", "he", "khw", "ks", "ps", "sd", "ur", "yi",
+    ];
+    const RTL_SCRIPTS: &[&str] = &["arab", "hebr", "thaa", "syrc", "nkoo", "adlm"];
+
+    let mut parts = tag.split('-');
+    let Some(language) = parts.next() else {
+        return false;
+    };
+
+    if parts.any(|part| RTL_SCRIPTS.contains(&part.to_ascii_lowercase().as_str())) {
+        return true;
+    }
+
+    RTL_LANGUAGES.contains(&language.to_ascii_lowercase().as_str())
 }
 
 /// Negotiate the best locale from the `Accept-Language` header.
@@ -142,6 +176,58 @@ mod tests {
         let mut map = HeaderMap::new();
         map.insert("accept-language", HeaderValue::from_str(value).unwrap());
         map
+    }
+
+    fn dir_of(locale: &str) -> &'static str {
+        I18n {
+            locale: locale.to_owned(),
+        }
+        .dir_attr()
+    }
+
+    // ..... Direction .....
+
+    /// Every locale the instance actually offers, so the attribute the
+    /// product serves today is asserted rather than inferred.
+    #[test]
+    fn every_available_locale_is_left_to_right() {
+        for locale in AVAILABLE_LOCALES {
+            assert_eq!(dir_of(locale), "ltr", "{locale}");
+        }
+    }
+
+    /// The point of deriving the attribute. Without these, `dir_attr`
+    /// could return a constant and pass the test above.
+    #[test]
+    fn a_right_to_left_language_is_detected_from_its_tag() {
+        for locale in [
+            "ar", "ar-EG", "he", "he-IL", "fa-IR", "ur", "ps", "ckb", "dv", "yi",
+        ] {
+            assert_eq!(dir_of(locale), "rtl", "{locale}");
+        }
+    }
+
+    /// A script subtag decides where the language alone does not: the
+    /// same language is written both ways.
+    #[test]
+    fn a_script_subtag_decides_where_the_language_does_not() {
+        assert_eq!(dir_of("uz-Arab"), "rtl");
+        assert_eq!(dir_of("uz-Latn"), "ltr");
+        assert_eq!(dir_of("sr-Cyrl"), "ltr");
+    }
+
+    /// A tag that merely begins with the letters of one is not one.
+    #[test]
+    fn a_tag_is_not_matched_on_a_prefix() {
+        for locale in ["arn", "hel", "urd-x", "fake", ""] {
+            assert_eq!(dir_of(locale), "ltr", "{locale}");
+        }
+    }
+
+    #[test]
+    fn the_tag_is_matched_without_regard_to_case() {
+        assert_eq!(dir_of("AR-eg"), "rtl");
+        assert_eq!(dir_of("uz-ARAB"), "rtl");
     }
 
     #[test]
