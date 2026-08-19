@@ -1,8 +1,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Postfix master.cf snippet: defines the filtermail content filter
-# as a pipe(8) service and the re-injection listener (127.0.0.1:10025).
+# Postfix master.cf snippet: defines the submission listener on 465, the
+# filtermail content filter as a pipe(8) service, and the re-injection
+# listener (127.0.0.1:10025).
 #
 # Appended to /etc/postfix/master.cf by the container entrypoint.
 #
@@ -10,6 +11,22 @@
 # Messages accepted by the filter are re-injected via sendmail(1)
 # with content_filter= cleared (to avoid a loop) and arrive at the
 # re-injection smtpd on 127.0.0.1:10025.
+
+# Submission over implicit TLS (RFC 8314), which is the port the
+# application server connects to. Postfix ships this listener commented
+# out, so without it 465 is EXPOSEd and nothing answers: sending fails
+# with "connection refused" while provisioning and fetching, which speak
+# IMAP, keep working.
+#
+# The numeric port rather than the `submissions` service name, so this
+# does not depend on /etc/services in the base image. `content_filter` is
+# inherited from main.cf, so submitted mail passes through filtermail
+# like everything else.
+465       inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/submissions
+  -o smtpd_tls_wrappermode=yes
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_client_restrictions=permit_sasl_authenticated,reject
 
 # filtermail content filter (pipe transport).
 filtermail unix  -       n       n       -       10      pipe
