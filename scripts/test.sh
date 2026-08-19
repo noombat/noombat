@@ -71,6 +71,11 @@ run ./scripts/check-image-pins.sh
 
 # ..... Templates .....
 
+# An inline <script> or style attribute is blocked by the served policy,
+# so the page renders without whatever it was doing.
+step "Checking templates against the CSP"
+run ./scripts/check-inline-scripts.sh
+
 # Askama validates only its own syntax, so an unterminated `<!--`
 # compiles clean and swallows the rest of the rendered page.
 step "Checking template comment balance"
@@ -88,11 +93,31 @@ run ./scripts/check-logical-properties.sh
 step "Checking colour contrast"
 run python3 ./scripts/check-contrast.py
 
+# ..... Database .....
+
+# A duplicate version or a missing down-migration is invisible until a
+# deployment tries to roll back.
+step "Checking migration shape"
+run ./scripts/check-migrations.sh
+
+# ..... Workflows .....
+
 # A `uses:` outside the repository's Actions policy makes the whole
 # workflow startup_failure, which creates no check runs and so leaves the
 # commit reading green while nothing ran.
 step "Checking the GitHub Actions allowlist"
 run ./scripts/check-action-allowlist.sh
+
+# The symptom of the same fault, and only answerable for a commit the
+# remote has. Announced when skipped rather than passed over, because a
+# check that quietly did not run is the thing this suite exists to catch.
+if git rev-parse --verify --quiet '@{u}' > /dev/null 2>&1 &&
+    git merge-base --is-ancestor HEAD '@{u}' > /dev/null 2>&1; then
+    step "Checking for workflows rejected at startup"
+    run ./scripts/check-workflow-startup.sh
+else
+    step "Skipping the startup check: HEAD is not on the remote yet"
+fi
 
 # ..... Frontend .....
 
@@ -111,6 +136,20 @@ if [ "$QUICK" = false ]; then
     cd frontend
     run pnpm lint
     cd "$REPO_ROOT"
+fi
+
+# ..... CV rendering .....
+
+# Compiles hostile markup with the pinned typst image, so it needs
+# docker and is the slowest check here. Its own CI job runs it either
+# way; the skip is announced so a local pass is not read as covering it.
+if [ "$QUICK" = false ]; then
+    if command -v docker > /dev/null 2>&1; then
+        step "Checking Typst injection"
+        run ./scripts/check-typst-injection.sh
+    else
+        step "Skipping the Typst check: docker is not available"
+    fi
 fi
 
 # ..... REUSE .....
