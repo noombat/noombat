@@ -116,10 +116,9 @@ if [ ! -f "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private" ]; then
         --bits=2048
 
     # opendkim-genkey writes PKCS#8 when built against OpenSSL 3, and
-    # OpenDKIM 2.11 loads only PKCS#1. Left unconverted every message
-    # fails to sign, the milter reports an internal error, and Postfix
-    # turns that into `4.7.1 Service unavailable` on submission. The
-    # public key is unchanged, so the TXT record below still matches.
+    # OpenDKIM 2.11 loads only PKCS#1, so unconverted no message can be
+    # signed. The public key is unchanged, so the TXT record below still
+    # matches.
     DKIM_KEY="${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
     openssl rsa -in "${DKIM_KEY}" -out "${DKIM_KEY}.pkcs1" -traditional 2>/dev/null
     mv "${DKIM_KEY}.pkcs1" "${DKIM_KEY}"
@@ -153,10 +152,8 @@ chown -R vmail:vmail /home/vmail
 # ..... SYSLOG .....
 
 # Nothing in this image creates /dev/log, so every daemon that logs
-# through syslog logs into nothing. Postfix is configured around it with
-# `maillog_file`, but OpenDKIM has no such option, and its refusals were
-# invisible: a message tempfailed with `4.7.1 Service unavailable` and no
-# record of why anywhere in the container.
+# through syslog logs into nothing. Postfix has `maillog_file` to route
+# around that; OpenDKIM has no equivalent.
 #
 # A collector rather than a syslog daemon because the image has neither,
 # and perl is already here. Backgrounded before the s6 handoff so it

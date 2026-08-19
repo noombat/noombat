@@ -14,9 +14,7 @@
 
 # Submission over implicit TLS (RFC 8314), which is the port the
 # application server connects to. Postfix ships this listener commented
-# out, so without it 465 is EXPOSEd and nothing answers: sending fails
-# with "connection refused" while provisioning and fetching, which speak
-# IMAP, keep working.
+# out, so it has to be declared here or nothing answers on 465.
 #
 # The numeric port rather than the `submissions` service name, so this
 # does not depend on /etc/services in the base image. `content_filter` is

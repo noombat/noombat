@@ -36,7 +36,7 @@ smtpd_relay_restrictions =
 
 # Postfix logs through syslog by default and this image runs no syslog
 # daemon, so without this every rejection, deferral and TLS error is
-# discarded. A 451 then reaches the client with no way to find its cause.
+# discarded.
 maillog_file = /dev/stdout
 
 # ..... TLS .....
