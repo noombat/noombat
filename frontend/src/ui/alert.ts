@@ -22,7 +22,8 @@ export function showFormAlert(form: HTMLFormElement, message: string): void {
   if (!alert) {
     alert = document.createElement("div");
     alert.setAttribute("role", "alert");
-    alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mb-6 text-sm";
+    alert.className =
+      "bg-bg-danger-subtle border border-border-danger text-text-danger rounded px-4 py-3 mb-6 text-sm";
     form.prepend(alert);
   }
   alert.textContent = message;

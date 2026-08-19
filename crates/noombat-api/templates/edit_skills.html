@@ -13,23 +13,23 @@
               hx-swap="beforeend"
               class="flex gap-2 mb-6 max-w-lg">
             <input name="name" type="text" required placeholder="{{ i18n.t("skill_placeholder") }}"
-                   class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
+                   class="flex-1 border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             <button type="submit"
-                    class="bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                    class="bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90">
                 {{ i18n.t("skill_add") }}
             </button>
         </form>
 
         <div id="skills-list" class="flex flex-wrap gap-2">
             {% for skill in skills %}
-            <span class="bg-surface border border-border px-3 py-1 rounded text-sm flex items-center gap-2"
+            <span class="bg-bg-raised border border-border-default px-3 py-1 rounded text-sm flex items-center gap-2"
                   id="skill-{{ skill.id }}">
                 {{ skill.name }}
                 <button type="button"
                         hx-delete="/users/{{ username }}/skills/{{ skill.id }}"
                         hx-target="#skill-{{ skill.id }}"
                         hx-swap="outerHTML"
-                        class="text-muted hover:text-red-600 text-xs"
+                        class="text-text-secondary hover:text-text-danger text-xs"
                         aria-label="{{ i18n.t("skill_remove") }}: {{ skill.name }}">✕</button>
             </span>
             {% endfor %}

@@ -13,9 +13,9 @@
         <article aria-label="{{ aria_article_label }}">
             <header class="mb-6">
                 <h1 class="text-3xl font-bold mb-2 leading-tight">{{ article_title }}</h1>
-                <div class="flex items-baseline gap-2 text-sm text-muted">
+                <div class="flex items-baseline gap-2 text-sm text-text-secondary">
                     <a href="/users/{{ author }}"
-                       class="text-accent font-semibold no-underline hover:underline">
+                       class="text-text-brand font-semibold no-underline hover:underline">
                         {{ author_display }}
                     </a>
                     <time datetime="{{ created_at }}">{{ created_at }}</time>
@@ -37,13 +37,13 @@
 
             {% if !headings.is_empty() %}
             <nav aria-label="{{ i18n.t("aria_article_toc") }}"
-                 class="border border-border rounded p-4 mb-8 text-sm">
+                 class="border border-border-default rounded p-4 mb-8 text-sm">
                 <p class="font-semibold mb-2">{{ i18n.t("article_toc_heading") }}</p>
-                <ul class="space-y-1 list-none pl-0">
+                <ul class="space-y-1 list-none ps-0">
                     {% for h in headings %}
                     <li class="toc-depth-{{ h.depth.saturating_sub(1) }}">
                         <a href="#{{ h.slug }}"
-                           class="text-accent no-underline hover:underline">
+                           class="text-text-brand no-underline hover:underline">
                             {{ h.text }}
                         </a>
                     </li>

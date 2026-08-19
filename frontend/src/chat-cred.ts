@@ -62,9 +62,9 @@ document.addEventListener("DOMContentLoaded", () => {
     prompt.innerHTML = `
       <input type="password" id="cred-password"
              placeholder="Noombat password"
-             class="border border-border rounded px-3 py-2 text-sm bg-surface text-fg">
+             class="border border-border-default rounded px-3 py-2 text-sm bg-bg-raised text-text-primary">
       <button type="button" id="cred-unlock"
-              class="bg-accent text-white rounded px-4 py-2 text-sm">
+              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm">
         Unlock
       </button>
     `;
@@ -109,7 +109,7 @@ document.addEventListener("DOMContentLoaded", () => {
         // Add a copy button next to the password.
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
-        copyBtn.className = "cred-copy text-xs text-muted hover:text-fg mt-1";
+        copyBtn.className = "cred-copy text-xs text-text-secondary hover:text-text-primary mt-1";
         copyBtn.textContent = "Copy password";
         copyBtn.addEventListener("click", () => {
           navigator.clipboard.writeText(chatmailPassword).then(() => {
@@ -150,7 +150,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
             // Show the URI as a copyable fallback below the QR code.
             const uriDisplay = document.createElement("code");
-            uriDisplay.className = "block mt-2 text-xs font-mono break-all select-all text-muted";
+            uriDisplay.className =
+              "block mt-2 text-xs font-mono break-all select-all text-text-secondary";
             uriDisplay.textContent = uri;
             canvas.after(uriDisplay);
           }
@@ -177,7 +178,8 @@ function showError(container: HTMLElement, message: string): void {
   if (!alert) {
     alert = document.createElement("div");
     alert.setAttribute("role", "alert");
-    alert.className = "bg-red-50 border border-red-300 text-red-800 rounded px-4 py-3 mt-2 text-sm";
+    alert.className =
+      "bg-bg-danger-subtle border border-border-danger text-text-danger rounded px-4 py-3 mt-2 text-sm";
     container.appendChild(alert);
   }
   alert.textContent = message;

@@ -13,16 +13,16 @@
             <input name="q" type="search" required
                    value="{{ query }}"
                    placeholder="{{ i18n.t("search_placeholder") }}"
-                   class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg">
+                   class="flex-1 border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             <select name="index"
                     aria-label="{{ i18n.t("search_index_label") }}"
-                    class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                    class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
                 <option value="profiles" {% if index == "profiles" %}selected{% endif %}>{{ i18n.t("search_profiles") }}</option>
                 <option value="jobs" {% if index == "jobs" %}selected{% endif %}>{{ i18n.t("search_jobs") }}</option>
                 <option value="posts" {% if index == "posts" %}selected{% endif %}>{{ i18n.t("search_posts") }}</option>
             </select>
             <button type="submit"
-                    class="bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                    class="bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90">
                 {{ i18n.t("search_submit") }}
             </button>
         </form>
@@ -30,19 +30,19 @@
         {% if !results.is_empty() %}
         <ul class="space-y-4">
             {% for result in results %}
-            <li class="border-b border-border pb-4">
-                <a href="{{ result.url }}" class="text-accent no-underline hover:underline font-semibold">
+            <li class="border-b border-border-default pb-4">
+                <a href="{{ result.url }}" class="text-text-brand no-underline hover:underline font-semibold">
                     {{ result.title }}
                 </a>
                 {% if !result.subtitle.is_empty() %}
-                <p class="text-muted text-sm">{{ result.subtitle }}</p>
+                <p class="text-text-secondary text-sm">{{ result.subtitle }}</p>
                 {% endif %}
             </li>
             {% endfor %}
         </ul>
         {% else %}
         {% if !query.is_empty() %}
-        <p class="text-muted">{{ i18n.t("search_no_results") }}</p>
+        <p class="text-text-secondary">{{ i18n.t("search_no_results") }}</p>
         {% endif %}
         {% endif %}
 {% endblock %}

@@ -862,7 +862,7 @@ async fn create_alias(
 
     // Return an HTML fragment for HTMX to append.
     let html = format!(
-        r##"<li class="flex items-center gap-2 border-b border-border pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-muted hover:text-red-600 text-xs">✕</button></li>"##,
+        r##"<li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-text-secondary hover:text-text-danger text-xs">✕</button></li>"##,
         id = id,
         alias = html_escape(&req.alias),
         username = username,

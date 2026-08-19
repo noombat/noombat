@@ -9,11 +9,11 @@
         <article aria-label="{{ aria_post_label }}">
             <header class="flex items-baseline gap-2 mb-2">
                 <a href="/users/{{ author }}"
-                   class="text-accent font-semibold no-underline hover:underline">
+                   class="text-text-brand font-semibold no-underline hover:underline">
                     {{ author_display }}
                 </a>
                 <time datetime="{{ created_at }}"
-                      class="text-muted text-xs">
+                      class="text-text-secondary text-xs">
                     {{ created_at }}
                 </time>
             </header>
@@ -24,9 +24,9 @@
                and re-derived for pre-guard rows by
                `noombat_federation::backfill`. #}
             <div class="leading-relaxed">{{ content_html|safe }}</div>
-            <footer class="mt-3 flex gap-3 text-xs text-muted">
+            <footer class="mt-3 flex gap-3 text-xs text-text-secondary">
                 <button type="button"
-                        class="hover:text-fg"
+                        class="hover:text-text-primary"
                         data-toggle-target="report-form-{{ post_id }}"
                         aria-expanded="false"
                         aria-controls="report-form-{{ post_id }}">
@@ -35,11 +35,11 @@
                 <form id="report-form-{{ post_id }}" hidden
                       hx-post="/api/v1/reports"
                       hx-swap="outerHTML"
-                      class="border border-border rounded p-3 mt-2 space-y-2 text-sm text-fg">
+                      class="border border-border-default rounded p-3 mt-2 space-y-2 text-sm text-text-primary">
                     <input type="hidden" name="target_post_id" value="{{ post_id }}">
                     <label class="block">
                         {{ i18n.t("report_reason") }}
-                        <select name="reason" class="block border border-border rounded px-2 py-1 bg-surface text-fg text-sm mt-1">
+                        <select name="reason" class="block border border-border-default rounded px-2 py-1 bg-bg-raised text-text-primary text-sm mt-1">
                             <option value="spam">{{ i18n.t("report_reason_spam") }}</option>
                             <option value="harassment">{{ i18n.t("report_reason_harassment") }}</option>
                             <option value="illegal">{{ i18n.t("report_reason_illegal") }}</option>
@@ -50,9 +50,9 @@
                     <label class="block">
                         {{ i18n.t("report_comment") }}
                         <textarea name="comment" rows="2"
-                                  class="block w-full border border-border rounded px-2 py-1 bg-surface text-fg text-sm mt-1"></textarea>
+                                  class="block w-full border border-border-default rounded px-2 py-1 bg-bg-raised text-text-primary text-sm mt-1"></textarea>
                     </label>
-                    <button type="submit" class="bg-accent text-white rounded px-3 py-1 text-sm hover:opacity-90">
+                    <button type="submit" class="bg-bg-brand text-text-on-brand rounded px-3 py-1 text-sm hover:opacity-90">
                         {{ i18n.t("report_submit") }}
                     </button>
                 </form>

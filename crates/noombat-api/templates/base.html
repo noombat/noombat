@@ -32,7 +32,7 @@
     <script type="module" src="/assets/htmx.js"></script>
     {% block style %}{% endblock %}
 </head>
-<body class="bg-bg text-fg font-sans leading-relaxed">
+<body class="bg-bg-primary text-text-primary font-sans leading-relaxed">
     <a class="skip-link" href="#main-content">{{ i18n.t("skip_to_content") }}</a>
 
     <!--
@@ -55,15 +55,15 @@
     -->
     <div id="a11y-status" class="sr-only" role="status"></div>
     <nav aria-label="{{ i18n.t("aria_nav_main") }}"
-         class="border-b border-border px-4 py-3 flex items-center gap-4">
+         class="border-b border-border-default px-4 py-3 flex items-center gap-4">
         <a href="/"
-           class="text-accent no-underline hover:underline">
+           class="text-text-brand no-underline hover:underline">
             {{ i18n.t("nav_brand") }}
         </a>
         <span class="flex-1"></span>
         {% block nav_links %}
         <a href="/auth/login"
-           class="text-sm text-muted no-underline hover:text-fg">
+           class="text-sm text-text-secondary no-underline hover:text-text-primary">
             {{ i18n.t("auth_login_title") }}
         </a>
         {% endblock %}
@@ -79,17 +79,17 @@
               aria-label="{{ i18n.t("theme_group_label") }}">
             <button type="submit" name="theme" value="light"
                     aria-pressed="{% if theme.as_str() == "light" %}true{% else %}false{% endif %}"
-                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
                 {{ i18n.t("theme_light") }}
             </button>
             <button type="submit" name="theme" value="dark"
                     aria-pressed="{% if theme.as_str() == "dark" %}true{% else %}false{% endif %}"
-                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
                 {{ i18n.t("theme_dark") }}
             </button>
             <button type="submit" name="theme" value="system"
                     aria-pressed="{% if theme.as_str() == "system" %}true{% else %}false{% endif %}"
-                    class="text-sm text-muted hover:text-fg aria-pressed:text-fg">
+                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
                 {{ i18n.t("theme_system") }}
             </button>
         </form>

@@ -11,9 +11,9 @@
         <!-- Data export -->
         <section class="mb-8 max-w-lg">
             <h2 class="text-lg font-semibold mb-2">{{ i18n.t("account_export") }}</h2>
-            <p class="text-sm text-muted mb-3">{{ i18n.t("account_export_description") }}</p>
+            <p class="text-sm text-text-secondary mb-3">{{ i18n.t("account_export_description") }}</p>
             <a href="/api/v1/me/export"
-               class="inline-block bg-accent text-white rounded px-4 py-2 text-sm no-underline hover:opacity-90"
+               class="inline-block bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm no-underline hover:opacity-90"
                download>
                 {{ i18n.t("account_export") }}
             </a>
@@ -22,13 +22,13 @@
         <!-- Account deletion -->
         <section class="max-w-lg">
             <h2 class="text-lg font-semibold mb-2">{{ i18n.t("account_delete") }}</h2>
-            <p class="text-sm text-muted mb-3">{{ i18n.t("account_delete_description") }}</p>
+            <p class="text-sm text-text-secondary mb-3">{{ i18n.t("account_delete_description") }}</p>
 
             {% if deletion_pending %}
-            <p class="text-sm font-semibold text-red-600 mb-3">{{ i18n.t("account_delete_pending") }}</p>
+            <p class="text-sm font-semibold text-text-danger mb-3">{{ i18n.t("account_delete_pending") }}</p>
             <form hx-post="/api/v1/me/cancel-delete" hx-swap="none">
                 <button type="submit"
-                        class="border border-border rounded px-4 py-2 text-sm hover:bg-surface-alt">
+                        class="border border-border-default rounded px-4 py-2 text-sm hover:bg-surface-alt">
                     {{ i18n.t("account_delete_cancel") }}
                 </button>
             </form>
@@ -36,7 +36,7 @@
             <form hx-post="/api/v1/me/delete" hx-swap="none"
                   hx-confirm="{{ i18n.t("account_delete_confirm") }}">
                 <button type="submit"
-                        class="bg-red-600 text-white rounded px-4 py-2 text-sm hover:opacity-90">
+                        class="bg-bg-danger text-text-on-danger rounded px-4 py-2 text-sm hover:opacity-90">
                     {{ i18n.t("account_delete") }}
                 </button>
             </form>

@@ -8,13 +8,13 @@
 {% block content %}
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("auth_upgrade_heading") }}</h1>
 
-        <p class="mb-6 text-sm text-muted">
+        <p class="mb-6 text-sm text-text-secondary">
             {{ i18n.t("chat_upgrade_prompt") }}
         </p>
 
         <noscript>
             <div role="alert"
-                 class="bg-yellow-50 border border-yellow-300 text-yellow-800 rounded px-4 py-3 mb-6 text-sm">
+                 class="bg-bg-warning-subtle border border-border-warning text-text-warning rounded px-4 py-3 mb-6 text-sm">
                 JavaScript is required for secure password handling.
             </div>
         </noscript>
@@ -30,7 +30,7 @@
                 </label>
                 <input id="upgrade-password" type="password"
                        required autocomplete="new-password" minlength="8"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div>
@@ -39,11 +39,11 @@
                 </label>
                 <input id="upgrade-password-confirm" type="password"
                        required autocomplete="new-password" minlength="8"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <button type="submit"
-                    class="w-full bg-accent text-white rounded px-4 py-2 hover:opacity-90">
+                    class="w-full bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90">
                 {{ i18n.t("chat_upgrade_button") }}
             </button>
         </form>

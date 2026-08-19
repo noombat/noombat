@@ -19,14 +19,14 @@
                 <label for="display-name" class="block text-sm mb-1">{{ i18n.t("edit_display_name") }}</label>
                 <input id="display-name" name="display_name" type="text"
                        value="{{ display_name }}"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div>
                 <label for="headline" class="block text-sm mb-1">{{ i18n.t("edit_headline") }}</label>
                 <input id="headline" name="headline" type="text"
                        value="{{ headline }}"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div>
@@ -34,7 +34,7 @@
                 <input id="location" name="location" type="text"
                        value="{{ location }}"
                        placeholder="Berlin, Germany"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div>
@@ -46,7 +46,7 @@
                      data-locale="{{ i18n.lang_attr() }}">
                     <noscript>
                         <textarea name="summary_md" rows="8"
-                                  class="w-full border border-border rounded p-3 font-mono text-sm bg-surface text-fg">{{ summary_md }}</textarea>
+                                  class="w-full border border-border-default rounded p-3 font-mono text-sm bg-bg-raised text-text-primary">{{ summary_md }}</textarea>
                     </noscript>
                 </div>
             </div>
@@ -55,11 +55,11 @@
                 <label for="avatar-url" class="block text-sm mb-1">{{ i18n.t("edit_avatar_url") }}</label>
                 <input id="avatar-url" name="avatar_url" type="url"
                        value="{{ avatar_url }}"
-                       class="w-full border border-border rounded px-3 py-2 bg-surface text-fg">
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <button type="submit"
-                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                    class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">
                 {{ i18n.t("edit_save") }}
             </button>
         </form>

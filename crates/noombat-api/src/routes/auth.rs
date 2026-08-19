@@ -217,7 +217,7 @@ async fn totp_verify(
 
     // Return an HTML fragment that HTMX swaps into the #totp-enrolment
     // container, replacing the verification form with a success message.
-    let html = r#"<div class="bg-green-50 border border-green-300 text-green-800 rounded px-4 py-3 text-sm" role="status">Two-factor authentication is now enabled.</div>"#;
+    let html = r#"<div class="bg-bg-success-subtle border border-border-success text-text-success rounded px-4 py-3 text-sm" role="status">Two-factor authentication is now enabled.</div>"#;
     Ok((StatusCode::OK, axum::response::Html(html)).into_response())
 }
 

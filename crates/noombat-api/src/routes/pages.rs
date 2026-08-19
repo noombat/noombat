@@ -1080,13 +1080,13 @@ async fn privacy_preview_partial(
         r#"<p class="font-semibold text-lg">{display_name}</p>
 {headline_html}
 <div class="text-sm leading-relaxed mt-2">{summary}</div>
-<p class="text-xs text-muted mt-3">{exp_count} experience · {edu_count} education · {pub_count} publications visible</p>"#,
+<p class="text-xs text-text-secondary mt-3">{exp_count} experience · {edu_count} education · {pub_count} publications visible</p>"#,
         display_name = ammonia::clean(&display_name),
         headline_html = if headline.is_empty() {
             String::new()
         } else {
             format!(
-                r#"<p class="text-sm text-muted">{}</p>"#,
+                r#"<p class="text-sm text-text-secondary">{}</p>"#,
                 ammonia::clean(&headline)
             )
         },

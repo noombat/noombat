@@ -11,7 +11,7 @@
         <!-- Account aliases (prerequisite for incoming moves) -->
         <section class="mb-8">
             <h2 class="text-lg font-semibold mb-3">{{ i18n.t("migrate_aliases") }}</h2>
-            <p class="text-sm text-muted mb-4">{{ i18n.t("migrate_aliases_help") }}</p>
+            <p class="text-sm text-text-secondary mb-4">{{ i18n.t("migrate_aliases_help") }}</p>
 
             <form hx-post="/users/{{ username }}/aliases"
                   hx-target="#alias-list"
@@ -19,23 +19,23 @@
                   class="flex gap-2 mb-4 max-w-lg">
                 <input name="alias" type="url" required
                        placeholder="https://mastodon.social/users/alice"
-                       class="flex-1 border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                       class="flex-1 border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
                 <button type="submit"
-                        class="bg-accent text-white rounded px-4 py-2 hover:opacity-90 text-sm">
+                        class="bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90 text-sm">
                     {{ i18n.t("migrate_add_alias") }}
                 </button>
             </form>
 
             <ul id="alias-list" class="space-y-2 max-w-lg">
                 {% for alias in aliases %}
-                <li class="flex items-center gap-2 border-b border-border pb-2 text-sm"
+                <li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm"
                     id="alias-{{ alias.id }}">
                     <span class="flex-1 truncate font-mono">{{ alias.alias }}</span>
                     <button type="button"
                             hx-delete="/users/{{ username }}/aliases/{{ alias.id }}"
                             hx-target="#alias-{{ alias.id }}"
                             hx-swap="outerHTML"
-                            class="text-muted hover:text-red-600 text-xs">✕</button>
+                            class="text-text-secondary hover:text-text-danger text-xs">✕</button>
                 </li>
                 {% endfor %}
             </ul>
@@ -44,7 +44,7 @@
         <!-- Outbound move -->
         <section>
             <h2 class="text-lg font-semibold mb-3">{{ i18n.t("migrate_move") }}</h2>
-            <p class="text-sm text-muted mb-4">{{ i18n.t("migrate_move_help") }}</p>
+            <p class="text-sm text-text-secondary mb-4">{{ i18n.t("migrate_move_help") }}</p>
 
             <form hx-post="/users/{{ username }}/move"
                   hx-swap="none"
@@ -54,10 +54,10 @@
                     <label for="move-target" class="block text-sm mb-1">{{ i18n.t("migrate_target") }}</label>
                     <input id="move-target" name="target" type="url" required
                            placeholder="https://other.instance/users/alice"
-                           class="w-full border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                           class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
                 </div>
                 <button type="submit"
-                        class="bg-red-600 text-white rounded px-6 py-2 hover:opacity-90 text-sm">
+                        class="bg-bg-danger text-text-on-danger rounded px-6 py-2 hover:opacity-90 text-sm">
                     {{ i18n.t("migrate_submit") }}
                 </button>
             </form>

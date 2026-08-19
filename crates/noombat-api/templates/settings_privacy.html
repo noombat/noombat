@@ -19,42 +19,42 @@
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="discoverable" value="true"
                            {% if discoverable %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_discoverable") }}</span>
                 </label>
 
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="indexable" value="true"
                            {% if indexable %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_indexable") }}</span>
                 </label>
 
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="federate_profile" value="true"
                            {% if federate_profile %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_federate") }}</span>
                 </label>
 
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="require_follow_approval" value="true"
                            {% if require_follow_approval %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_follow_approval") }}</span>
                 </label>
 
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="show_followers_count" value="true"
                            {% if show_followers_count %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_show_followers") }}</span>
                 </label>
 
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="chatmail_visible" value="true"
                            {% if chatmail_visible %}checked{% endif %}
-                           class="rounded border-border">
+                           class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_chatmail_visible") }}</span>
                 </label>
             </fieldset>
@@ -66,7 +66,7 @@
             <div>
                 <label for="cv-download" class="block text-lg font-semibold mb-2">{{ i18n.t("privacy_cv") }}</label>
                 <select id="cv-download" name="cv_download"
-                        class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                        class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
                     <option value="public" {% if cv_download == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                     <option value="followers" {% if cv_download == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
                     <option value="self" {% if cv_download == "self" %}selected{% endif %}>{{ i18n.t("privacy_cv_self") }}</option>
@@ -77,7 +77,7 @@
             <div>
                 <label for="default-visibility" class="block text-lg font-semibold mb-2">{{ i18n.t("privacy_default_vis") }}</label>
                 <select id="default-visibility" name="default_visibility"
-                        class="border border-border rounded px-3 py-2 bg-surface text-fg text-sm">
+                        class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
                     <option value="public" {% if default_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                     <option value="unlisted" {% if default_visibility == "unlisted" %}selected{% endif %}>{{ i18n.t("vis_unlisted") }}</option>
                     <option value="followers" {% if default_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
@@ -85,32 +85,32 @@
             </div>
 
             <button type="submit"
-                    class="bg-accent text-white rounded px-6 py-2 hover:opacity-90">
+                    class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">
                 {{ i18n.t("edit_save") }}
             </button>
         </form>
 
         <!-- Links to related settings pages -->
         <nav class="mt-8 space-y-2 text-sm">
-            <a href="/settings/blocked" class="block text-accent no-underline hover:underline">{{ i18n.t("blocked_muted_heading") }}</a>
-            <a href="/settings/chat" class="block text-accent no-underline hover:underline">{{ i18n.t("chat_cred_title") }}</a>
-            <a href="/auth/totp" class="block text-accent no-underline hover:underline">{{ i18n.t("auth_totp_title") }}</a>
+            <a href="/settings/blocked" class="block text-text-brand no-underline hover:underline">{{ i18n.t("blocked_muted_heading") }}</a>
+            <a href="/settings/chat" class="block text-text-brand no-underline hover:underline">{{ i18n.t("chat_cred_title") }}</a>
+            <a href="/auth/totp" class="block text-text-brand no-underline hover:underline">{{ i18n.t("auth_totp_title") }}</a>
         </nav>
 
         <!-- Section visibility grid -->
         <section class="mt-10 max-w-lg" aria-label="{{ i18n.t("privacy_section_visibility") }}">
             <h2 class="text-lg font-semibold mb-4">{{ i18n.t("privacy_section_visibility") }}</h2>
             {% if section_rows.is_empty() %}
-            <p class="text-sm text-muted">{{ i18n.t("privacy_no_sections") }}</p>
+            <p class="text-sm text-text-secondary">{{ i18n.t("privacy_no_sections") }}</p>
             {% else %}
             <div class="space-y-2">
                 {% for row in section_rows %}
-                <div class="flex items-center justify-between border border-border rounded px-3 py-2">
-                    <span class="text-sm">{{ row.label }} <span class="text-xs text-muted">({{ row.table_name }})</span></span>
+                <div class="flex items-center justify-between border border-border-default rounded px-3 py-2">
+                    <span class="text-sm">{{ row.label }} <span class="text-xs text-text-secondary">({{ row.table_name }})</span></span>
                     <select hx-patch="/api/v1/sections/{{ row.section_id }}/visibility"
                             hx-swap="none"
                             name="visibility"
-                            class="border border-border rounded px-2 py-1 bg-surface text-fg text-xs"
+                            class="border border-border-default rounded px-2 py-1 bg-bg-raised text-text-primary text-xs"
                             aria-label="{{ row.label }} {{ i18n.t("edit_visibility") }}">
                         <option value="public" {% if row.visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                         <option value="followers" {% if row.visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
@@ -130,26 +130,26 @@
                         hx-get="/settings/privacy/preview?as=public"
                         hx-target="#privacy-preview"
                         hx-swap="innerHTML"
-                        class="text-sm border border-border rounded px-3 py-1 bg-surface hover:bg-surface-alt">
+                        class="text-sm border border-border-default rounded px-3 py-1 bg-bg-raised hover:bg-surface-alt">
                     {{ i18n.t("privacy_preview_as_public") }}
                 </button>
                 <button role="tab" aria-selected="false"
                         hx-get="/settings/privacy/preview?as=follower"
                         hx-target="#privacy-preview"
                         hx-swap="innerHTML"
-                        class="text-sm border border-border rounded px-3 py-1 bg-surface hover:bg-surface-alt">
+                        class="text-sm border border-border-default rounded px-3 py-1 bg-bg-raised hover:bg-surface-alt">
                     {{ i18n.t("privacy_preview_as_follower") }}
                 </button>
                 <button role="tab" aria-selected="false"
                         hx-get="/settings/privacy/preview?as=owner"
                         hx-target="#privacy-preview"
                         hx-swap="innerHTML"
-                        class="text-sm border border-border rounded px-3 py-1 bg-surface hover:bg-surface-alt">
+                        class="text-sm border border-border-default rounded px-3 py-1 bg-bg-raised hover:bg-surface-alt">
                     {{ i18n.t("privacy_preview_as_owner") }}
                 </button>
             </div>
             <div id="privacy-preview" role="tabpanel"
-                 class="border border-border rounded p-4 min-h-24"
+                 class="border border-border-default rounded p-4 min-h-24"
                  aria-live="polite"
                  hx-get="/settings/privacy/preview?as=public"
                  hx-trigger="load"

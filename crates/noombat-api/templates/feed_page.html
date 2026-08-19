@@ -17,14 +17,14 @@
 
 {% for post in posts %}
 <article aria-label="{{ post.aria_label }}"
-         class="border-b border-border py-4">
+         class="border-b border-border-default py-4">
     <header class="flex items-baseline gap-2 mb-1">
         <a href="/users/{{ post.author }}"
-           class="text-accent font-semibold no-underline hover:underline">
+           class="text-text-brand font-semibold no-underline hover:underline">
             {{ post.author_display }}
         </a>
         <time datetime="{{ post.created_at }}"
-              class="text-muted text-xs">
+              class="text-text-secondary text-xs">
             {{ post.created_at }}
         </time>
     </header>
@@ -33,7 +33,7 @@
     <!-- Article: title as linked heading, optional featured image, truncated preview. -->
     <h2 class="text-lg font-semibold mt-1 mb-1">
         <a href="/users/{{ post.author }}/posts/{{ post.post_id }}"
-           class="text-fg no-underline hover:underline">
+           class="text-text-primary no-underline hover:underline">
             {{ post.title.as_deref().unwrap_or_default() }}
         </a>
     </h2>
@@ -43,10 +43,10 @@
          class="w-full max-h-48 object-cover rounded mb-2"
          loading="lazy">
     {% endif %}
-    <p class="text-muted text-sm leading-relaxed">{{ post.preview_text }}</p>
+    <p class="text-text-secondary text-sm leading-relaxed">{{ post.preview_text }}</p>
     <footer class="mt-2">
         <a href="/users/{{ post.author }}/posts/{{ post.post_id }}"
-           class="text-accent text-sm no-underline hover:underline">
+           class="text-text-brand text-sm no-underline hover:underline">
             {{ read_more_label }}
         </a>
     </footer>
@@ -61,7 +61,7 @@
     <div class="leading-relaxed">{{ post.content_html|safe }}</div>
     <footer class="mt-2">
         <a href="/users/{{ post.author }}/posts/{{ post.post_id }}"
-           class="text-muted text-xs no-underline hover:underline">
+           class="text-text-secondary text-xs no-underline hover:underline">
             {{ permalink_label }}
         </a>
     </footer>
@@ -73,7 +73,7 @@
      hx-trigger="revealed"
      hx-swap="outerHTML"
      class="py-4">
-    <span class="htmx-indicator text-muted text-sm">
+    <span class="htmx-indicator text-text-secondary text-sm">
         {{ loading_more_label }}
     </span>
 </div>

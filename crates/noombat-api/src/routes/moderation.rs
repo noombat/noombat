@@ -556,7 +556,7 @@ async fn create_report(
     Ok((
         StatusCode::CREATED,
         axum::response::Html(format!(
-            r#"<p class="text-sm text-accent">{}</p>"#,
+            r#"<p class="text-sm text-text-brand">{}</p>"#,
             "Report submitted. A moderator will review it."
         )),
     ))

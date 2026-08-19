@@ -6,17 +6,17 @@
  */
 
 .noombat-editor {
-  border: 1px solid var(--color-border);
+  border: 1px solid var(--color-border-default);
   border-radius: 6px;
   overflow: hidden;
-  background: var(--color-surface);
+  background: var(--color-bg-raised);
 }
 
 /* ..... Tab bar (mobile only) ..... */
 
 .noombat-editor__tabs {
   display: flex;
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 1px solid var(--color-border-default);
 }
 
 .noombat-editor__tab {
@@ -24,15 +24,15 @@
   padding: 0.5rem 1rem;
   border: none;
   background: transparent;
-  color: var(--color-muted);
+  color: var(--color-text-secondary);
   cursor: pointer;
   font-size: 0.875rem;
   min-height: 44px; /* WCAG 2.2 touch target */
 }
 
 .noombat-editor__tab--active {
-  color: var(--color-fg);
-  border-bottom: 2px solid var(--color-accent);
+  color: var(--color-text-primary);
+  border-bottom: 2px solid var(--color-text-brand);
 }
 
 /* ..... Split panes ..... */
@@ -56,20 +56,20 @@
   font-family: monospace;
   font-size: 0.9rem;
   line-height: 1.5;
-  background: var(--color-bg);
-  color: var(--color-fg);
+  background: var(--color-bg-primary);
+  color: var(--color-text-primary);
   min-height: 200px;
 }
 
 .noombat-editor__source:focus {
-  outline: 2px solid var(--color-focus);
+  outline: 2px solid var(--color-border-focus);
   outline-offset: -2px;
 }
 
 .noombat-editor__preview {
   overflow-y: auto;
   line-height: 1.6;
-  color: var(--color-fg);
+  color: var(--color-text-primary);
 }
 
 /* ..... Mobile: hide inactive pane ..... */
@@ -97,7 +97,7 @@
   }
 
   .noombat-editor__source {
-    border-right: 1px solid var(--color-border);
+    border-right: 1px solid var(--color-border-default);
   }
 
   /* On desktop both panes are always visible. */

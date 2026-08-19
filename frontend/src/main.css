@@ -7,8 +7,10 @@
  * Theme tokens defined in @theme become Tailwind utility classes
  * (e.g. bg-bg-raised, text-text-secondary, border-border-default).
  *
- * @source tells Tailwind to scan the Askama templates (which live
- * outside the frontend/ tree) for class names.
+ * @source tells Tailwind where to look for class names outside the
+ * frontend/ tree: the Askama templates, and the handlers that build HTML
+ * fragments in Rust. A class named only from an unscanned file generates
+ * no rule and renders unstyled.
  *
  * Two layers, and the split is the point. Primitives below name colours
  * and nothing else; the semantic tokens in @theme name roles and are the
@@ -20,6 +22,7 @@
 @import "tailwindcss";
 @import "./math.css";
 @source "../../crates/noombat-api/templates/**/*.html";
+@source "../../crates/noombat-api/src/**/*.rs";
 
 /*
  * Primitives. Referenced by the semantic tokens and by nothing else.
@@ -72,6 +75,27 @@
   --signal-danger-dark: #d4584a;
   --signal-info-dark: #6b8fb0;
 
+  /* Tints for the banner each signal fills, warm enough to sit beside
+     Cream rather than on top of it. */
+  --signal-danger-tint: #f9e8e3;
+  --signal-warning-tint: #fbf1da;
+  --signal-success-tint: #eaf0e5;
+  --signal-danger-tint-dark: #2d1713;
+  --signal-warning-tint-dark: #2d2413;
+  --signal-success-tint-dark: #1a2418;
+
+  /* The same four hues at text weight. A signal chosen to read as a fill
+     is a mid-tone, and a mid-tone set as body text on its own tint does
+     not reach 4.5:1. Merging these back into the fills reintroduces that. */
+  --signal-danger-text: #8a2a1c;
+  --signal-warning-text: #6f470c;
+  --signal-success-text: #2c5629;
+  --signal-info-text: #2f4a66;
+  --signal-danger-text-dark: #f0a99f;
+  --signal-warning-text-dark: #edc264;
+  --signal-success-text-dark: #9ac996;
+  --signal-info-text-dark: #9ab6cf;
+
   /* One step lighter than --cream-100, so it has no place in the ramp. */
   --raised-light: #fffcf5;
 }
@@ -112,10 +136,10 @@
   --color-text-brand: light-dark(var(--bark-700), var(--bark-300));
   --color-text-on-brand: light-dark(var(--cream-50), var(--ink-800));
   --color-text-accent: light-dark(var(--euc-500), var(--euc-300));
-  --color-text-success: light-dark(var(--signal-success), var(--signal-success-dark));
-  --color-text-warning: light-dark(var(--signal-warning), var(--signal-warning-dark));
-  --color-text-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
-  --color-text-info: light-dark(var(--signal-info), var(--signal-info-dark));
+  --color-text-success: light-dark(var(--signal-success-text), var(--signal-success-text-dark));
+  --color-text-warning: light-dark(var(--signal-warning-text), var(--signal-warning-text-dark));
+  --color-text-danger: light-dark(var(--signal-danger-text), var(--signal-danger-text-dark));
+  --color-text-info: light-dark(var(--signal-info-text), var(--signal-info-text-dark));
 
   --color-bg-primary: light-dark(var(--cream-100), var(--ink-800));
   --color-bg-raised: light-dark(var(--raised-light), var(--ink-600));
@@ -126,12 +150,27 @@
   --color-bg-accent: light-dark(var(--euc-500), var(--euc-300));
   --color-bg-highlight: light-dark(var(--sun-500), var(--sun-300));
 
+  /* A signal fills a control solid, or tints a banner. A control set in
+     the tint disappears. */
+  --color-bg-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
+  --color-text-on-danger: light-dark(var(--cream-50), var(--ink-800));
+  --color-bg-danger-subtle: light-dark(var(--signal-danger-tint), var(--signal-danger-tint-dark));
+  --color-bg-warning-subtle: light-dark(
+    var(--signal-warning-tint),
+    var(--signal-warning-tint-dark)
+  );
+  --color-bg-success-subtle: light-dark(
+    var(--signal-success-tint),
+    var(--signal-success-tint-dark)
+  );
+
   /* Warm ink at low opacity rather than a grey, so borders sit in the
      same family as the surfaces they divide. */
   --color-border-default: light-dark(rgb(31 27 22 / 0.12), rgb(248 242 229 / 0.1));
   --color-border-strong: light-dark(rgb(31 27 22 / 0.22), rgb(248 242 229 / 0.18));
   --color-border-focus: light-dark(var(--bark-500), var(--bark-300));
   --color-border-success: light-dark(var(--signal-success), var(--signal-success-dark));
+  --color-border-warning: light-dark(var(--signal-warning), var(--signal-warning-dark));
   --color-border-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
 
   /* The halo drawn outside --color-border-focus by the focus rule. Pinned
@@ -162,18 +201,6 @@
   --radius-pill: 9999px;
 
   --font-sans: system-ui, -apple-system, sans-serif;
-
-  /*
-   * Names the templates still use, mapped onto the semantic tokens.
-   * Delete each one with the last template class that references it.
-   */
-  --color-bg: var(--color-bg-primary);
-  --color-fg: var(--color-text-primary);
-  --color-muted: var(--color-text-secondary);
-  --color-accent: var(--color-text-brand);
-  --color-focus: var(--color-border-focus);
-  --color-surface: var(--color-bg-raised);
-  --color-border: var(--color-border-default);
 }
 
 /* ..... Focus ..... */

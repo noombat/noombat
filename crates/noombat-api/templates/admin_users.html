@@ -7,11 +7,11 @@
 
 {% block content %}
         <nav aria-label="{{ i18n.t("admin_nav_label") }}" class="mb-6 flex flex-wrap gap-3 text-sm">
-            <a href="/admin/moderation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_moderation_title") }}</a>
-            <a href="/admin/users" class="font-semibold text-accent" aria-current="page">{{ i18n.t("admin_users_title") }}</a>
-            <a href="/admin/domains" class="text-muted no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
-            <a href="/admin/settings" class="text-muted no-underline hover:underline">{{ i18n.t("admin_settings_title") }}</a>
-            <a href="/admin/federation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_federation_title") }}</a>
+            <a href="/admin/moderation" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_moderation_title") }}</a>
+            <a href="/admin/users" class="font-semibold text-text-brand" aria-current="page">{{ i18n.t("admin_users_title") }}</a>
+            <a href="/admin/domains" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
+            <a href="/admin/settings" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_settings_title") }}</a>
+            <a href="/admin/federation" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_federation_title") }}</a>
         </nav>
 
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("admin_users_heading") }}</h1>
@@ -20,7 +20,7 @@
         <form method="get" action="/admin/users" class="flex flex-wrap gap-3 mb-6">
             <label class="text-sm">
                 {{ i18n.t("admin_users_filter_role") }}
-                <select name="role" class="border border-border rounded px-2 py-1 bg-surface text-fg text-sm ml-1">
+                <select name="role" class="border border-border-default rounded px-2 py-1 bg-bg-raised text-text-primary text-sm ms-1">
                     <option value="">{{ i18n.t("admin_users_all") }}</option>
                     <option value="user" {% if filter_role == "user" %}selected{% endif %}>user</option>
                     <option value="moderator" {% if filter_role == "moderator" %}selected{% endif %}>moderator</option>
@@ -29,42 +29,42 @@
             </label>
             <label class="text-sm">
                 {{ i18n.t("admin_users_filter_status") }}
-                <select name="status" class="border border-border rounded px-2 py-1 bg-surface text-fg text-sm ml-1">
+                <select name="status" class="border border-border-default rounded px-2 py-1 bg-bg-raised text-text-primary text-sm ms-1">
                     <option value="">{{ i18n.t("admin_users_all") }}</option>
                     <option value="active" {% if filter_status == "active" %}selected{% endif %}>active</option>
                     <option value="silenced" {% if filter_status == "silenced" %}selected{% endif %}>silenced</option>
                     <option value="suspended" {% if filter_status == "suspended" %}selected{% endif %}>suspended</option>
                 </select>
             </label>
-            <button type="submit" class="bg-accent text-white rounded px-4 py-1 text-sm hover:opacity-90">
+            <button type="submit" class="bg-bg-brand text-text-on-brand rounded px-4 py-1 text-sm hover:opacity-90">
                 {{ i18n.t("admin_users_filter_apply") }}
             </button>
         </form>
 
         <!-- User list -->
         {% if users.is_empty() %}
-        <p class="text-muted">{{ i18n.t("admin_users_empty") }}</p>
+        <p class="text-text-secondary">{{ i18n.t("admin_users_empty") }}</p>
         {% else %}
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
-                    <tr class="border-b border-border text-left">
-                        <th class="py-2 pr-4">{{ i18n.t("admin_users_col_username") }}</th>
-                        <th class="py-2 pr-4">{{ i18n.t("admin_users_col_name") }}</th>
-                        <th class="py-2 pr-4">{{ i18n.t("admin_users_col_role") }}</th>
-                        <th class="py-2 pr-4">{{ i18n.t("admin_users_col_status") }}</th>
-                        <th class="py-2 pr-4">{{ i18n.t("admin_users_col_joined") }}</th>
+                    <tr class="border-b border-border-default text-start">
+                        <th class="py-2 pe-4">{{ i18n.t("admin_users_col_username") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_users_col_name") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_users_col_role") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_users_col_status") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_users_col_joined") }}</th>
                         <th class="py-2">{{ i18n.t("admin_users_col_actions") }}</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for user in users %}
-                    <tr class="border-b border-border">
-                        <td class="py-2 pr-4 font-mono">{{ user.username }}</td>
-                        <td class="py-2 pr-4">{{ user.display_name }}</td>
-                        <td class="py-2 pr-4">{{ user.instance_role }}</td>
-                        <td class="py-2 pr-4">{{ user.actor_status }}</td>
-                        <td class="py-2 pr-4">{{ user.created_at }}</td>
+                    <tr class="border-b border-border-default">
+                        <td class="py-2 pe-4 font-mono">{{ user.username }}</td>
+                        <td class="py-2 pe-4">{{ user.display_name }}</td>
+                        <td class="py-2 pe-4">{{ user.instance_role }}</td>
+                        <td class="py-2 pe-4">{{ user.actor_status }}</td>
+                        <td class="py-2 pe-4">{{ user.created_at }}</td>
                         <td class="py-2 flex gap-1">
                             {% if user.actor_status == "active" %}
                             <form hx-post="/api/v1/admin/actors/{{ user.id }}/suspend"
@@ -72,7 +72,7 @@
                                   hx-confirm="{{ i18n.t("admin_users_confirm_suspend") }}">
                                 <input type="hidden" name="reason" value="">
                                 <button type="submit"
-                                        class="text-xs border border-border rounded px-2 py-0.5 hover:bg-surface-alt">
+                                        class="text-xs border border-border-default rounded px-2 py-0.5 hover:bg-surface-alt">
                                     {{ i18n.t("admin_users_suspend") }}
                                 </button>
                             </form>
@@ -80,7 +80,7 @@
                             <form hx-post="/api/v1/admin/actors/{{ user.id }}/unsuspend"
                                   hx-swap="none" class="inline">
                                 <button type="submit"
-                                        class="text-xs border border-border rounded px-2 py-0.5 hover:bg-surface-alt">
+                                        class="text-xs border border-border-default rounded px-2 py-0.5 hover:bg-surface-alt">
                                     {{ i18n.t("admin_users_unsuspend") }}
                                 </button>
                             </form>

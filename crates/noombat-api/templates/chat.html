@@ -11,7 +11,7 @@
              mounted; display a static message instead. -->
         <div class="max-w-md mx-auto py-12 text-center">
             <h2 class="text-lg font-semibold mb-4">{{ i18n.t("chat_title") }}</h2>
-            <p class="text-sm text-red-600 mb-6">
+            <p class="text-sm text-text-danger mb-6">
                 {{ i18n.t("chat_suspended") }}
             </p>
         </div>
@@ -25,7 +25,7 @@
              data-locale="{{ i18n.lang_attr() }}"
              aria-label="{{ i18n.t("aria_chat") }}">
             <!-- Fallback content for no-JS or while the island loads. -->
-            <p class="text-muted">{{ i18n.t("chat_empty") }}</p>
+            <p class="text-text-secondary">{{ i18n.t("chat_empty") }}</p>
         </div>
         {% endif %}
 {% endblock %}

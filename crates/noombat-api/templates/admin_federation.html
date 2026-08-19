@@ -7,27 +7,27 @@
 
 {% block content %}
         <nav aria-label="{{ i18n.t("admin_nav_label") }}" class="mb-6 flex flex-wrap gap-3 text-sm">
-            <a href="/admin/moderation" class="text-muted no-underline hover:underline">{{ i18n.t("admin_moderation_title") }}</a>
-            <a href="/admin/users" class="text-muted no-underline hover:underline">{{ i18n.t("admin_users_title") }}</a>
-            <a href="/admin/domains" class="text-muted no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
-            <a href="/admin/settings" class="text-muted no-underline hover:underline">{{ i18n.t("admin_settings_title") }}</a>
-            <a href="/admin/federation" class="font-semibold text-accent" aria-current="page">{{ i18n.t("admin_federation_title") }}</a>
+            <a href="/admin/moderation" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_moderation_title") }}</a>
+            <a href="/admin/users" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_users_title") }}</a>
+            <a href="/admin/domains" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_domains_title") }}</a>
+            <a href="/admin/settings" class="text-text-secondary no-underline hover:underline">{{ i18n.t("admin_settings_title") }}</a>
+            <a href="/admin/federation" class="font-semibold text-text-brand" aria-current="page">{{ i18n.t("admin_federation_title") }}</a>
         </nav>
 
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("admin_federation_heading") }}</h1>
 
         <!-- Summary cards -->
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-            <div class="border border-border rounded p-4">
-                <p class="text-sm text-muted">{{ i18n.t("admin_federation_queue_depth") }}</p>
+            <div class="border border-border-default rounded p-4">
+                <p class="text-sm text-text-secondary">{{ i18n.t("admin_federation_queue_depth") }}</p>
                 <p class="text-3xl font-bold">{{ queue_depth }}</p>
             </div>
-            <div class="border border-border rounded p-4">
-                <p class="text-sm text-muted">{{ i18n.t("admin_federation_tombstoned") }}</p>
+            <div class="border border-border-default rounded p-4">
+                <p class="text-sm text-text-secondary">{{ i18n.t("admin_federation_tombstoned") }}</p>
                 <p class="text-3xl font-bold">{{ tombstoned_count }}</p>
             </div>
-            <div class="border border-border rounded p-4">
-                <p class="text-sm text-muted">{{ i18n.t("admin_federation_failing_domains") }}</p>
+            <div class="border border-border-default rounded p-4">
+                <p class="text-sm text-text-secondary">{{ i18n.t("admin_federation_failing_domains") }}</p>
                 <p class="text-3xl font-bold">{{ failed_domains.len() }}</p>
             </div>
         </div>
@@ -38,15 +38,15 @@
         <div class="overflow-x-auto">
             <table class="w-full text-sm">
                 <thead>
-                    <tr class="border-b border-border text-left">
-                        <th class="py-2 pr-4">{{ i18n.t("admin_federation_col_domain") }}</th>
+                    <tr class="border-b border-border-default text-start">
+                        <th class="py-2 pe-4">{{ i18n.t("admin_federation_col_domain") }}</th>
                         <th class="py-2">{{ i18n.t("admin_federation_col_failed") }}</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for entry in failed_domains %}
-                    <tr class="border-b border-border">
-                        <td class="py-2 pr-4 font-mono">{{ entry.domain }}</td>
+                    <tr class="border-b border-border-default">
+                        <td class="py-2 pe-4 font-mono">{{ entry.domain }}</td>
                         <td class="py-2">{{ entry.failed_count }}</td>
                     </tr>
                     {% endfor %}

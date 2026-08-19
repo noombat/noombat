@@ -16,15 +16,15 @@
 
 {% block nav_links %}
         <a href="/chat"
-           class="text-sm text-muted no-underline hover:text-fg">
+           class="text-sm text-text-secondary no-underline hover:text-text-primary">
             {{ i18n.t("chat_title") }}
         </a>
         <a href="/@{{ nav_username }}"
-           class="text-sm text-muted no-underline hover:text-fg">
+           class="text-sm text-text-secondary no-underline hover:text-text-primary">
             @{{ nav_username }}
         </a>
         <a href="/settings"
-           class="text-sm text-muted no-underline hover:text-fg">
+           class="text-sm text-text-secondary no-underline hover:text-text-primary">
             {{ i18n.t("nav_settings") }}
         </a>
 {% endblock %}

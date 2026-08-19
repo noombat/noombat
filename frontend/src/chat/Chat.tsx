@@ -707,10 +707,10 @@ export default function Chat(props: ChatProps): JSX.Element {
       <Show when={needsProvisioning()}>
         <div class="max-w-md mx-auto py-12 text-center">
           <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
-          <p class="text-sm text-muted mb-6">{strings().notProvisioned}</p>
+          <p class="text-sm text-text-secondary mb-6">{strings().notProvisioned}</p>
           <a
             href="/auth/upgrade"
-            class="inline-block bg-accent text-white rounded px-6 py-2 no-underline hover:opacity-90"
+            class="inline-block bg-bg-brand text-text-on-brand rounded px-6 py-2 no-underline hover:opacity-90"
           >
             {strings().setupChat}
           </a>
@@ -721,14 +721,14 @@ export default function Chat(props: ChatProps): JSX.Element {
       <Show when={!needsProvisioning() && needsUnlock()}>
         <div class="max-w-md mx-auto py-12 text-center">
           <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
-          <p class="text-sm text-muted mb-6">{strings().enterPassword}</p>
+          <p class="text-sm text-text-secondary mb-6">{strings().enterPassword}</p>
           <Show when={status()}>
-            <p class="text-sm text-red-600 mb-4">{status()}</p>
+            <p class="text-sm text-text-danger mb-4">{status()}</p>
           </Show>
           <div class="flex gap-2 justify-center">
             <input
               type="password"
-              class="border border-gray-300 rounded px-3 py-2 text-sm"
+              class="border border-border-strong rounded px-3 py-2 text-sm"
               placeholder="Password"
               value={unlockPassword()}
               onInput={(e) => setUnlockPassword(e.currentTarget.value)}
@@ -741,7 +741,7 @@ export default function Chat(props: ChatProps): JSX.Element {
             />
             <button
               type="button"
-              class="bg-accent text-white rounded px-4 py-2 text-sm"
+              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm"
               onClick={() => void handleUnlock()}
             >
               {strings().unlock}
@@ -765,10 +765,12 @@ export default function Chat(props: ChatProps): JSX.Element {
             class={`noombat-chat__contacts ${showContacts() ? "noombat-chat__contacts--open" : ""}`}
             aria-label={strings().contacts}
           >
-            <h2 class="text-sm font-semibold text-muted px-3 py-2">{strings().contacts}</h2>
+            <h2 class="text-sm font-semibold text-text-secondary px-3 py-2">
+              {strings().contacts}
+            </h2>
             <Show
               when={contacts().length > 0}
-              fallback={<p class="px-3 text-sm text-muted">{strings().empty}</p>}
+              fallback={<p class="px-3 text-sm text-text-secondary">{strings().empty}</p>}
             >
               <ul class="space-y-1">
                 <For each={contacts()}>
@@ -776,8 +778,8 @@ export default function Chat(props: ChatProps): JSX.Element {
                     <li>
                       <button
                         type="button"
-                        class={`w-full text-left px-3 py-2 text-sm hover:bg-surface rounded ${
-                          recipient() === addr ? "bg-surface font-semibold" : ""
+                        class={`w-full text-start px-3 py-2 text-sm hover:bg-bg-raised rounded ${
+                          recipient() === addr ? "bg-bg-raised font-semibold" : ""
                         }`}
                         onClick={() => {
                           setRecipient(addr);
@@ -850,7 +852,9 @@ export default function Chat(props: ChatProps): JSX.Element {
                   <span class="noombat-chat__verify-label">{strings().peerFingerprint}</span>
                   <Show
                     when={peerFingerprint()}
-                    fallback={<span class="text-xs text-muted">{strings().noPeerKey}</span>}
+                    fallback={
+                      <span class="text-xs text-text-secondary">{strings().noPeerKey}</span>
+                    }
                   >
                     <code class="noombat-chat__fingerprint">{peerFingerprint()}</code>
                     <button
@@ -877,7 +881,9 @@ export default function Chat(props: ChatProps): JSX.Element {
             <div class="noombat-chat__messages" role="log" aria-live="polite">
               <Show
                 when={filteredMessages().length > 0}
-                fallback={<p class="text-center text-muted text-sm py-8">{strings().empty}</p>}
+                fallback={
+                  <p class="text-center text-text-secondary text-sm py-8">{strings().empty}</p>
+                }
               >
                 <For each={filteredMessages()}>
                   {(msg) => (
@@ -894,17 +900,19 @@ export default function Chat(props: ChatProps): JSX.Element {
                       >
                         <p class="text-sm">{msg.body}</p>
                         <div class="flex items-center gap-2 mt-1">
-                          <time class="text-xs text-muted">{formatTime(msg.timestamp)}</time>
+                          <time class="text-xs text-text-secondary">
+                            {formatTime(msg.timestamp)}
+                          </time>
                           {/* Signature / encryption trust indicator */}
                           <Show when={!msg.outgoing}>
                             <Show when={msg.signatureVerified === true}>
-                              <span class="text-xs text-green-600" title="Signature verified">
+                              <span class="text-xs text-text-success" title="Signature verified">
                                 &#x2713; verified
                               </span>
                             </Show>
                             <Show when={msg.signatureVerified === false}>
                               <span
-                                class="text-xs text-amber-600"
+                                class="text-xs text-text-warning"
                                 title="Signature verification failed"
                               >
                                 &#x26A0; signature failed
@@ -912,7 +920,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                             </Show>
                             <Show when={msg.signatureVerified === null}>
                               <span
-                                class="text-xs text-gray-400"
+                                class="text-xs text-text-secondary"
                                 title="Encrypted (unverified key)"
                               >
                                 &#x1F512;
@@ -922,7 +930,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                           <Show when={!msg.outgoing}>
                             <button
                               type="button"
-                              class="text-xs text-muted hover:text-red-600"
+                              class="text-xs text-text-secondary hover:text-text-danger"
                               onClick={() => reportMessage(msg)}
                             >
                               {strings().report}

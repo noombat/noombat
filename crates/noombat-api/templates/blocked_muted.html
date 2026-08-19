@@ -12,18 +12,18 @@
         <section class="mb-8">
             <h2 class="text-lg font-semibold mb-3">{{ i18n.t("blocked_heading") }}</h2>
             {% if blocked.is_empty() %}
-            <p class="text-muted text-sm">{{ i18n.t("blocked_empty") }}</p>
+            <p class="text-text-secondary text-sm">{{ i18n.t("blocked_empty") }}</p>
             {% else %}
             <ul class="space-y-2 max-w-lg">
                 {% for entry in blocked %}
-                <li class="flex items-center gap-2 border-b border-border pb-2"
+                <li class="flex items-center gap-2 border-b border-border-default pb-2"
                     id="block-{{ entry.id }}">
                     <span class="text-sm flex-1 truncate">{{ entry.target_name }}</span>
                     <button type="button"
                             hx-delete="/users/{{ username }}/blocks/{{ entry.target_ap_id_encoded }}"
                             hx-target="#block-{{ entry.id }}"
                             hx-swap="outerHTML"
-                            class="text-sm text-muted hover:text-red-600">
+                            class="text-sm text-text-secondary hover:text-text-danger">
                         {{ i18n.t("blocked_unblock") }}
                     </button>
                 </li>
@@ -36,18 +36,18 @@
         <section>
             <h2 class="text-lg font-semibold mb-3">{{ i18n.t("muted_heading") }}</h2>
             {% if muted.is_empty() %}
-            <p class="text-muted text-sm">{{ i18n.t("muted_empty") }}</p>
+            <p class="text-text-secondary text-sm">{{ i18n.t("muted_empty") }}</p>
             {% else %}
             <ul class="space-y-2 max-w-lg">
                 {% for entry in muted %}
-                <li class="flex items-center gap-2 border-b border-border pb-2"
+                <li class="flex items-center gap-2 border-b border-border-default pb-2"
                     id="mute-{{ entry.id }}">
                     <span class="text-sm flex-1 truncate">{{ entry.target_name }}</span>
                     <button type="button"
                             hx-delete="/users/{{ username }}/mutes/{{ entry.id }}"
                             hx-target="#mute-{{ entry.id }}"
                             hx-swap="outerHTML"
-                            class="text-sm text-muted hover:text-red-600">
+                            class="text-sm text-text-secondary hover:text-text-danger">
                         {{ i18n.t("muted_unmute") }}
                     </button>
                 </li>

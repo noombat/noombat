@@ -39,8 +39,8 @@
                         {{ i18n.t("compose_article_title") }}
                     </label>
                     <input type="text" id="title" name="title"
-                           class="w-full border border-border rounded p-2
-                                  bg-bg text-fg"
+                           class="w-full border border-border-default rounded p-2
+                                  bg-bg-primary text-text-primary"
                            placeholder="{{ i18n.t("compose_article_title_placeholder") }}">
                 </div>
                 <div>
@@ -48,8 +48,8 @@
                         {{ i18n.t("compose_article_image") }}
                     </label>
                     <input type="url" id="featured_image_url" name="featured_image_url"
-                           class="w-full border border-border rounded p-2
-                                  bg-bg text-fg"
+                           class="w-full border border-border-default rounded p-2
+                                  bg-bg-primary text-text-primary"
                            placeholder="https://example.com/image.jpg">
                 </div>
             </div>
@@ -64,7 +64,7 @@
                 <noscript>
                     <textarea name="content"
                               rows="16"
-                              class="w-full border border-border rounded p-3 font-mono text-sm bg-bg text-fg"
+                              class="w-full border border-border-default rounded p-3 font-mono text-sm bg-bg-primary text-text-primary"
                               placeholder="{{ i18n.t("compose_placeholder") }}"></textarea>
                 </noscript>
             </div>
@@ -75,7 +75,7 @@
                     {{ i18n.t("edit_visibility") }}
                 </label>
                 <select id="visibility" name="visibility"
-                        class="border border-border rounded p-2 bg-bg text-fg
+                        class="border border-border-default rounded p-2 bg-bg-primary text-text-primary
                                min-h-[44px]">
                     <option value="public" selected>{{ i18n.t("vis_public") }}</option>
                     <option value="unlisted">{{ i18n.t("vis_unlisted") }}</option>
@@ -85,7 +85,7 @@
 
             <div class="flex justify-end">
                 <button type="submit"
-                        class="bg-accent text-white px-6 py-2 rounded hover:opacity-90
+                        class="bg-bg-brand text-text-on-brand px-6 py-2 rounded hover:opacity-90
                                focus-visible:outline focus-visible:outline-2
                                focus-visible:outline-offset-2 focus-visible:outline-focus
                                min-h-[44px] min-w-[44px]">
