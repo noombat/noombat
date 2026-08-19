@@ -23,7 +23,18 @@
 set -eu
 
 REPO="${NOOMBAT_REPO:-noombat/noombat}"
-SHA="${1:-$(git rev-parse HEAD)}"
+SHA="${1:-HEAD}"
+
+# `head_sha` matches exactly, and the API answers `total_count: 0` for
+# anything shorter rather than refusing, so an abbreviated SHA reads as a
+# clean commit. Expand what was given, and refuse rather than query with
+# something the API will silently not match.
+FULL=$(git rev-parse --verify --quiet "${SHA}^{commit}" 2>/dev/null) && SHA="$FULL"
+if ! printf '%s' "$SHA" | grep -qE '^[0-9a-f]{40}$'; then
+    echo "::error::need a full 40-character commit SHA, and '$SHA' could not be expanded to one" >&2
+    exit 2
+fi
+
 API="https://api.github.com/repos/$REPO/actions/runs?head_sha=$SHA&per_page=100"
 
 fetch() {
@@ -57,6 +68,14 @@ if [ -z "$COUNT" ]; then
 fi
 
 echo "Checked $COUNT workflow run(s) for $SHA."
+
+# Nothing examined is not a clean commit. Without this the two ways of
+# reaching zero, an unpushed commit and a mistyped SHA, both report that
+# no workflow was rejected.
+if [ "$COUNT" = "0" ]; then
+    echo "::error::no workflow runs recorded for $SHA, so nothing was examined" >&2
+    exit 2
+fi
 
 # The API pretty-prints, so the separator is `": "`, not `":"`. Matching
 # the compact form finds nothing and reports every commit clean.
