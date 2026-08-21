@@ -148,6 +148,11 @@ jobs:
       # checked.
       - name: "Assert every semantic colour pair meets WCAG"
         run: python3 scripts/check-contrast.py
+      # The other half of the checker audits a candidate palette, whose
+      # input is not in this repository. Committed fixtures are what keep
+      # that half from rotting unnoticed between revisions.
+      - name: "Assert the design-system mode still works"
+        run: python3 scripts/check-contrast.py --self-test
 
   dependency-hygiene:
     name: Dependency hygiene

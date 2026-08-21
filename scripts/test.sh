@@ -93,6 +93,11 @@ run ./scripts/check-logical-properties.sh
 step "Checking colour contrast"
 run python3 ./scripts/check-contrast.py
 
+# The palette-auditing half takes an input this repository does not carry,
+# so fixtures stand in for it.
+step "Checking the design-system mode against its fixtures"
+run python3 ./scripts/check-contrast.py --self-test
+
 # ..... Database .....
 
 # A duplicate version or a missing down-migration is invisible until a
