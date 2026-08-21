@@ -23,7 +23,9 @@ adopted and both have to be checkable:
                           the tokens it overrides
 
 Usage: check-contrast.py [CSS]
-           Defaults to frontend/src/main.css.
+           Defaults to frontend/src/main.css, and additionally scans
+           every stylesheet under frontend/src/ for a colour stated
+           outright, which is a colour the pair audit cannot see.
        check-contrast.py --design-system CSS
            Audits a candidate palette in the second shape. The default
            mode runs in CI; this one cannot, because the palette it takes
@@ -111,6 +113,19 @@ THRESHOLDS = {
 }
 
 DECLARATION = re.compile(r"(--[\w-]+)\s*:\s*([^;]+);")
+
+# Property and value, for the raw-colour scan. Restricted to values so
+# that a selector cannot be mistaken for one: `.white` is a class and
+# `#feed-loading` is an id, and neither is a colour.
+DECLARATION_VALUE = re.compile(r"(?<![\w-])([a-z-]+)\s*:\s*([^;{}]*)[;}]")
+
+COLOUR_LITERAL = re.compile(
+    r"#[0-9a-fA-F]{3,8}(?![\w-])"
+    r"|(?<![\w-])(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\s*\("
+    r"|(?<![\w-])(?:white|black|red|green|blue|yellow|orange|purple|pink|brown"
+    r"|gr[ae]y|silver|gold|cyan|magenta|teal|navy|olive|maroon|lime|aqua|fuchsia)"
+    r"(?![\w-])"
+)
 
 
 def strip_comments(css):
@@ -263,6 +278,89 @@ def ratio(foreground, background):
     return (lighter + 0.05) / (darker + 0.05)
 
 
+def blank_comments(css):
+    """Replace comments with spaces, keeping every offset and line number."""
+    return re.sub(
+        r"/\*.*?\*/",
+        lambda comment: re.sub(r"[^\n]", " ", comment.group(0)),
+        css,
+        flags=re.DOTALL,
+    )
+
+
+def token_spans(css, at_rules=("@media", "@supports", "@layer")):
+    """Character ranges of the blocks that may state a colour outright.
+
+    Only the token declarations may: everything else has to reach a
+    colour through one of them. At-rules are descended into, because a
+    token restated under a media query is still a token.
+    """
+    spans, i, n = [], 0, len(css)
+    while i < n:
+        open_brace = css.find("{", i)
+        if open_brace == -1:
+            break
+        selector = css[i:open_brace].strip().split("}")[-1].strip().split("\n")[-1].strip()
+        depth, j = 1, open_brace + 1
+        while j < n and depth:
+            depth += (css[j] == "{") - (css[j] == "}")
+            j += 1
+        if selector.startswith(":root") or selector == "@theme":
+            spans.append((open_brace, j))
+        elif selector.startswith(at_rules):
+            body = open_brace + 1
+            spans.extend(
+                (body + start, body + end)
+                for start, end in token_spans(css[body:j - 1])
+            )
+        i = j
+    return spans
+
+
+def raw_colours(root=Path("frontend/src")):
+    """Fail on a colour stated outright in any stylesheet that ships.
+
+    The pair audit above measures tokens, so it says nothing about a
+    stylesheet that never uses them. The chat island was one, and shipped
+    a timestamp at 1.07:1. Listing the files to check would leave the next
+    such stylesheet unmeasured too, so this walks the tree.
+    """
+    files = sorted(path for path in root.rglob("*.css"))
+    if not files:
+        print(f"::error::no stylesheets under {root}, so nothing was scanned", file=sys.stderr)
+        return 2
+
+    offences = []
+    for path in files:
+        css = blank_comments(path.read_text())
+        allowed = token_spans(css) if path.name == "main.css" else []
+        for declaration in DECLARATION_VALUE.finditer(css):
+            value = declaration.group(2)
+            literal = COLOUR_LITERAL.search(value)
+            if literal is None:
+                continue
+            at = declaration.start(2) + literal.start()
+            if any(start <= at < end for start, end in allowed):
+                continue
+            offences.append((path, css.count("\n", 0, at) + 1, literal.group(0)))
+
+    for path, line, literal in offences:
+        print(
+            f"::error file={path},line={line}::{literal} is a colour, not a token. "
+            "Use a --color-* custom property, or add one to main.css.",
+            file=sys.stderr,
+        )
+    if offences:
+        print(
+            f"::error::{len(offences)} raw colour(s) in {len(files)} stylesheet(s)",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"Scanned {len(files)} stylesheet(s) for raw colours: every colour comes from a token.")
+    return 0
+
+
 def audit(modes, pairs, label, page_token):
     """Measure every pair in every mode.
 
@@ -393,7 +491,13 @@ def main():
 
     pairs = DESIGN_SYSTEM_PAIRS if upstream else PROJECT_PAIRS
     page = "--bg" if upstream else "--color-bg-primary"
-    return audit(modes, pairs, path.name, page)
+    status = audit(modes, pairs, path.name, page)
+
+    # A candidate palette is a single file that is not in this tree, so
+    # there is nothing to scan for it.
+    if not upstream:
+        status = max(status, raw_colours())
+    return status
 
 
 if __name__ == "__main__":
