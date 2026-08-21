@@ -128,18 +128,39 @@ up() {
   say "asset manifest generated (without it the provenance test skips silently)"
 
   mkdir -p "$RUN_DIR"
+
+  # Refuse rather than start a second server. The readiness check below
+  # cannot tell this one from one already holding the port, so the second
+  # process dies with EADDRINUSE, the check passes against the first, and
+  # the pid file ends up naming something dead. `down` can then never
+  # stop the survivor, and it keeps serving the binary built first: every
+  # rebuild after that is verified against code that is not running.
+  if curl -fsS -o /dev/null --max-time 2 "http://localhost:$NOOMBAT_PORT/" 2>/dev/null; then
+    say "something is already serving on :$NOOMBAT_PORT"
+    say "  run 'scripts/e2e-stack.sh down' first, or 'pgrep -a noombat' to find it"
+    return 1
+  fi
+
   # `exec` matters. Without it, `( cd ... && nohup ... & )` records the
   # PID of the subshell, and the server is that subshell's child, so
   # `down` kills the wrapper and orphans a server still holding :8443.
   # With `exec` the subshell is replaced by the server, so the PID in
   # the file is the server's own.
   ( cd "$REPO" && exec nohup ./target/debug/noombat > "$LOG_FILE" 2>&1 ) &
-  echo $! > "$PID_FILE"
+  local server_pid=$!
+  echo "$server_pid" > "$PID_FILE"
+  # Assert on the process as well as the port, so a server that exited
+  # cannot be reported as up by whatever answers next.
   wait_for "the server on :$NOOMBAT_PORT" 60 \
     curl -fsS -o /dev/null "http://localhost:$NOOMBAT_PORT/" || {
     say "server did not come up; see $LOG_FILE"; return 1
   }
-  say "server up (pid $(cat "$PID_FILE"), log $LOG_FILE)"
+  if ! kill -0 "$server_pid" 2>/dev/null; then
+    say "the server exited while :$NOOMBAT_PORT answered; see $LOG_FILE"
+    rm -f "$PID_FILE"
+    return 1
+  fi
+  say "server up (pid $server_pid, log $LOG_FILE)"
 
   seed
   seed_admin
