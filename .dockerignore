@@ -43,3 +43,6 @@ docs-extra/
 
 # Python bytecode from the check scripts.
 __pycache__/
+
+# Extracted at test time, never part of an image.
+tests/acme/.pebble/

@@ -18,8 +18,21 @@ services:
       NOOMBAT_CHATMAIL_DOMAIN: chat.${NOOMBAT_DOMAIN:-localhost}
       NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
       NOOMBAT_CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
+      # Trust the relay's development CA in addition to the public roots.
+      #
+      # NOOMBAT_EXTRA_CA_FILE and not SSL_CERT_FILE: the latter replaces
+      # the trust store rather than extending it, and it governs
+      # federation too, so pointing it at a private relay CA would stop
+      # this instance trusting every public CA at the same instant.
+      #
+      # Without this the default stack cannot complete a handshake with
+      # its own relay: provisioning fails, actors.chatmail_addr stays
+      # NULL, and the only trace is one server log line.
+      NOOMBAT_EXTRA_CA_FILE: /etc/ssl/chatmail-ca/ca.crt
     ports:
       - "8443:8443"
+    volumes:
+      - chatmail-ca:/etc/ssl/chatmail-ca:ro
     depends_on:
       db:
         condition: service_healthy
@@ -126,6 +139,17 @@ services:
       - "465:465"     # SMTP submission (TLS)
     volumes:
       - chatmail-data:/home/vmail
+      # The certificate and its key on a volume, not on the container
+      # filesystem. Written there they are regenerated on every
+      # `compose up --build` and on every recreate, so a client that
+      # pinned the chain breaks for a reason nothing reports, and a
+      # renewed certificate is thrown away by the next deployment.
+      - chatmail-tls:/etc/ssl/certs
+      - chatmail-tls-key:/etc/ssl/private
+      # The development CA, shared with Noombat so it can complete a
+      # handshake against this relay. Read-only there, since only this
+      # container issues it.
+      - chatmail-ca:/etc/ssl/chatmail-ca
     healthcheck:
       test: ["CMD", "doveadm", "service", "status", "imap"]
       interval: 30s
@@ -136,3 +160,6 @@ volumes:
   redis-data:
   meili-data:
   chatmail-data:
+  chatmail-tls:
+  chatmail-tls-key:
+  chatmail-ca:

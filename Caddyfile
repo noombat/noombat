@@ -33,3 +33,26 @@
 
     encode gzip
 }
+
+# The Chatmail relay's hostname.
+#
+# Caddy serves nothing here. The block exists so that Caddy obtains and
+# renews a publicly trusted certificate for `chat.`, which Postfix and
+# Dovecot then serve on 993 and 465. Without it those two present a
+# certificate no client accepts, and Delta Chat, the client this project
+# tells users to prefer, refuses to connect.
+#
+# HTTP-01 and not DNS-01. DNS-01 needs a Caddy binary carrying
+# DNS-provider modules, which the digest-pinned upstream image does not
+# ship, so taking it would mean building and pinning our own Caddy. That
+# digest pinning is load-bearing for the reproducibility claims in
+# SECURITY.md, and this problem occurs once. The cost of HTTP-01 is that
+# `chat.<domain>` must resolve and answer on port 80, which is a record
+# the operator is creating for the relay anyway.
+#
+# The relay reads the result out of Caddy's storage volume; see the
+# `cert-watch` service in Dockerfile.chatmail. Caddy owns acquisition and
+# renewal, the relay owns reloading the daemons.
+chat.{$NOOMBAT_DOMAIN} {
+    respond "This hostname serves mail, not web." 404
+}

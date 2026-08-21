@@ -109,6 +109,19 @@ services:
 
   chatmail:
     restart: unless-stopped
+    environment:
+      # Take the certificate Caddy obtained for chat.<domain> rather than
+      # generating one. In production the entrypoint refuses to generate
+      # anything, so without this the relay does not start, which is the
+      # intended failure: a relay serving an untrusted chain looks
+      # healthy and fails only at the client.
+      CHATMAIL_CADDY_DATA: /caddy-data
+    volumes:
+      # Read-only: Caddy owns acquisition and renewal, the relay owns
+      # importing the result and reloading the two daemons that serve it.
+      - caddy-data:/caddy-data:ro
+    depends_on:
+      - caddy
     deploy:
       resources:
         limits:

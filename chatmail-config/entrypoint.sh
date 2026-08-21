@@ -48,18 +48,70 @@ done
 
 # ..... TLS CERTIFICATES .....
 
+# A development domain may generate its own certificate. Anything else
+# must be given one, and is refused rather than started without one.
+#
+# The refusal is the point. A relay serving a certificate no client will
+# accept looks healthy from the outside: Postfix and Dovecot start, the
+# ports answer, and the failure appears only at the client, as a TLS
+# error with no matching entry in any log here. Refusing to start puts
+# the cause in the operator's terminal at the moment they cause it.
+#
+# Keyed off MAIL_DOMAIN because that is what this container is given.
+# NOOMBAT_DOMAIN is not visible here: the compose service passes
+# MAIL_DOMAIN, the admin secret, host and port, and the allowlist URL,
+# and Dockerfile.chatmail sets no ENV at all.
+is_development_domain() {
+    case "$1" in
+        localhost | *.localhost | *.local | *.test | *.example | *.invalid) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 # If no certificate is mounted, generate one for development. Production
-# deployments should mount a real certificate.
+# deployments must mount a real certificate.
 #
 # A local CA and a leaf signed by it, not one self-signed certificate.
 # `openssl req -x509` marks what it produces `CA:TRUE`, and a client
 # offered a CA certificate as the server's own rejects it: rustls calls
 # that `CaUsedAsEndEntity`, and no amount of trusting it helps, because a
-# CA certificate cannot be the leaf. The CA goes where the compose file
-# shares it with Noombat, which trusts it through `SSL_CERT_FILE` exactly
-# as the federation stack trusts Caddy's internal CA.
+# CA certificate cannot be the leaf.
 CHATMAIL_CA_DIR=/etc/ssl/chatmail-ca
+
+# When Caddy is the issuer, wait for it rather than failing on the first
+# boot of a new deployment. Caddy obtains the certificate asynchronously
+# once `chat.` resolves, so for a minute or two after `compose up` there
+# is nothing to import. Waiting says so once; the alternative is a
+# restart loop whose log line is the refusal below, which reads like a
+# misconfiguration rather than a normal first boot.
+if [ ! -f /etc/ssl/certs/chatmail.pem ] && [ -n "${CHATMAIL_CADDY_DATA:-}" ]; then
+    echo "[entrypoint] waiting for Caddy to issue a certificate for ${MAIL_DOMAIN}"
+    waited=0
+    until /usr/local/bin/cert-watch --import >/dev/null 2>&1; do
+        if [ "$waited" -ge "${CHATMAIL_CERT_WAIT_SECS:-300}" ]; then
+            echo "[entrypoint] FATAL: Caddy issued no certificate for ${MAIL_DOMAIN}" >&2
+            echo "[entrypoint]   Check that ${MAIL_DOMAIN} resolves to this host and that" >&2
+            echo "[entrypoint]   port 80 reaches Caddy, which is what HTTP-01 validates on." >&2
+            echo "[entrypoint]   Caddy's own log names the ACME failure." >&2
+            exit 1
+        fi
+        sleep 5
+        waited=$((waited + 5))
+    done
+    echo "[entrypoint] imported the certificate Caddy issued (waited ${waited}s)"
+fi
+
 if [ ! -f /etc/ssl/certs/chatmail.pem ]; then
+    if ! is_development_domain "${MAIL_DOMAIN}"; then
+        echo "[entrypoint] FATAL: no certificate for ${MAIL_DOMAIN}" >&2
+        echo "[entrypoint]   Expected a PEM chain at /etc/ssl/certs/chatmail.pem and a key" >&2
+        echo "[entrypoint]   at /etc/ssl/private/chatmail.key, mounted from the host or from" >&2
+        echo "[entrypoint]   the chatmail-tls volume that Caddy writes." >&2
+        echo "[entrypoint]   Refusing to start: a generated certificate here would be trusted" >&2
+        echo "[entrypoint]   by nothing, and the relay would look healthy while every client" >&2
+        echo "[entrypoint]   failed the handshake." >&2
+        exit 1
+    fi
     echo "[entrypoint] generating a local CA and a leaf certificate for ${MAIL_DOMAIN}"
     mkdir -p /etc/ssl/certs /etc/ssl/private "$CHATMAIL_CA_DIR"
 
@@ -95,6 +147,9 @@ if [ ! -f /etc/ssl/certs/chatmail.pem ]; then
     # World-readable: Noombat reads it from a shared volume as non-root.
     chmod 644 "$CHATMAIL_CA_DIR/ca.crt"
 fi
+
+# Renewal is handled by the `cert-watch` s6 service, not from here: a
+# background job started before `exec /init` is supervised by nothing.
 
 # ..... DKIM .....
 

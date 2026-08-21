@@ -109,8 +109,9 @@ COPY chatmail-config/dovecot.conf /etc/dovecot/dovecot.conf
 COPY chatmail-config/opendkim.conf /etc/opendkim.conf
 COPY chatmail-config/master.cf.filtermail /etc/postfix/master.cf.filtermail
 COPY chatmail-config/entrypoint.sh /entrypoint.sh
+COPY chatmail-config/cert-watch.sh /usr/local/bin/cert-watch
 COPY chatmail-config/noombat-doveauth /usr/local/bin/noombat-doveauth
-RUN chmod +x /entrypoint.sh /usr/local/bin/noombat-doveauth
+RUN chmod +x /entrypoint.sh /usr/local/bin/cert-watch /usr/local/bin/noombat-doveauth
 
 # Copy the Rust binaries from the builder stage.
 COPY --from=rust-builder /build/target/release/noombat-chatmail-admin /usr/local/bin/noombat-chatmail-admin
@@ -141,6 +142,19 @@ RUN printf '#!/command/execlineb -P\n/usr/lib/postfix/sbin/master -d\n' > /etc/s
     chmod +x /etc/s6-overlay/s6-rc.d/postfix/run
 RUN printf 'dovecot\nopendkim\n' > /etc/s6-overlay/s6-rc.d/postfix/dependencies
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/postfix
+
+# Certificate watcher (depends on both daemons it reloads).
+#
+# A supervised service and not a background job in the entrypoint: the
+# entrypoint ends in `exec /init`, so anything it backgrounds is watched
+# by nothing and its death is silent. Under s6 it restarts, and
+# `s6-rc -a list` shows whether renewal is being watched at all.
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/cert-watch
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/cert-watch/type
+RUN printf '#!/command/execlineb -P\n/command/with-contenv\n/usr/local/bin/cert-watch\n' > /etc/s6-overlay/s6-rc.d/cert-watch/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/cert-watch/run
+RUN printf 'dovecot\npostfix\n' > /etc/s6-overlay/s6-rc.d/cert-watch/dependencies
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/cert-watch
 
 # noombat-chatmail-admin sidecar service (no dependencies).
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/chatmail-admin

@@ -157,6 +157,21 @@ if [ "$QUICK" = false ]; then
     fi
 fi
 
+# ..... Chatmail certificate path .....
+
+# Acquisition, import and reload against a local ACME server. Needs
+# docker and builds the Chatmail image, so it is out of QUICK. The skip
+# is announced: renewal without a reload is the failure this covers, and
+# it is invisible everywhere else.
+if [ "$QUICK" = false ]; then
+    if command -v docker > /dev/null 2>&1; then
+        step "Checking the Chatmail certificate path"
+        run ./scripts/check-chatmail-cert.sh
+    else
+        step "Skipping the certificate path: docker is not available"
+    fi
+fi
+
 # ..... REUSE .....
 
 if command -v reuse >/dev/null 2>&1; then

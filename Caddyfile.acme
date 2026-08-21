@@ -1,0 +1,35 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# Caddyfile for the local ACME exercise, used only by compose.acme.yml.
+#
+# A copy of the production Caddyfile's structure with one difference,
+# `acme_ca`, so that the certificate path can run against Pebble instead
+# of Let's Encrypt. Kept as a separate file rather than an env-var
+# switch inside the production Caddyfile: a production deployment must
+# have no way to point its certificate authority somewhere else by
+# setting a variable.
+
+{
+    acme_ca {$ACME_CA}
+    # Pebble serves its ACME API under a certificate signed by a CA of
+    # its own, distinct from the root it issues from, and does not
+    # publish it over HTTP. scripts/check-chatmail-cert.sh extracts it
+    # from the image and mounts it here.
+    acme_ca_root /pebble-ca/minica.pem
+    # Pebble's HTTP-01 validation reaches this container on port 80,
+    # which is what tests/acme/pebble-config.json selects.
+    email noombat-acme-test@noombat.test
+}
+
+{$NOOMBAT_DOMAIN} {
+    reverse_proxy noombat:8443
+    encode gzip
+}
+
+# The block under test. Identical in purpose to the production one: Caddy
+# holds a certificate for the relay's hostname, and `cert-watch` inside
+# the Chatmail container imports it and reloads the two daemons.
+chat.{$NOOMBAT_DOMAIN} {
+    respond "This hostname serves mail, not web." 404
+}

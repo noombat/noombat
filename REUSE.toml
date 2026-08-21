@@ -48,6 +48,7 @@ path = [
     "tests/e2e/package.json",
     "tests/e2e/tsconfig.json",
     "tests/e2e/pnpm-lock.yaml",
+    "tests/acme/pebble-config.json",
     # Documentation (all Markdown files).
     "**/*.md",
     "docs/**",

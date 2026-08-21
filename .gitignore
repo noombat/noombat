@@ -24,3 +24,7 @@ tests/e2e/playwright-report/
 # Python bytecode, which `reuse lint` counts as an unlicensed file.
 __pycache__/
 *.pyc
+
+# Pebble's own certificate authority, extracted from its image by
+# scripts/check-chatmail-cert.sh so that no certificate is committed.
+tests/acme/.pebble/

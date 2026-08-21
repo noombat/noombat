@@ -1,0 +1,91 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# A local ACME certificate authority, so the production certificate path
+# can be exercised without a domain.
+#
+# Usage:
+#   docker compose -f compose.yml -f compose.acme.yml up -d
+#   ./scripts/check-chatmail-cert.sh
+#
+# WHY THIS EXISTS. `chat.localhost` can never hold a publicly trusted
+# chain, so the acquire, import and reload path had no way to run outside
+# a real deployment. That left the one part of certificate management
+# that fails silently, renewal without a reload, untested by anything.
+# Pebble issues a chain a test can trust and drives the same code Let's
+# Encrypt drives in production: the Caddyfile's `chat.` block, the
+# `cert-watch` import, and the Postfix and Dovecot reload.
+#
+# WHAT IS DIFFERENT FROM PRODUCTION, and deliberately so:
+#
+#   - `acme_ca` points at Pebble instead of Let's Encrypt.
+#   - Caddy trusts Pebble's CA, which is a fixed test certificate that
+#     Pebble ships and publishes. It is not a secret and must never
+#     appear in a production configuration.
+#   - Pebble validates HTTP-01 against port 80 on the Caddy container.
+#     Its own default is 5002, which is a Pebble-only convention.
+#
+# Everything else is the production path unchanged, which is the point.
+
+services:
+  pebble:
+    # Pinned to the multi-arch index digest, not a per-platform manifest:
+    # a platform digest would restrict this file to one architecture.
+    image: ghcr.io/letsencrypt/pebble:latest@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    command: -config /pebble/config.json -dnsserver 127.0.0.11:53
+    environment:
+      # Issue on every request rather than Pebble's default of failing
+      # one nonce in five. That default exists to shake out clients; here
+      # it would make a certificate test flaky for reasons unrelated to
+      # the certificate.
+      PEBBLE_VA_NOSLEEP: "1"
+      PEBBLE_WFE_NONCEREJECT: "0"
+    volumes:
+      - ./tests/acme/pebble-config.json:/pebble/config.json:ro
+    networks:
+      default:
+        aliases:
+          - pebble
+
+  caddy:
+    image: docker.io/library/caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648
+    environment:
+      NOOMBAT_DOMAIN: ${NOOMBAT_DOMAIN:-localhost}
+      ACME_CA: https://pebble:14000/dir
+    ports:
+      - "8080:80"
+      - "8444:443"
+    volumes:
+      - ./Caddyfile.acme:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      # Extracted from the Pebble image by check-chatmail-cert.sh rather
+      # than committed, so this repository holds no certificate whose
+      # provenance a reader would have to take on trust.
+      - ./tests/acme/.pebble:/pebble-ca:ro
+    depends_on:
+      - pebble
+    networks:
+      default:
+        aliases:
+          # Pebble validates HTTP-01 by resolving the name it is issuing
+          # for, through Docker's embedded DNS. Without the alias the
+          # challenge fails on lookup rather than on anything the
+          # certificate path controls.
+          - chat.${NOOMBAT_DOMAIN:-localhost}
+          # The apex too, so its own certificate attempt does not fill
+          # the log with resolution failures unrelated to the relay.
+          - ${NOOMBAT_DOMAIN:-localhost}
+
+  chatmail:
+    environment:
+      CHATMAIL_CADDY_DATA: /caddy-data
+      # Five seconds rather than the production 300, so a test that
+      # exercises renewal finishes in a test's worth of time.
+      CHATMAIL_CERT_WATCH_INTERVAL: "5"
+    volumes:
+      - caddy-data:/caddy-data:ro
+    depends_on:
+      - caddy
+
+volumes:
+  caddy-data:
