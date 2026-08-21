@@ -2629,9 +2629,9 @@ mod tests {
     /// The other half: a proof that does not match the document it
     /// travels with is not merely flagged, the object is not stored.
     ///
-    /// The audit's criterion also asks that this row read `FALSE`. Both
-    /// cannot hold at once, and discarding is the safer of the two: see
-    /// the note on `verify_object_proof`.
+    /// A tampered object could instead be stored with the verification
+    /// column set to `FALSE`. Both cannot hold at once, and discarding is
+    /// the safer of the two: see the note on `verify_object_proof`.
     #[ignore = "requires a database; run with --include-ignored"]
     #[sqlx::test(migrations = "../../migrations")]
     async fn create_with_tampered_proof_is_not_persisted(pool: PgPool) {
