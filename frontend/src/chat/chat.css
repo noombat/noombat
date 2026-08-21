@@ -117,13 +117,19 @@
 
 .noombat-chat__bubble--outgoing {
   align-self: flex-end;
-  background: var(--color-text-brand);
-  color: #fff;
+  background: var(--color-bg-brand);
+  color: var(--color-text-on-brand);
   border-color: transparent;
 }
 
-.noombat-chat__bubble--outgoing .text-muted {
-  color: rgba(255, 255, 255, 0.7);
+/* The timestamp is secondary against the page and on the brand fill in an
+   outgoing bubble, so it cannot use one colour for both. */
+.noombat-chat__time {
+  color: var(--color-text-secondary);
+}
+
+.noombat-chat__bubble--outgoing .noombat-chat__time {
+  color: var(--color-text-on-brand);
 }
 
 /* ..... Compose ..... */
@@ -162,8 +168,8 @@
 
 .noombat-chat__send {
   padding: 0.5rem 1rem;
-  background: var(--color-text-brand);
-  color: #fff;
+  background: var(--color-bg-brand);
+  color: var(--color-text-on-brand);
   border: none;
   border-radius: 0.375rem;
   cursor: pointer;
@@ -254,9 +260,9 @@
 .noombat-chat__notice {
   margin: 0.5rem auto;
   max-width: 32rem;
-  border: 1px solid #f59e0b;
+  border: 1px solid var(--color-border-warning);
   border-radius: 0.375rem;
-  background: rgba(245, 158, 11, 0.12);
+  background: var(--color-bg-warning-subtle);
   color: var(--color-text-primary);
   padding: 0.5rem 0.75rem;
   font-size: 0.75rem;

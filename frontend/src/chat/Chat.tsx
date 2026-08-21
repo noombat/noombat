@@ -900,7 +900,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                       >
                         <p class="text-sm">{msg.body}</p>
                         <div class="flex items-center gap-2 mt-1">
-                          <time class="text-xs text-text-secondary">
+                          <time class="text-xs noombat-chat__time">
                             {formatTime(msg.timestamp)}
                           </time>
                           {/* Signature / encryption trust indicator */}
