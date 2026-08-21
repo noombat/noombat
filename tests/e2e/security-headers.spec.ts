@@ -44,6 +44,7 @@ import {
   type APIRequestContext,
   type APIResponse,
   type Page,
+  type Response,
 } from "@playwright/test";
 
 import { authenticateBrowser, requireSession } from "./session";
@@ -362,28 +363,73 @@ async function servedManifest(request: APIRequestContext): Promise<Set<string> |
 }
 
 /**
- * Assert every subresource the loaded page pulls in is one the manifest
- * names.
+ * The resource types that are always build output, and so must come
+ * from `/assets/` and appear in the manifest.
  *
- * Scripts and stylesheets both, because `style-src 'self'` is as
+ * Images are not here: an avatar or a featured image is author-supplied
+ * content rather than something the build produced, and `img-src 'self'
+ * data:` is what constrains those. `xhr` and `fetch` are not here
+ * either, because an HTMX partial is a route, not an asset.
+ */
+const BUILD_OUTPUT_TYPES = new Set(["stylesheet", "script", "font"]);
+
+/**
+ * Navigate, and return every build-output URL the browser actually
+ * fetched.
+ *
+ * Recorded from responses rather than read back out of the DOM. Querying
+ * `script[src]` and `link[rel~=stylesheet]` checks the asset types
+ * someone remembered to look for: it silently ignored the seven fonts
+ * added in August, and would ignore the next type too. What the browser
+ * fetched is the whole set by construction.
+ */
+async function loadAndCollectAssets(page: Page, path: string): Promise<string[]> {
+  const fetched: string[] = [];
+  const record = (response: Response) => {
+    if (BUILD_OUTPUT_TYPES.has(response.request().resourceType())) {
+      fetched.push(response.url());
+    }
+  };
+
+  page.on("response", record);
+  try {
+    await page.goto(path);
+    // `@font-face` is lazy: a face is requested only once an element it
+    // matches is laid out, so the set is not settled at load.
+    await page.waitForFunction(() => document.fonts.status === "loaded");
+  } finally {
+    page.off("response", record);
+  }
+  return fetched;
+}
+
+/**
+ * Assert every build-output subresource the page fetched is one the
+ * manifest names.
+ *
+ * Stylesheets as well as scripts, because `style-src 'self'` is as
  * permissive as `script-src 'self'`: a same-origin sheet absent from
  * the manifest loads exactly as readily as a same-origin script, and a
  * stylesheet can carry a request to an arbitrary host in a
  * `background-image` URL.
  */
-async function expectManifestedAssets(page: Page, path: string, known: Set<string>): Promise<void> {
-  const origin = new URL(page.url()).origin;
+function expectManifestedAssets(
+  pageUrl: string,
+  path: string,
+  fetched: string[],
+  known: Set<string>,
+): void {
+  const origin = new URL(pageUrl).origin;
 
-  const sources = await page.evaluate(() => [
-    ...Array.from(document.querySelectorAll("script[src]")).map(
-      (el) => (el as HTMLScriptElement).src,
-    ),
-    ...Array.from(document.querySelectorAll("link[rel~=stylesheet]")).map(
-      (el) => (el as HTMLLinkElement).href,
-    ),
-  ]);
+  // Every page loads main.css and htmx.js at minimum. An empty set means
+  // the recording missed them, not that the page is clean, and would
+  // otherwise pass every assertion below by having nothing to check.
+  expect(
+    fetched.length,
+    `${path}: no stylesheet, script or font was fetched, so this proves nothing`,
+  ).toBeGreaterThan(0);
 
-  for (const src of sources) {
+  for (const src of fetched) {
     const url = new URL(src);
     expect(url.origin, `${path}: ${src} is not same-origin`).toBe(origin);
     expect(
@@ -418,8 +464,8 @@ test.describe("Asset provenance", () => {
     expect(known?.size, "manifest lists no assets").toBeGreaterThan(0);
 
     for (const path of PUBLIC_PAGES) {
-      await page.goto(path);
-      await expectManifestedAssets(page, path, known ?? new Set());
+      const fetched = await loadAndCollectAssets(page, path);
+      expectManifestedAssets(page.url(), path, fetched, known ?? new Set());
     }
   });
 
@@ -438,9 +484,9 @@ test.describe("Asset provenance", () => {
       expect(known?.size, "manifest lists no assets").toBeGreaterThan(0);
 
       for (const path of AUTHENTICATED_PAGES) {
-        await page.goto(path);
+        const fetched = await loadAndCollectAssets(page, path);
         await expectServedPage(page, path);
-        await expectManifestedAssets(page, path, known ?? new Set());
+        expectManifestedAssets(page.url(), path, fetched, known ?? new Set());
       }
     });
   });
