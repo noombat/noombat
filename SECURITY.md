@@ -67,7 +67,8 @@ It is in alpha; see [`docs/webcat.md`](docs/webcat.md) for the evaluation and it
 A browser standard covering the same ground, WAICT, is under discussion.
 
 **3. A client the operator did not deliver.**
-The strongest option available today, and it already works.
+The strongest option in this list, and the one that needs the operator to have finished a deployment step.
+Delta Chat validates the relay's certificate chain and refuses to connect to a relay presenting one it cannot verify, which is a relay whose operator has not yet obtained a publicly trusted certificate for `chat.`.
 Noombat's Chatmail account is a standard IMAP/SMTP account with a standard OpenPGP key.
 The chat credentials page at `/settings/chat` offers those credentials and a `DCACCOUNT` QR code that configures [Delta Chat](https://delta.chat) against the same account.
 
