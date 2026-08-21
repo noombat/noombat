@@ -40,3 +40,6 @@ docs-extra/
 
 # Agent tooling, kept out of git and out of images alike.
 .scratch/
+
+# Python bytecode from the check scripts.
+__pycache__/

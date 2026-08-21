@@ -4,8 +4,15 @@
 /*
  * TailwindCSS v4 entry point for Noombat.
  *
- * Theme tokens defined in @theme become Tailwind utility classes
- * (e.g. bg-bg-raised, text-text-secondary, border-border-default).
+ * Colour values are transcribed from the brand's design system rather
+ * than imported from it, so two things hold here that do not hold there.
+ * Each token is stated once as light-dark() instead of once per theme
+ * and contrast combination, which leaves one place to edit and none to
+ * forget. And the names carry the `--color-` prefix, because Tailwind
+ * generates utilities from those and from nothing else.
+ *
+ * scripts/check-contrast.py measures every pair below. A value changed
+ * here without running it is a claim rather than a fact.
  *
  * @source tells Tailwind where to look for class names outside the
  * frontend/ tree: the Askama templates, and the handlers that build HTML
@@ -25,80 +32,131 @@
 @source "../../crates/noombat-api/src/**/*.rs";
 
 /*
+ * The three brand faces, served from this origin.
+ *
+ * The design system loads them from a font CDN. That cannot work here:
+ * the served Content-Security-Policy admits stylesheets from this origin
+ * only, so the browser refuses the stylesheet `@import` asks for and no
+ * font is ever requested.
+ *
+ * Only the weights the templates use are shipped. `font-display: swap`
+ * keeps text readable while a face arrives rather than blanking it, and
+ * every stack ends in a system font so a failed fetch degrades to a
+ * different shape rather than to nothing.
+ */
+
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/InstrumentSerif-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("./fonts/InstrumentSerif-Italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-Medium.woff2") format("woff2");
+  font-weight: 500;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-SemiBold.woff2") format("woff2");
+  font-weight: 600;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Public Sans";
+  src: url("./fonts/PublicSans-Bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("./fonts/JetBrainsMono-Regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+/*
  * Primitives. Referenced by the semantic tokens and by nothing else.
- * Warm throughout: no cool greys, no pure white, no pure black.
+ * Warm throughout: no cool greys, no pure white, no pure black. The four
+ * signal hues are not here, because each varies by theme, which makes
+ * them semantic rather than raw.
  */
 :root {
-  /* Bark: the numbat's fur, and the action colour. */
+  /* Bark: the numbat's fur. --bark-500 is the brand hue; anything
+     carrying text steps to --bark-600, which is why --color-bg-brand
+     is not the brand colour. */
   --bark-50: #fbf2ec;
   --bark-100: #f4ddcd;
-  --bark-200: #e8bb9e;
-  --bark-300: #d9986c;
+  --bark-200: #e8b89e;
+  --bark-300: #d9906c;
   --bark-400: #c5703f;
-  --bark-500: #885c38;
+  --bark-500: #b85c38;
   --bark-600: #9a4a2c;
   --bark-700: #7a3a23;
   --bark-800: #582a19;
   --bark-900: #371a0f;
+  --bark-950: #2a1309;
 
   /* Cream: the numbat's stripes, and every light surface. */
   --cream-50: #fdfbf6;
   --cream-100: #f8f2e5;
   --cream-200: #f0e7d2;
-  --cream-300: #e5dbb8;
+  --cream-300: #e5d8b8;
   --cream-400: #d4c293;
 
   /* Ink: text, and every dark surface. */
+  --ink-50: #f4f1ed;
   --ink-100: #dcd6cc;
   --ink-200: #b5ac9c;
+  --ink-300: #847b6c;
   --ink-400: #57503f;
+  --ink-500: #3a3428;
   --ink-600: #2a251c;
+  --ink-700: #1f1b16;
   --ink-800: #14110d;
-  --ink-900: #0d0b08;
+  --ink-900: #0a0907;
 
   /* Eucalyptus: the habitat, and the secondary accent. */
-  --euc-300: #86a884;
+  --euc-50: #eff2ec;
+  --euc-100: #d9e1d3;
+  --euc-200: #b5c2ab;
+  --euc-300: #8fa084;
+  --euc-400: #6e826a;
   --euc-500: #5c7a5a;
-  --euc-700: #3d5a3b;
+  --euc-600: #496247;
+  --euc-700: #364a35;
 
   /* Sunset: highlights and badges, never a surface. */
-  --sun-300: #f0b968;
+  --sun-100: #fbe7c4;
+  --sun-300: #f2c271;
   --sun-500: #e8a04a;
-
-  /* Signals. Used to report state, never as decoration. The `-dark`
-     halves are the same four hues lifted for legibility on ink. */
-  --signal-success: #4e7a4a;
-  --signal-warning: #c98a1f;
-  --signal-danger: #b23e2a;
-  --signal-info: #4a6b8a;
-  --signal-success-dark: #6b9e68;
-  --signal-warning-dark: #e0a832;
-  --signal-danger-dark: #d4584a;
-  --signal-info-dark: #6b8fb0;
-
-  /* Tints for the banner each signal fills, warm enough to sit beside
-     Cream rather than on top of it. */
-  --signal-danger-tint: #f9e8e3;
-  --signal-warning-tint: #fbf1da;
-  --signal-success-tint: #eaf0e5;
-  --signal-danger-tint-dark: #2d1713;
-  --signal-warning-tint-dark: #2d2413;
-  --signal-success-tint-dark: #1a2418;
-
-  /* The same four hues at text weight. A signal chosen to read as a fill
-     is a mid-tone, and a mid-tone set as body text on its own tint does
-     not reach 4.5:1. Merging these back into the fills reintroduces that. */
-  --signal-danger-text: #8a2a1c;
-  --signal-warning-text: #6f470c;
-  --signal-success-text: #2c5629;
-  --signal-info-text: #2f4a66;
-  --signal-danger-text-dark: #f0a99f;
-  --signal-warning-text-dark: #edc264;
-  --signal-success-text-dark: #9ac996;
-  --signal-info-text-dark: #9ab6cf;
-
-  /* One step lighter than --cream-100, so it has no place in the ramp. */
-  --raised-light: #fffcf5;
+  --sun-700: #8a5a18;
 }
 
 /*
@@ -126,69 +184,40 @@
   /*
    * Semantic tokens: the palette templates name, each stated once as
    * light-dark(light, dark).
-   *
-   * Cream and Ink swap roles in dark. Bark, Eucalyptus and Sunset move to
-   * lighter steps, because a mid-tone that reads as an action on cream
-   * disappears on ink.
    */
 
-  --color-text-primary: light-dark(var(--ink-800), var(--cream-100));
-  --color-text-secondary: light-dark(var(--ink-400), var(--ink-200));
-  --color-text-brand: light-dark(var(--bark-700), var(--bark-300));
+  --color-text-primary: light-dark(var(--ink-700), var(--cream-100));
+  --color-text-secondary: light-dark(var(--ink-400), #c4bbaa);
+  --color-text-brand: light-dark(var(--bark-600), var(--bark-200));
+  --color-text-accent: light-dark(var(--euc-600), var(--euc-200));
   --color-text-on-brand: light-dark(var(--cream-50), var(--ink-800));
-  --color-text-accent: light-dark(var(--euc-700), var(--euc-300));
-  --color-text-success: light-dark(var(--signal-success-text), var(--signal-success-text-dark));
-  --color-text-warning: light-dark(var(--signal-warning-text), var(--signal-warning-text-dark));
-  --color-text-danger: light-dark(var(--signal-danger-text), var(--signal-danger-text-dark));
-  --color-text-info: light-dark(var(--signal-info-text), var(--signal-info-text-dark));
-
-  --color-bg-primary: light-dark(var(--cream-100), var(--ink-800));
-  --color-bg-raised: light-dark(var(--raised-light), var(--ink-600));
-  --color-bg-sunken: light-dark(var(--cream-200), var(--ink-900));
-  --color-bg-brand: light-dark(var(--bark-500), var(--bark-400));
-  --color-bg-brand-hover: light-dark(var(--bark-600), var(--bark-300));
-  --color-bg-brand-press: light-dark(var(--bark-700), var(--bark-200));
-  --color-bg-accent: light-dark(var(--euc-500), var(--euc-300));
-  --color-bg-highlight: light-dark(var(--sun-500), var(--sun-300));
-
-  /* A signal fills a control solid, or tints a banner. A control set in
-     the tint disappears. */
-  --color-bg-danger: light-dark(var(--signal-danger), var(--signal-danger-dark));
   --color-text-on-danger: light-dark(var(--cream-50), var(--ink-800));
-  --color-bg-danger-subtle: light-dark(var(--signal-danger-tint), var(--signal-danger-tint-dark));
-  --color-bg-warning-subtle: light-dark(
-    var(--signal-warning-tint),
-    var(--signal-warning-tint-dark)
-  );
-  --color-bg-success-subtle: light-dark(
-    var(--signal-success-tint),
-    var(--signal-success-tint-dark)
-  );
-
-  /* Warm ink at low opacity rather than a grey, so borders sit in the
-     same family as the surfaces they divide. */
-  --color-border-default: light-dark(rgb(31 27 22 / 0.12), rgb(248 242 229 / 0.1));
-
-  /* Strong is the border of a control, which WCAG asks to reach 3:1 of
-     its surface; default divides regions and carries no such duty. The
-     two are not a light and a heavy version of one thing. */
-  --color-border-strong: light-dark(rgb(31 27 22 / 0.62), rgb(248 242 229 / 0.56));
-
-  --color-border-focus: light-dark(var(--bark-500), var(--bark-300));
-
-  /* A banner's border is set at the weight of its text: the mid-tone
-     fills are too light to reach 3:1 of their own tints. */
-  --color-border-success: light-dark(var(--signal-success-text), var(--signal-success-text-dark));
-  --color-border-warning: light-dark(var(--signal-warning-text), var(--signal-warning-text-dark));
-  --color-border-danger: light-dark(var(--signal-danger-text), var(--signal-danger-text-dark));
-
-  /* The halo drawn outside --color-border-focus by the focus rule. Pinned
-     rather than derived from the accent, so focus visibility does not
-     follow the accent if that is ever retuned. */
-  --color-focus-halo: light-dark(var(--bark-100), rgb(217 152 108 / 0.25));
+  --color-text-success: light-dark(#3d6339, #9bc594);
+  --color-text-warning: light-dark(#8a5e10, #e8c179);
+  --color-text-danger: light-dark(#97321f, #e89b87);
+  --color-text-info: light-dark(#3b5670, #9dbbd6);
+  --color-bg-primary: light-dark(var(--cream-100), var(--ink-700));
+  --color-bg-raised: light-dark(#fffcf5, var(--ink-600));
+  --color-bg-sunken: light-dark(var(--cream-200), var(--ink-800));
+  --color-bg-brand: light-dark(var(--bark-600), var(--bark-300));
+  --color-bg-brand-hover: light-dark(var(--bark-700), var(--bark-200));
+  --color-bg-brand-press: light-dark(var(--bark-800), var(--bark-100));
+  --color-bg-accent: light-dark(var(--euc-600), var(--euc-200));
+  --color-bg-highlight: light-dark(var(--sun-500), var(--sun-300));
+  --color-bg-danger: light-dark(#97321f, #e89b87);
+  --color-bg-danger-subtle: light-dark(#f4d9d2, #35201a);
+  --color-bg-warning-subtle: light-dark(#fbefd3, #33280f);
+  --color-bg-success-subtle: light-dark(#e4eddf, #22301f);
+  --color-border-default: light-dark(rgba(31, 27, 22, 0.12), rgba(248, 242, 229, 0.14));
+  --color-border-strong: light-dark(#8a8072, #7c7466);
+  --color-border-focus: light-dark(var(--bark-600), var(--bark-200));
+  --color-border-success: light-dark(#3d6339, #9bc594);
+  --color-border-warning: light-dark(#8a5e10, #e8c179);
+  --color-border-danger: light-dark(#97321f, #e89b87);
 
   /* Spacing, 4 px base. Stated here, not inherited from Tailwind's
-     numeric scale, which they coincide with. */
+     numeric scale, which they coincide with. The larger steps contract
+     below 768 px; see the block after this one. */
   --spacing-1: 4px;
   --spacing-2: 8px;
   --spacing-3: 12px;
@@ -198,6 +227,37 @@
   --spacing-12: 48px;
   --spacing-16: 64px;
   --spacing-24: 96px;
+
+  /*
+   * Elevation. Warm and shallow on cream, black and deep on ink, because
+   * a shadow tinted with the surface disappears against a dark one.
+   *
+   * light-dark() takes two colours, and these are multi-layer shadows
+   * whose own commas would be read as its arguments, so the theme varies
+   * in the tint tokens and the geometry is stated once.
+   */
+  --shadow-tint-xs: light-dark(rgb(58 52 40 / 0.06), rgb(0 0 0 / 0.4));
+  --shadow-tint-sm-a: light-dark(rgb(58 52 40 / 0.08), rgb(0 0 0 / 0.5));
+  --shadow-tint-sm-b: light-dark(rgb(58 52 40 / 0.04), rgb(0 0 0 / 0.3));
+  --shadow-tint-md-a: light-dark(rgb(58 52 40 / 0.08), rgb(0 0 0 / 0.5));
+  --shadow-tint-md-b: light-dark(rgb(58 52 40 / 0.05), rgb(0 0 0 / 0.35));
+  --shadow-tint-lg-a: light-dark(rgb(58 52 40 / 0.12), rgb(0 0 0 / 0.55));
+  --shadow-tint-lg-b: light-dark(rgb(58 52 40 / 0.06), rgb(0 0 0 / 0.4));
+  --shadow-tint-xl-a: light-dark(rgb(58 52 40 / 0.16), rgb(0 0 0 / 0.6));
+  --shadow-tint-xl-b: light-dark(rgb(58 52 40 / 0.08), rgb(0 0 0 / 0.45));
+  --shadow-tint-inset: light-dark(rgb(58 52 40 / 0.08), rgb(0 0 0 / 0.4));
+
+  --shadow-xs: 0 1px 2px var(--shadow-tint-xs);
+  --shadow-sm: 0 1px 3px var(--shadow-tint-sm-a), 0 1px 2px var(--shadow-tint-sm-b);
+  --shadow-md: 0 4px 12px var(--shadow-tint-md-a), 0 2px 4px var(--shadow-tint-md-b);
+  --shadow-lg: 0 12px 32px var(--shadow-tint-lg-a), 0 4px 8px var(--shadow-tint-lg-b);
+  --shadow-xl: 0 24px 56px var(--shadow-tint-xl-a), 0 8px 16px var(--shadow-tint-xl-b);
+  --shadow-inset: inset 0 1px 2px var(--shadow-tint-inset);
+
+  /* The signature offset, flat rather than blurred. Reserved for hero
+     cards and the wordmark. Its 4px/4px stays put in a right-to-left
+     locale: box-shadow has no logical form, and this one is decorative. */
+  --shadow-stripe: 4px 4px 0 light-dark(var(--bark-100), var(--bark-700));
 
   /* Cards --radius-lg, inputs and buttons --radius-md, chips
      --radius-pill, avatars a full circle. */
@@ -209,7 +269,46 @@
   --radius-2xl: 28px;
   --radius-pill: 9999px;
 
-  --font-sans: system-ui, -apple-system, sans-serif;
+  /*
+   * Three faces with one job each. The serif is for one or two display
+   * moments per screen, never running text; the sans is the workhorse;
+   * the mono carries handles, code and timestamps.
+   */
+  --font-sans: "Public Sans", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-display: "Instrument Serif", "Iowan Old Style", Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* Type scale. The four display sizes are set in the serif. */
+  --text-xs: 12px;
+  --text-sm: 14px;
+  --text-base: 16px;
+  --text-md: 18px;
+  --text-lg: 22px;
+  --text-xl: 28px;
+  --text-2xl: 36px;
+  --text-3xl: 48px;
+  --text-4xl: 64px;
+  --text-5xl: 84px;
+}
+
+/*
+ * Below the tablet breakpoint the large spacing steps contract, so a
+ * phone spends its width on content rather than on gutters. The small
+ * steps do not move: they set the rhythm inside a control, which a
+ * narrow screen does not change.
+ *
+ * These are the Tailwind spacing tokens, so `p-8` and `gap-24` contract
+ * with them and no template carries a breakpoint of its own. The literal
+ * 768 px is the tablet breakpoint; a media query cannot read a custom
+ * property, so it is the one place the number is written out.
+ */
+@media (max-width: 767px) {
+  :root {
+    --spacing-8: 24px;
+    --spacing-12: 32px;
+    --spacing-16: 40px;
+    --spacing-24: 56px;
+  }
 }
 
 /*
@@ -217,56 +316,58 @@
  * carries a second set of classes.
  *
  * The warm-tint rule is suspended here and only here: pure white and
- * pure black are what buy the extra ratio.
- *
- * scripts/check-contrast.py measures every pair below and fails under
- * 7:1 for body text. Changing a value here without running it is how the
- * mode becomes a claim rather than a fact.
+ * pure black are what buy the extra ratio. Legibility over recognition.
  */
 :root[data-contrast="high"] {
-  --color-text-primary: light-dark(#000000, #ffffff);
-  --color-text-secondary: light-dark(#2f2a20, #ddd7cd);
-  --color-text-brand: light-dark(#57291a, #f2bb96);
+  /* Depth is carried by borders here, not by shadows: a soft edge is the
+     first thing to disappear for a reader who asked for this mode. */
+  --shadow-xs: none;
+  --shadow-sm: none;
+  --shadow-md: none;
+  --shadow-lg: none;
+  --shadow-xl: none;
+  --shadow-inset: none;
+  --shadow-stripe: 4px 4px 0 light-dark(var(--ink-900), #ffffff);
+
+  --color-text-primary: light-dark(var(--ink-900), #ffffff);
+  --color-text-secondary: light-dark(#2e2a22, #d8d2c8);
+  --color-text-brand: light-dark(#5a2a18, var(--bark-200));
+  --color-text-accent: light-dark(#26351f, var(--euc-100));
   --color-text-on-brand: light-dark(#ffffff, #000000);
-  --color-text-accent: light-dark(#22351f, #b8dab6);
-  --color-text-success: light-dark(#17400f, #a8e0a3);
-  --color-text-warning: light-dark(#4a3105, #ffd479);
-  --color-text-danger: light-dark(#7a1f12, #ffab9e);
-  --color-text-info: light-dark(#123554, #a9cdea);
-
-  --color-bg-primary: light-dark(#ffffff, #000000);
-  --color-bg-raised: light-dark(#ffffff, #12100c);
-  --color-bg-sunken: light-dark(#f2ece0, #000000);
-  --color-bg-brand: light-dark(#6b3a20, #e0895a);
-  --color-bg-brand-hover: light-dark(#57291a, #f2bb96);
-  --color-bg-brand-press: light-dark(#3d1c10, #f8d6c0);
-  --color-bg-accent: light-dark(#22351f, #b8dab6);
-  --color-bg-highlight: light-dark(#7a5410, #ffd479);
-  --color-bg-danger: light-dark(#7a1f12, #ffab9e);
   --color-text-on-danger: light-dark(#ffffff, #000000);
-  --color-bg-danger-subtle: light-dark(#fdeeea, #2a0f0a);
-  --color-bg-warning-subtle: light-dark(#fdf3e0, #2a2208);
-  --color-bg-success-subtle: light-dark(#eef4ea, #0f2410);
-
-  --color-border-default: light-dark(rgb(31 27 22 / 0.7), rgb(248 242 229 / 0.7));
-  --color-border-strong: light-dark(rgb(31 27 22 / 0.95), rgb(248 242 229 / 0.95));
-  --color-border-focus: light-dark(#000000, #ffffff);
-  --color-border-success: light-dark(#17400f, #a8e0a3);
-  --color-border-warning: light-dark(#4a3105, #ffd479);
-  --color-border-danger: light-dark(#7a1f12, #ffab9e);
-
-  --color-focus-halo: light-dark(#ffd479, #7a5410);
+  --color-text-success: light-dark(#234020, #b8dcb1);
+  --color-text-warning: light-dark(#4a3208, #f2d79b);
+  --color-text-danger: light-dark(#5e1a0e, #f2b8a6);
+  --color-text-info: light-dark(#1f3247, #b8d2e8);
+  --color-bg-primary: light-dark(#ffffff, #000000);
+  --color-bg-raised: light-dark(#ffffff, #14110d);
+  --color-bg-sunken: light-dark(#f2f2f0, #000000);
+  --color-bg-brand: light-dark(#5a2a18, var(--bark-200));
+  --color-bg-brand-hover: light-dark(#4a2214, var(--bark-100));
+  --color-bg-brand-press: light-dark(#3a1a0f, var(--cream-100));
+  --color-bg-accent: light-dark(#26351f, var(--euc-100));
+  --color-bg-highlight: light-dark(#4a3208, var(--sun-300));
+  --color-bg-danger: light-dark(#5e1a0e, #f2b8a6);
+  --color-bg-danger-subtle: light-dark(#f4d9d2, #1f1310);
+  --color-bg-warning-subtle: light-dark(#fbefd3, #1f1808);
+  --color-bg-success-subtle: light-dark(#e4eddf, #111a10);
+  --color-border-default: light-dark(var(--ink-900), #ffffff);
+  --color-border-strong: light-dark(var(--ink-900), #ffffff);
+  --color-border-focus: light-dark(var(--ink-900), var(--sun-300));
+  --color-border-success: light-dark(#234020, #b8dcb1);
+  --color-border-warning: light-dark(#4a3208, #f2d79b);
+  --color-border-danger: light-dark(#5e1a0e, #f2b8a6);
 }
 
 /* ..... Focus ..... */
 
 @layer base {
-  /* The halo carries the indicator across backgrounds the outline colour
-     alone is close to. */
+  /* 3 px rather than 2 px with a halo: the ring carries the indicator on
+     its own, and --color-border-focus is measured against the page in
+     every theme. */
   :focus-visible {
-    outline: 2px solid var(--color-border-focus);
+    outline: 3px solid var(--color-border-focus);
     outline-offset: 2px;
-    box-shadow: 0 0 0 3px var(--color-focus-halo);
   }
 
   a:focus-visible {

@@ -68,6 +68,42 @@ SPDX-FileCopyrightText = "2026 Gabriel Henrique Lopes Gomes Alves Nunes"
 # release, converted from the Google Fonts TTF to WOFF2. Converting drops
 # the DSIG table, which WOFF2 invalidates by design; the MATH table that
 # makes it a maths font is preserved.
+# The three brand typefaces, self-hosted rather than loaded from a CDN.
+#
+# Not a preference: the served Content-Security-Policy admits stylesheets
+# and fonts from this origin only, so the CDN `@import` the design system
+# ships with is refused by the browser before it fetches anything.
+# Self-hosting is the only route that works here.
+#
+# Upstream `webfonts/` builds, unmodified, in the weights the templates
+# use: 400, 500, 600 and 700 for the sans, one weight for the mono, and
+# roman plus italic for the display serif.
+[[annotations]]
+path = [
+    "frontend/src/fonts/InstrumentSerif-Regular.woff2",
+    "frontend/src/fonts/InstrumentSerif-Italic.woff2",
+]
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileCopyrightText = "2022 The Instrument Serif Project Authors (https://github.com/Instrument/instrument-serif)"
+
+# A joint work: the GSA modifications are CC0, the original Libre Franklin
+# remains under the OFL. Its own licence says to use the combination under
+# the OFL, which is the more restrictive half, so that is what is declared.
+[[annotations]]
+path = [
+    "frontend/src/fonts/PublicSans-Regular.woff2",
+    "frontend/src/fonts/PublicSans-Medium.woff2",
+    "frontend/src/fonts/PublicSans-SemiBold.woff2",
+    "frontend/src/fonts/PublicSans-Bold.woff2",
+]
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileCopyrightText = "2015 The Public Sans Project Authors (https://github.com/uswds/public-sans)"
+
+[[annotations]]
+path = ["frontend/src/fonts/JetBrainsMono-Regular.woff2"]
+SPDX-License-Identifier = "OFL-1.1"
+SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://github.com/JetBrains/JetBrainsMono)"
+
 [[annotations]]
 path = ["frontend/src/fonts/STIXTwoMath-Regular.woff2"]
 SPDX-License-Identifier = "OFL-1.1"

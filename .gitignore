@@ -20,3 +20,7 @@ tests/e2e/playwright-report/
 
 # pnpm creates a store beside the project when none is configured.
 .pnpm-store/
+
+# Python bytecode, which `reuse lint` counts as an unlicensed file.
+__pycache__/
+*.pyc
