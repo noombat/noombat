@@ -18,6 +18,21 @@ pub enum ActorType {
     Group,
 }
 
+impl ActorType {
+    /// The ActivityStreams type a peer sees for this actor.
+    ///
+    /// One mapping, because three copies of it disagreed: a profile
+    /// update answered `Person` for a company while both federation
+    /// paths answered `Organization`.
+    pub fn ap_type(self) -> &'static str {
+        match self {
+            Self::Individual => "Person",
+            Self::Company => "Organization",
+            Self::Group => "Group",
+        }
+    }
+}
+
 /// Instance-level role assigned to a local actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]

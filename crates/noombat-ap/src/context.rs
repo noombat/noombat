@@ -20,6 +20,14 @@ pub const SECURITY_CONTEXT: &str = "https://w3id.org/security/v1";
 /// The W3C Data Integrity context URI (for FEP-8b32 integrity proofs).
 pub const DATA_INTEGRITY_CONTEXT: &str = "https://w3id.org/security/data-integrity/v1";
 
+/// The W3C Multikey context URI.
+///
+/// [`SECURITY_CONTEXT`] defines `assertionMethod` but not the `Multikey`
+/// type or `publicKeyMultibase` that FEP-521a puts inside it, so an
+/// actor publishing an Ed25519 key under the default context alone
+/// hands a JSON-LD processor terms it must drop.
+pub const MULTIKEY_CONTEXT: &str = "https://w3id.org/security/multikey/v1";
+
 /// The Noombat extension namespace.
 pub const NOOMBAT_NS: &str = "https://noombat.org/ns#";
 
@@ -28,6 +36,18 @@ pub fn default_context() -> Value {
     json!([
         AS_CONTEXT,
         SECURITY_CONTEXT,
+        { "noombat": NOOMBAT_NS }
+    ])
+}
+
+/// Produces the `@context` array for an actor that publishes an
+/// `assertionMethod`, i.e. [`default_context`] plus the terms that
+/// entry's contents need.
+pub fn actor_context() -> Value {
+    json!([
+        AS_CONTEXT,
+        SECURITY_CONTEXT,
+        MULTIKEY_CONTEXT,
         { "noombat": NOOMBAT_NS }
     ])
 }

@@ -15,7 +15,6 @@ use serde_json::json;
 use uuid::Uuid;
 
 use noombat_ap::context::{AS_CONTEXT, default_context};
-use noombat_ap::object::{ApActor, ApMultikey, ApPublicKey};
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
@@ -135,91 +134,13 @@ async fn get_actor(
     }
 
     if wants_activity_json(&headers) {
-        // Build the AP actor attachment (ORCID, verified links) only
-        // when federate_profile is enabled.
-        let attachment = if actor.actor_privacy.federate_profile {
-            let mut entries: Vec<serde_json::Value> = Vec::new();
-            if let Some(ref orcid) = actor.orcid {
-                entries.push(serde_json::json!({
-                    "type": "PropertyValue",
-                    "name": "ORCID",
-                    "value": format!("<a href=\"https://orcid.org/{orcid}\" rel=\"me\">{orcid}</a>")
-                }));
-            }
-            if let Ok(links) =
-                noombat_identity::verification::list_links(&state.pool, actor.id).await
-            {
-                for link in links {
-                    if link.verified_at.is_some() {
-                        entries.push(serde_json::json!({
-                            "type": "PropertyValue",
-                            "name": "Website",
-                            "value": format!("<a rel=\"me\" href=\"{url}\">{url}</a>", url = link.url)
-                        }));
-                    }
-                }
-            }
-            if entries.is_empty() {
-                None
-            } else {
-                Some(entries)
-            }
-        } else {
-            None
-        };
-
-        // Fetch aliases for the alsoKnownAs property (Move support).
-        let aliases = noombat_federation::move_actor::list_aliases(&state.pool, actor.id)
-            .await
-            .unwrap_or_default();
-
-        let ap_actor = ApActor {
-            context: Some(default_context()),
-            id: actor.ap_id.clone(),
-            actor_type: match actor.actor_type {
-                noombat_core::actor::ActorType::Individual => "Person".to_owned(),
-                noombat_core::actor::ActorType::Company => "Organization".to_owned(),
-                noombat_core::actor::ActorType::Group => "Group".to_owned(),
-            },
-            preferred_username: actor.username.clone(),
-            name: actor.display_name.clone(),
-            summary: actor.summary_html.clone(),
-            icon: None,
-            image: None,
-            inbox: format!("{}/inbox", actor.ap_id),
-            outbox: format!("{}/outbox", actor.ap_id),
-            followers: Some(format!("{}/followers", actor.ap_id)),
-            following: Some(format!("{}/following", actor.ap_id)),
-            public_key: ApPublicKey {
-                id: format!("{}#main-key", actor.ap_id),
-                owner: actor.ap_id.clone(),
-                public_key_pem: actor.public_key_pem.clone(),
-            },
-            url: Some(format!("https://{}/@{}", state.domain, actor.username)),
-            attachment,
-            endpoints: Some(serde_json::json!({
-                "sharedInbox": format!("https://{}/inbox", state.domain)
-            })),
-            assertion_method: actor.ed25519_public_key.as_ref().map(|pk| {
-                vec![ApMultikey {
-                    id: format!("{}#ed25519-key", actor.ap_id),
-                    key_type: "Multikey".to_owned(),
-                    controller: actor.ap_id.clone(),
-                    public_key_multibase: pk.clone(),
-                }]
-            }),
-            moved_to: actor.moved_to.clone(),
-            also_known_as: if aliases.is_empty() {
-                None
-            } else {
-                Some(aliases)
-            },
-        };
+        let document =
+            noombat_federation::actor_document::build(&state.pool, &actor, &state.domain).await;
 
         return Ok((
             StatusCode::OK,
             [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
-            Json(ap_actor),
+            Json(document),
         )
             .into_response());
     }
@@ -723,7 +644,7 @@ async fn patch_actor(
         [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
         Json(json!({
             "id": updated.ap_id,
-            "type": "Person",
+            "type": updated.actor_type.ap_type(),
             "preferredUsername": updated.username,
             "name": updated.display_name,
             "summary": updated.summary_html

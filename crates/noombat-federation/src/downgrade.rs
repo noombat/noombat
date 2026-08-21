@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 
-use noombat_ap::context::default_context;
+use noombat_ap::context::{actor_context, default_context};
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
 use noombat_core::privacy::SectionVisibility;
@@ -183,15 +183,19 @@ pub struct VerifiedLinkRef<'a> {
     pub url: &'a str,
 }
 
-/// Build the federated AP actor object for a local actor, respecting
-/// the `federate_profile` and per-section visibility settings.
+/// Build the AP actor document for a local actor, respecting the
+/// `federate_profile` and per-section visibility settings.
 ///
-/// When `federate_profile` is `false`, only the minimal actor fields
-/// (name, summary, avatar) are included. When `true`, only sections
-/// whose visibility is [`SectionVisibility::Public`] are included in
-/// unsolicited deliveries.
+/// This is the only serialiser for a local actor, and must stay so: a
+/// peer that fetches the actor and a peer that receives an `Update` have
+/// to hold the same document, or which one a given peer holds depends on
+/// the order events reached it.
 ///
-/// The returned object includes the `noombat:ttl` hint.
+/// Identity and key material (`publicKey`, `assertionMethod`, `icon`,
+/// `image`, `movedTo`, `alsoKnownAs`, `noombat:ttl`) is emitted for
+/// every actor. When `federate_profile` is `false` the document stops
+/// there. When `true` it also carries the `attachment` array and the
+/// sections whose visibility is [`SectionVisibility::Public`].
 pub fn build_federated_actor(
     actor: &Actor,
     domain: &str,
@@ -201,19 +205,16 @@ pub fn build_federated_actor(
     ttl_secs: Option<u64>,
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
-    let ap_type = match actor.actor_type {
-        noombat_core::actor::ActorType::Individual => "Person",
-        noombat_core::actor::ActorType::Company => "Organization",
-        noombat_core::actor::ActorType::Group => "Group",
-    };
 
     let mut obj = json!({
-        "@context": default_context(),
+        "@context": if actor.ed25519_public_key.is_some() {
+            actor_context()
+        } else {
+            default_context()
+        },
         "id": actor.ap_id,
-        "type": ap_type,
+        "type": actor.actor_type.ap_type(),
         "preferredUsername": actor.username,
-        "name": actor.display_name,
-        "summary": actor.summary_html,
         "url": profile_url,
         "inbox": format!("{}/inbox", actor.ap_id),
         "outbox": format!("{}/outbox", actor.ap_id),
@@ -228,6 +229,28 @@ pub fn build_federated_actor(
             "publicKeyPem": actor.public_key_pem,
         },
     });
+
+    // Omitted when absent, never sent as `null`: a peer can read a null
+    // as an instruction to clear what it has cached.
+    if let Some(ref display_name) = actor.display_name {
+        obj["name"] = json!(display_name);
+    }
+    if let Some(ref summary) = actor.summary_html {
+        obj["summary"] = json!(summary);
+    }
+
+    // The Ed25519 key for FEP-8b32 proofs (FEP-521a `assertionMethod`).
+    // Key material rather than profile data, so it belongs above the
+    // `federate_profile` return: an actor who stops federating a profile
+    // must still be verifiable.
+    if let Some(ref multibase) = actor.ed25519_public_key {
+        obj["assertionMethod"] = json!([{
+            "id": format!("{}#ed25519-key", actor.ap_id),
+            "type": "Multikey",
+            "controller": actor.ap_id,
+            "publicKeyMultibase": multibase,
+        }]);
+    }
 
     // Profile data TTL hint.
     obj[vocab::TTL] = json!(ttl_secs.unwrap_or(DEFAULT_TTL_SECS));
@@ -258,17 +281,10 @@ pub fn build_federated_actor(
         });
     }
 
-    // If the user has disabled profile federation, stop here,
-    // i.e. remote instances see only the minimal actor object.
-    //
-    // This check used to sit *after* the attachment array had already
-    // been assigned into `obj`, so the early return handed back a
-    // document still carrying the ORCID, the Chatmail address and every
-    // verified link. Turning the setting off suppressed the sections
-    // below and pushed the attachments anyway, to every peer. The fetch
-    // path in `noombat-api::routes::actors` (`get_actor`) has always
-    // gated the whole attachment block on this flag; the two paths
-    // disagreed, and this one was the permissive side.
+    // Everything below is profile data, so this return must stay above
+    // it. Below it sit the ORCID, the Chatmail address and the verified
+    // links, and a return placed after them suppresses the sections while
+    // pushing the attachments to every peer anyway.
     if !actor.actor_privacy.federate_profile {
         return obj;
     }
@@ -503,6 +519,102 @@ mod tests {
         let aka = obj["alsoKnownAs"].as_array().unwrap();
         assert_eq!(aka.len(), 1);
         assert_eq!(aka[0], "https://old.example/users/alice");
+    }
+
+    #[test]
+    fn federated_actor_publishes_the_ed25519_key() {
+        let actor = test_actor();
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+
+        let methods = obj["assertionMethod"].as_array().unwrap();
+        assert_eq!(methods.len(), 1);
+        assert_eq!(
+            methods[0]["id"],
+            "https://noombat.social/users/alice#ed25519-key"
+        );
+        assert_eq!(methods[0]["type"], "Multikey");
+        assert_eq!(
+            methods[0]["controller"],
+            "https://noombat.social/users/alice"
+        );
+        assert_eq!(
+            methods[0]["publicKeyMultibase"],
+            actor.ed25519_public_key.as_deref().unwrap()
+        );
+    }
+
+    #[test]
+    fn federated_actor_publishes_the_key_without_profile_federation() {
+        // The push path omitted `assertionMethod` entirely, so a peer
+        // that learned this actor from an Update could not verify a
+        // FEP-8b32 proof from it. The key is not profile data: turning
+        // profile federation off must not withdraw it.
+        let mut actor = test_actor();
+        actor.actor_privacy.federate_profile = false;
+
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        assert!(obj.get("assertionMethod").is_some());
+        assert!(obj.get("publicKey").is_some());
+    }
+
+    #[test]
+    fn federated_actor_context_defines_the_terms_it_uses() {
+        use noombat_ap::context::MULTIKEY_CONTEXT;
+
+        let with_key = build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None);
+        let declared: Vec<&str> = with_key["@context"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.as_str())
+            .collect();
+        assert!(
+            declared.contains(&MULTIKEY_CONTEXT),
+            "Multikey and publicKeyMultibase are emitted under a context \
+             that does not define them: {declared:?}"
+        );
+
+        let mut keyless = test_actor();
+        keyless.ed25519_public_key = None;
+        let without_key = build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None);
+        let declared: Vec<&str> = without_key["@context"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.as_str())
+            .collect();
+        assert!(!declared.contains(&MULTIKEY_CONTEXT));
+    }
+
+    #[test]
+    fn federated_actor_omits_absent_members_rather_than_nulling_them() {
+        let mut actor = test_actor();
+        actor.display_name = None;
+        actor.summary_html = None;
+
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        assert!(obj.get("name").is_none(), "name sent as {}", obj["name"]);
+        assert!(obj.get("summary").is_none());
+
+        let present = build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None);
+        assert_eq!(present["name"], "Alice");
+        assert_eq!(present["summary"], "<p>Hello</p>");
+    }
+
+    #[test]
+    fn federated_actor_type_follows_the_actor_type() {
+        use noombat_core::actor::ActorType;
+
+        for (actor_type, expected) in [
+            (ActorType::Individual, "Person"),
+            (ActorType::Company, "Organization"),
+            (ActorType::Group, "Group"),
+        ] {
+            let mut actor = test_actor();
+            actor.actor_type = actor_type;
+            let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+            assert_eq!(obj["type"], expected);
+        }
     }
 
     /// Construct a minimal [`Actor`] for unit tests.

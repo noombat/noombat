@@ -1,0 +1,140 @@
+// SPDX-License-Identifier: AGPL-3.0-or-later
+// SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+//! The one place a local actor's ActivityPub document is assembled.
+//!
+//! Two paths publish an actor: a peer dereferences it, and an `Update`
+//! pushes it to followers. Both must go through [`build`], gather
+//! included, or a peer ends up holding whichever document reached it
+//! last rather than the actor's actual state.
+
+use std::borrow::Cow;
+
+use noombat_core::actor::Actor;
+use noombat_core::privacy::SectionVisibility;
+use serde_json::Value;
+use sqlx::PgPool;
+use tracing::warn;
+
+use crate::downgrade::{self, FederatedSection, VerifiedLinkRef};
+use crate::move_actor;
+
+/// Gather an actor's federated inputs and serialise the document.
+///
+/// A gather that fails degrades to a smaller document rather than to no
+/// document: an actor that cannot be served is worse than one served
+/// without its sections, and the dereference path has no way to retry.
+pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
+    let sections = match fetch_public_sections(pool, actor.id).await {
+        Ok(sections) => sections,
+        Err(error) => {
+            warn!(
+                actor = %actor.ap_id,
+                %error,
+                "failed to fetch profile sections; serving a minimal actor"
+            );
+            Vec::new()
+        }
+    };
+
+    let aliases = move_actor::list_aliases(pool, actor.id)
+        .await
+        .unwrap_or_default();
+
+    let links = noombat_identity::verification::list_links(pool, actor.id)
+        .await
+        .unwrap_or_default();
+    let link_refs: Vec<VerifiedLinkRef<'_>> = links
+        .iter()
+        .filter(|link| link.verified_at.is_some() && link.visibility == "public")
+        .map(|link| VerifiedLinkRef { url: &link.url })
+        .collect();
+
+    downgrade::build_federated_actor(actor, domain, &sections, &aliases, &link_refs, None)
+}
+
+/// Fetch all public-visibility profile sections for an actor,
+/// formatted as [`FederatedSection`] values.
+///
+/// The five independent database queries are executed concurrently
+/// via [`tokio::try_join!`] to minimise latency on the Update
+/// broadcast path.
+async fn fetch_public_sections(
+    pool: &PgPool,
+    actor_id: uuid::Uuid,
+) -> noombat_core::error::Result<Vec<FederatedSection>> {
+    let vis = SectionVisibility::Public;
+
+    let (experiences, educations, skills, publications, custom) = tokio::try_join!(
+        noombat_identity::profile::list_experiences(pool, actor_id, &vis),
+        noombat_identity::profile::list_educations(pool, actor_id, &vis),
+        noombat_identity::profile::list_skills(pool, actor_id, false),
+        noombat_identity::profile::list_publications(pool, actor_id, &vis),
+        noombat_identity::profile::list_custom_sections(pool, actor_id, &vis),
+    )?;
+
+    let mut sections = Vec::new();
+
+    for exp in experiences {
+        sections.push(FederatedSection {
+            section_type: "experience".into(),
+            visibility: SectionVisibility::Public,
+            data: serde_json::json!({
+                "noombat:title": exp.title,
+                "noombat:company": exp.company,
+                "noombat:startDate": exp.start_date.to_string(),
+                "noombat:endDate": exp.end_date.map(|d| d.to_string()),
+                "content": exp.description_html,
+            }),
+        });
+    }
+
+    for edu in educations {
+        sections.push(FederatedSection {
+            section_type: "education".into(),
+            visibility: SectionVisibility::Public,
+            data: serde_json::json!({
+                "noombat:institution": edu.institution,
+                "noombat:degree": edu.degree,
+                "noombat:fieldOfStudy": edu.field_of_study,
+                "noombat:startDate": edu.start_date.to_string(),
+                "noombat:endDate": edu.end_date.map(|d| d.to_string()),
+                "content": edu.description_html,
+            }),
+        });
+    }
+
+    for skill in skills {
+        sections.push(FederatedSection {
+            section_type: "skill".into(),
+            visibility: SectionVisibility::Public,
+            data: serde_json::json!({ "name": skill.name }),
+        });
+    }
+
+    for pub_ in publications {
+        sections.push(FederatedSection {
+            section_type: "publication".into(),
+            visibility: SectionVisibility::Public,
+            data: serde_json::json!({
+                "noombat:doi": pub_.doi,
+                "name": pub_.title,
+                "noombat:authors": pub_.authors,
+                "noombat:journal": pub_.journal,
+            }),
+        });
+    }
+
+    for cs in custom {
+        sections.push(FederatedSection {
+            section_type: Cow::Owned(cs.section_type),
+            visibility: SectionVisibility::Public,
+            data: serde_json::json!({
+                "name": cs.title,
+                "content": cs.content_html,
+                "noombat:data": cs.data,
+            }),
+        });
+    }
+
+    Ok(sections)
+}
