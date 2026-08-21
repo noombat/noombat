@@ -22,12 +22,22 @@ See [`SECURITY.md`](../SECURITY.md) for what that distinction does and does not 
 
 Each release carries four files:
 
-| File                           | Contents                                                                   |
-| ------------------------------ | -------------------------------------------------------------------------- |
-| `assets-manifest.json`         | SHA-256 of every browser asset.                                            |
-| `server-image-manifest.json`   | SHA-256 of every file under `/opt/noombat` and `/usr/local/bin` in the server image, i.e. the `noombat` and `typst` binaries, migrations, templates, locales, assets, plus every installed Debian package and version. |
-| `chatmail-image-manifest.json` | The same for the chatmail image: `noombat-chatmail-admin`, `noombat-filtermail`, `noombat-doveauth`, the Postfix and Dovecot configuration, the entrypoint, and the package list. |
-| `*.sigstore.json`              | A Sigstore bundle for each: signature, certificate, Rekor inclusion proof. |
+| File                           | Contents                                    |
+|--------------------------------|---------------------------------------------|
+| `assets-manifest.json`         | SHA-256 of every browser asset              |
+| `server-image-manifest.json`   | SHA-256 of every file in the server image   |
+| `chatmail-image-manifest.json` | SHA-256 of every file in the chatmail image |
+| `*.sigstore.json`              | A Sigstore bundle for each of the above     |
+
+The server image manifest covers everything under `/opt/noombat` and `/usr/local/bin`: the
+`noombat` and `typst` binaries, the migrations, templates, locales and built assets, plus every
+installed Debian package and its version.
+
+The chatmail image manifest covers the same ground for that image: `noombat-chatmail-admin`,
+`noombat-filtermail`, `noombat-doveauth`, the Postfix and Dovecot configuration, the entrypoint,
+and the package list.
+
+Each Sigstore bundle carries a signature, a certificate, and a Rekor inclusion proof.
 
 Each manifest also records the version and commit it was built from.
 
