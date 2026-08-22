@@ -18,6 +18,7 @@ pub mod hashtags;
 pub mod health;
 pub mod interactions;
 pub mod jobs;
+pub mod media;
 pub mod moderation;
 pub mod pages;
 pub mod posts;

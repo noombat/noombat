@@ -12,6 +12,7 @@ pub mod cookie;
 pub mod erasure;
 pub mod error;
 pub mod i18n;
+pub mod media;
 pub mod middleware;
 pub mod rate_limit;
 pub mod routes;
@@ -46,6 +47,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::follows::router())
         .merge(routes::hashtags::router())
         .merge(routes::interactions::router())
+        .merge(routes::media::router())
         .merge(routes::moderation::router())
         .merge(routes::posts::router())
         .merge(routes::preview::router())

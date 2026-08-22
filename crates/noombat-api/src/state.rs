@@ -94,4 +94,9 @@ pub struct AppState {
     /// Whether signed-fetch failures fall back to unsigned GET
     /// (default `false`).
     pub allow_unsigned_fetch: bool,
+    /// Where uploaded media rests.
+    ///
+    /// A backend, not an origin: the browser never addresses it. See
+    /// [`crate::media`] for why that is a rule rather than a default.
+    pub media: crate::media::MediaStore,
 }

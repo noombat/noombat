@@ -319,13 +319,35 @@ CREATE TABLE media_attachments (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id   UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     post_id    UUID REFERENCES posts(id) ON DELETE CASCADE,
-    media_type TEXT NOT NULL,
+    -- A closed list. Content sniffing decides which of these a file is;
+    -- this constraint is what stops a third value ever being stored.
+    media_type TEXT NOT NULL CHECK (media_type IN ('image/jpeg', 'image/png')),
+    -- The opaque object key. Random, and never derived from the actor,
+    -- the filename or the content: a key anyone can guess or enumerate
+    -- lets them walk the instance's users, and a content hash lets them
+    -- test whether a given photograph is in use here.
+    object_key TEXT NOT NULL UNIQUE,
+    -- Where the bytes rest. Per row, not per instance: an operator who
+    -- enables object storage later must not orphan everything written
+    -- while storage was local.
+    backend    TEXT NOT NULL DEFAULT 'local' CHECK (backend IN ('local', 's3')),
+    -- What the object is for. `post_id` alone cannot distinguish an
+    -- avatar from a header, and the read paths need one deterministic
+    -- row per purpose.
+    purpose    TEXT NOT NULL DEFAULT 'post' CHECK (purpose IN ('avatar', 'header', 'post')),
     url        TEXT NOT NULL,
     alt_text   TEXT,
     blurhash   TEXT,
     byte_size  BIGINT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+
+-- One current avatar and one current header per actor. The upload path
+-- replaces rather than accumulates, and this is what makes "replaces"
+-- true rather than a convention the next writer can break.
+CREATE UNIQUE INDEX idx_media_one_per_purpose
+    ON media_attachments (actor_id, purpose)
+    WHERE purpose IN ('avatar', 'header');
 
 -- ..... SOCIAL GRAPH .....
 
@@ -641,6 +663,7 @@ CREATE INDEX idx_skills_actor ON skills (actor_id);
 CREATE INDEX idx_publications_actor ON publications (actor_id);
 CREATE INDEX idx_verified_links_actor ON verified_links (actor_id);
 CREATE INDEX idx_custom_sections_actor ON custom_profile_sections (actor_id);
+CREATE INDEX idx_media_attachments_actor ON media_attachments (actor_id);
 CREATE INDEX idx_media_attachments_post ON media_attachments (post_id);
 CREATE INDEX idx_job_listings_actor ON job_listings (actor_id);
 CREATE INDEX idx_applications_job ON applications (job_listing_id);

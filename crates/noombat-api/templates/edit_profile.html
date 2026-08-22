@@ -38,29 +38,59 @@
             </div>
 
             <div>
-                <label for="summary" class="block text-sm mb-1">{{ i18n.t("edit_summary") }}</label>
+                <!-- A span, not a label: the editor mounts on a div, which
+                     `for` cannot address. The island names its own textarea
+                     from data-label, and the noscript fallback below carries
+                     the same string. -->
+                <span class="block text-sm mb-1">{{ i18n.t("edit_summary") }}</span>
                 <div id="editor-mount"
                      data-name="summary_md"
-                     data-value="{{ summary_md }}"
+                     data-initial-value="{{ summary_md }}"
+                     data-label="{{ i18n.t("edit_summary") }}"
                      data-rows="8"
                      data-locale="{{ i18n.lang_attr() }}">
                     <noscript>
                         <textarea name="summary_md" rows="8"
+                                  aria-label="{{ i18n.t("edit_summary") }}"
                                   class="w-full border border-border-default rounded p-3 font-mono text-sm bg-bg-raised text-text-primary">{{ summary_md }}</textarea>
                     </noscript>
                 </div>
             </div>
 
+            <button type="submit"
+                    class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">
+                {{ i18n.t("edit_save") }}
+            </button>
+        </form>
+
+        <!-- A separate form, because a file cannot travel in the JSON body
+             the form above submits. It posts multipart to its own route,
+             which authenticates by session rather than by the path, so it
+             cannot be aimed at another account. -->
+        <form action="/settings/avatar" method="post" enctype="multipart/form-data"
+              class="space-y-4 max-w-lg mt-8 border-t border-border-default pt-6">
+            <h2 class="text-lg font-semibold">{{ i18n.t("edit_avatar_heading") }}</h2>
+
+            {% if avatar_url.is_empty() %}
+            <p class="text-sm text-text-secondary">{{ i18n.t("edit_avatar_none") }}</p>
+            {% else %}
+            <img src="{{ avatar_url }}" alt="{{ i18n.t("edit_avatar_current") }}"
+                 width="96" height="96"
+                 class="rounded-full border border-border-default">
+            {% endif %}
+
             <div>
-                <label for="avatar-url" class="block text-sm mb-1">{{ i18n.t("edit_avatar_url") }}</label>
-                <input id="avatar-url" name="avatar_url" type="url"
-                       value="{{ avatar_url }}"
+                <label for="avatar-file" class="block text-sm mb-1">{{ i18n.t("edit_avatar_file") }}</label>
+                <input id="avatar-file" name="avatar" type="file"
+                       accept="image/jpeg,image/png" required
+                       aria-describedby="avatar-help"
                        class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
+                <p id="avatar-help" class="text-sm text-text-secondary mt-1">{{ i18n.t("edit_avatar_help") }}</p>
             </div>
 
             <button type="submit"
                     class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">
-                {{ i18n.t("edit_save") }}
+                {{ i18n.t("edit_avatar_upload") }}
             </button>
         </form>
 

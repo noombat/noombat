@@ -40,7 +40,10 @@ ammonia = { workspace = true }
 governor = { workspace = true }
 hmac = { workspace = true }
 
+image = { workspace = true }
+
 [dev-dependencies]
+tempfile = { workspace = true }
 # `ServiceExt::oneshot` drives the assembled Router in integration
 # tests without binding a socket.
 tower = { version = "0.5", features = ["util"] }

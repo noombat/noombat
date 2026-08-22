@@ -35,7 +35,7 @@ noombat-chat = { path = "crates/noombat-chat", version = "0.1.0" }
 noombat-api = { path = "crates/noombat-api", version = "0.1.0" }
 
 # HTTP framework.
-axum = { version = "0.8.9", features = ["macros", "ws"] }
+axum = { version = "0.8.9", features = ["macros", "multipart", "ws"] }
 http = "1"
 tower-http = { version = "0.7", features = ["cors", "trace", "compression-gzip", "limit", "request-id", "fs", "set-header"] }
 
@@ -191,6 +191,24 @@ rustls-native-certs = "0.8"
 # TLS connector does; without it lettre falls back to webpki-roots and
 # submission ignores the trust configuration the rest of chat honours.
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "builder", "rustls-native-certs"] }
+
+# Image decode and re-encode for uploaded media.
+#
+# Default features off, and only the two formats the upload route
+# accepts. That is 8 transitive crates rather than the dozens the
+# default set pulls, no new duplicate versions, and every licence in
+# deny.toml's allowlist. Adding `webp` costs `image-webp` and
+# `quick-error`, and `quick-error` declares the deprecated
+# `MIT/Apache-2.0` slash form that cargo-deny may not accept.
+#
+# JPEG XL is the format worth wanting here: better compression than both
+# at the same quality, and lossless JPEG transcoding. It is deliberately
+# absent. Add it, and the `image/jxl` arm of the media_type constraint,
+# once Firefox, Chromium and WebKit all decode it without a flag; today
+# only WebKit does, so serving it would mean keeping a fallback encode
+# of every object, which is a second storage story rather than a format
+# switch.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
 # MIME parsing (Autocrypt header extraction from IMAP messages).
 mailparse = "0.16"

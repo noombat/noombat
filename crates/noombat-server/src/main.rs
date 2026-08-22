@@ -110,6 +110,14 @@ struct Config {
     /// federating with implementations that reject signed fetches.
     #[serde(default)]
     allow_unsigned_fetch: bool,
+    /// Directory holding uploaded media.
+    ///
+    /// Local storage is the default and an instance that configures
+    /// nothing works: delegation to object storage is opt-in, and must
+    /// stay so, because an operator should not acquire a third-party
+    /// dependency by accident.
+    #[serde(default = "default_media_root")]
+    media_root: String,
     /// Per-IP rate limit: maximum requests per window (default 120).
     #[serde(default = "default_rate_limit")]
     rate_limit: u32,
@@ -182,6 +190,9 @@ fn default_refresh_ttl() -> i64 {
 }
 fn default_rate_limit() -> u32 {
     120
+}
+fn default_media_root() -> String {
+    "/var/lib/noombat/media".to_owned()
 }
 fn default_fed_rate_limit() -> u32 {
     300
@@ -606,6 +617,12 @@ async fn main() -> anyhow::Result<()> {
     // here.
     let fallback_rate_limiter = FallbackRateLimiter::new();
 
+    // Fail at boot rather than at the first upload. An unwritable media
+    // directory is a deployment mistake, and discovering it when a user
+    // tries to set an avatar puts the report in the wrong person's hands.
+    let media_store = noombat_api::media::MediaStore::local(&config.media_root)
+        .unwrap_or_else(|e| panic!("media root {} is not usable: {e}", config.media_root));
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -650,6 +667,7 @@ async fn main() -> anyhow::Result<()> {
         cv_download_limit: config.cv_download_limit as i64,
         cv_download_window_secs: config.cv_download_window_secs,
         allow_unsigned_fetch: config.allow_unsigned_fetch,
+        media: media_store,
     };
     // Spawn the account erasure worker before the router, so a restart
     // during a grace period still completes it. Hourly: the grace
@@ -658,10 +676,17 @@ async fn main() -> anyhow::Result<()> {
     {
         let pool = state.pool.clone();
         let search = state.search.clone();
+        let media = state.media.clone();
         let grace_days = config.deletion_grace_days;
         tokio::spawn(async move {
-            noombat_api::erasure::run_worker(pool, search, grace_days, Duration::from_secs(3600))
-                .await;
+            noombat_api::erasure::run_worker(
+                pool,
+                search,
+                media,
+                grace_days,
+                Duration::from_secs(3600),
+            )
+            .await;
         });
     }
 

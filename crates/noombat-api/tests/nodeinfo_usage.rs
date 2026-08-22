@@ -76,6 +76,12 @@ fn test_state(pool: PgPool) -> AppState {
         cv_download_window_secs: 60,
         deletion_grace_days: 30,
         allow_unsigned_fetch: false,
+        // A per-test directory: these tests never serve media, and a
+        // shared path would let one test's objects outlive it.
+        media: noombat_api::media::MediaStore::local(
+            std::env::temp_dir().join(format!("noombat-test-media-{}", uuid::Uuid::new_v4())),
+        )
+        .expect("temp media root"),
     }
 }
 

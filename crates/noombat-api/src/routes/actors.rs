@@ -665,7 +665,7 @@ async fn delete_actor_handler(
 
     // Shared with the grace-period worker in `crate::erasure`, which
     // is where the inbox-before-tombstone ordering is explained.
-    crate::erasure::erase_actor(&state.pool, &state.search, actor.id).await?;
+    crate::erasure::erase_actor(&state.pool, &state.search, &state.media, actor.id).await?;
     // Posts were deleted by tombstone_actor; their Meilisearch
     // documents will become stale. A full reindex or per-post
     // removal is deferred to the search sync worker.

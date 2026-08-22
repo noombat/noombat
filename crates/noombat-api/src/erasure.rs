@@ -38,6 +38,7 @@ use uuid::Uuid;
 pub async fn erase_actor(
     pool: &PgPool,
     search: &Option<Arc<dyn SearchBackend>>,
+    media: &crate::media::MediaStore,
     actor_id: Uuid,
 ) -> Result<Actor> {
     // Before tombstoning: tombstone_actor deletes the follow rows these
@@ -64,7 +65,29 @@ pub async fn erase_actor(
             .await
             .unwrap_or_default();
 
+    // And again, for the bytes rather than the rows. `tombstone_actor`
+    // deletes the media_attachments rows, and afterwards nothing knows
+    // which objects they named: the files would stay on disk, or in a
+    // bucket, unreferenced and permanent. An erasure that leaves the
+    // pictures behind is the failure this whole path exists to prevent.
+    let media_keys: Vec<String> =
+        sqlx::query_scalar("SELECT object_key FROM media_attachments WHERE actor_id = $1")
+            .bind(actor_id)
+            .fetch_all(pool)
+            .await
+            .unwrap_or_default();
+
     let pre_tombstone = noombat_identity::repo::tombstone_actor(pool, actor_id).await?;
+
+    // After the rows are gone, so nothing can serve an object whose
+    // bytes have already been removed.
+    for key in &media_keys {
+        if let Err(error) = media.delete(key).await {
+            // Reported, never swallowed: this is the state where the
+            // database says erased and the disk disagrees.
+            error!(%error, %actor_id, object_key = %key, "erasure could not remove a media object");
+        }
+    }
 
     // The request has been fulfilled, so retire it. `tombstone_actor`
     // leaves `deletion_requested_at` set, and the sweep selects on that
@@ -125,7 +148,12 @@ async fn due_for_erasure(pool: &PgPool, grace_days: i32) -> Result<Vec<Uuid>> {
 /// an account that cannot be erased now is still due next time round,
 /// and holding up every other user's erasure behind it would be the
 /// wrong trade.
-pub async fn sweep(pool: &PgPool, search: &Option<Arc<dyn SearchBackend>>, grace_days: i32) -> u64 {
+pub async fn sweep(
+    pool: &PgPool,
+    search: &Option<Arc<dyn SearchBackend>>,
+    media: &crate::media::MediaStore,
+    grace_days: i32,
+) -> u64 {
     let due = match due_for_erasure(pool, grace_days).await {
         Ok(due) => due,
         Err(e) => {
@@ -136,7 +164,7 @@ pub async fn sweep(pool: &PgPool, search: &Option<Arc<dyn SearchBackend>>, grace
 
     let mut erased = 0;
     for actor_id in due {
-        match erase_actor(pool, search, actor_id).await {
+        match erase_actor(pool, search, media, actor_id).await {
             Ok(_) => {
                 // Deliberately no username or address in the log line:
                 // this is the record of an erasure, and it should not
@@ -155,6 +183,7 @@ pub async fn sweep(pool: &PgPool, search: &Option<Arc<dyn SearchBackend>>, grace
 pub async fn run_worker(
     pool: PgPool,
     search: Option<Arc<dyn SearchBackend>>,
+    media: crate::media::MediaStore,
     grace_days: i32,
     interval: Duration,
 ) {
@@ -164,7 +193,7 @@ pub async fn run_worker(
     );
 
     loop {
-        let erased = sweep(&pool, &search, grace_days).await;
+        let erased = sweep(&pool, &search, &media, grace_days).await;
         if erased > 0 {
             info!(erased, "erasure sweep complete");
         }

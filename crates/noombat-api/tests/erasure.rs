@@ -145,13 +145,22 @@ async fn display_name(pool: &PgPool, actor_id: Uuid) -> Option<String> {
 /// everything would pass a "the expired one is gone" assertion, and a
 /// sweep that erased nothing would pass "the recent one survives".
 #[ignore = "requires a database; run with --include-ignored"]
+/// A throwaway media root per call: these tests assert on rows, and a
+/// store is required only because erasure now removes objects too.
+fn test_media() -> noombat_api::media::MediaStore {
+    noombat_api::media::MediaStore::local(
+        std::env::temp_dir().join(format!("noombat-erasure-media-{}", uuid::Uuid::new_v4())),
+    )
+    .expect("temp media root")
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_sweep_erases_only_expired_requests(pool: PgPool) {
     let expired = insert_actor(&pool, "expired", Some(GRACE_DAYS + 1)).await;
     let recent = insert_actor(&pool, "recent", Some(1)).await;
     let never = insert_actor(&pool, "never", None).await;
 
-    let erased = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+    let erased = noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
 
     assert_eq!(erased, 1, "exactly the one past its grace period");
     assert_eq!(display_name(&pool, expired).await, None, "expired erased");
@@ -182,7 +191,7 @@ async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
         "fixture should start with career history"
     );
 
-    noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+    noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
 
     assert_eq!(
         experience_count(&pool, actor_id).await,
@@ -201,8 +210,8 @@ async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
 async fn a_second_sweep_does_not_erase_again(pool: PgPool) {
     insert_actor(&pool, "leaver", Some(GRACE_DAYS + 1)).await;
 
-    let first = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
-    let second = noombat_api::erasure::sweep(&pool, &no_search(), GRACE_DAYS).await;
+    let first = noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
+    let second = noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
 
     assert_eq!(first, 1, "the first sweep erases");
     assert_eq!(second, 0, "the second must find nothing left to do");
@@ -215,7 +224,7 @@ async fn a_second_sweep_does_not_erase_again(pool: PgPool) {
 async fn a_zero_grace_period_erases_on_the_next_sweep(pool: PgPool) {
     let actor_id = insert_actor(&pool, "immediate", Some(0)).await;
 
-    let erased = noombat_api::erasure::sweep(&pool, &no_search(), 0).await;
+    let erased = noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), 0).await;
 
     assert_eq!(erased, 1);
     assert_eq!(display_name(&pool, actor_id).await, None);
@@ -238,7 +247,7 @@ async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
     let search = Arc::new(RecordingSearch::default());
     let backend: Option<Arc<dyn SearchBackend>> = Some(search.clone());
 
-    noombat_api::erasure::sweep(&pool, &backend, GRACE_DAYS).await;
+    noombat_api::erasure::sweep(&pool, &backend, &test_media(), GRACE_DAYS).await;
 
     // The removals are spawned, so let the tasks run.
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -297,7 +306,7 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
 
     let search = Arc::new(RecordingSearch::default());
     let backend: Option<Arc<dyn SearchBackend>> = Some(search.clone());
-    noombat_api::erasure::sweep(&pool, &backend, GRACE_DAYS).await;
+    noombat_api::erasure::sweep(&pool, &backend, &test_media(), GRACE_DAYS).await;
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // The recruiter's content is gone.
