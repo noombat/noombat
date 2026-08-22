@@ -26,6 +26,7 @@ if (mount) {
   const placeholder = mount.dataset.placeholder;
   const rows = mount.dataset.rows ? parseInt(mount.dataset.rows, 10) : undefined;
   const locale = mount.dataset.locale ?? document.documentElement.lang ?? "en-US";
+  const label = mount.dataset.label;
 
   // Article mode, tracked live.
   //
@@ -57,6 +58,7 @@ if (mount) {
     () => (
       <Editor
         initialValue={initial}
+        label={label}
         name={name}
         placeholder={placeholder}
         rows={rows}

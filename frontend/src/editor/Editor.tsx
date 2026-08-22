@@ -74,6 +74,16 @@ export interface EditorProps {
   /** BCP 47 locale tag (e.g. "en-US", "pt-BR"). Defaults to "en-US". */
   locale?: string;
   /**
+   * Accessible name for the source textarea.
+   *
+   * The mount point is a `div`, which `<label for>` cannot address, so a
+   * page that labels this editor has no element to point at and the
+   * textarea is left named only by its placeholder. A placeholder is not
+   * an accessible name: it is announced inconsistently and disappears on
+   * first keystroke.
+   */
+  label?: string;
+  /**
    * Render as an Article rather than a Note.
    *
    * Selects the same `MarkupOptions` the outbox handler selects: strict
@@ -185,6 +195,7 @@ export default function Editor(props: EditorProps): JSX.Element {
       <div class="noombat-editor__panes">
         <textarea
           class={`noombat-editor__source ${activeTab() === "edit" ? "" : "noombat-editor__source--hidden"}`}
+          aria-label={props.label}
           rows={props.rows ?? 12}
           placeholder={props.placeholder ?? strings().placeholder}
           value={source()}
