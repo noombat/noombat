@@ -1,0 +1,72 @@
+# GitHub Actions CI pipeline for the accessibility and i18n gates.
+#
+# Runs unconditionally on every push and pull request, with no path
+# filter, and that is the whole reason this file exists separately.
+#
+# These three checks used to live in ci.yml, which is gated on the paths
+# that affect the Rust build. `frontend/**` is not among them, so a push
+# confined to stylesheets did not run the contrast gate, which is the
+# gate that audits those stylesheets. The contrast job even carried a
+# comment saying it sat in ci.yml so that it would not be "only checked
+# when someone happens to touch a matching path"; ci.yml being itself
+# path-filtered made that untrue.
+#
+# WCAG conformance and locale completeness are claims the project makes
+# to its readers, not properties of a subsystem. A claim that is checked
+# only when a matching path changes is a claim nobody is checking.
+#
+# The cost of running these unconditionally is about six seconds: three
+# Python and shell scripts over text files, with no toolchain to install
+# and nothing to compile.
+#
+# Related workflows:
+#   ci.yml           Rust checks, path-gated.
+#   ci-frontend.yml  Frontend checks, path-gated.
+#   ci-reuse.yml     REUSE compliance, also unconditional.
+
+name: Accessibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  accessibility:
+    name: Accessibility and i18n
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The high-contrast mode is a WCAG AAA claim, and advertising it
+      # without measuring it is a claim the code does not keep. The same
+      # run holds the standard palette to AA, so it cannot regress
+      # quietly, and scans every stylesheet for a colour stated outright
+      # rather than taken from a token.
+      - name: Assert every semantic colour pair meets WCAG
+        run: python3 scripts/check-contrast.py
+
+      # The palette-auditing half takes an input this repository does not
+      # carry, so committed fixtures are what keep it from rotting
+      # unnoticed between revisions of the design system.
+      - name: Assert the design-system mode still works
+        run: python3 scripts/check-contrast.py --self-test
+
+      # A locale missing a key renders that key's name to a reader, in
+      # the middle of otherwise translated text. The build succeeds, the
+      # server boots, and the page returns 200, so nothing else here
+      # would report it.
+      - name: Assert every locale defines the same keys
+        run: python3 scripts/check-locale-parity.py
+
+      # Both spellings compile and render, so nothing else distinguishes
+      # a page that will follow the reading direction from one that will
+      # not. Right-to-left support is architecture, not polish, and this
+      # is what stops it becoming a refactor.
+      - name: Reject physical-direction utilities
+        run: scripts/check-logical-properties.sh
