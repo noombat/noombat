@@ -120,7 +120,18 @@ smtpd_sender_restrictions =
 # ..... DKIM .....
 
 # OpenDKIM milter for DKIM signing on outbound mail.
-milter_default_action = accept
+#
+# `tempfail`, not `accept`. With `accept`, a crashed or misconfigured
+# OpenDKIM is indistinguishable from a working one: mail keeps flowing,
+# unsigned, and the first sign of it is a peer relay rejecting messages
+# from this domain, days later, for a reason visible only at their end.
+#
+# `tempfail` answers 4xx instead, so the sending client retries and the
+# mail is delivered once the milter is back. The cost of the wrong
+# choice is asymmetric: a deferral is minutes of delay, while silent
+# unsigned delivery is a domain reputation nobody here can observe
+# losing.
+milter_default_action = tempfail
 milter_protocol = 6
 smtpd_milters = inet:localhost:8891
 non_smtpd_milters = inet:localhost:8891

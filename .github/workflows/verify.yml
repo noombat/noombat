@@ -62,6 +62,25 @@ permissions:
   contents: read
 
 jobs:
+  # A separate job, not a step in `verify` below: this is three seds over
+  # two files and has no business waiting seven minutes behind two image
+  # builds to report a one-word disagreement.
+  conventions:
+    name: Chatmail conventions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The relay entrypoint and the setup wizard both name the DKIM
+      # selector, and they used to name different ones, which makes the
+      # relay emit signatures no receiver can verify. Receivers treat a
+      # signature that fails verification worse than no signature.
+      #
+      # The deployment guide names it too and is deliberately not an input
+      # to this gate: it is prose, and docs/ is held back, so parsing it
+      # would mean comparing against a file no CI checkout contains.
+      - name: "Assert the relay and the wizard name the same DKIM selector"
+        run: scripts/check-dkim-selector.sh
+
   verify:
     name: Build both images
     runs-on: ubuntu-latest

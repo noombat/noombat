@@ -69,6 +69,11 @@ fi
 step "Checking container image pins"
 run ./scripts/check-image-pins.sh
 
+# Three files name the DKIM selector and for months they named three
+# different ones, which produces signatures no receiver can verify.
+step "Checking the DKIM selector agrees everywhere"
+run ./scripts/check-dkim-selector.sh
+
 step "Checking locale parity"
 run python3 ./scripts/check-locale-parity.py
 

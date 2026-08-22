@@ -155,6 +155,17 @@ services:
       # handshake against this relay. Read-only there, since only this
       # container issues it.
       - chatmail-ca:/etc/ssl/chatmail-ca
+      # The DKIM signing key. On the container filesystem it is
+      # regenerated on every recreate, against a TXT record the operator
+      # already published, so the relay would start signing with a key
+      # the world cannot verify. Receiving relays treat a signature that
+      # fails verification worse than no signature at all, so losing the
+      # key turns a silent problem into an active one.
+      #
+      # Not shared with the application container: nothing outside this
+      # one needs to sign, and a private key reachable from the web
+      # process is a key with a much larger attack surface.
+      - chatmail-dkim:/etc/opendkim
     healthcheck:
       test: ["CMD", "doveadm", "service", "status", "imap"]
       interval: 30s
@@ -168,3 +179,4 @@ volumes:
   chatmail-tls:
   chatmail-tls-key:
   chatmail-ca:
+  chatmail-dkim:

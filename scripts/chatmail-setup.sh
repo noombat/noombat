@@ -132,22 +132,29 @@ fi
 
 header "DNS: DKIM TXT record"
 
-# Chatmail uses a default DKIM selector. Check common selectors.
+# The selector the relay generates, not a list of common ones.
+#
+# This used to loop over "dkim", "mail", "default" and "selector1", none
+# of which the entrypoint has ever produced: it generates `noombat`. So
+# the wizard reported "no DKIM record" against a correctly published
+# one, and an operator who trusted it would republish under a selector
+# nothing signs with.
+#
+# Kept in step with DKIM_SELECTOR in chatmail-config/entrypoint.sh.
+# scripts/check-dkim-selector.sh fails if the two drift.
+DKIM_SELECTOR="noombat"
 DKIM_FOUND=false
-for selector in "dkim" "mail" "default" "selector1"; do
-    DKIM_NAME="${selector}._domainkey.${DOMAIN}"
-    DKIM_TXT=$(dig +short TXT "${DKIM_NAME}" 2>/dev/null || true)
-    if [ -n "${DKIM_TXT}" ]; then
-        pass "DKIM TXT record found at ${DKIM_NAME}"
-        DKIM_FOUND=true
-        break
-    fi
-done
+DKIM_NAME="${DKIM_SELECTOR}._domainkey.${DOMAIN}"
+DKIM_TXT=$(dig +short TXT "${DKIM_NAME}" 2>/dev/null || true)
+if [ -n "${DKIM_TXT}" ]; then
+    pass "DKIM TXT record found at ${DKIM_NAME}"
+    DKIM_FOUND=true
+fi
 
 if [ "${DKIM_FOUND}" = false ]; then
     fail "No DKIM TXT record found for ${DOMAIN}"
-    info "Generate a DKIM key and publish a TXT record at <selector>._domainkey.${DOMAIN}"
-    info "Example: opendkim-genkey -s dkim -d ${DOMAIN}"
+    info "Publish the record the relay generated, at ${DKIM_NAME}"
+    info "The relay prints the record to publish on first boot; see its log."
 fi
 
 # ..... OUTBOUND PORT 25 .....
