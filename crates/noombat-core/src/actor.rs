@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Actor domain types (Individual, Company, Group).
+//! Actor domain types (Individual, Organization, Group).
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,7 @@ use crate::privacy::ActorPrivacy;
 #[serde(rename_all = "lowercase")]
 pub enum ActorType {
     Individual,
-    Company,
+    Organization,
     Group,
 }
 
@@ -22,13 +22,40 @@ impl ActorType {
     /// The ActivityStreams type a peer sees for this actor.
     ///
     /// One mapping, because three copies of it disagreed: a profile
-    /// update answered `Person` for a company while both federation
-    /// paths answered `Organization`.
+    /// update answered `Person` for an organisation while both
+    /// federation paths answered `Organization`.
     pub fn ap_type(self) -> &'static str {
         match self {
             Self::Individual => "Person",
-            Self::Company => "Organization",
+            Self::Organization => "Organization",
             Self::Group => "Group",
+        }
+    }
+
+    /// The stored form, matching the `actor_type` check constraint.
+    ///
+    /// Derived by `sqlx::Type` for reads. This exists because the write
+    /// paths spell the same strings out by hand, and a variant renamed
+    /// in one place and not the other is a row the check constraint
+    /// rejects at runtime rather than a compile error.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Individual => "individual",
+            Self::Organization => "organization",
+            Self::Group => "group",
+        }
+    }
+
+    /// The actor kind an ActivityStreams `type` names.
+    ///
+    /// Anything unrecognised is an individual: a peer may send a type
+    /// this instance has no concept of, and treating it as a person is
+    /// the reading that grants nothing.
+    pub fn from_ap_type(ap_type: &str) -> Self {
+        match ap_type {
+            "Organization" => Self::Organization,
+            "Group" => Self::Group,
+            _ => Self::Individual,
         }
     }
 }
@@ -140,4 +167,60 @@ pub struct NewActor {
     pub ed25519_public_key: String,
     /// Ed25519 private key (PEM or raw encoding).
     pub ed25519_private_key: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ActorType;
+
+    /// Every variant, so adding one to the enum and not to this list is
+    /// a compile error rather than a gap in the tests below.
+    const ALL: [ActorType; 3] = [
+        ActorType::Individual,
+        ActorType::Organization,
+        ActorType::Group,
+    ];
+
+    #[test]
+    fn stored_form_matches_the_check_constraint() {
+        // Read from the migration rather than restated here. A copy of
+        // the allowed values in this file would agree with itself while
+        // disagreeing with the database, which is the failure: a variant
+        // renamed on one side is a row rejected at runtime, and no test
+        // that quotes its own expectation can see it.
+        let migration = include_str!("../../../migrations/0001_foundation.sql");
+        let constraint = migration
+            .lines()
+            .find(|line| line.contains("actor_type") && line.contains("CHECK"))
+            .expect("no actor_type check constraint in the migration");
+        let allowed: Vec<&str> = constraint.split('\'').skip(1).step_by(2).collect();
+        assert_eq!(
+            allowed.len(),
+            ALL.len(),
+            "the constraint allows {allowed:?}, which is not one value per variant"
+        );
+
+        for actor_type in ALL {
+            assert!(
+                allowed.contains(&actor_type.as_str()),
+                "{:?} stores as {:?}; the constraint allows {:?}",
+                actor_type,
+                actor_type.as_str(),
+                allowed
+            );
+        }
+    }
+
+    #[test]
+    fn ap_type_round_trips() {
+        for actor_type in ALL {
+            assert_eq!(ActorType::from_ap_type(actor_type.ap_type()), actor_type);
+        }
+    }
+
+    #[test]
+    fn an_unknown_ap_type_is_an_individual() {
+        assert_eq!(ActorType::from_ap_type("Service"), ActorType::Individual);
+        assert_eq!(ActorType::from_ap_type(""), ActorType::Individual);
+    }
 }

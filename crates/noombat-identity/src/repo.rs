@@ -118,11 +118,7 @@ where
 {
     let id = Uuid::new_v4();
     let ap_id = format!("https://{}/users/{}", params.domain, params.username);
-    let actor_type_str = match params.actor_type {
-        ActorType::Individual => "individual",
-        ActorType::Company => "company",
-        ActorType::Group => "group",
-    };
+    let actor_type_str = params.actor_type.as_str();
     let privacy = ActorPrivacy::default();
     let privacy_json = serde_json::to_value(&privacy)?;
 

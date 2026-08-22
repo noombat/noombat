@@ -607,7 +607,7 @@ mod tests {
 
         for (actor_type, expected) in [
             (ActorType::Individual, "Person"),
-            (ActorType::Company, "Organization"),
+            (ActorType::Organization, "Organization"),
             (ActorType::Group, "Group"),
         ] {
             let mut actor = test_actor();

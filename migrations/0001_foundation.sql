@@ -42,7 +42,7 @@
 
 CREATE TABLE actors (
     id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_type                   TEXT NOT NULL CHECK (actor_type IN ('individual', 'company', 'group')),
+    actor_type                   TEXT NOT NULL CHECK (actor_type IN ('individual', 'organization', 'group')),
     ap_id                        TEXT NOT NULL UNIQUE,
     username                     TEXT NOT NULL,
     display_name                 TEXT,

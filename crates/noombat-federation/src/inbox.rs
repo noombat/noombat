@@ -507,12 +507,9 @@ fn ap_actor_to_remote(
         sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,
         public_key_pem: ap_actor.public_key.public_key_pem.clone(),
         public_key_id: Some(ap_actor.public_key.id.clone()),
-        actor_type: match ap_actor.actor_type.as_str() {
-            "Person" => "individual".to_owned(),
-            "Organization" => "company".to_owned(),
-            "Group" => "group".to_owned(),
-            _ => "individual".to_owned(),
-        },
+        actor_type: noombat_core::actor::ActorType::from_ap_type(&ap_actor.actor_type)
+            .as_str()
+            .to_owned(),
         inbox_url: ap_actor.inbox.clone(),
         shared_inbox_url,
         ed25519_public_key,
