@@ -66,6 +66,21 @@ jobs:
       - name: Build the chatmail image
         run: scripts/build-image.sh Dockerfile.chatmail noombat-chatmail:verify
 
+      - name: Assert the relay acquires, imports and reloads a certificate
+        # Here rather than in ci.yml for two reasons. ci.yml is gated on
+        # paths that affect the Rust build, so a change to the Caddyfile
+        # or to the entrypoint would not run it. And this job has already
+        # built Dockerfile.chatmail, so the compose build inside the
+        # harness is a full layer-cache hit: measured at 2s against 152s
+        # for the build above. The gate costs the harness run, not a
+        # second image.
+        #
+        # What it covers is the reload after a renewal, which is the step
+        # that fails silently: Postfix and Dovecot read the chain once, so
+        # a renewed file changes nothing they serve, and the relay reports
+        # healthy while every client fails the handshake.
+        run: scripts/check-chatmail-cert.sh
+
       - name: Check the served asset manifest is labelled
         # A manifest reporting "unknown" names no release, so nothing
         # can be compared against it; such an image is not releasable.
