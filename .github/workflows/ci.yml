@@ -153,6 +153,12 @@ jobs:
       # that half from rotting unnoticed between revisions.
       - name: "Assert the design-system mode still works"
         run: python3 scripts/check-contrast.py --self-test
+      # Beside the accessibility checks for the same reason. A locale
+      # missing a key renders that key's name to a reader, and nothing
+      # else in this repository would report it: the build succeeds, the
+      # server boots, and the page returns 200.
+      - name: "Assert every locale defines the same keys"
+        run: python3 scripts/check-locale-parity.py
 
   dependency-hygiene:
     name: Dependency hygiene

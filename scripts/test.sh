@@ -69,6 +69,9 @@ fi
 step "Checking container image pins"
 run ./scripts/check-image-pins.sh
 
+step "Checking locale parity"
+run python3 ./scripts/check-locale-parity.py
+
 # ..... Templates .....
 
 # An inline <script> or style attribute is blocked by the served policy,
