@@ -19,6 +19,11 @@ services:
     restart: unless-stopped
     environment:
       NOOMBAT_DOMAIN: ${NOOMBAT_DOMAIN}
+      # One address for the application and for the certificate
+      # authority. `:?` rather than a default: an ACME account registered
+      # with no contact gets no expiry warning, and the first symptom is
+      # an expired certificate.
+      NOOMBAT_CONTACT_EMAIL: "${NOOMBAT_CONTACT_EMAIL:?an address Let's Encrypt can mail}"
     ports:
       - "80:80"
       - "443:443"

@@ -18,6 +18,11 @@ services:
       NOOMBAT_CHATMAIL_DOMAIN: chat.${NOOMBAT_DOMAIN:-localhost}
       NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
       NOOMBAT_CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
+      # The instance's administrative contact. Caddy passes the same
+      # variable to Let's Encrypt as the ACME account address, so the
+      # address a reader is told to write to and the address a certificate
+      # warning is sent to cannot drift apart.
+      NOOMBAT_CONTACT_EMAIL: ${NOOMBAT_CONTACT_EMAIL:-}
       # Trust the relay's development CA in addition to the public roots.
       #
       # NOOMBAT_EXTRA_CA_FILE and not SSL_CERT_FILE: the latter replaces

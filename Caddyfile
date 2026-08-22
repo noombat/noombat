@@ -6,6 +6,23 @@
 # Replace {$NOOMBAT_DOMAIN} with the actual domain, or set the
 # environment variable before starting Caddy.
 
+{
+    # The address Let's Encrypt mails expiry and policy notices to.
+    #
+    # The same NOOMBAT_CONTACT_EMAIL the application uses, not a second
+    # address written here. Two addresses drift: this one is read once a
+    # year, by a machine, in a message nobody expects, so a stale value
+    # here is discovered when a certificate has already expired. Sharing
+    # the variable means the address is wrong in the places an operator
+    # looks at daily, or it is right here too.
+    #
+    # Caddy substitutes an unset variable with the empty string and
+    # registers an ACME account with no contact rather than failing, so
+    # compose.prod.yml demands the variable with `:?`. That fails at
+    # `compose up`, naming it, instead of ninety days later.
+    email {$NOOMBAT_CONTACT_EMAIL}
+}
+
 {$NOOMBAT_DOMAIN} {
     reverse_proxy noombat:8443
 
