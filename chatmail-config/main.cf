@@ -133,15 +133,42 @@ smtpd_sender_restrictions =
 # losing.
 milter_default_action = tempfail
 milter_protocol = 6
-smtpd_milters = inet:localhost:8891
-non_smtpd_milters = inet:localhost:8891
+
+# A numeric address and not `localhost`. smtpd runs chrooted to
+# /var/spool/postfix, so it resolves names through that directory's own
+# `etc`, which the entrypoint populates. A loopback service should not
+# depend on that having worked: paired with `tempfail` above, one failed
+# lookup answers every connection on port 25 with `451`, and the relay
+# accepts no mail at all while looking healthy from the outside.
+smtpd_milters = inet:127.0.0.1:8891
+
+# Currently unreachable, and kept as the safe default rather than
+# removed. `pickup` runs with `no_milters` (see the entrypoint), and
+# every non-SMTP submission here arrives through `pickup`, that being
+# how filtermail re-injects. Without it a re-injected message would be
+# signed a second time, over the same body.
+non_smtpd_milters = inet:127.0.0.1:8891
 
 # ..... ENCRYPTION-ONLY ENFORCEMENT .....
 
-# filtermail content filter: rejects any message whose body is not
-# PGP-encrypted. The filter is invoked as an after-queue content
-# filter via a dedicated Postfix pipe(8) service defined in master.cf.
-content_filter = filtermail:dummy
+# filtermail rejects any message whose body is not PGP-encrypted. It is
+# an after-queue content filter, declared as a pipe(8) service in
+# master.cf. Deliberately there is no `content_filter` setting here.
+#
+# Setting it globally breaks delivery outright, and silently. `cleanup`
+# applies a global `content_filter` on every submission path, `pickup`
+# included, and filtermail re-injects the mail it accepts with
+# sendmail(1), which goes through `pickup`. So every accepted message
+# comes straight back to the filter: measured at 51 `Received:` hops
+# and a "too many hops" bounce, meaning no encrypted message was
+# delivered at all. Plaintext hid the loop, because the filter rejects
+# it on the second pass rather than the first.
+#
+# The setting therefore lives on the two smtpd listeners in master.cf,
+# which is where Postfix's filter documentation puts it, and it says in
+# the same place that mail submitted with sendmail(1) cannot be content
+# filtered. That is what stops the loop, and it is by design rather
+# than by accident.
 
 # ..... MISCELLANEOUS .....
 

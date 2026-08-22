@@ -15,10 +15,17 @@
 //! PGP-encrypted (PGP/MIME `multipart/encrypted` with the OpenPGP
 //! protocol parameter, or inline PGP beginning with the
 //! `-----BEGIN PGP MESSAGE-----` marker), the message is re-injected
-//! into Postfix via `sendmail` with `content_filter=` cleared to
-//! prevent a loop. Otherwise, the process exits with code 69
-//! (`EX_UNAVAILABLE`), causing Postfix to bounce the message with a
+//! into Postfix via `sendmail`. Otherwise, the process exits with code
+//! 69 (`EX_UNAVAILABLE`), causing Postfix to bounce the message with a
 //! permanent delivery failure.
+//!
+//! Re-injection does not come back through this filter, because
+//! `sendmail` submits through `postdrop` and `pickup`, and the
+//! `content_filter` setting that invokes this binary is on the smtpd
+//! listeners rather than in `main.cf`. Postfix documents that mail
+//! submitted with `sendmail(1)` cannot be content filtered, and that is
+//! the whole of the loop prevention. Nothing this binary passes on the
+//! command line contributes to it.
 //!
 //! ## Exit codes
 //!
@@ -63,8 +70,8 @@ fn main() -> ExitCode {
         return ExitCode::from(EX_UNAVAILABLE);
     }
 
-    // Re-inject the message into Postfix via sendmail(1), clearing
-    // content_filter to avoid a loop.
+    // Re-inject the message into Postfix via sendmail(1). See the
+    // module documentation for why this does not loop back here.
     if let Err(e) = reinject(&sender, &recipients, &raw) {
         eprintln!("filtermail: re-injection failed: {e}");
         return ExitCode::from(EX_TEMPFAIL);
@@ -190,14 +197,18 @@ fn is_encrypted_part(part: &mailparse::ParsedMail<'_>) -> bool {
 }
 
 /// Re-inject the message into Postfix via sendmail(1).
+///
+/// No `-o content_filter=` here, though there was until 2026-08-22 and a
+/// comment calling it the thing that avoided the loop. `sendmail(1)`
+/// lists `-o` as ignored, so it never did anything, and while the
+/// setting was global in `main.cf` the re-injected message came back
+/// through the filter until Postfix bounced it for too many hops.
 fn reinject(sender: &str, recipients: &[String], raw: &[u8]) -> Result<(), String> {
     let mut cmd = Command::new("/usr/sbin/sendmail");
     cmd.arg("-G") // relay (gateway) mode
         .arg("-i") // do not treat a line with only '.' as EOF
         .arg("-f")
         .arg(sender)
-        .arg("-o")
-        .arg("content_filter=") // disable content filter for re-injection
         .args(recipients)
         .stdin(Stdio::piped())
         .stdout(Stdio::null())

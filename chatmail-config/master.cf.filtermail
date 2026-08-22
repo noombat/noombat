@@ -1,44 +1,39 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Postfix master.cf snippet: defines the submission listener on 465, the
-# filtermail content filter as a pipe(8) service, and the re-injection
-# listener (127.0.0.1:10025).
+# Postfix master.cf snippet: defines the submission listener on 465 and
+# the filtermail content filter as a pipe(8) service.
 #
-# Appended to /etc/postfix/master.cf by the container entrypoint.
+# Appended to /etc/postfix/master.cf by the container entrypoint, which
+# also puts `content_filter` on the inbound listener on 25 and turns
+# milters off for `pickup`. Those two live in the base image's
+# master.cf, so they are edited in place rather than declared here.
 #
 # The filtermail service runs as the unprivileged 'filtermail' user.
-# Messages accepted by the filter are re-injected via sendmail(1)
-# with content_filter= cleared (to avoid a loop) and arrive at the
-# re-injection smtpd on 127.0.0.1:10025.
+# Mail the filter accepts is re-injected with sendmail(1), which submits
+# through `postdrop` and `pickup`. Neither carries `content_filter`, so
+# the message is not filtered a second time. That is the whole loop
+# prevention: not the `-o content_filter=` that sendmail(1) documents as
+# ignored, and that this configuration used to rely on.
 
 # Submission over implicit TLS (RFC 8314), which is the port the
 # application server connects to. Postfix ships this listener commented
 # out, so it has to be declared here or nothing answers on 465.
 #
 # The numeric port rather than the `submissions` service name, so this
-# does not depend on /etc/services in the base image. `content_filter` is
-# inherited from main.cf, so submitted mail passes through filtermail
-# like everything else.
+# does not depend on /etc/services in the base image.
+#
+# `content_filter` per listener and not in main.cf, because a global one
+# also applies to `pickup`, which is the path the filter re-injects on,
+# and the accepted message loops back into the filter until Postfix
+# bounces it for too many hops. See main.cf for the measurement.
 465       inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/submissions
   -o smtpd_tls_wrappermode=yes
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o content_filter=filtermail:dummy
 
 # filtermail content filter (pipe transport).
 filtermail unix  -       n       n       -       10      pipe
   flags=Rq user=filtermail argv=/usr/local/bin/noombat-filtermail -f ${sender} -- ${recipient}
-
-# Re-injection smtpd: receives messages from filtermail after
-# encryption verification. content_filter is empty to prevent the
-# message from re-entering the filter loop.
-127.0.0.1:10025 inet  n  -       n       -       10      smtpd
-  -o content_filter=
-  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
-  -o smtpd_helo_restrictions=
-  -o smtpd_client_restrictions=
-  -o smtpd_sender_restrictions=
-  -o smtpd_recipient_restrictions=permit_mynetworks,reject
-  -o mynetworks=127.0.0.0/8
-  -o smtpd_authorized_xforward_hosts=127.0.0.0/8

@@ -31,6 +31,64 @@ if ! grep -q "^filtermail" /etc/postfix/master.cf 2>/dev/null; then
     echo "[entrypoint] appended filtermail service to master.cf"
 fi
 
+# The setting that invokes the filter belongs on the smtpd listeners,
+# never in main.cf. The 465 listener carries it in the snippet appended
+# above; the inbound listener on 25 and the `pickup` service come from
+# the base image's master.cf, so they are edited here instead.
+#
+# A global `content_filter` in main.cf loops. `cleanup` applies it on
+# every submission path, `pickup` included, and filtermail re-injects
+# accepted mail through `pickup`, so the message returns to the filter
+# until Postfix bounces it for too many hops. main.cf carries the
+# measurement.
+#
+# `no_milters` on `pickup` because OpenDKIM already signed the message
+# when it arrived on 25 or 465. Without this, re-injection runs the
+# milter a second time and every delivered message carries two
+# signatures over the same body.
+#
+# `postconf -P` rather than an edit in place: it replaces the parameter
+# when it is already set, which makes this idempotent across restarts,
+# and it distinguishes `smtp/inet`, the listener, from `smtp/unix`, the
+# outbound client transport that must not filter anything.
+postconf -P "smtp/inet/content_filter=filtermail:dummy"
+postconf -P "pickup/unix/receive_override_options=no_milters"
+
+# ..... POSTFIX CHROOT AND QUEUE DIRECTORIES .....
+
+# Debian runs smtpd, cleanup, pickup and the outbound smtp client
+# chrooted to /var/spool/postfix, and the base image ships that
+# directory with an empty `etc`. Nothing inside the chroot can resolve a
+# name until these are copied in, which breaks two separate things: the
+# milter address, and every peer domain in transport_maps, written as
+# `smtp:[domain]` and still needing an address record.
+#
+# Measured in this image, with the chroot `etc` empty: every connection
+# on port 25 is answered `451 4.7.1 Service unavailable`, because
+# Postfix cannot reach OpenDKIM and `milter_default_action` is
+# `tempfail`. The relay accepts nothing while every process reports
+# itself healthy. Copying these in makes the same submission succeed.
+#
+# glibc 2.36 in the base image resolves `files` and `dns` from libc
+# itself, so no NSS module has to be copied alongside them.
+#
+# Copies, so a later change to the container's resolv.conf does not
+# reach Postfix until the container restarts. That is the same bargain
+# Postfix's chroot makes on any host.
+mkdir -p /var/spool/postfix/etc
+for chrootfile in /etc/resolv.conf /etc/hosts /etc/services /etc/nsswitch.conf; do
+    if [ -f "${chrootfile}" ]; then
+        cp -f "${chrootfile}" /var/spool/postfix/etc/
+    fi
+done
+
+# The base image's spool is missing the `hold` and `trace` queues, and
+# missing is fatal rather than degraded: `mailq`, `postqueue -p` and
+# `postsuper` each exit non-zero with `scan_dir_push: open directory
+# hold`, so an operator cannot inspect, flush or delete anything.
+# `postfix check` creates whatever is absent.
+postfix check
+
 # ..... INITIALISE POSTFIX MAPS .....
 
 # Ensure the moderation access map files exist (they are managed by
