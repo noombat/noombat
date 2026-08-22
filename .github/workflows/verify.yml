@@ -21,6 +21,13 @@ on:
       - "Dockerfile.chatmail"
       - "chatmail-config/**"
       - "compose.yml"
+      # The certificate gate's own inputs. Without these a change to the
+      # production Caddyfile, or to the local ACME harness that tests it,
+      # would not run the check that covers them.
+      - "Caddyfile"
+      - "Caddyfile.acme"
+      - "compose.acme.yml"
+      - "tests/acme/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
@@ -36,6 +43,13 @@ on:
       - "Dockerfile.chatmail"
       - "chatmail-config/**"
       - "compose.yml"
+      # The certificate gate's own inputs. Without these a change to the
+      # production Caddyfile, or to the local ACME harness that tests it,
+      # would not run the check that covers them.
+      - "Caddyfile"
+      - "Caddyfile.acme"
+      - "compose.acme.yml"
+      - "tests/acme/**"
       - "Cargo.toml"
       - "Cargo.lock"
       - "rust-toolchain.toml"
