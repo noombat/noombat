@@ -180,6 +180,24 @@ if [ "$QUICK" = false ]; then
     fi
 fi
 
+# ..... Chatmail relay invariants .....
+
+# Real mail through the relay: plaintext refused before the queue, and
+# the accepted message's signature verified against the generated key.
+# Needs an image and does not build one, so it skips rather than fails
+# when the tag is absent.
+if [ "$QUICK" = false ]; then
+    RELAY_IMAGE="${IMAGE:-noombat-chatmail:verify}"
+    if ! command -v docker > /dev/null 2>&1; then
+        step "Skipping the relay invariants: docker is not available"
+    elif ! docker image inspect "$RELAY_IMAGE" > /dev/null 2>&1; then
+        step "Skipping the relay invariants: $RELAY_IMAGE is not built"
+    else
+        step "Checking the Chatmail relay invariants"
+        run ./scripts/check-relay-invariants.sh
+    fi
+fi
+
 # ..... REUSE .....
 
 if command -v reuse >/dev/null 2>&1; then

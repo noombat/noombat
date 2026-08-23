@@ -71,9 +71,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The relay entrypoint and the setup wizard both name the DKIM
-      # selector, and they used to name different ones, which makes the
-      # relay emit signatures no receiver can verify. Receivers treat a
-      # signature that fails verification worse than no signature.
+      # selector. A disagreement makes the relay emit signatures no
+      # receiver can verify, which receivers treat worse than an absent
+      # one.
       #
       # The deployment guide names it too and is deliberately not an input
       # to this gate: it is prose, and docs/ is held back, so parsing it
@@ -100,19 +100,28 @@ jobs:
         run: scripts/build-image.sh Dockerfile.chatmail noombat-chatmail:verify
 
       - name: Assert the relay acquires, imports and reloads a certificate
-        # Here rather than in ci.yml for two reasons. ci.yml is gated on
-        # paths that affect the Rust build, so a change to the Caddyfile
-        # or to the entrypoint would not run it. And this job has already
-        # built Dockerfile.chatmail, so the compose build inside the
-        # harness is a full layer-cache hit: measured at 2s against 152s
-        # for the build above. The gate costs the harness run, not a
-        # second image.
+        # Here rather than in ci.yml, which is gated on paths that
+        # affect the Rust build and so would not run on a change to the
+        # Caddyfile or the entrypoint. This job has already built the
+        # image, so the gate costs the harness run and not a second
+        # build.
         #
         # What it covers is the reload after a renewal, which is the step
         # that fails silently: Postfix and Dovecot read the chain once, so
         # a renewed file changes nothing they serve, and the relay reports
         # healthy while every client fails the handshake.
         run: scripts/check-chatmail-cert.sh
+
+      - name: Assert the relay carries only encrypted mail, and signs it
+        # Reuses the image built above, as the certificate gate does.
+        #
+        # Sends real mail through the relay: plaintext must be refused
+        # mid-conversation with nothing queued and no bounce, which no
+        # unit test can reach, and the accepted message's signature is
+        # verified against the key the relay generated.
+        env:
+          IMAGE: noombat-chatmail:verify
+        run: scripts/check-relay-invariants.sh
 
       - name: Check the served asset manifest is labelled
         # A manifest reporting "unknown" names no release, so nothing
