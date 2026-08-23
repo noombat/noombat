@@ -134,41 +134,41 @@ smtpd_sender_restrictions =
 milter_default_action = tempfail
 milter_protocol = 6
 
-# A numeric address and not `localhost`. smtpd runs chrooted to
-# /var/spool/postfix, so it resolves names through that directory's own
-# `etc`, which the entrypoint populates. A loopback service should not
-# depend on that having worked: paired with `tempfail` above, one failed
-# lookup answers every connection on port 25 with `451`, and the relay
-# accepts no mail at all while looking healthy from the outside.
+# A numeric address, not `localhost`. With `tempfail` above, one failed
+# lookup answers every connection on 25 with `451` and the relay accepts
+# nothing, so the failure path should not depend on a resolver at all.
+#
+# Reaches the re-injection listener only. Both public listeners empty
+# `smtpd_milters`, because a before-queue filter cannot run a milter
+# that touches headers and signing adds one, so nothing is signed until
+# the filter has accepted it.
 smtpd_milters = inet:127.0.0.1:8891
 
-# Currently unreachable, and kept as the safe default rather than
-# removed. `pickup` runs with `no_milters` (see the entrypoint), and
-# every non-SMTP submission here arrives through `pickup`, that being
-# how filtermail re-injects. Without it a re-injected message would be
-# signed a second time, over the same body.
+# Mail submitted with sendmail(1) rather than over SMTP: bounces, and
+# anything an operator sends by hand. The normal path does not reach it.
 non_smtpd_milters = inet:127.0.0.1:8891
 
 # ..... ENCRYPTION-ONLY ENFORCEMENT .....
 
-# filtermail rejects any message whose body is not PGP-encrypted. It is
-# an after-queue content filter, declared as a pipe(8) service in
-# master.cf. Deliberately there is no `content_filter` setting here.
+# `noombat-filtermail` refuses any message that is not PGP-encrypted,
+# as a before-queue filter: the public listeners in master.cf carry
+# `smtpd_proxy_filter`, so the refusal is a `550` at end-of-DATA with
+# nothing spooled and no bounce.
 #
-# Setting it globally breaks delivery outright, and silently. `cleanup`
-# applies a global `content_filter` on every submission path, `pickup`
-# included, and filtermail re-injects the mail it accepts with
-# sendmail(1), which goes through `pickup`. So every accepted message
-# comes straight back to the filter: measured at 51 `Received:` hops
-# and a "too many hops" bounce, meaning no encrypted message was
-# delivered at all. Plaintext hid the loop, because the filter rejects
-# it on the second pass rather than the first.
-#
-# The setting therefore lives on the two smtpd listeners in master.cf,
-# which is where Postfix's filter documentation puts it, and it says in
-# the same place that mail submitted with sendmail(1) cannot be content
-# filtered. That is what stops the loop, and it is by design rather
-# than by accident.
+# No `content_filter` here, and no after-queue filter anywhere. An
+# after-queue refusal can only be a bounce, which mails the sender's
+# plaintext back out. A global `content_filter` also applies to
+# `pickup`, which loops a filter's own re-injection back through it
+# until the hopcount bounces.
+
+# ..... LIMITS .....
+
+# 30 MiB, matching the Chatmail reference relay's `max_message_size`
+# default rather than Postfix's own 10240000. Clients are written
+# against the reference: a 20 MiB attachment that every other Chatmail
+# host accepts would be permanently rejected here, which reads to the
+# user as this instance being broken.
+message_size_limit = 31457280
 
 # ..... MISCELLANEOUS .....
 

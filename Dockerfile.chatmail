@@ -90,9 +90,8 @@ RUN groupadd -g 5000 vmail && \
     mkdir -p /home/vmail/.noombat-admin && \
     chown -R vmail:vmail /home/vmail
 
-# Create the dedicated user for the filtermail content filter (runs
-# under a non-root, non-vmail account per Postfix content_filter best
-# practice).
+# The user the filtermail daemon runs as. Non-root and non-vmail: it
+# parses attacker-supplied MIME and needs no access to anybody's mail.
 RUN useradd -r -s /usr/sbin/nologin filtermail
 
 # Create Postfix access map files and the transport_maps file.
@@ -133,14 +132,34 @@ RUN printf '#!/command/execlineb -P\n/usr/sbin/opendkim -f\n' > /etc/s6-overlay/
     chmod +x /etc/s6-overlay/s6-rc.d/opendkim/run
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/opendkim
 
-# Postfix service (depends on Dovecot and OpenDKIM).
+# filtermail service (started before Postfix: provides the before-queue
+# filter that both public listeners proxy to).
+#
+# A listener that must be up when Postfix accepts a connection. If it is
+# not, Postfix answers 4xx and the client retries, so a crash defers
+# mail rather than admitting it unfiltered.
+#
+# `s6-setuidgid filtermail` because this parses attacker-supplied MIME
+# and needs no privilege.
+#
+# `with-contenv` first, for the same reason the sidecar below needs it:
+# s6-overlay runs the supervision tree without the container
+# environment, so the FILTERMAIL_ settings would be silently ignored and
+# the rate limit would sit at its default whatever an operator set.
+RUN mkdir -p /etc/s6-overlay/s6-rc.d/filtermail
+RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/filtermail/type
+RUN printf '#!/command/execlineb -P\n/command/with-contenv\n/command/s6-setuidgid filtermail\n/usr/local/bin/noombat-filtermail\n' > /etc/s6-overlay/s6-rc.d/filtermail/run && \
+    chmod +x /etc/s6-overlay/s6-rc.d/filtermail/run
+RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/filtermail
+
+# Postfix service (depends on Dovecot, OpenDKIM and filtermail).
 # The master process is run directly in the foreground (-d flag)
 # rather than via `postfix start`, which backgrounds the daemon.
 RUN mkdir -p /etc/s6-overlay/s6-rc.d/postfix
 RUN echo "longrun" > /etc/s6-overlay/s6-rc.d/postfix/type
 RUN printf '#!/command/execlineb -P\n/usr/lib/postfix/sbin/master -d\n' > /etc/s6-overlay/s6-rc.d/postfix/run && \
     chmod +x /etc/s6-overlay/s6-rc.d/postfix/run
-RUN printf 'dovecot\nopendkim\n' > /etc/s6-overlay/s6-rc.d/postfix/dependencies
+RUN printf 'dovecot\nopendkim\nfiltermail\n' > /etc/s6-overlay/s6-rc.d/postfix/dependencies
 RUN touch /etc/s6-overlay/s6-rc.d/user/contents.d/postfix
 
 # Certificate watcher (depends on both daemons it reloads).

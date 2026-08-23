@@ -21,71 +21,59 @@ sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/postfix/main.cf
 
 sed -i "s/MAIL_DOMAIN/${MAIL_DOMAIN}/g" /etc/dovecot/dovecot.conf
 
-# ..... FILTERMAIL CONTENT FILTER .....
+# ..... FILTERMAIL BEFORE-QUEUE FILTER .....
 
-# Append the filtermail pipe service to master.cf if it has not
-# already been appended (idempotent across container restarts).
-if ! grep -q "^filtermail" /etc/postfix/master.cf 2>/dev/null; then
+# Append the submission and re-injection listeners to master.cf if they
+# are not already there (idempotent across container restarts). Keyed
+# off the re-injection listener, because the filter is a daemon Postfix
+# connects to rather than a service declared here.
+if ! grep -q "^127.0.0.1:10025" /etc/postfix/master.cf 2>/dev/null; then
     echo "" >> /etc/postfix/master.cf
     cat /etc/postfix/master.cf.filtermail >> /etc/postfix/master.cf
-    echo "[entrypoint] appended filtermail service to master.cf"
+    echo "[entrypoint] appended the filtermail listeners to master.cf"
 fi
 
-# The setting that invokes the filter belongs on the smtpd listeners,
-# never in main.cf. The 465 listener carries it in the snippet appended
-# above; the inbound listener on 25 and the `pickup` service come from
-# the base image's master.cf, so they are edited here instead.
+# The inbound listener on 25 comes from the base image's master.cf, so
+# it needs the two settings the 465 listener carries in the snippet.
+# `smtpd_milters` is emptied for the reason given there.
 #
-# A global `content_filter` in main.cf loops. `cleanup` applies it on
-# every submission path, `pickup` included, and filtermail re-injects
-# accepted mail through `pickup`, so the message returns to the filter
-# until Postfix bounces it for too many hops. main.cf carries the
-# measurement.
+# Port 10027, not the 10026 the submission listener uses: the filter
+# runs a listener per direction, because a message from one of this
+# instance's users and a message from a peer relay are not checked the
+# same way.
 #
-# `no_milters` on `pickup` because OpenDKIM already signed the message
-# when it arrived on 25 or 465. Without this, re-injection runs the
-# milter a second time and every delivered message carries two
-# signatures over the same body.
-#
-# `postconf -P` rather than an edit in place: it replaces the parameter
-# when it is already set, which makes this idempotent across restarts,
-# and it distinguishes `smtp/inet`, the listener, from `smtp/unix`, the
-# outbound client transport that must not filter anything.
-postconf -P "smtp/inet/content_filter=filtermail:dummy"
-postconf -P "pickup/unix/receive_override_options=no_milters"
+# `postconf -P` rather than an edit in place: it replaces a parameter
+# already set, which keeps this idempotent, and it distinguishes
+# `smtp/inet`, the listener, from `smtp/unix`, the outbound client
+# transport, which must not be filtered at all.
+postconf -P "smtp/inet/smtpd_proxy_filter=127.0.0.1:10027"
+postconf -P "smtp/inet/smtpd_milters="
+
+# Removed rather than left behind: `content_filter` would run the filter
+# a second time from the queue and names a transport that no longer
+# exists, and `no_milters` on `pickup` would silence the signer for
+# every non-SMTP submission.
+postconf -PX "smtp/inet/content_filter" 2>/dev/null || true
+postconf -PX "pickup/unix/receive_override_options" 2>/dev/null || true
 
 # ..... POSTFIX CHROOT AND QUEUE DIRECTORIES .....
 
-# Debian runs smtpd, cleanup, pickup and the outbound smtp client
-# chrooted to /var/spool/postfix, and the base image ships that
-# directory with an empty `etc`. Nothing inside the chroot can resolve a
-# name until these are copied in, which breaks two separate things: the
-# milter address, and every peer domain in transport_maps, written as
-# `smtp:[domain]` and still needing an address record.
+# Debian chroots smtpd, cleanup, pickup and the outbound smtp client to
+# /var/spool/postfix, and the base image ships that directory with an
+# empty `etc`, so nothing inside resolves a name: the milter address
+# fails to resolve, and so does every peer domain in transport_maps,
+# written as `smtp:[domain]` and still needing an address record.
 #
-# Measured in this image, with the chroot `etc` empty: every connection
-# on port 25 is answered `451 4.7.1 Service unavailable`, because
-# Postfix cannot reach OpenDKIM and `milter_default_action` is
-# `tempfail`. The relay accepts nothing while every process reports
-# itself healthy. Copying these in makes the same submission succeed.
-#
-# glibc 2.36 in the base image resolves `files` and `dns` from libc
-# itself, so no NSS module has to be copied alongside them.
-#
-# Copies, so a later change to the container's resolv.conf does not
-# reach Postfix until the container restarts. That is the same bargain
-# Postfix's chroot makes on any host.
-mkdir -p /var/spool/postfix/etc
-for chrootfile in /etc/resolv.conf /etc/hosts /etc/services /etc/nsswitch.conf; do
-    if [ -f "${chrootfile}" ]; then
-        cp -f "${chrootfile}" /var/spool/postfix/etc/
-    fi
-done
+# The chroot is turned off rather than populated. Copying resolv.conf in
+# also works and leaves a copy that goes stale the moment the container
+# is given different nameservers, with no symptom but mail that stops
+# being delivered. The boundary given up is one the container namespace
+# already provides.
+postconf -F '*/*/chroot=n'
 
 # The base image's spool is missing the `hold` and `trace` queues, and
-# missing is fatal rather than degraded: `mailq`, `postqueue -p` and
-# `postsuper` each exit non-zero with `scan_dir_push: open directory
-# hold`, so an operator cannot inspect, flush or delete anything.
+# without them `mailq`, `postqueue -p` and `postsuper` all exit
+# non-zero, so an operator cannot inspect or flush the queue at all.
 # `postfix check` creates whatever is absent.
 postfix check
 
@@ -181,8 +169,12 @@ if [ ! -f /etc/ssl/certs/chatmail.pem ]; then
 
     # `subjectAltName` and not the common name alone: a modern TLS client
     # matches the hostname against the SAN and ignores CN entirely.
-    printf 'basicConstraints=critical,CA:FALSE\nkeyUsage=critical,digitalSignature,keyEncipherment\nextendedKeyUsage=serverAuth\nsubjectAltName=DNS:%s\n' \
-        "${MAIL_DOMAIN}" > /tmp/chatmail-leaf.ext
+    cat > /tmp/chatmail-leaf.ext <<EXT
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+subjectAltName=DNS:${MAIL_DOMAIN}
+EXT
 
     openssl req -newkey rsa:2048 -nodes \
         -keyout /etc/ssl/private/chatmail.key \

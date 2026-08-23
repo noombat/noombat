@@ -1,20 +1,23 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Postfix master.cf snippet: defines the submission listener on 465 and
-# the filtermail content filter as a pipe(8) service.
+# Postfix master.cf snippet: the submission listener on 465, and the
+# re-injection listener the encryption filter hands accepted mail to.
 #
 # Appended to /etc/postfix/master.cf by the container entrypoint, which
-# also puts `content_filter` on the inbound listener on 25 and turns
-# milters off for `pickup`. Those two live in the base image's
-# master.cf, so they are edited in place rather than declared here.
+# also puts the proxy filter on the inbound listener on 25. That one
+# comes from the base image's master.cf, so it is edited in place.
 #
-# The filtermail service runs as the unprivileged 'filtermail' user.
-# Mail the filter accepts is re-injected with sendmail(1), which submits
-# through `postdrop` and `pickup`. Neither carries `content_filter`, so
-# the message is not filtered a second time. That is the whole loop
-# prevention: not the `-o content_filter=` that sendmail(1) documents as
-# ignored, and that this configuration used to rely on.
+# The path a message takes, and the filter listens on a different port
+# per direction because the checks differ:
+#
+#   user  -- smtpd :465 -- filtermail :10026 -- smtpd :10025 -- queue
+#   peer  -- smtpd :25  -- filtermail :10027 -- smtpd :10025 -- queue
+#
+# Postfix hands the message to the filter during the SMTP conversation
+# and takes its end-of-DATA answer as the answer to the client, so a
+# refusal is a `550` on the sender's own connection with nothing spooled
+# and no bounce.
 
 # Submission over implicit TLS (RFC 8314), which is the port the
 # application server connects to. Postfix ships this listener commented
@@ -23,17 +26,33 @@
 # The numeric port rather than the `submissions` service name, so this
 # does not depend on /etc/services in the base image.
 #
-# `content_filter` per listener and not in main.cf, because a global one
-# also applies to `pickup`, which is the path the filter re-injects on,
-# and the accepted message loops back into the filter until Postfix
-# bounces it for too many hops. See main.cf for the measurement.
+# `smtpd_milters` is emptied: a before-queue filter cannot run a milter
+# that touches headers, and signing adds one. The re-injection listener
+# below signs instead, so a refused message never is.
 465       inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/submissions
   -o smtpd_tls_wrappermode=yes
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
-  -o content_filter=filtermail:dummy
+  -o smtpd_proxy_filter=127.0.0.1:10026
+  -o smtpd_milters=
 
-# filtermail content filter (pipe transport).
-filtermail unix  -       n       n       -       10      pipe
-  flags=Rq user=filtermail argv=/usr/local/bin/noombat-filtermail -f ${sender} -- ${recipient}
+# Re-injection listener: what the filter accepted, and the only path
+# into the queue. Loopback only.
+#
+# `smtpd_authorized_xforward_hosts` lets the filter forward the original
+# client's address, so the logs and the `Received:` header name the real
+# sender rather than 127.0.0.1.
+#
+# `smtpd_proxy_filter` is emptied explicitly, because a global one would
+# point this listener back at the filter the message just came from.
+127.0.0.1:10025 inet  n  -       n       -       -       smtpd
+  -o syslog_name=postfix/reinject
+  -o smtpd_proxy_filter=
+  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o smtpd_helo_restrictions=
+  -o smtpd_client_restrictions=
+  -o smtpd_sender_restrictions=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o mynetworks=127.0.0.0/8
+  -o smtpd_authorized_xforward_hosts=127.0.0.0/8
