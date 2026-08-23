@@ -154,6 +154,7 @@ fn test_media() -> noombat_api::media::MediaStore {
     .expect("temp media root")
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_sweep_erases_only_expired_requests(pool: PgPool) {
     let expired = insert_actor(&pool, "expired", Some(GRACE_DAYS + 1)).await;
@@ -267,12 +268,11 @@ async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
 
 /// A recruiter's erasure takes their listings and spares the applicants.
 ///
-/// The whole decision in one assertion. `applications.job_listing_id`
-/// used to be `NOT NULL ... ON DELETE CASCADE`, so deleting a listing
-/// deleted every application to it: erasing one person destroyed
-/// another person's records. The listing is the recruiter's content and
-/// goes; the application is the applicant's and stays, legible because
-/// of the snapshot taken when it was created.
+/// The whole decision in one assertion. The listing is the recruiter's
+/// content and goes; the application is the applicant's and stays,
+/// legible because of the snapshot taken when it was created. A
+/// cascade from `applications.job_listing_id` would make erasing one
+/// person destroy another person's records.
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {

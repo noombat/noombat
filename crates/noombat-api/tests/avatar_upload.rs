@@ -196,6 +196,7 @@ async fn upload(state: AppState, token: Option<&str>, bytes: &[u8]) -> StatusCod
 
 // ..... Tests .....
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_upload_without_a_session_stores_nothing(pool: PgPool) {
     insert_actor(&pool).await;
@@ -213,6 +214,7 @@ async fn an_upload_without_a_session_stores_nothing(pool: PgPool) {
     assert_eq!(rows, 0, "an unauthenticated upload created a row");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_signed_in_upload_is_stored_and_then_served(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
@@ -273,6 +275,7 @@ async fn a_signed_in_upload_is_stored_and_then_served(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_matching_validator_is_answered_with_not_modified(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
@@ -298,6 +301,7 @@ async fn a_matching_validator_is_answered_with_not_modified(pool: PgPool) {
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_declared_type_is_not_believed(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
@@ -318,6 +322,7 @@ async fn the_declared_type_is_not_believed(pool: PgPool) {
     assert_eq!(media_type, "image/png");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_file_that_is_not_an_accepted_image_is_refused(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
@@ -335,6 +340,7 @@ async fn a_file_that_is_not_an_accepted_image_is_refused(pool: PgPool) {
     assert_eq!(rows, 0);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn uploading_again_replaces_rather_than_accumulates(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
@@ -363,6 +369,7 @@ async fn uploading_again_replaces_rather_than_accumulates(pool: PgPool) {
     assert!(root.join(&keys[0]).exists());
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn erasure_removes_the_object_as_well_as_the_row(pool: PgPool) {
     let actor_id = insert_actor(&pool).await;
