@@ -8,6 +8,7 @@
 //! and starts the Axum HTTP listener.
 
 mod meilisearch;
+mod secret;
 
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -25,6 +26,8 @@ use noombat_api::rate_limit::FallbackRateLimiter;
 use noombat_api::state::AppState;
 use noombat_core::envelope::EnvelopeKey;
 
+use crate::secret::Secret;
+
 /// Top-level configuration, loaded from `noombat.toml` and environment
 /// variables prefixed with `NOOMBAT_`.
 #[derive(Debug, Deserialize)]
@@ -32,7 +35,7 @@ struct Config {
     /// Instance domain (e.g. `noombat.social`).
     domain: String,
     /// PostgreSQL connection URL.
-    database_url: String,
+    database_url: Secret,
     /// Listen address (default `0.0.0.0`).
     #[serde(default = "default_host")]
     host: String,
@@ -47,12 +50,12 @@ struct Config {
     open_registrations: bool,
     /// Development-only bearer token for C2S outbox POST!
     /// If unset, the outbox POST endpoint is disabled.
-    admin_token: Option<String>,
+    admin_token: Option<Secret>,
     /// Meilisearch base URL (e.g. `http://localhost:7700`).
     /// If unset, full-text search is disabled.
     meili_url: Option<String>,
     /// Meilisearch API key (optional).
-    meili_key: Option<String>,
+    meili_key: Option<Secret>,
     /// Interval in seconds between link re-verification sweeps (default 3600).
     #[serde(default = "default_reverify_interval")]
     link_reverify_interval_secs: u64,
@@ -67,7 +70,7 @@ struct Config {
     /// Chatmail admin sidecar REST API URL (internal-only).
     chatmail_admin_url: Option<String>,
     /// Shared secret for authenticating requests to the admin sidecar.
-    chatmail_admin_secret: Option<String>,
+    chatmail_admin_secret: Option<Secret>,
     /// Administrative contact email address, used as the `mailto`
     /// parameter for the CrossRef polite pool. Defaults to
     /// `admin@{domain}` when not explicitly set.
@@ -83,10 +86,10 @@ struct Config {
     articles_enabled: bool,
     /// Redis connection URL (e.g. `redis://redis:6379`).
     /// If unset, rate limiting and session storage are disabled.
-    redis_url: Option<String>,
+    redis_url: Option<Secret>,
     /// JWT signing secret for session tokens (HS256). Must be at
     /// least 32 bytes. If unset, session-based auth is disabled.
-    jwt_secret: Option<String>,
+    jwt_secret: Option<Secret>,
     /// Access-token lifetime in seconds (default: 900 = 15 min).
     #[serde(default = "default_access_ttl")]
     access_ttl_secs: i64,
@@ -96,7 +99,7 @@ struct Config {
     /// ORCID OAuth client ID.
     orcid_client_id: Option<String>,
     /// ORCID OAuth client secret.
-    orcid_client_secret: Option<String>,
+    orcid_client_secret: Option<Secret>,
     /// Whether FEP-8b32 integrity proofs (`eddsa-jcs-2022`) are
     /// attached to all outbound activities (default `true`).
     #[serde(default = "default_true")]
@@ -161,7 +164,41 @@ struct Config {
     /// encryption of secrets at rest. 64 hex characters (32 bytes).
     /// Required in production; if unset, secrets are stored as
     /// plaintext (development mode only).
-    kek: Option<String>,
+    kek: Option<Secret>,
+
+    /// Base URL of an S3-compatible endpoint, without the bucket.
+    ///
+    /// This, the bucket and both credentials move uploaded media to
+    /// object storage. Unset keeps it on disk, so an operator does not
+    /// acquire a third-party dependency by accident.
+    ///
+    /// Readers never talk to the endpoint whatever the backend, so the
+    /// bucket sees this server and never a per-viewer request log.
+    s3_endpoint: Option<String>,
+    /// Bucket that holds uploaded media.
+    s3_bucket: Option<String>,
+    /// Region to sign for. Self-hosted endpoints usually ignore it but
+    /// still require it in the signature.
+    #[serde(default = "default_s3_region")]
+    s3_region: String,
+    /// Prepended to every object key. For a bucket shared between
+    /// deployments; empty otherwise.
+    #[serde(default)]
+    s3_prefix: String,
+    s3_access_key: Option<String>,
+    /// The bucket secret.
+    ///
+    /// Configuration rather than an envelope-encrypted value: the
+    /// key-encryption key protects per-row database values, and this is
+    /// instance-wide and set at deploy time. Never rendered, never
+    /// returned, and redacted from the store's `Debug` output.
+    s3_secret_key: Option<Secret>,
+    /// `{endpoint}/{bucket}/{key}` rather than
+    /// `{bucket}.{endpoint}/{key}`. The default suits the self-hosted
+    /// S3-compatible servers this is most likely to point at; set it
+    /// false for a provider that requires virtual-hosted addressing.
+    #[serde(default = "default_true")]
+    s3_path_style: bool,
 }
 
 fn default_host() -> String {
@@ -194,6 +231,9 @@ fn default_rate_limit() -> u32 {
 fn default_media_root() -> String {
     "/var/lib/noombat/media".to_owned()
 }
+fn default_s3_region() -> String {
+    "us-east-1".to_owned()
+}
 fn default_fed_rate_limit() -> u32 {
     300
 }
@@ -225,7 +265,7 @@ impl Config {
     /// `NOOMBAT_KEK=` yields `Some("")`, which is not a key and is not
     /// a decision to run without one either.
     fn kek(&self) -> Option<&str> {
-        self.kek.as_deref().map(str::trim).filter(|k| !k.is_empty())
+        self.kek.as_ref().and_then(Secret::non_empty)
     }
 }
 
@@ -255,9 +295,17 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     // Merge configuration: file to environment variables.
+    // `_FILE` last, so a value read from a file wins over the same
+    // setting given directly. An operator who has moved a credential
+    // into a secret store has said which one they mean.
+    let from_files = match secret::from_files() {
+        Ok(values) => values,
+        Err(e) => panic!("{e}"),
+    };
     let config: Config = Figment::new()
         .merge(Toml::file("noombat.toml"))
         .merge(Env::prefixed("NOOMBAT_"))
+        .merge(figment::providers::Serialized::defaults(from_files))
         .extract()
         .expect("failed to load configuration");
 
@@ -307,7 +355,7 @@ async fn main() -> anyhow::Result<()> {
     let pool = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .acquire_timeout(Duration::from_secs(5))
-        .connect(&config.database_url)
+        .connect(config.database_url.expose())
         .await
         .expect("failed to connect to PostgreSQL");
 
@@ -431,7 +479,10 @@ async fn main() -> anyhow::Result<()> {
     // Meilisearch search backend (optional).
     let search: Option<Arc<dyn noombat_core::extension::SearchBackend>> =
         if let Some(ref meili_url) = config.meili_url {
-            match meilisearch::MeilisearchBackend::new(meili_url, config.meili_key.as_deref()) {
+            match meilisearch::MeilisearchBackend::new(
+                meili_url,
+                config.meili_key.as_ref().map(Secret::expose),
+            ) {
                 Ok(backend) => {
                     if let Err(e) = backend.ensure_indices().await {
                         tracing::warn!("Meilisearch index setup failed (search degraded): {e}");
@@ -451,39 +502,43 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Redis connection (optional).
-    let redis: Option<redis::aio::ConnectionManager> = if let Some(ref redis_url) = config.redis_url
-    {
-        match redis::Client::open(redis_url.as_str()) {
-            Ok(client) => match redis::aio::ConnectionManager::new(client).await {
-                Ok(mgr) => {
-                    info!(url = %redis_url, "Redis connection established");
-                    Some(mgr)
-                }
+    let redis: Option<redis::aio::ConnectionManager> =
+        if let Some(redis_url) = config.redis_url.as_ref().map(Secret::expose) {
+            match redis::Client::open(redis_url) {
+                Ok(client) => match redis::aio::ConnectionManager::new(client).await {
+                    Ok(mgr) => {
+                        info!(url = %redis_url, "Redis connection established");
+                        Some(mgr)
+                    }
+                    Err(e) => {
+                        tracing::warn!("Redis connection failed (rate limiting disabled): {e}");
+                        None
+                    }
+                },
                 Err(e) => {
-                    tracing::warn!("Redis connection failed (rate limiting disabled): {e}");
+                    tracing::warn!("invalid Redis URL (rate limiting disabled): {e}");
                     None
                 }
-            },
-            Err(e) => {
-                tracing::warn!("invalid Redis URL (rate limiting disabled): {e}");
-                None
             }
-        }
-    } else {
-        info!("no NOOMBAT_REDIS_URL configured; rate limiting disabled");
-        None
-    };
+        } else {
+            info!("no NOOMBAT_REDIS_URL configured; rate limiting disabled");
+            None
+        };
 
     // Session configuration (optional).
-    let session_config = config.jwt_secret.as_ref().map(|secret| {
-        info!("JWT session authentication enabled");
-        noombat_identity::session::SessionConfig {
-            jwt_secret: secret.clone(),
-            domain: config.domain.clone(),
-            access_ttl_secs: config.access_ttl_secs,
-            refresh_ttl_secs: config.refresh_ttl_secs,
-        }
-    });
+    let session_config = config
+        .jwt_secret
+        .as_ref()
+        .map(Secret::expose)
+        .map(|secret| {
+            info!("JWT session authentication enabled");
+            noombat_identity::session::SessionConfig {
+                jwt_secret: secret.to_string(),
+                domain: config.domain.clone(),
+                access_ttl_secs: config.access_ttl_secs,
+                refresh_ttl_secs: config.refresh_ttl_secs,
+            }
+        });
     if session_config.is_none() {
         info!(
             "no NOOMBAT_JWT_SECRET configured; session-based auth disabled (dev-only bearer token active)"
@@ -496,7 +551,7 @@ async fn main() -> anyhow::Result<()> {
             info!("ORCID OAuth enabled");
             Some(noombat_identity::oauth_orcid::OrcidConfig {
                 client_id: id.clone(),
-                client_secret: secret.clone(),
+                client_secret: secret.expose().to_string(),
                 ..Default::default()
             })
         }
@@ -620,8 +675,56 @@ async fn main() -> anyhow::Result<()> {
     // Fail at boot rather than at the first upload. An unwritable media
     // directory is a deployment mistake, and discovering it when a user
     // tries to set an avatar puts the report in the wrong person's hands.
-    let media_store = noombat_api::media::MediaStore::local(&config.media_root)
-        .unwrap_or_else(|e| panic!("media root {} is not usable: {e}", config.media_root));
+    //
+    // Object storage needs all four. A partial set is refused rather
+    // than quietly falling back to disk, which an operator would
+    // discover only when the disk filled.
+    let s3 = [
+        ("NOOMBAT_S3_ENDPOINT", config.s3_endpoint.as_deref()),
+        ("NOOMBAT_S3_BUCKET", config.s3_bucket.as_deref()),
+        ("NOOMBAT_S3_ACCESS_KEY", config.s3_access_key.as_deref()),
+        (
+            "NOOMBAT_S3_SECRET_KEY",
+            config.s3_secret_key.as_ref().map(Secret::expose),
+        ),
+    ];
+    let missing: Vec<&str> = s3
+        .iter()
+        .filter(|(_, value)| value.is_none_or(str::is_empty))
+        .map(|(name, _)| *name)
+        .collect();
+
+    let media_store = if missing.len() == s3.len() {
+        noombat_api::media::MediaStore::local(&config.media_root)
+            .unwrap_or_else(|e| panic!("media root {} is not usable: {e}", config.media_root))
+    } else if missing.is_empty() {
+        // The endpoint is not logged: it names the provider.
+        info!("media is stored in object storage");
+        noombat_api::media::MediaStore::s3(
+            config.s3_endpoint.clone().unwrap_or_default(),
+            config.s3_bucket.clone().unwrap_or_default(),
+            config.s3_region.clone(),
+            config.s3_prefix.clone(),
+            config.s3_access_key.clone().unwrap_or_default(),
+            config
+                .s3_secret_key
+                .as_ref()
+                .map(Secret::expose)
+                .unwrap_or_default(),
+            config.s3_path_style,
+        )
+    } else {
+        panic!(
+            "object storage is half configured: {} is set but {} is not. \
+             Set all four, or none of them to keep media on disk.",
+            s3.iter()
+                .filter(|(name, _)| !missing.contains(name))
+                .map(|(name, _)| *name)
+                .collect::<Vec<_>>()
+                .join(", "),
+            missing.join(", ")
+        );
+    };
 
     let state = AppState {
         pool,
@@ -629,7 +732,7 @@ async fn main() -> anyhow::Result<()> {
         public_port: config.port,
         http_client,
         open_registrations: config.open_registrations,
-        admin_token: config.admin_token.clone(),
+        admin_token: config.admin_token.as_ref().map(|s| s.expose().to_string()),
         search,
         nodeinfo_features: noombat_federation::nodeinfo::NodeInfoFeatures {
             chatmail_available: config.chatmail_available,
@@ -645,10 +748,13 @@ async fn main() -> anyhow::Result<()> {
         orcid_config,
         chatmail_domain: config.chatmail_domain.clone(),
         chatmail_admin_url: config.chatmail_admin_url.clone(),
-        chatmail_admin_secret: config.chatmail_admin_secret.clone(),
+        chatmail_admin_secret: config
+            .chatmail_admin_secret
+            .as_ref()
+            .map(|s| s.expose().to_string()),
         chatmail_admin_client: noombat_chat::admin_client::ChatmailAdminClient::new(
             config.chatmail_admin_url.as_deref(),
-            config.chatmail_admin_secret.as_deref(),
+            config.chatmail_admin_secret.as_ref().map(Secret::expose),
         ),
         contact_email: config
             .contact_email
@@ -744,7 +850,7 @@ fn validate_production_config(config: &Config) {
 
     let mut fatal = false;
 
-    match config.jwt_secret.as_deref() {
+    match config.jwt_secret.as_ref().map(Secret::expose) {
         None => {
             error!(
                 "NOOMBAT_JWT_SECRET is not set. \
@@ -768,7 +874,7 @@ fn validate_production_config(config: &Config) {
         Some(_) => {}
     }
 
-    if config.admin_token.as_deref() == Some(INSECURE_ADMIN_TOKEN) {
+    if config.admin_token.as_ref().map(Secret::expose) == Some(INSECURE_ADMIN_TOKEN) {
         error!(
             "NOOMBAT_ADMIN_TOKEN is set to the documented default \
              (\"{token}\"). Change it to a random value or remove \
@@ -778,7 +884,7 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
-    if config.database_url.contains(INSECURE_DB_CRED) {
+    if config.database_url.expose().contains(INSECURE_DB_CRED) {
         error!(
             "DATABASE_URL contains the default credential \
              \"{cred}\". Use a strong, unique password in production.",
@@ -787,7 +893,7 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
-    if config.meili_key.as_deref() == Some(INSECURE_MEILI_KEY) {
+    if config.meili_key.as_ref().map(Secret::expose) == Some(INSECURE_MEILI_KEY) {
         error!(
             "NOOMBAT_MEILI_KEY is set to the documented default \
              (\"{key}\"). Set MEILI_MASTER_KEY to a random value.",
@@ -796,7 +902,7 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
-    if config.chatmail_admin_secret.as_deref() == Some(INSECURE_CHATMAIL_SECRET) {
+    if config.chatmail_admin_secret.as_ref().map(Secret::expose) == Some(INSECURE_CHATMAIL_SECRET) {
         error!(
             "NOOMBAT_CHATMAIL_ADMIN_SECRET is set to the documented \
              default (\"{secret}\"). Set CHATMAIL_ADMIN_SECRET to a \
