@@ -145,13 +145,61 @@ pub fn new_object_key() -> String {
 
 /// Where uploaded media rests.
 ///
-/// One variant today. The trait-shaped surface is deliberate: an
-/// S3-compatible backend is a second variant behind these three methods,
-/// and every row records which backend wrote it, so enabling object
-/// storage later cannot orphan what was written while it was local.
-#[derive(Clone, Debug)]
+/// Every row records which backend wrote it, so turning object storage
+/// on cannot orphan what was written while it was local.
+///
+/// Which backend an instance uses appears in no response, header or
+/// NodeInfo field: it is not a capability a peer needs, and publishing
+/// it names a provider to attack.
+#[derive(Clone)]
 pub enum MediaStore {
-    Local { root: PathBuf },
+    Local {
+        root: PathBuf,
+    },
+    S3 {
+        client: reqwest::Client,
+        /// Base URL of the endpoint, without the bucket.
+        endpoint: String,
+        bucket: String,
+        region: String,
+        /// Prepended to every key. Empty unless the operator shares a
+        /// bucket between deployments.
+        prefix: String,
+        access_key: String,
+        secret_key: String,
+        /// `{endpoint}/{bucket}/{key}` rather than
+        /// `{bucket}.{endpoint}/{key}`. True suits the self-hosted
+        /// S3-compatible servers this is most likely to point at.
+        path_style: bool,
+    },
+}
+
+/// Written by hand so the secret cannot be logged: the derived
+/// implementation prints `secret_key` in full anywhere a `MediaStore`
+/// reaches a `{:?}`, including a `tracing` field or a panic.
+impl std::fmt::Debug for MediaStore {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Local { root } => f.debug_struct("Local").field("root", root).finish(),
+            Self::S3 {
+                endpoint,
+                bucket,
+                region,
+                prefix,
+                path_style,
+                ..
+            } => f
+                .debug_struct("S3")
+                .field("endpoint", endpoint)
+                .field("bucket", bucket)
+                .field("region", region)
+                .field("prefix", prefix)
+                .field("path_style", path_style)
+                .field("access_key", &"<redacted>")
+                .field("secret_key", &"<redacted>")
+                .finish(),
+        }
+    }
 }
 
 impl MediaStore {
@@ -162,10 +210,37 @@ impl MediaStore {
         Ok(Self::Local { root })
     }
 
+    /// A store backed by an S3-compatible endpoint.
+    ///
+    /// Nothing is contacted here, so a third party's outage is a failed
+    /// upload rather than an instance that will not start.
+    #[allow(clippy::too_many_arguments)]
+    pub fn s3(
+        endpoint: impl Into<String>,
+        bucket: impl Into<String>,
+        region: impl Into<String>,
+        prefix: impl Into<String>,
+        access_key: impl Into<String>,
+        secret_key: impl Into<String>,
+        path_style: bool,
+    ) -> Self {
+        Self::S3 {
+            client: reqwest::Client::new(),
+            endpoint: endpoint.into().trim_end_matches('/').to_string(),
+            bucket: bucket.into(),
+            region: region.into(),
+            prefix: prefix.into(),
+            access_key: access_key.into(),
+            secret_key: secret_key.into(),
+            path_style,
+        }
+    }
+
     /// The discriminator stored on every row this store writes.
     pub fn backend(&self) -> &'static str {
         match self {
             Self::Local { .. } => "local",
+            Self::S3 { .. } => "s3",
         }
     }
 
@@ -190,6 +265,10 @@ impl MediaStore {
                 })?;
                 tokio::fs::write(path, bytes).await
             }
+            Self::S3 { .. } => {
+                self.s3_request(reqwest::Method::PUT, key, bytes).await?;
+                Ok(())
+            }
         }
     }
 
@@ -200,6 +279,10 @@ impl MediaStore {
                     std::io::Error::new(std::io::ErrorKind::InvalidInput, "malformed object key")
                 })?;
                 tokio::fs::read(path).await
+            }
+            Self::S3 { .. } => {
+                let body = self.s3_request(reqwest::Method::GET, key, &[]).await?;
+                Ok(body)
             }
         }
     }
@@ -220,8 +303,218 @@ impl MediaStore {
                     Err(e) => Err(e),
                 }
             }
+            Self::S3 { .. } => match self.s3_request(reqwest::Method::DELETE, key, &[]).await {
+                Ok(_) => Ok(()),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+                Err(e) => Err(e),
+            },
         }
     }
+
+    /// The URL an object lives at, and the path to sign for it.
+    fn s3_url(&self, key: &str) -> Option<(reqwest::Url, String)> {
+        let Self::S3 {
+            endpoint,
+            bucket,
+            prefix,
+            path_style,
+            ..
+        } = self
+        else {
+            return None;
+        };
+
+        // Each segment is percent-encoded separately so the separators
+        // survive. `urlencoding::encode` leaves exactly the RFC 3986
+        // unreserved set alone, which is what SigV4 canonicalisation
+        // wants, and encodes a space as `%20` rather than `+`.
+        let object = format!("{prefix}{key}");
+        let encoded: String = object
+            .split('/')
+            .map(|segment| urlencoding::encode(segment).into_owned())
+            .collect::<Vec<_>>()
+            .join("/");
+
+        let (base, path) = if *path_style {
+            (
+                endpoint.clone(),
+                format!("/{}/{}", urlencoding::encode(bucket), encoded),
+            )
+        } else {
+            let host = endpoint.split("://").nth(1)?;
+            let scheme = endpoint.split("://").next()?;
+            (format!("{scheme}://{bucket}.{host}"), format!("/{encoded}"))
+        };
+
+        let url = reqwest::Url::parse(&format!("{base}{path}")).ok()?;
+        Some((url, path))
+    }
+
+    /// Sign and send one request, returning the body.
+    ///
+    /// The provider's error text is logged and never returned: it names
+    /// the provider, the bucket and sometimes the account, to a reader
+    /// who asked only for an avatar.
+    async fn s3_request(
+        &self,
+        method: reqwest::Method,
+        key: &str,
+        body: &[u8],
+    ) -> std::io::Result<Vec<u8>> {
+        let Self::S3 {
+            client,
+            region,
+            access_key,
+            secret_key,
+            ..
+        } = self
+        else {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Unsupported,
+                "not an object store",
+            ));
+        };
+
+        if key.len() != 32 || !key.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "malformed object key",
+            ));
+        }
+
+        let (url, canonical_path) = self.s3_url(key).ok_or_else(|| {
+            std::io::Error::new(std::io::ErrorKind::InvalidInput, "unusable endpoint")
+        })?;
+        let host = url
+            .host_str()
+            .ok_or_else(|| {
+                std::io::Error::new(std::io::ErrorKind::InvalidInput, "endpoint has no host")
+            })?
+            .to_string();
+        let host = match url.port() {
+            Some(port) => format!("{host}:{port}"),
+            None => host,
+        };
+
+        let payload_hash = hex(&sha256(body));
+        let now = chrono::Utc::now();
+        let authorization = sign_v4(
+            method.as_str(),
+            &canonical_path,
+            &host,
+            &payload_hash,
+            now,
+            region,
+            "s3",
+            access_key,
+            secret_key,
+        );
+
+        let mut request = client
+            .request(method.clone(), url)
+            .header("host", &host)
+            .header("x-amz-content-sha256", &payload_hash)
+            .header("x-amz-date", now.format("%Y%m%dT%H%M%SZ").to_string())
+            .header("authorization", authorization);
+        if method == reqwest::Method::PUT {
+            request = request.body(body.to_vec());
+        }
+
+        let response = request.send().await.map_err(|error| {
+            tracing::error!(%error, "the object store could not be reached");
+            std::io::Error::other("object store unreachable")
+        })?;
+
+        let status = response.status();
+        if status == reqwest::StatusCode::NOT_FOUND {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "no such object",
+            ));
+        }
+        if !status.is_success() {
+            let detail = response.text().await.unwrap_or_default();
+            tracing::error!(%status, %detail, "the object store refused a request");
+            return Err(std::io::Error::other("object store refused the request"));
+        }
+
+        response.bytes().await.map(|b| b.to_vec()).map_err(|error| {
+            tracing::error!(%error, "the object store's response could not be read");
+            std::io::Error::other("object store response unreadable")
+        })
+    }
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    use sha2::Digest;
+    sha2::Sha256::digest(bytes).into()
+}
+
+fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
+    use hmac::Mac;
+    let mut mac =
+        hmac::Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC accepts a key of any length");
+    mac.update(message);
+    mac.finalize().into_bytes().into()
+}
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// Build an AWS Signature Version 4 `Authorization` header.
+///
+/// `service` is a parameter rather than a constant so published test
+/// vectors, which sign for other service names, can be run against this
+/// function unchanged.
+#[allow(clippy::too_many_arguments)]
+fn sign_v4(
+    method: &str,
+    canonical_path: &str,
+    host: &str,
+    payload_hash: &str,
+    now: chrono::DateTime<chrono::Utc>,
+    region: &str,
+    service: &str,
+    access_key: &str,
+    secret_key: &str,
+) -> String {
+    let amz_date = now.format("%Y%m%dT%H%M%SZ").to_string();
+    let date_stamp = now.format("%Y%m%d").to_string();
+
+    // Headers are signed lowercase, sorted, and with the value trimmed.
+    // Only these three: everything else the request carries is
+    // deliberately unsigned, which S3 permits and which keeps a proxy
+    // that adds a header from invalidating the signature.
+    let signed_headers = "host;x-amz-content-sha256;x-amz-date";
+    let canonical_headers =
+        format!("host:{host}\nx-amz-content-sha256:{payload_hash}\nx-amz-date:{amz_date}\n");
+
+    // No query string on any request this makes, so the canonical query
+    // string is empty rather than absent: the newline still counts.
+    let canonical_request = format!(
+        "{method}\n{canonical_path}\n\n{canonical_headers}\n{signed_headers}\n{payload_hash}"
+    );
+
+    let scope = format!("{date_stamp}/{region}/{service}/aws4_request");
+    let string_to_sign = format!(
+        "AWS4-HMAC-SHA256\n{amz_date}\n{scope}\n{}",
+        hex(&sha256(canonical_request.as_bytes()))
+    );
+
+    let date_key = hmac_sha256(
+        format!("AWS4{secret_key}").as_bytes(),
+        date_stamp.as_bytes(),
+    );
+    let region_key = hmac_sha256(&date_key, region.as_bytes());
+    let service_key = hmac_sha256(&region_key, service.as_bytes());
+    let signing_key = hmac_sha256(&service_key, b"aws4_request");
+    let signature = hex(&hmac_sha256(&signing_key, string_to_sign.as_bytes()));
+
+    format!(
+        "AWS4-HMAC-SHA256 Credential={access_key}/{scope}, \
+         SignedHeaders={signed_headers}, Signature={signature}"
+    )
 }
 
 #[cfg(test)]
@@ -360,5 +653,425 @@ mod tests {
         // Deleting what is already gone is success: erasure must not
         // fail because the bytes went first.
         store.delete(&key).await.unwrap();
+    }
+
+    // ..... THE OBJECT STORE BACKEND .....
+
+    use std::collections::HashMap;
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Debug)]
+    struct Seen {
+        method: String,
+        path: String,
+        headers: HashMap<String, String>,
+        body: Vec<u8>,
+    }
+
+    #[derive(Clone, Default)]
+    struct FakeBucket {
+        objects: Arc<Mutex<HashMap<String, Vec<u8>>>>,
+        seen: Arc<Mutex<Vec<Seen>>>,
+        /// When set, every request is answered with this status and body
+        /// instead of being served.
+        forced_error: Arc<Mutex<Option<(u16, String)>>>,
+    }
+
+    /// An S3-shaped server, so the three verbs run over real HTTP.
+    async fn fake_bucket() -> (String, FakeBucket) {
+        use axum::body::Bytes;
+        use axum::extract::{Path as AxPath, State};
+        use axum::http::{HeaderMap, Method, StatusCode};
+        use axum::routing::any;
+
+        let state = FakeBucket::default();
+
+        async fn handle(
+            State(state): State<FakeBucket>,
+            AxPath((bucket, key)): AxPath<(String, String)>,
+            method: Method,
+            headers: HeaderMap,
+            body: Bytes,
+        ) -> (StatusCode, Vec<u8>) {
+            state.seen.lock().unwrap().push(Seen {
+                method: method.to_string(),
+                path: format!("/{bucket}/{key}"),
+                headers: headers
+                    .iter()
+                    .map(|(k, v)| {
+                        (
+                            k.as_str().to_string(),
+                            v.to_str().unwrap_or_default().to_string(),
+                        )
+                    })
+                    .collect(),
+                body: body.to_vec(),
+            });
+
+            if let Some((status, text)) = state.forced_error.lock().unwrap().clone() {
+                return (StatusCode::from_u16(status).unwrap(), text.into_bytes());
+            }
+
+            let mut objects = state.objects.lock().unwrap();
+            match method {
+                Method::PUT => {
+                    objects.insert(key, body.to_vec());
+                    (StatusCode::OK, Vec::new())
+                }
+                Method::GET => match objects.get(&key) {
+                    Some(bytes) => (StatusCode::OK, bytes.clone()),
+                    None => (StatusCode::NOT_FOUND, b"<Error>NoSuchKey</Error>".to_vec()),
+                },
+                Method::DELETE => {
+                    objects.remove(&key);
+                    (StatusCode::NO_CONTENT, Vec::new())
+                }
+                _ => (StatusCode::METHOD_NOT_ALLOWED, Vec::new()),
+            }
+        }
+
+        let app = axum::Router::new()
+            .route("/{bucket}/{key}", any(handle))
+            .with_state(state.clone());
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        (format!("http://{addr}"), state)
+    }
+
+    fn test_store(endpoint: &str) -> MediaStore {
+        MediaStore::s3(
+            endpoint,
+            "media",
+            "us-east-1",
+            "",
+            "AKIAIOSFODNN7EXAMPLE",
+            "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+            true,
+        )
+    }
+
+    #[tokio::test]
+    async fn an_object_store_round_trips_and_forgets() {
+        let (endpoint, bucket) = fake_bucket().await;
+        let store = test_store(&endpoint);
+        let key = new_object_key();
+
+        store.put(&key, b"bytes").await.unwrap();
+        assert_eq!(store.get(&key).await.unwrap(), b"bytes");
+        store.delete(&key).await.unwrap();
+
+        let missing = store.get(&key).await.unwrap_err();
+        assert_eq!(missing.kind(), std::io::ErrorKind::NotFound);
+        // As for the local store: erasure must not fail because the
+        // bytes were already gone.
+        store.delete(&key).await.unwrap();
+
+        let seen = bucket.seen.lock().unwrap();
+        let methods: Vec<&str> = seen.iter().map(|s| s.method.as_str()).collect();
+        assert_eq!(methods, ["PUT", "GET", "DELETE", "GET", "DELETE"]);
+        assert!(seen.iter().all(|s| s.path == format!("/media/{key}")));
+    }
+
+    #[tokio::test]
+    async fn every_request_is_signed_over_the_body_it_carries() {
+        let (endpoint, bucket) = fake_bucket().await;
+        let store = test_store(&endpoint);
+        let key = new_object_key();
+
+        store.put(&key, b"the payload").await.unwrap();
+
+        let seen = bucket.seen.lock().unwrap();
+        let put = seen.first().unwrap();
+
+        // The content hash must cover what was actually sent: hashing
+        // an empty body and then sending bytes is rejected by the store
+        // as a credentials error.
+        assert_eq!(put.body, b"the payload");
+        assert_eq!(
+            put.headers.get("x-amz-content-sha256").map(String::as_str),
+            Some(hex(&sha256(b"the payload")).as_str())
+        );
+
+        let auth = put.headers.get("authorization").expect("no authorization");
+        assert!(auth.starts_with("AWS4-HMAC-SHA256 Credential=AKIAIOSFODNN7EXAMPLE/"));
+        assert!(auth.contains("/us-east-1/s3/aws4_request"));
+        assert!(auth.contains("SignedHeaders=host;x-amz-content-sha256;x-amz-date"));
+        // Every header named in SignedHeaders has to be on the request,
+        // or the store recomputes over something it did not receive.
+        for name in ["host", "x-amz-content-sha256", "x-amz-date"] {
+            assert!(put.headers.contains_key(name), "{name} was not sent");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_provider_s_error_text_does_not_escape() {
+        let (endpoint, bucket) = fake_bucket().await;
+        *bucket.forced_error.lock().unwrap() = Some((
+            403,
+            "<Error><Message>Access denied for \
+              arn:aws:iam::123456789012:user/backups</Message></Error>"
+                .to_string(),
+        ));
+        let store = test_store(&endpoint);
+
+        let error = store.get(&new_object_key()).await.unwrap_err();
+        let rendered = error.to_string();
+        assert!(
+            !rendered.contains("arn:aws")
+                && !rendered.contains("123456789012")
+                && !rendered.contains("Access denied"),
+            "the provider's error text reached the caller: {rendered}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_key_that_is_not_ours_never_reaches_the_object_store() {
+        let (endpoint, bucket) = fake_bucket().await;
+        let store = test_store(&endpoint);
+
+        for bad in ["../../etc/passwd", "a/b", "", "media/../../secret"] {
+            assert!(store.get(bad).await.is_err(), "{bad} was not refused");
+            assert!(store.put(bad, b"x").await.is_err(), "{bad} was not refused");
+        }
+        assert!(
+            bucket.seen.lock().unwrap().is_empty(),
+            "a malformed key was sent to the object store"
+        );
+    }
+
+    #[test]
+    fn the_secret_is_not_printable() {
+        let store = test_store("https://example.invalid");
+        let rendered = format!("{store:?}");
+        assert!(
+            !rendered.contains("wJalrXUtnFEMI"),
+            "the secret key is in the Debug output: {rendered}"
+        );
+        assert!(
+            !rendered.contains("AKIAIOSFODNN7EXAMPLE"),
+            "the access key is in the Debug output: {rendered}"
+        );
+        // Still useful for diagnosis: the parts that are not secret.
+        assert!(rendered.contains("example.invalid"));
+        assert!(rendered.contains("media"));
+    }
+
+    #[test]
+    fn the_backend_discriminator_distinguishes_the_two() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(MediaStore::local(dir.path()).unwrap().backend(), "local");
+        assert_eq!(test_store("https://example.invalid").backend(), "s3");
+    }
+
+    #[test]
+    fn a_prefix_is_applied_and_the_bucket_placement_follows_the_style() {
+        let key = new_object_key();
+
+        let path_style = MediaStore::s3(
+            "https://s3.example.invalid",
+            "media",
+            "us-east-1",
+            "noombat/",
+            "id",
+            "secret",
+            true,
+        );
+        let (url, path) = path_style.s3_url(&key).unwrap();
+        assert_eq!(path, format!("/media/noombat/{key}"));
+        assert_eq!(url.host_str(), Some("s3.example.invalid"));
+
+        let virtual_style = MediaStore::s3(
+            "https://s3.example.invalid",
+            "media",
+            "us-east-1",
+            "noombat/",
+            "id",
+            "secret",
+            false,
+        );
+        let (url, path) = virtual_style.s3_url(&key).unwrap();
+        assert_eq!(path, format!("/noombat/{key}"));
+        assert_eq!(url.host_str(), Some("media.s3.example.invalid"));
+    }
+
+    /// The reference timestamp for the vectors below: 2015-08-30
+    /// 12:36:00 UTC, the one AWS uses in its own worked examples.
+    fn reference_time() -> chrono::DateTime<chrono::Utc> {
+        chrono::DateTime::from_timestamp(1_440_938_160, 0).unwrap()
+    }
+
+    /// Agree with an independent implementation, not just with itself.
+    ///
+    /// These four headers came from botocore 1.43.78, which the AWS CLI
+    /// signs with, given the same inputs. To regenerate: sign with
+    /// `botocore.auth.SigV4Auth`, replacing
+    /// `botocore.auth.get_current_datetime` to return the timestamp
+    /// above, and set only `Host` and `x-amz-content-sha256` so
+    /// botocore signs the same three headers this does.
+    #[test]
+    fn the_signature_matches_an_independent_implementation() {
+        let empty = hex(&sha256(b""));
+        let payload = hex(&sha256(b"the payload"));
+        let cases = [
+            (
+                "GET",
+                "/media/abc",
+                empty.as_str(),
+                "9b1732efa9e6e6a6b29b81fb16683f4e646b90ef91c65dc151d2ddf9af066fd0",
+            ),
+            (
+                "PUT",
+                "/media/abc",
+                payload.as_str(),
+                "3aa7e0a2f0e20c90758ef65a7fe3f63434458b84831c956073f6b4ba9a3389f7",
+            ),
+            (
+                "DELETE",
+                "/media/abc",
+                empty.as_str(),
+                "a4d2a1b3cbe19f90f9e45853a358e9423af40f7bf236c7bc66c3ccca6647e4fa",
+            ),
+            (
+                "GET",
+                "/media/noombat/deadbeef",
+                empty.as_str(),
+                "e12fa510f339f9740aed0248df32a904f3364be7a357102cf46917844e8a7682",
+            ),
+        ];
+
+        for (method, path, payload_hash, expected) in cases {
+            let header = sign_v4(
+                method,
+                path,
+                "s3.example.invalid",
+                payload_hash,
+                reference_time(),
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            );
+            assert_eq!(
+                header,
+                format!(
+                    "AWS4-HMAC-SHA256 Credential=AKID/20150830/us-east-1/s3/aws4_request, \
+                     SignedHeaders=host;x-amz-content-sha256;x-amz-date, Signature={expected}"
+                ),
+                "{method} {path} disagrees with botocore"
+            );
+        }
+    }
+
+    /// The signature must change when any signed input changes, which
+    /// catches a signer that drops one the vectors above do not vary.
+    #[test]
+    fn the_signature_depends_on_every_signed_input() {
+        let at = reference_time();
+        let base = || {
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "s3.example.invalid",
+                "payloadhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            )
+        };
+        let reference = base();
+        assert_eq!(reference, base(), "signing is not deterministic");
+
+        let variants = [
+            sign_v4(
+                "PUT",
+                "/media/abc",
+                "s3.example.invalid",
+                "payloadhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/xyz",
+                "s3.example.invalid",
+                "payloadhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "other.invalid",
+                "payloadhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "s3.example.invalid",
+                "otherhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "s3.example.invalid",
+                "payloadhash",
+                at + chrono::Duration::seconds(1),
+                "us-east-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "s3.example.invalid",
+                "payloadhash",
+                at,
+                "eu-west-1",
+                "s3",
+                "AKID",
+                "secret",
+            ),
+            sign_v4(
+                "GET",
+                "/media/abc",
+                "s3.example.invalid",
+                "payloadhash",
+                at,
+                "us-east-1",
+                "s3",
+                "AKID",
+                "other-secret",
+            ),
+        ];
+        for (i, variant) in variants.iter().enumerate() {
+            assert_ne!(
+                &reference, variant,
+                "changing signed input {i} left the signature unchanged"
+            );
+        }
     }
 }
