@@ -534,12 +534,11 @@ async fn post_outbox(
 
     // Link extracted hashtags to the newly created post.
     //
-    // Uses the id the insert returned. This previously parsed a UUID out
-    // of the AP id's last path segment, which is a *different* UUID:
+    // The id the insert returned, not one parsed from the AP id's last
+    // path segment: those are different UUIDs, because
     // `create_local_post` generates its own primary key and the URL
-    // carries one made separately at `:522`. The insert therefore failed
-    // its foreign key to `posts(id)` every time, and the error went into
-    // a discarded `let _`, so no hashtag has ever been linked.
+    // carries one made separately. The wrong one fails the foreign key
+    // to `posts(id)` every time.
     if !hashtags.is_empty() {
         let _ = noombat_identity::hashtags::link_post_hashtags(&state.pool, created.id, &hashtags)
             .await;

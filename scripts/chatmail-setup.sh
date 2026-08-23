@@ -132,13 +132,10 @@ fi
 
 header "DNS: DKIM TXT record"
 
-# The selector the relay generates, not a list of common ones.
-#
-# This used to loop over "dkim", "mail", "default" and "selector1", none
-# of which the entrypoint has ever produced: it generates `noombat`. So
-# the wizard reported "no DKIM record" against a correctly published
-# one, and an operator who trusted it would republish under a selector
-# nothing signs with.
+# The selector the relay generates, not a list of common ones. Checking
+# a list passes on any of them, so it can report "no DKIM record"
+# against a correctly published one and send an operator to republish
+# under a selector nothing signs with.
 #
 # Kept in step with DKIM_SELECTOR in chatmail-config/entrypoint.sh.
 # scripts/check-dkim-selector.sh fails if the two drift.

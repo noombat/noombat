@@ -3,13 +3,9 @@
 # Runs unconditionally on every push and pull request, with no path
 # filter, and that is the whole reason this file exists separately.
 #
-# These three checks used to live in ci.yml, which is gated on the paths
-# that affect the Rust build. `frontend/**` is not among them, so a push
-# confined to stylesheets did not run the contrast gate, which is the
-# gate that audits those stylesheets. The contrast job even carried a
-# comment saying it sat in ci.yml so that it would not be "only checked
-# when someone happens to touch a matching path"; ci.yml being itself
-# path-filtered made that untrue.
+# ci.yml is gated on the paths that affect the Rust build, and
+# `frontend/**` is not among them, so a push confined to stylesheets
+# would not run the gate that audits those stylesheets.
 #
 # WCAG conformance and locale completeness are claims the project makes
 # to its readers, not properties of a subsystem. A claim that is checked

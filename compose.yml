@@ -71,10 +71,9 @@ services:
     image: docker.io/library/redis:8-alpine@sha256:978f0e01593e65eed801f2402944efcd936d43b5027e4908a7897baf88ed6241
     volumes:
       - redis-data:/data
-    # Present so that `docker compose up --wait` actually waits. A service
-    # with no healthcheck is "ready" the moment it is running, which is
-    # not the same thing, and CI now gates on this instead of on the
-    # equivalent `--health-cmd` it used to repeat in ci.yml.
+    # Present so that `docker compose up --wait` actually waits: a
+    # service with no healthcheck is "ready" the moment it is running,
+    # which is not the same thing. CI gates on this.
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -88,11 +87,10 @@ services:
       # Development by default, production selected by compose.prod.yml,
       # which is also where the master key becomes mandatory.
       #
-      # This file used to default to production, which did not start:
-      # production mode requires a key of at least 16 bytes and the
-      # default above is 15, so `docker compose up -d` exited 1 on the
-      # documented quickstart. Lengthening the default would have fixed
-      # the symptom and left a publicly known key running in a mode
+      # Development here, because production mode requires a key of at
+      # least 16 bytes and the development default is 15, so defaulting
+      # to production exits 1 on the documented quickstart. Lengthening
+      # the default would leave a publicly known key running in a mode
       # whose whole purpose is to demand a secret one.
       MEILI_ENV: development
       # Meilisearch reports anonymised usage to its vendor in EVERY

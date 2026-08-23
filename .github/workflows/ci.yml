@@ -301,24 +301,19 @@ jobs:
   # The services come from the compose files rather than a `services:`
   # block, and that is deliberate.
   #
-  # A `services:` block is the one place an image reference can sit where
-  # no updater will ever propose it: Dependabot's docker ecosystem reads
-  # Dockerfiles, docker-compose reads compose files, and github-actions
-  # reads `uses:`. This job used to repeat postgres, redis and meilisearch
-  # from compose.yml, and PR #48 duly bumped Meilisearch there and left
-  # the copy here behind, which would have had CI asserting against one
-  # Meilisearch while every deployment ran another. The two copies had
-  # also already drifted in a quieter way: compose pinned all three by
-  # digest, while this block ran floating `postgres:18-alpine` and
-  # `redis:8-alpine` tags.
+  # A `services:` block is the one place an image reference can sit
+  # where no updater will propose it: Dependabot's docker ecosystem
+  # reads Dockerfiles, docker-compose reads compose files, and
+  # github-actions reads `uses:`. A copy here drifts from compose
+  # silently, leaving CI asserting against one version while every
+  # deployment runs another.
   #
-  # Naming them in one place removes that, and compose.dev.yml already
-  # publishes exactly the three host ports this job needs. Readiness is
-  # gated by `--wait` against the healthchecks in compose.yml, which is
-  # why redis and meilisearch grew one; postgres always had it.
+  # compose.dev.yml publishes exactly the three host ports this job
+  # needs, and `--wait` gates readiness on the healthchecks in
+  # compose.yml.
   #
-  # `scripts/check-image-pins.sh` enforces what is left: the job container
-  # in ci-e2e.yml cannot come from compose, so it is checked instead.
+  # `scripts/check-image-pins.sh` covers what is left: the job container
+  # in ci-e2e.yml cannot come from compose.
   integration:
     name: Integration tests
     runs-on: ubuntu-latest

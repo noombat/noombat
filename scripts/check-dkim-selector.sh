@@ -4,10 +4,9 @@
 #
 # Assert that everything naming the DKIM selector names the same one.
 #
-# Two files in this repository name it, and they used to disagree: the
-# relay entrypoint generates `noombat`, while the setup wizard checked
-# `dkim`, `mail`, `default` and `selector1` and never `noombat`. The
-# deployment guide was a third, telling operators to publish `dkim`.
+# Two files in this repository name it: the relay entrypoint, which
+# generates the selector, and the setup wizard, which checks for the
+# published record. The deployment guide is a third.
 #
 # The guide is deliberately not checked here. A gate must not take a
 # documentation file as an input: prose is reworded and reformatted

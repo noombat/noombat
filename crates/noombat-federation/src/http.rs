@@ -293,7 +293,10 @@ mod tests {
         );
     }
 
-    /// The attack the entry names, in the form it names it.
+    /// Server-side request forgery against the cloud metadata service,
+    /// which is the case this guard was written for: an address literal
+    /// bypasses every name-based check, and `169.254.169.254` hands out
+    /// instance credentials to anything that can reach it.
     #[test]
     fn an_address_literal_is_refused_even_though_it_never_reaches_the_resolver() {
         for target in [
