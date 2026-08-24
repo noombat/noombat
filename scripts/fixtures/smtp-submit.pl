@@ -18,6 +18,8 @@
 #   --body plain       a plaintext message the filter must refuse
 #   --header-from A    put A in the From header instead of the envelope
 #                      sender, so the two disagree
+#   --message FILE     send FILE verbatim as the message, headers and
+#                      all, so a signed message can be replayed
 #
 # Prints one line per step, the last being the reply to the message
 # itself. Exits 0 when the conversation completed, whatever the relay
@@ -37,6 +39,9 @@ my %opt = (
     # The From header, when it must disagree with the envelope sender.
     # Defaults to matching, which is the ordinary case.
     'header-from' => '',
+    # Send an existing message verbatim instead of generating one, for
+    # replaying something the relay itself signed.
+    message => '',
 );
 while (@ARGV) {
     my $flag = shift @ARGV;
@@ -101,8 +106,23 @@ step('ehlo', 'EHLO probe.invalid');
 step('mail', "MAIL FROM:<$opt{from}>");
 step('rcpt', "RCPT TO:<$opt{to}>");
 step('data', 'DATA');
-my $header_from = $opt{'header-from'} || $opt{from};
-print $sock "Subject: $opt{tag}\r\nFrom: <$header_from>\r\nTo: <$opt{to}>\r\n$body\r\n";
+if ($opt{message} ne '') {
+    open(my $fh, '<', $opt{message}) or do { print "cannot read $opt{message}: $!\n"; exit 2 };
+    binmode $fh;
+    local $/;
+    my $raw = <$fh>;
+    close $fh;
+    # Normalise to CRLF and dot-stuff, or a body line beginning with a
+    # dot would end the message early.
+    $raw =~ s/\r\n/\n/g;
+    for my $line (split /\n/, $raw, -1) {
+        $line = ".$line" if $line =~ /^\./;
+        print $sock "$line\r\n";
+    }
+} else {
+    my $header_from = $opt{'header-from'} || $opt{from};
+    print $sock "Subject: $opt{tag}\r\nFrom: <$header_from>\r\nTo: <$opt{to}>\r\n$body\r\n";
+}
 
 print $sock ".\r\n";
 my $verdict = read_reply();

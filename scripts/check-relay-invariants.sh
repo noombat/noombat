@@ -58,6 +58,21 @@ in_relay() { docker exec "$CONTAINER" "$@"; }
 
 # ..... BRING THE RELAY UP .....
 
+# Unbound, which is what the verifier resolves through, answers the RFC
+# 6761 names from built-in local zones and never asks anyone, and it
+# would call the stub's unsigned answer bogus. This turns both off for
+# the test domain only, and forwards to the stub.
+cat > "$WORKDIR/resolver.conf" <<RESOLVER
+server:
+  local-zone: "localhost." nodefault
+  local-zone: "127.in-addr.arpa." nodefault
+  domain-insecure: "$MAIL_DOMAIN"
+  val-permissive-mode: yes
+forward-zone:
+  name: "."
+  forward-addr: 127.0.0.1@5353
+RESOLVER
+
 docker rm -f "$CONTAINER" >/dev/null 2>&1
 # The admin sidecar refuses to start without a secret and s6 restarts it
 # for as long as the container lives, which buries the log this gate
@@ -65,8 +80,10 @@ docker rm -f "$CONTAINER" >/dev/null 2>&1
 if ! docker run -d --name "$CONTAINER" \
     -e MAIL_DOMAIN="$MAIL_DOMAIN" \
     -e CHATMAIL_ADMIN_SECRET="relay-invariants-gate" \
-    -e FILTERMAIL_RATE_PER_MINUTE=6 \
-    -e FILTERMAIL_RATE_BURST=2 \
+    -e FILTERMAIL_RATE_PER_MINUTE=60 \
+    -e FILTERMAIL_RATE_BURST=3 \
+    -e CHATMAIL_DKIM_RESOLVER_CONF=/etc/opendkim-resolver-test.conf \
+    -v "$WORKDIR/resolver.conf:/etc/opendkim-resolver-test.conf:ro" \
     "$IMAGE" >/dev/null; then
     fail "could not start $IMAGE"
     exit 1
@@ -140,13 +157,28 @@ step_of() { awk 'NF > 1 { last = $1 } END { print last }' "$WORKDIR/$1.log"; }
 captured_bytes() { in_relay sh -c 'wc -c < /tmp/captured.eml' | tr -d '[:space:]'; }
 queued_now() { in_relay sh -c 'mailq 2>/dev/null | grep -c "^[A-F0-9]"' | tr -d '[:space:]'; }
 
+# Drives the filter's own ports rather than Postfix's. The submission
+# path needs SASL, which needs an account; the filter's ports are
+# loopback-only inside the container and exercise exactly the logic
+# under test.
+filter() {
+    in_relay perl /tmp/smtp-submit.pl --host 127.0.0.1 "$@" 2>&1 | tail -1
+}
+
+
 # ..... ONE: THE ENCRYPTION-ONLY INVARIANT .....
 
 printf '\n== the encryption-only invariant ==\n'
 
-submit encrypted accepted
-verdict="$(verdict_of accepted)"
-if [ "${verdict:0:1}" = "2" ]; then
+# On the submission path, because the incoming one now refuses
+# unsigned mail and this message has not been signed yet.
+in_relay sh -c 'postsuper -d ALL >/dev/null 2>&1
+                : > /tmp/captured.eml
+                chmod 666 /tmp/captured.eml'
+verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag ACCEPTED)"
+sleep 4
+if [[ "$verdict" == *" 250 "* ]]; then
     say "an encrypted message is accepted: $verdict"
 else
     fail "an encrypted message was not accepted: ${verdict:-no reply at all}"
@@ -240,10 +272,11 @@ if [ -z "$stopped" ]; then
     fail "the signer was told to stop and is still accepting on 8891"
 fi
 
-submit encrypted unsigned
-verdict="$(verdict_of unsigned)"
-if [ "${verdict:0:1}" = "4" ]; then
-    say "with the signer stopped, mail is deferred at the $(step_of unsigned) step: $verdict"
+in_relay sh -c ': > /tmp/captured.eml; chmod 666 /tmp/captured.eml'
+verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag UNSIGNED-OUT)"
+if [ "${verdict:0:1}" = "4" ] || [[ "$verdict" == *" 4"[0-9][0-9]" "* ]]; then
+    say "with the signer stopped, mail is deferred: $verdict"
 else
     fail "with the signer stopped the relay answered ${verdict:-nothing}, not a 4xx"
 fi
@@ -263,25 +296,19 @@ sleep 5
 # Restart and re-test, so the deferral above is attributable to the
 # signer being stopped rather than to anything else that may have gone
 # wrong by then.
-submit encrypted resumed
-verdict="$(verdict_of resumed)"
-if [ "${verdict:0:1}" = "2" ]; then
+in_relay sh -c ': > /tmp/captured.eml; chmod 666 /tmp/captured.eml'
+verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag RESUMED)"
+if [[ "$verdict" == *" 250 "* ]]; then
     say "with the signer back, mail flows again: $verdict"
 else
     fail "the relay did not recover after the signer restarted: ${verdict:-no reply}"
 fi
 
-# ..... THREE: THE SUBMISSION AND PEER CHECKS .....
+# ..... THREE: THE SUBMISSION CHECKS .....
 
-printf '\n== the per-direction checks ==\n'
-
-# Driven at the filter's own ports rather than through Postfix. The
-# submission path needs SASL, which needs an account; the filter's ports
-# are loopback-only inside the container and exercise exactly the logic
-# under test.
-filter() {
-    in_relay perl /tmp/smtp-submit.pl --host 127.0.0.1 "$@" 2>&1 | tail -1
-}
+sleep 5   # the sections above spend from the same rate-limit bucket
+printf '\n== the submission checks ==\n'
 
 verdict="$(filter --port 10026 --body encrypted --tag OUT-MISMATCH \
     --from user@$MAIL_DOMAIN --header-from other@$MAIL_DOMAIN)"
@@ -291,41 +318,113 @@ else
     fail "a mismatched From was not refused on submission: ${verdict:-nothing}"
 fi
 
+# Burst is 3, so the fourth in a row must be refused, and at MAIL FROM
+# rather than after the body.
+#
+# The whole burst runs inside one `docker exec`, because one exec per
+# message costs about a second and the bucket refills once a second: the
+# limiter would keep pace with the test and never fire. It also uses a
+# sender of its own, since the bucket is keyed on the envelope sender
+# and the sections above spend from `user@`.
+burst="$(in_relay sh -c '
+    for i in 1 2 3 4 5 6; do
+        printf "%d " "$i"
+        perl /tmp/smtp-submit.pl --host 127.0.0.1 --port 10026 \
+            --from ratelimit@'"$MAIL_DOMAIN"' --to dest@'"$MAIL_DOMAIN"' \
+            --body encrypted --tag "RATE$i" 2>&1 | tail -1
+    done')"
+limited="$(echo "$burst" | awk '/ 450 / { print $1; exit }')"
+if [[ -n "$limited" ]]; then
+    step_name="$(echo "$burst" | awk '/ 450 / { print $2; exit }')"
+    say "the rate limit refuses submission $limited, at the $step_name step"
+else
+    fail "six submissions in a row were all accepted with a burst of 3"
+    printf '%s\n' "$burst" | sed 's/^/      /' >&2
+fi
+
+# ..... FOUR: INBOUND DKIM VERIFICATION .....
+
+printf '\n== inbound DKIM verification ==\n'
+
+# A relay with no domain has no zone to publish a key in, so the stub
+# serves the relay's own record and the message it signed is replayed
+# as if a peer had sent it. That is a real signature over a real body
+# checked against the real key, with only the DNS standing in.
+docker cp scripts/fixtures/dns-stub.pl "$CONTAINER:/tmp/dns-stub.pl" >/dev/null
+in_relay sh -c '
+    value=$(perl -0777 -ne "my @q = /\"([^\"]*)\"/g; print join(q{}, @q)" \
+        /etc/opendkim/keys/'"$MAIL_DOMAIN"'/'"$SELECTOR"'.txt)
+    nohup perl /tmp/dns-stub.pl \
+        --record "'"$SELECTOR"'._domainkey.'"$MAIL_DOMAIN"'=$value" \
+        --bind 127.0.0.1 --port 5353 >/tmp/dns-stub.log 2>&1 &
+' >/dev/null 2>&1
+sleep 2
+
+# The stub speaks UDP, so a TCP connect is no test of it.
+if ! in_relay grep -q "listening" /tmp/dns-stub.log 2>/dev/null; then
+    fail "the DNS stub did not start, so nothing below tests verification"
+fi
+
+# A fresh signed message: submitted on the outgoing port so the relay
+# signs it, then replayed on the incoming one as if a peer had sent it.
+sleep 6   # let the rate limit above recover
+in_relay sh -c 'postsuper -d ALL >/dev/null 2>&1
+                : > /tmp/captured.eml
+                chmod 666 /tmp/captured.eml'
+filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag TOSIGN >/dev/null
+sleep 4
+if [ "$(captured_bytes)" -eq 0 ]; then
+    fail "no signed message was captured to replay"
+fi
+in_relay sh -c 'sed "/^Return-Path:/d" /tmp/captured.eml > /tmp/replay.eml
+                sed "s/aGVsbG8/aGVsbG9/" /tmp/replay.eml > /tmp/corrupt.eml'
+
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --message /tmp/replay.eml)"
+if [[ "$verdict" == *" 250 "* ]]; then
+    say "a peer message whose signature verifies is accepted"
+else
+    fail "a validly signed message was refused: ${verdict:-nothing}"
+fi
+
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --message /tmp/corrupt.eml)"
+if [[ "$verdict" == *" 550 "* ]]; then
+    say "one changed byte in the body makes it refuse: $verdict"
+else
+    fail "a corrupted body was not refused: ${verdict:-nothing}"
+fi
+
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag UNSIGNED)"
+if [[ "$verdict" == *" 550 "* ]]; then
+    say "an unsigned peer message is refused: $verdict"
+else
+    fail "an unsigned peer message was accepted: ${verdict:-nothing}"
+fi
+
+# Without this the three above would pass just as well against a
+# verifier refusing everything for an unrelated reason.
+if in_relay grep -q "answered" /tmp/dns-stub.log; then
+    say "and the key came from the stub, so the signature was really checked"
+else
+    fail "the stub was never queried; the verifier is not resolving through it"
+fi
+
+# The strip, which needs a message that also passes verification: a
+# valid signature with an envelope sender that disagrees with From.
 in_relay sh -c ': > /tmp/captured.eml; chmod 666 /tmp/captured.eml'
-verdict="$(filter --port 10027 --body encrypted --tag IN-STRIP \
-    --from peer@peer.invalid --header-from other@peer.invalid)"
+verdict="$(filter --port 25 --from "other@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --message /tmp/replay.eml)"
 sleep 4
 if [[ "$verdict" == *" 250 "* ]] \
     && in_relay grep -q "^Return-Path: <MAILER-DAEMON>" /tmp/captured.eml; then
-    say "the same mismatch from a peer is kept, with the envelope sender stripped"
+    say "a peer message whose From disagrees is kept, with the sender stripped"
 else
     fail "an incoming mismatch was not stripped: ${verdict:-nothing}"
 fi
 
-verdict="$(filter --port 10027 --body encrypted --tag IN-UNALIGNED \
-    --from peer@peer.invalid --header-from peer@elsewhere.invalid)"
-if [[ "$verdict" == *" 250 "* ]]; then
-    say "an unsigned peer message is left to OpenDKIM rather than refused here"
-else
-    fail "an unsigned peer message was refused by the filter: ${verdict:-nothing}"
-fi
-
-# Burst is 2 for this container, so the third in a row must be refused,
-# and at MAIL FROM rather than after the body.
-limited=""
-for i in 1 2 3 4; do
-    verdict="$(filter --port 10026 --body encrypted --tag "RATE$i")"
-    if [[ "$verdict" == *" 450 "* ]]; then
-        limited="$i"
-        break
-    fi
-done
-if [[ -n "$limited" ]]; then
-    step_name="$(echo "$verdict" | awk '{print $1}')"
-    say "the rate limit refuses submission $limited, at the $step_name step"
-else
-    fail "four submissions in a row were all accepted with a burst of 2"
-fi
 
 # ..... VERDICT .....
 

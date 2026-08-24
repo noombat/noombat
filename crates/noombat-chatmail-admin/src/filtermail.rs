@@ -46,8 +46,15 @@ use std::time::{Duration, Instant};
 /// makes the same distinction.
 const DEFAULT_OUTGOING_LISTEN: &str = "127.0.0.1:10026";
 const DEFAULT_INCOMING_LISTEN: &str = "127.0.0.1:10027";
-/// The re-injection smtpd this filter hands accepted mail to.
-const DEFAULT_FORWARD: &str = "127.0.0.1:10025";
+/// The re-injection smtpd each direction hands accepted mail to.
+///
+/// Two, so each can carry a different milter: the outgoing listener
+/// signs, the incoming one verifies. OpenDKIM chooses between signing
+/// and verifying from the client address, and both see 127.0.0.1
+/// because this filter is what connects, so the listener has to carry
+/// the distinction instead.
+const DEFAULT_FORWARD_OUTGOING: &str = "127.0.0.1:10025";
+const DEFAULT_FORWARD_INCOMING: &str = "127.0.0.1:10028";
 
 /// Longest single SMTP line accepted. RFC 5321 caps commands at 1000
 /// octets; message lines are allowed to be longer in practice, and a
@@ -171,22 +178,29 @@ fn main() -> ExitCode {
         .unwrap_or_else(|_| DEFAULT_OUTGOING_LISTEN.to_string());
     let incoming = std::env::var("FILTERMAIL_INCOMING_LISTEN")
         .unwrap_or_else(|_| DEFAULT_INCOMING_LISTEN.to_string());
-    let forward =
-        std::env::var("FILTERMAIL_FORWARD").unwrap_or_else(|_| DEFAULT_FORWARD.to_string());
+    let forward_outgoing = std::env::var("FILTERMAIL_FORWARD")
+        .unwrap_or_else(|_| DEFAULT_FORWARD_OUTGOING.to_string());
+    let forward_incoming = std::env::var("FILTERMAIL_FORWARD_INCOMING")
+        .unwrap_or_else(|_| DEFAULT_FORWARD_INCOMING.to_string());
 
     let limiter = Arc::new(RateLimiter::new(
         env_number("FILTERMAIL_RATE_PER_MINUTE", DEFAULT_RATE_PER_MINUTE),
         env_number("FILTERMAIL_RATE_BURST", DEFAULT_RATE_BURST),
     ));
-    let forward = Arc::new(forward);
     let live = Arc::new(AtomicUsize::new(0));
 
     let mut listeners = Vec::new();
-    for (mode, addr) in [(Mode::Outgoing, outgoing), (Mode::Incoming, incoming)] {
+    for (mode, addr, forward) in [
+        (Mode::Outgoing, outgoing, forward_outgoing),
+        (Mode::Incoming, incoming, forward_incoming),
+    ] {
         match TcpListener::bind(&addr) {
             Ok(listener) => {
-                eprintln!("filtermail: {} on {addr}", mode.label());
-                listeners.push((mode, listener));
+                eprintln!(
+                    "filtermail: {} on {addr}, re-injecting to {forward}",
+                    mode.label()
+                );
+                listeners.push((mode, listener, Arc::new(forward)));
             }
             Err(e) => {
                 eprintln!("filtermail: cannot bind {addr} for {}: {e}", mode.label());
@@ -194,11 +208,9 @@ fn main() -> ExitCode {
             }
         }
     }
-    eprintln!("filtermail: re-injecting to {forward}");
 
     let mut threads = Vec::new();
-    for (mode, listener) in listeners {
-        let forward = Arc::clone(&forward);
+    for (mode, listener, forward) in listeners {
         let limiter = Arc::clone(&limiter);
         let live = Arc::clone(&live);
         threads.push(thread::spawn(move || {

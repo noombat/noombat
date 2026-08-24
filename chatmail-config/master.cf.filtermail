@@ -12,7 +12,12 @@
 # per direction because the checks differ:
 #
 #   user  -- smtpd :465 -- filtermail :10026 -- smtpd :10025 -- queue
-#   peer  -- smtpd :25  -- filtermail :10027 -- smtpd :10025 -- queue
+#   peer  -- smtpd :25  -- filtermail :10027 -- smtpd :10028 -- queue
+#
+# Two re-injection listeners, not one, so each can carry a different
+# milter: the outgoing one signs, the incoming one verifies. OpenDKIM
+# decides between the two from the client address, which is 127.0.0.1
+# on both, so the listener has to make the distinction instead.
 #
 # Postfix hands the message to the filter during the SMTP conversation
 # and takes its end-of-DATA answer as the answer to the client, so a
@@ -49,6 +54,21 @@
 127.0.0.1:10025 inet  n  -       n       -       -       smtpd
   -o syslog_name=postfix/reinject
   -o smtpd_proxy_filter=
+  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o smtpd_helo_restrictions=
+  -o smtpd_client_restrictions=
+  -o smtpd_sender_restrictions=
+  -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o mynetworks=127.0.0.0/8
+  -o smtpd_authorized_xforward_hosts=127.0.0.0/8
+
+# The incoming re-injection listener. Identical to the one above except
+# for the milter: this one verifies the peer's signature and refuses
+# what does not check out, and holds no key of its own.
+127.0.0.1:10028 inet  n  -       n       -       -       smtpd
+  -o syslog_name=postfix/reinject-in
+  -o smtpd_proxy_filter=
+  -o smtpd_milters=inet:127.0.0.1:8892
   -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
   -o smtpd_helo_restrictions=
   -o smtpd_client_restrictions=

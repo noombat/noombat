@@ -249,6 +249,24 @@ if [ ! -f "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private" ]; then
     echo "[entrypoint] ..... end DKIM DNS record ....."
 fi
 
+# The verifier treats nothing as internal. Left to its default it takes
+# the loopback address as internal, which is every connection it will
+# ever see, and it would verify nothing at all. TEST-NET-1, because no
+# such address reaches this host.
+printf '# Deliberately empty of real hosts: see opendkim-verify.conf.\n192.0.2.1\n' \
+    > "${DKIM_DIR}/NoInternalHosts"
+
+# The verifier resolves through Unbound, not through /etc/resolv.conf,
+# and Unbound answers the RFC 6761 names from built-in local zones
+# without asking anyone. A deployment that needs its own resolver, or a
+# test that needs to serve a key for a name Unbound would otherwise
+# shortcut, names an Unbound configuration file here.
+if [ -n "${CHATMAIL_DKIM_RESOLVER_CONF:-}" ] && [ -f "${CHATMAIL_DKIM_RESOLVER_CONF}" ]; then
+    printf '\nResolverConfiguration   %s\n' "${CHATMAIL_DKIM_RESOLVER_CONF}" \
+        >> /etc/opendkim-verify.conf
+    echo "[entrypoint] DKIM verification resolves via ${CHATMAIL_DKIM_RESOLVER_CONF}"
+fi
+
 chown -R opendkim:opendkim "${DKIM_DIR}" /run/opendkim
 chmod 600 "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
 
