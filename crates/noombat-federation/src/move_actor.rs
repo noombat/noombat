@@ -82,8 +82,33 @@ pub async fn list_aliases(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> 
     Ok(aliases)
 }
 
+/// Revoke every outstanding application grant held by a migrating actor,
+/// returning how many. A grant is bound to this instance's domain and is
+/// never re-pointed, so leaving it live serves the applicant's CV from an
+/// instance they have left. `account_migrated` rather than
+/// `applicant_withdrew`: the same 410 to an employer, a different
+/// sentence to the applicant.
+pub async fn revoke_grants_for_migration(pool: &PgPool, source_actor_id: Uuid) -> Result<u64> {
+    let result = sqlx::query(
+        "UPDATE application_grants g \
+         SET state = 'revoked', revoked_at = now(), revoked_reason = 'account_migrated' \
+         FROM applications a \
+         WHERE g.application_id = a.id \
+           AND a.applicant_id = $1 \
+           AND g.state = 'active'",
+    )
+    .bind(source_actor_id)
+    .execute(pool)
+    .await?;
+
+    Ok(result.rows_affected())
+}
+
 /// Initiate an outbound `Move`: set the local actor's `moved_to`
 /// column and broadcast the `Move` activity to all followers.
+///
+/// Outstanding application grants are revoked first. See
+/// [`revoke_grants_for_migration`] for why they are not carried over.
 ///
 /// # Preconditions
 ///
@@ -98,6 +123,17 @@ pub async fn initiate_move(
     source_ap_id: &str,
     target_ap_id: &str,
 ) -> Result<()> {
+    // Before `moved_to` is set, so a failure stops the move rather than
+    // leaving live grants served from an instance the actor has left.
+    let revoked = revoke_grants_for_migration(pool, source_actor_id).await?;
+    if revoked > 0 {
+        tracing::info!(
+            actor_id = %source_actor_id,
+            revoked,
+            "revoked application grants on migration"
+        );
+    }
+
     // Record the move locally.
     sqlx::query("UPDATE actors SET moved_to = $1 WHERE id = $2")
         .bind(target_ap_id)
@@ -311,4 +347,149 @@ pub async fn handle_inbound_move(
 /// the shared implementation used across the federation crate.
 async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
     crate::signed_fetch::find_local_signing_actor(pool).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn insert_actor(pool: &PgPool, username: &str) -> Uuid {
+        sqlx::query_scalar::<_, Uuid>(
+            r#"INSERT INTO actors
+                   (actor_type, ap_id, username, domain, public_key_pem, is_local)
+               VALUES ('individual', $1, $2, 'noombat.example', 'KEY', TRUE)
+               RETURNING id"#,
+        )
+        .bind(format!("https://noombat.example/users/{username}"))
+        .bind(username)
+        .fetch_one(pool)
+        .await
+        .expect("actor fixture inserted")
+    }
+
+    /// An applicant, an application, and one active grant.
+    async fn insert_grant(pool: &PgPool, applicant: Uuid, suffix: &str) -> Uuid {
+        let recruiter = insert_actor(pool, &format!("recruiter{suffix}")).await;
+        let listing = sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO job_listings (actor_id, ap_id, title, description_md, description_html) \
+             VALUES ($1, $2, 'Engineer', 'md', '<p>md</p>') RETURNING id",
+        )
+        .bind(recruiter)
+        .bind(format!("https://noombat.example/jobs/{suffix}"))
+        .fetch_one(pool)
+        .await
+        .expect("listing fixture inserted");
+
+        let application = sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO applications \
+                 (applicant_id, job_listing_id, listing_title, listing_company, ap_id) \
+             VALUES ($1, $2, 'Engineer', 'Acme', $3) RETURNING id",
+        )
+        .bind(applicant)
+        .bind(listing)
+        .bind(format!("https://noombat.example/applications/{suffix}"))
+        .fetch_one(pool)
+        .await
+        .expect("application fixture inserted");
+
+        sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO application_grants \
+                 (application_id, token_hash, audience_ap_id, audience_origin, \
+                  expires_at, document_uses_remaining, cv_uses_remaining) \
+             VALUES ($1, $2, 'https://acme.example/actor', 'https://acme.example', \
+                     now() + interval '7 days', 5, 5) RETURNING id",
+        )
+        .bind(application)
+        .bind(format!("hash-{suffix}"))
+        .fetch_one(pool)
+        .await
+        .expect("grant fixture inserted")
+    }
+
+    async fn grant_state(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
+        sqlx::query_as("SELECT state, revoked_reason FROM application_grants WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .expect("grant readable")
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn revoking_marks_active_grants_migrated(pool: PgPool) {
+        let applicant = insert_actor(&pool, "alice").await;
+        let grant = insert_grant(&pool, applicant, "a").await;
+
+        let revoked = revoke_grants_for_migration(&pool, applicant)
+            .await
+            .expect("revocation ran");
+
+        assert_eq!(revoked, 1);
+        let (state, reason) = grant_state(&pool, grant).await;
+        assert_eq!(state, "revoked");
+        // Not `applicant_withdrew`: the applicant withdrew nothing.
+        assert_eq!(reason.as_deref(), Some("account_migrated"));
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn revoking_leaves_another_applicants_grants_alone(pool: PgPool) {
+        let alice = insert_actor(&pool, "alice").await;
+        let bob = insert_actor(&pool, "bob").await;
+        let alice_grant = insert_grant(&pool, alice, "a").await;
+        let bob_grant = insert_grant(&pool, bob, "b").await;
+
+        let revoked = revoke_grants_for_migration(&pool, alice)
+            .await
+            .expect("revocation ran");
+
+        assert_eq!(revoked, 1, "only alice's grant should be revoked");
+        assert_eq!(grant_state(&pool, alice_grant).await.0, "revoked");
+        assert_eq!(grant_state(&pool, bob_grant).await.0, "active");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn an_already_revoked_grant_keeps_its_first_reason(pool: PgPool) {
+        // A migration must not rewrite an earlier revocation's reason.
+        let applicant = insert_actor(&pool, "alice").await;
+        let grant = insert_grant(&pool, applicant, "a").await;
+        sqlx::query(
+            "UPDATE application_grants SET state = 'revoked', revoked_at = now(), \
+             revoked_reason = 'applicant_withdrew' WHERE id = $1",
+        )
+        .bind(grant)
+        .execute(&pool)
+        .await
+        .expect("pre-revoked");
+
+        let revoked = revoke_grants_for_migration(&pool, applicant)
+            .await
+            .expect("revocation ran");
+
+        assert_eq!(revoked, 0);
+        assert_eq!(
+            grant_state(&pool, grant).await.1.as_deref(),
+            Some("applicant_withdrew")
+        );
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn initiating_a_move_revokes_the_grants(pool: PgPool) {
+        // The wiring, not the query.
+        let applicant = insert_actor(&pool, "alice").await;
+        let grant = insert_grant(&pool, applicant, "a").await;
+
+        initiate_move(
+            &pool,
+            applicant,
+            "https://noombat.example/users/alice",
+            "https://elsewhere.example/users/alice",
+        )
+        .await
+        .expect("move initiated");
+
+        assert_eq!(grant_state(&pool, grant).await.0, "revoked");
+    }
 }
