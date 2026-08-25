@@ -75,14 +75,14 @@ pub fn build(params: &NodeInfoParams) -> Value {
         // `jobListingsEnabled` is a capability: it tells a peer this
         // software supports job listings, which is what discovery needs.
         //
-        // The count that used to sit here, `noombat:activeJobListings`,
-        // was not a capability. This endpoint is unauthenticated and
-        // polled on a schedule by Fediverse observatories, so publishing
-        // it made a machine-readable hiring-volume time series out of an
-        // instance, and on a single-company instance the inference is
-        // direct. NodeInfo 2.1 treats `metadata` as free-form and tells
-        // clients not to rely on specific keys, so nothing federates
-        // worse without it.
+        // A count such as `noombat:activeJobListings` is not a
+        // capability, and must not join it. This endpoint is
+        // unauthenticated and polled on a schedule by Fediverse
+        // observatories, so publishing one makes a machine-readable
+        // hiring-volume time series out of an instance, and on a
+        // single-company instance the inference is direct. NodeInfo 2.1
+        // treats `metadata` as free-form and tells clients not to rely on
+        // specific keys, so nothing federates worse for its absence.
         "noombat:jobListingsEnabled": true,
         "noombat:chatmailAvailable": params.features.chatmail_available,
         "noombat:groupsEnabled": params.features.groups_enabled,

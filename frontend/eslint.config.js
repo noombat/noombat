@@ -23,10 +23,10 @@ export default tseslint.config(
   // Both spreads below are load-bearing. A flat-config object has ONE
   // `rules` key and ONE `languageOptions` key, so writing either of them
   // after `...solid` replaces the plugin's version outright instead of
-  // adding to it. That is what this block used to do, and the result was
-  // that eslint-plugin-solid was installed, registered, and enforcing
-  // nothing: `eslint --print-config` reported 88 active rules and zero
-  // beginning with `solid/`. Nothing failed, because a rule that never
+  // adding to it. Get that wrong and eslint-plugin-solid is installed,
+  // registered, and enforcing nothing: `eslint --print-config` then
+  // reports 88 active rules and zero beginning with `solid/`. Nothing
+  // fails, because a rule that never
   // runs never complains. If you add another key here, spread the
   // plugin's value into it too, and check with:
   //

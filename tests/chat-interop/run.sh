@@ -279,7 +279,7 @@ else
 fi
 
 # 12. Provisioning against the relay, which is the integration this suite
-# is named for and the one thing it never used to do.
+# is named for.
 #
 # It reaches the relay over IMAP with implicit TLS, so it passes only if
 # the certificate the relay serves verifies: the chatmail container signs

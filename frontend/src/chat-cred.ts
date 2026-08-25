@@ -21,7 +21,7 @@ document.addEventListener("DOMContentLoaded", () => {
   //
   // Attach click handlers to all `.cred-copy` buttons. Each button
   // carries the value to copy in its `data-value` attribute.
-  // Previously an inline <script>; moved here for CSP compliance
+  // Kept out of an inline <script> for CSP compliance
   // (script-src 'self' without 'unsafe-inline').
   document.querySelectorAll<HTMLButtonElement>(".cred-copy").forEach((btn) => {
     btn.addEventListener("click", () => {

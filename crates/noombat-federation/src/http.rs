@@ -51,7 +51,7 @@ use tracing::warn;
 /// The same bound as [`crate::integrity_proof::MAX_PROOF_DOCUMENT_BYTES`],
 /// and deliberately so: a fetched document goes on to be canonicalised for
 /// proof verification, and a limit here that exceeded that one would just
-/// move the refusal later, after the work had been done.
+/// move the refusal later, once the canonicalisation work is already done.
 pub const MAX_FETCH_BYTES: usize = crate::integrity_proof::MAX_PROOF_DOCUMENT_BYTES;
 
 /// Redirect hops a federation fetch may follow.

@@ -523,10 +523,9 @@ mod tests {
 
     /// Backslash and quote are escaped. A hash is not.
     ///
-    /// This assertion used to require `C#` to become `C\#`, which is
-    /// what the function did and what typst does not want: `\#` is not
-    /// a string escape, so the compiler keeps both characters and the
-    /// PDF read `C\#`. Confirmed against typst 0.15, where
+    /// The tempting assertion, that `C#` becomes `C\#`, is wrong: `\#`
+    /// is not a string escape, so the compiler keeps both characters
+    /// and the PDF reads `C\#`. Confirmed against typst 0.15, where
     /// `assert.eq("a\#b".len(), 4)` passes and `"C\#".len()` is 3.
     #[test]
     fn escape_special_chars() {

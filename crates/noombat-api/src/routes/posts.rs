@@ -120,10 +120,10 @@ async fn get_post(
 
         // Fill these in only when they are missing.
         //
-        // Both used to be overwritten unconditionally: `@context` because
-        // an inner object nested in a Create may omit it, and `id` to
-        // guard against a stale stored value. Neither can be rewritten
-        // now. Locally published objects carry an FEP-8b32 proof computed
+        // There are reasons to want both written unconditionally:
+        // `@context` because an inner object nested in a Create may omit
+        // it, and `id` to guard against a stale stored value. Neither may
+        // be. Locally published objects carry an FEP-8b32 proof computed
         // over the document including these properties, so replacing them
         // invalidates the proof of every object we serve, which is the
         // one redistribution path that exists today.
@@ -184,9 +184,10 @@ async fn get_post(
         // MarkupOptions::inject_heading_ids).
         //
         // Remote posts without a Markdown source yield no headings, and
-        // so no table of contents. That is a correction, not a
-        // regression: this used to run over a copy of the *HTML*, which
-        // produced entries whose `#slug` anchors matched nothing.
+        // so no table of contents. Deriving them from the *HTML* instead
+        // produces entries whose `#slug` anchors match nothing, so an
+        // empty table of contents is the correct answer rather than a
+        // gap to fill.
         let headings = row
             .content_md
             .as_deref()

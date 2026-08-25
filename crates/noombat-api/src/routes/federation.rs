@@ -354,7 +354,7 @@ async fn verify_and_process_inbound(
     // typed view from the `Value` would be cheaper, but `Value` keeps the
     // last of a duplicated key while the derived `Deserialize` rejects
     // the duplicate outright. Going through `Value` would therefore
-    // silently accept documents this route used to refuse, and a parser
+    // silently accept documents this route refuses, and a parser
     // differential between the signature check, the proof check and the
     // typed view is the exact failure FEP-8b32 exists to prevent. The
     // second parse is bounded by the body limit on this route.

@@ -217,11 +217,11 @@ fn safe_url(url: &str) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Everything a hostile author might reach for, in the four places
-    /// that were previously reachable. Each was confirmed to execute
-    /// `#panic()` against typst 0.15 under the old emitter.
+    /// Everything a hostile author might reach for, at the four points
+    /// where an emitter can let author text out of a string literal.
+    /// Each executes `#panic()` against typst 0.15 if it escapes.
     const INJECTIONS: &[&str] = &[
-        // The four vectors of the old emitter.
+        // The four escape vectors.
         "]\n#panic(\"NB_EXEC_MARKER\")\n#let ignored = [",
         "Formula: $#panic(\"NB_EXEC_MARKER\")$",
         "[text](https://x\"+panic(\"NB_EXEC_MARKER\")+\"y)",

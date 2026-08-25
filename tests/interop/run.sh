@@ -533,9 +533,9 @@ else
         # 14. Create { Note }, the other direction.
         #
         # Everything above exercises Noombat's *outbound* path or its
-        # handling of Follow and Accept. Nothing GoToSocial authored had
-        # ever reached Noombat's ingestion, which is where three separate
-        # defects were sitting until 2026-08-18. This is the only
+        # handling of Follow and Accept. Without this, nothing GoToSocial
+        # authored reaches Noombat's ingestion at all, and that path has
+        # proven to hide several defects at once. This is the only
         # assertion in the suite that drives it.
         #
         # It works because ${NOOMBAT_ACTOR} follows ${GTS_ACTOR} above, so

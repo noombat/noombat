@@ -530,10 +530,10 @@ pub(crate) struct RemoteContent {
     /// The peer's Markdown source from the Mastodon-convention `source`
     /// property, when it declared `text/markdown`.
     ///
-    /// `None` when the peer sent no Markdown. It previously fell back to
-    /// a copy of `content_html`, i.e. it stored HTML in a column named
-    /// for Markdown, which is why unsanitised input reached two columns
-    /// from one binding. `None` says what is actually true.
+    /// `None` when the peer sent no Markdown. Falling back to a copy of
+    /// `content_html` would store HTML in a column named for Markdown,
+    /// and that is how unsanitised input reaches two columns from one
+    /// binding. `None` says what is actually true.
     pub content_md: Option<String>,
     /// The [`noombat_markup::sanitise::STRICT_VERSION`] that produced
     /// `content_html`, persisted so the value can be re-derived when the

@@ -170,11 +170,11 @@ done <"$WORK/workflow.tsv"
 
 # ..... Rule 2: pinning .....
 #
-# Applied to compose files as well as workflows. It used to cover only
-# workflows, on the reasoning that compose was the source of truth and
-# therefore already pinned. That was not true: `gotosocial:latest` and
-# `caddy:2-alpine` sat unpinned in tests/interop/compose.yml the whole
-# time, and the check reported a clean tree.
+# Applied to compose files as well as workflows. Covering workflows
+# alone, on the reasoning that compose is the source of truth and
+# therefore already pinned, does not hold: `gotosocial:latest` and
+# `caddy:2-alpine` can sit unpinned in tests/interop/compose.yml while
+# the check reports a clean tree.
 #
 # Pinning compose images matters for a second reason beyond
 # reproducibility. Dependabot's docker-compose ecosystem proposes digest

@@ -310,11 +310,11 @@ mod tests {
 
     /// Each quota gets its own limiter.
     ///
-    /// The point of the registry. Before it, one instance-wide quota
-    /// answered for every caller, so a route asking for 20 per hour got
-    /// whatever the per-IP limiter had been built with. On an instance
-    /// with no Redis configured that was not a degraded mode, it was the
-    /// only behaviour there was.
+    /// The point of the registry. Without it a single instance-wide
+    /// quota answers for every caller, so a route asking for 20 per hour
+    /// gets whatever the per-IP limiter was built with. On an instance
+    /// with no Redis configured that is not a degraded mode, it is the
+    /// only behaviour there is.
     #[test]
     fn each_quota_is_enforced_separately() {
         let limiter = FallbackRateLimiter::new();

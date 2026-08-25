@@ -115,7 +115,7 @@ pub fn seal(key: &EnvelopeKey, plaintext: &str) -> Result<String> {
     Ok(B64.encode(&blob))
 }
 
-/// Decrypt a Base64 blob previously produced by [`seal`].
+/// Decrypt a Base64 blob produced by [`seal`].
 ///
 /// If decryption fails (e.g. the value is pre-existing plaintext
 /// that was stored before envelope encryption was enabled), the raw

@@ -45,9 +45,9 @@ describe("parseAutocryptHeader", () => {
   });
 
   it("rejects a header carrying an unknown critical attribute", () => {
-    // Level 1 §2.1: an attribute whose name does not begin with an
-    // underscore is critical, and an unrecognised critical attribute
-    // invalidates the entire header.
+    // Autocrypt Level 1 §2.1: an attribute whose name does not begin
+    // with an underscore is critical, and an unrecognised critical
+    // attribute invalidates the entire header.
     expect(parseAutocryptHeader(`addr=${ALICE}; unknown=x; keydata=AQIDBA==`)).toBeNull();
   });
 

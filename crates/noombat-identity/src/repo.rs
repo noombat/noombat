@@ -620,8 +620,8 @@ pub struct RemotePost {
     /// Primarily relevant for Articles.
     pub featured_image_url: Option<String>,
     /// Original Markdown source from the Mastodon-convention `source`
-    /// property. `None` when the peer sent none. It previously held a
-    /// copy of `content_html`, i.e. HTML in a column named for Markdown.
+    /// property. `None` when the peer sent none, and never a copy of
+    /// `content_html`: that is HTML in a column named for Markdown.
     pub content_md: Option<String>,
     /// Sanitised HTML. Produced only by
     /// `noombat_federation::inbox::extract_remote_content`, never taken

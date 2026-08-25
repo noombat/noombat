@@ -342,19 +342,19 @@ jobs:
   # Runs the harness the repository documents, rather than a second
   # topology maintained only here.
   #
-  # This job used to build the server natively, reach services on
-  # localhost over plain HTTP with `NOOMBAT_DOMAIN: localhost`, and add an
-  # /etc/hosts entry for gotosocial. `tests/interop/compose.yml` describes
-  # something materially different: Noombat containerised as
+  # `tests/interop/compose.yml` is the topology: Noombat containerised as
   # `noombat-backend` on the `interop` network, behind Caddy terminating
-  # TLS, serving `noombat.localhost:8443`. For a federation test that difference is
-  # the test. HTTP Signatures cover `(request-target)` and `host`, so a
-  # reverse proxy is part of what is under test. Actor ids are absolute
-  # URLs, and `http://localhost:8443/users/alice` is not a shape any peer
-  # resolves in the wild. Delivery and WebFinger require the peer to fetch
-  # back over the same scheme. None of that was exercised, so proxy header
-  # handling and scheme or port leaking into generated URLs could not fail
-  # here however broken they were.
+  # TLS, serving `noombat.localhost:8443`. The cheaper alternative, a
+  # natively built server reaching services on localhost over plain HTTP,
+  # is not a smaller version of this test but a different one, and for a
+  # federation test the difference is the test. HTTP Signatures cover
+  # `(request-target)` and `host`, so a reverse proxy is part of what is
+  # under test. Actor ids are absolute URLs, and
+  # `http://localhost:8443/users/alice` is not a shape any peer resolves
+  # in the wild. Delivery and WebFinger require the peer to fetch back
+  # over the same scheme. Under plain HTTP on localhost none of that is
+  # exercised, so proxy header handling and scheme or port leaking into
+  # generated URLs cannot fail here however broken they are.
   #
   # `run.sh` already documented both invocations. This runs the second,
   # the one a developer runs locally.
