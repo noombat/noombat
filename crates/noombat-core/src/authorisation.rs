@@ -240,6 +240,69 @@ pub fn may_moderate_group(role: GroupRole) -> bool {
     matches!(role, GroupRole::Moderator | GroupRole::Admin)
 }
 
+/// Standing of an actor within a company actor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OrganizationRole {
+    /// Acts for the company on every listing, and sets who else may.
+    Owner,
+    /// Acts on the listings they created, and on those a listing has
+    /// been opened to.
+    Recruiter,
+}
+
+/// Who, besides the owners and the creator, may read a listing's
+/// applications. Set per listing by an owner or by its creator.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum ListingAccess {
+    /// Nobody. The default: a recruiter's listing is not every
+    /// recruiter's business until somebody says so.
+    CreatorOnly,
+    /// Every recruiter in the company.
+    AllRecruiters,
+    /// The recruiters named in the listing's reader set.
+    Listed,
+}
+
+/// Whether an actor may read and act on a listing's applications.
+///
+/// `is_creator` is the member who created the listing, `is_listed` is
+/// membership of its reader set. A non-member is refused whatever those
+/// say, so naming an outsider in a reader set grants nothing.
+pub fn may_access_applications(
+    role: Option<OrganizationRole>,
+    access: ListingAccess,
+    is_creator: bool,
+    is_listed: bool,
+) -> bool {
+    match role {
+        None => false,
+        // Never lockable out: the account that fixes a mistake cannot be
+        // the one a mistake locks out.
+        Some(OrganizationRole::Owner) => true,
+        Some(OrganizationRole::Recruiter) => {
+            is_creator
+                || match access {
+                    ListingAccess::CreatorOnly => false,
+                    ListingAccess::AllRecruiters => true,
+                    ListingAccess::Listed => is_listed,
+                }
+        }
+    }
+}
+
+/// Whether an actor may change who reads a listing's applications.
+///
+/// Owners, and the recruiter who created it. A recruiter opening their
+/// own listing to colleagues does not need an owner to do it for them,
+/// and cannot widen anybody else's.
+pub fn may_delegate_listing(role: Option<OrganizationRole>, is_creator: bool) -> bool {
+    matches!(role, Some(OrganizationRole::Owner)) || (role.is_some() && is_creator)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -412,5 +475,92 @@ mod tests {
         assert!(!may_post_to_group(GroupRole::Member, true));
         assert!(may_post_to_group(GroupRole::Moderator, true));
         assert!(may_post_to_group(GroupRole::Admin, true));
+    }
+
+    #[test]
+    fn a_non_member_is_refused_whatever_the_listing_says() {
+        for access in [
+            ListingAccess::CreatorOnly,
+            ListingAccess::AllRecruiters,
+            ListingAccess::Listed,
+        ] {
+            // Even flagged as creator and listed: membership comes first.
+            assert!(
+                !may_access_applications(None, access, true, true),
+                "{access:?}"
+            );
+        }
+        assert!(!may_delegate_listing(None, true));
+    }
+
+    #[test]
+    fn a_recruiters_listing_is_not_every_recruiters_business() {
+        // The default. Another recruiter is refused until somebody opens it.
+        let other = may_access_applications(
+            Some(OrganizationRole::Recruiter),
+            ListingAccess::CreatorOnly,
+            false,
+            false,
+        );
+        assert!(!other);
+        // The creator keeps their own.
+        assert!(may_access_applications(
+            Some(OrganizationRole::Recruiter),
+            ListingAccess::CreatorOnly,
+            true,
+            false
+        ));
+    }
+
+    #[test]
+    fn an_owner_reads_every_listing_and_cannot_be_locked_out() {
+        for access in [
+            ListingAccess::CreatorOnly,
+            ListingAccess::AllRecruiters,
+            ListingAccess::Listed,
+        ] {
+            assert!(
+                may_access_applications(Some(OrganizationRole::Owner), access, false, false),
+                "{access:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn opening_a_listing_admits_recruiters_by_the_two_routes() {
+        let all = may_access_applications(
+            Some(OrganizationRole::Recruiter),
+            ListingAccess::AllRecruiters,
+            false,
+            false,
+        );
+        assert!(all, "all_recruiters admits any recruiter");
+
+        assert!(may_access_applications(
+            Some(OrganizationRole::Recruiter),
+            ListingAccess::Listed,
+            false,
+            true
+        ));
+        assert!(!may_access_applications(
+            Some(OrganizationRole::Recruiter),
+            ListingAccess::Listed,
+            false,
+            false
+        ));
+    }
+
+    #[test]
+    fn only_an_owner_or_the_creator_may_open_a_listing() {
+        assert!(may_delegate_listing(Some(OrganizationRole::Owner), false));
+        assert!(may_delegate_listing(
+            Some(OrganizationRole::Recruiter),
+            true
+        ));
+        // A recruiter cannot widen a colleague's listing.
+        assert!(!may_delegate_listing(
+            Some(OrganizationRole::Recruiter),
+            false
+        ));
     }
 }
