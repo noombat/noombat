@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Company features routes: candidate search and applicant management.
+//! Organization features routes: candidate search and applicant management.
 //!
 //! - `GET  /api/v1/candidates`                              search candidates
 //! - `GET  /api/v1/jobs/{id}/applications`                  list applications
@@ -16,6 +16,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
+use noombat_core::authorisation::{ListingAccess, OrganizationRole, may_access_applications};
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -108,9 +109,13 @@ struct ApplicationSummary {
 
 /// `GET /api/v1/jobs/{job_id}/applications`
 ///
-/// List all applications for a job listing. Requires that the
-/// authenticated principal owns the job listing (or has a moderator
-/// or admin role).
+/// List all applications for a job listing. Requires an owner of the
+/// publishing company, the recruiter who created the listing, or a
+/// recruiter the listing has been opened to.
+///
+/// Moderators are **not** admitted here. They read one application at a
+/// time through `moderation::review_application`, which states a reason
+/// and writes it to the applicant's own access log.
 async fn list_applications(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
@@ -120,20 +125,17 @@ async fn list_applications(
         .as_ref()
         .ok_or(ApiError(NoombatError::Forbidden))?;
 
-    // Verify the principal owns the job listing or is a moderator.
     let job = noombat_jobs::get_job(&state.pool, job_id).await?;
-    let is_owner = principal
-        .actor_uuid
-        .map(|id| id == job.actor_id)
-        .unwrap_or(false);
-    let is_moderator = matches!(
-        principal.instance_role,
-        Some(
-            noombat_core::actor::InstanceRole::Moderator | noombat_core::actor::InstanceRole::Admin
-        )
-    );
+    let permitted = match principal.actor_uuid {
+        Some(actor_id) => {
+            let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
+            may_access_applications(s.role, s.access, s.is_creator, s.is_listed)
+        }
+        // An admin-token principal carries no actor.
+        None => false,
+    };
 
-    if !is_owner && !is_moderator {
+    if !permitted {
         return Err(ApiError(NoombatError::Forbidden));
     }
 
@@ -169,6 +171,67 @@ struct UpdateStatusRequest {
     status: String,
 }
 
+/// An actor's standing for one listing. The publishing actor counts as
+/// `Owner` without a membership row, so a company posting as itself is
+/// not locked out of its own applications.
+struct Standing {
+    role: Option<OrganizationRole>,
+    access: ListingAccess,
+    is_creator: bool,
+    is_listed: bool,
+}
+
+async fn company_standing(
+    pool: &sqlx::PgPool,
+    organization_id: uuid::Uuid,
+    listing_id: uuid::Uuid,
+    actor_id: uuid::Uuid,
+) -> Result<Standing, NoombatError> {
+    let (access, created_by): (ListingAccess, Option<uuid::Uuid>) =
+        sqlx::query_as("SELECT application_readers, created_by FROM job_listings WHERE id = $1")
+            .bind(listing_id)
+            .fetch_one(pool)
+            .await
+            .map_err(|e| NoombatError::Internal(e.to_string()))?;
+
+    let is_creator = created_by == Some(actor_id);
+
+    if actor_id == organization_id {
+        return Ok(Standing {
+            role: Some(OrganizationRole::Owner),
+            access,
+            is_creator,
+            is_listed: true,
+        });
+    }
+
+    let role: Option<OrganizationRole> = sqlx::query_scalar(
+        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(organization_id)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| NoombatError::Internal(e.to_string()))?;
+
+    let is_listed: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM job_listing_readers \
+         WHERE job_listing_id = $1 AND member_id = $2)",
+    )
+    .bind(listing_id)
+    .bind(actor_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| NoombatError::Internal(e.to_string()))?;
+
+    Ok(Standing {
+        role,
+        access,
+        is_creator,
+        is_listed,
+    })
+}
+
 /// `POST /api/v1/jobs/{job_id}/applications/{app_id}/status`
 ///
 /// Transition an application's status. Permitted transitions are
@@ -199,14 +262,18 @@ async fn update_application_status(
         ))));
     }
 
-    // Verify the principal owns the job listing.
+    // No moderator override: moving an application is the company's
+    // decision.
     let job = noombat_jobs::get_job(&state.pool, job_id).await?;
-    let is_owner = principal
-        .actor_uuid
-        .map(|id| id == job.actor_id)
-        .unwrap_or(false);
+    let permitted = match principal.actor_uuid {
+        Some(actor_id) => {
+            let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
+            may_access_applications(s.role, s.access, s.is_creator, s.is_listed)
+        }
+        None => false,
+    };
 
-    if !is_owner {
+    if !permitted {
         return Err(ApiError(NoombatError::Forbidden));
     }
 

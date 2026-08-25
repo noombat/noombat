@@ -59,7 +59,7 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::pages::router())
         .merge(routes::ws_chat::router())
         .merge(routes::admin_relays::router())
-        .merge(routes::company::router())
+        .merge(routes::organization::router())
         .merge(routes::explore::router())
         .merge(routes::admin::router())
         .merge(routes::account::router())
