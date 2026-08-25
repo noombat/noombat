@@ -95,6 +95,7 @@ skip = [
     { crate = "hmac@0.12" },
     { crate = "jsonwebtoken@10" },
     { crate = "nom@7" },
+    { crate = "num-bigint@0.4" },
     { crate = "r-efi@5" },
     { crate = "rand@0.8" },
     { crate = "rand@0.9" },
