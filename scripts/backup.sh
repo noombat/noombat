@@ -11,6 +11,11 @@
 #   <dir>/noombat-pg-<date>.sql.gz        PostgreSQL dump
 #   <dir>/noombat-meili-<date>.tar.gz     Meilisearch data snapshot
 #   <dir>/noombat-chatmail-<date>.tar.gz  Chatmail maildir archive
+#   <dir>/noombat-media-<date>.tar.gz     Uploaded media, when stored locally
+#
+# Not covered here: the `caddy-data` volume, which holds the ACME account
+# key and the relay certificate. It has its own script,
+# scripts/backup-caddy-data.sh, and needs running on the same schedule.
 
 set -euo pipefail
 
@@ -45,6 +50,20 @@ if [ -n "$CHATMAIL_VOLUME" ]; then
     tar -czf "$BACKUP_DIR/noombat-chatmail-$DATE.tar.gz" -C "$CHATMAIL_MOUNT" .
 else
     echo "    (Chatmail volume not found; skipping.)"
+fi
+
+echo "==> Archiving uploaded media..."
+# Absent when the instance stores media in an S3-compatible bucket, which
+# is a legitimate configuration and not a failed backup. The message says
+# which of the two it is, because a silent skip is how avatars go
+# unarchived for months without anyone noticing.
+MEDIA_VOLUME="$(podman volume ls --format '{{.Name}}' | grep media-data | head -1)"
+if [ -n "$MEDIA_VOLUME" ]; then
+    MEDIA_MOUNT="$(podman volume inspect "$MEDIA_VOLUME" --format '{{.Mountpoint}}')"
+    tar -czf "$BACKUP_DIR/noombat-media-$DATE.tar.gz" -C "$MEDIA_MOUNT" .
+else
+    echo "    (no media-data volume; expected if NOOMBAT_S3_ENDPOINT is set,"
+    echo "     otherwise uploaded media is NOT being backed up.)"
 fi
 
 echo "==> Backup complete: $BACKUP_DIR"
