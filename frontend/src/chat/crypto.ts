@@ -75,8 +75,19 @@ export function formatFingerprint(fingerprint: string): string {
 // ..... Message encryption .....
 
 /**
+ * OpenPGP.js compresses nothing by default; a 1.4 kB message measured
+ * 2340 bytes on the wire and 532 compressed. ZIP over ZLIB because
+ * RFC 4880 asks every implementation to support it.
+ */
+const CHAT_COMPRESSION = openpgp.enums.compression.zip;
+
+/**
  * Sign and encrypt a plaintext message for the given recipient
  * (sign-then-encrypt per the Autocrypt Level 1 specification).
+ *
+ * Compression makes ciphertext length depend on the plaintext's
+ * redundancy. Safe only while nothing quotes an incoming message into
+ * the compose box; a quote-reply feature would need this reconsidered.
  */
 export async function encryptMessage(
   recipientKeyBytes: Uint8Array,
@@ -92,6 +103,7 @@ export async function encryptMessage(
     encryptionKeys: recipientKey,
     signingKeys: senderKey,
     format: "binary",
+    config: { preferredCompressionAlgorithm: CHAT_COMPRESSION },
   });
 
   return encrypted as Uint8Array;
@@ -100,13 +112,23 @@ export async function encryptMessage(
 // ..... Message decryption .....
 
 /**
+ * OpenPGP.js leaves this at `Infinity`, so a small message can expand
+ * without bound in the reader's tab. Set to the relay's own per-message
+ * ceiling, which never refuses what the relay already accepted.
+ */
+export const MAX_DECOMPRESSED_BYTES = 30 * 1024 * 1024;
+
+/**
  * Decrypt an OpenPGP-encrypted message without signature verification.
  *
  * Use `decryptAndVerify` when the sender's public key is available.
+ * `maxDecompressed` is overridable so a test need not build a thirty
+ * megabyte fixture.
  */
 export async function decryptMessage(
   privateKeyBytes: Uint8Array,
   ciphertext: Uint8Array,
+  maxDecompressed: number = MAX_DECOMPRESSED_BYTES,
 ): Promise<Uint8Array> {
   const privateKey = await openpgp.readPrivateKey({
     binaryKey: privateKeyBytes,
@@ -117,6 +139,7 @@ export async function decryptMessage(
     message,
     decryptionKeys: privateKey,
     format: "binary",
+    config: { maxDecompressedMessageSize: maxDecompressed },
   });
 
   return data as Uint8Array;
@@ -152,6 +175,7 @@ export async function decryptAndVerify(
   privateKeyBytes: Uint8Array,
   senderKeyBytes: Uint8Array,
   ciphertext: Uint8Array,
+  maxDecompressed: number = MAX_DECOMPRESSED_BYTES,
 ): Promise<DecryptAndVerifyResult> {
   const privateKey = await openpgp.readPrivateKey({
     binaryKey: privateKeyBytes,
@@ -164,6 +188,7 @@ export async function decryptAndVerify(
     decryptionKeys: privateKey,
     verificationKeys: senderKey,
     format: "utf8",
+    config: { maxDecompressedMessageSize: maxDecompressed },
   });
 
   // Iterate over every signature rather than inspecting only the

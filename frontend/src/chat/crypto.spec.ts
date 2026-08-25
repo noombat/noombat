@@ -19,9 +19,11 @@ import * as openpgp from "openpgp";
 import {
   generateKeyPair,
   encryptMessage,
+  decryptMessage,
   decryptAndVerify,
   keyFingerprint,
   formatFingerprint,
+  MAX_DECOMPRESSED_BYTES,
   type KeyPair,
 } from "./crypto";
 
@@ -203,5 +205,114 @@ describe("decryptAndVerify", () => {
     const { signatures } = await openpgp.decrypt({ message, decryptionKeys, format: "binary" });
 
     expect(signatures).toHaveLength(2);
+  });
+});
+
+// ..... Compression .....
+
+describe("encryptMessage compression", () => {
+  /** A message with the redundancy ordinary prose has. */
+  const repetitive = "Thanks for the update on the role. ".repeat(40);
+
+  it("produces a fraction of what the same message costs uncompressed", async () => {
+    const plainBytes = new TextEncoder().encode(repetitive);
+
+    const compressed = await encryptMessage(bob.publicKey, alice.privateKey, plainBytes);
+    // `encryptSignedBy` passes no `config`, so this measures our
+    // setting rather than a property of the library.
+    const uncompressed = await encryptSignedBy(bob.publicKey, [alice.privateKey], repetitive);
+
+    expect(compressed.length).toBeLessThan(uncompressed.length / 3);
+  });
+
+  it("leaves the uncompressed comparison larger than the plaintext", async () => {
+    // Guards the test above: a compressing fixture would narrow the
+    // comparison silently.
+    const uncompressed = await encryptSignedBy(bob.publicKey, [alice.privateKey], repetitive);
+
+    expect(uncompressed.length).toBeGreaterThan(repetitive.length);
+  });
+
+  it("round-trips, with the signature still verifying", async () => {
+    const plainBytes = new TextEncoder().encode(repetitive);
+    const ciphertext = await encryptMessage(bob.publicKey, alice.privateKey, plainBytes);
+
+    const result = await decryptAndVerify(bob.privateKey, alice.publicKey, ciphertext);
+
+    expect(result.plaintext).toBe(repetitive);
+    expect(result.signatureVerified).toBe(true);
+  });
+
+  it("still reads a message a peer sent uncompressed", async () => {
+    // A peer that compresses nothing must keep working.
+    const ciphertext = await encryptSignedBy(bob.publicKey, [alice.privateKey], "plain and small");
+
+    const result = await decryptAndVerify(bob.privateKey, alice.publicKey, ciphertext);
+
+    expect(result.plaintext).toBe("plain and small");
+    expect(result.signatureVerified).toBe(true);
+  });
+
+  it("costs almost nothing on incompressible input", async () => {
+    // Measured against the uncompressed equivalent, not the plaintext:
+    // OpenPGP's own packets are a few hundred bytes either way.
+    const random = new Uint8Array(4096);
+    crypto.getRandomValues(random);
+
+    const compressed = await encryptMessage(bob.publicKey, alice.privateKey, random);
+
+    const encryptionKeys = await openpgp.readKey({ binaryKey: bob.publicKey });
+    const signingKeys = await openpgp.readPrivateKey({ binaryKey: alice.privateKey });
+    const uncompressed = (await openpgp.encrypt({
+      message: await openpgp.createMessage({ binary: random }),
+      encryptionKeys,
+      signingKeys,
+      format: "binary",
+    })) as Uint8Array;
+
+    expect(compressed.length).toBeLessThan(uncompressed.length * 1.01);
+  });
+});
+
+// ..... Decompression bound .....
+
+describe("inbound decompression is bounded", () => {
+  it("declares a finite ceiling", async () => {
+    // The regression this guards is the ceiling quietly going away,
+    // which no round-trip test notices.
+    expect(Number.isFinite(MAX_DECOMPRESSED_BYTES)).toBe(true);
+    expect(MAX_DECOMPRESSED_BYTES).toBe(30 * 1024 * 1024);
+  });
+
+  it("refuses a message that expands past the ceiling", async () => {
+    // The shape of the attack, at a size a test can afford.
+    const bomb = new TextEncoder().encode("A".repeat(512 * 1024));
+    const ciphertext = await encryptMessage(bob.publicKey, alice.privateKey, bomb);
+    expect(ciphertext.length).toBeLessThan(4096);
+
+    await expect(decryptMessage(bob.privateKey, ciphertext, 64 * 1024)).rejects.toThrow();
+  });
+
+  it("accepts the same message when the ceiling allows it", async () => {
+    // Guards the test above: a refusal from any other cause would
+    // fail here too.
+    const bomb = new TextEncoder().encode("A".repeat(512 * 1024));
+    const ciphertext = await encryptMessage(bob.publicKey, alice.privateKey, bomb);
+
+    const plain = await decryptMessage(bob.privateKey, ciphertext, 2 * 1024 * 1024);
+
+    expect(plain.length).toBe(512 * 1024);
+  });
+
+  it("bounds the verifying path too", async () => {
+    // The path the chat UI actually calls. Compressed deliberately:
+    // the ceiling governs decompression, so an uncompressed fixture
+    // would prove nothing.
+    const bomb = new TextEncoder().encode("A".repeat(512 * 1024));
+    const ciphertext = await encryptMessage(bob.publicKey, alice.privateKey, bomb);
+
+    await expect(
+      decryptAndVerify(bob.privateKey, alice.publicKey, ciphertext, 64 * 1024),
+    ).rejects.toThrow();
   });
 });
