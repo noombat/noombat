@@ -244,6 +244,10 @@ jobs:
 
       - name: Start Noombat server
         run: |
+          # The default media root is /var/lib/noombat/media, which the
+          # image provides and a runner does not.
+          export NOOMBAT_MEDIA_ROOT="$RUNNER_TEMP/noombat-media"
+          mkdir -p "$NOOMBAT_MEDIA_ROOT"
           nohup ./target/release/noombat > /tmp/noombat.log 2>&1 &
           for i in $(seq 1 30); do
             if curl -sf http://localhost:8443/healthz; then

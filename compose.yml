@@ -38,6 +38,9 @@ services:
       - "8443:8443"
     volumes:
       - chatmail-ca:/etc/ssl/chatmail-ca:ro
+      # Uploaded media, when no object storage is configured. Named, or
+      # every avatar is lost when the container is next recreated.
+      - media-data:/var/lib/noombat/media
     depends_on:
       db:
         condition: service_healthy
@@ -171,6 +174,7 @@ services:
 
 volumes:
   pg-data:
+  media-data:
   redis-data:
   meili-data:
   chatmail-data:

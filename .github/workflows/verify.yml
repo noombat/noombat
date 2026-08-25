@@ -96,6 +96,21 @@ jobs:
       - name: Build the server image
         run: scripts/build-image.sh Dockerfile noombat-server:verify
 
+      # Every other job that would notice an unbootable image needs a
+      # database first, so this workflow can pass on one. Run as the
+      # image's own user: the directory existing is not the question.
+      - name: Assert the image provides a writable media root
+        run: |
+          docker run --rm --entrypoint sh noombat-server:verify -c '
+            set -e
+            test -d /var/lib/noombat/media || {
+              echo "::error::/var/lib/noombat/media is missing from the image"; exit 1; }
+            touch /var/lib/noombat/media/.probe || {
+              echo "::error::/var/lib/noombat/media is not writable by the image user"; exit 1; }
+            rm -f /var/lib/noombat/media/.probe
+            echo "media root present and writable as $(id -un)"
+          '
+
       - name: Build the chatmail image
         run: scripts/build-image.sh Dockerfile.chatmail noombat-chatmail:verify
 

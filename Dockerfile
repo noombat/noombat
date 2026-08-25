@@ -91,6 +91,10 @@ COPY --from=frontend /build/frontend/dist /opt/noombat/frontend/dist
 
 WORKDIR /opt/noombat
 
+# The default `media_root`. Without it the server aborts at boot:
+# `/var/lib` is not writable by the user this image switches to.
+RUN mkdir -p /var/lib/noombat/media && chown -R noombat:noombat /var/lib/noombat
+
 USER noombat
 EXPOSE 8443
 

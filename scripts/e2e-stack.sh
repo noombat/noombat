@@ -146,7 +146,10 @@ up() {
   # `down` kills the wrapper and orphans a server still holding :8443.
   # With `exec` the subshell is replaced by the server, so the PID in
   # the file is the server's own.
-  ( cd "$REPO" && exec nohup ./target/debug/noombat > "$LOG_FILE" 2>&1 ) &
+  # The default media root is /var/lib/noombat/media, which a container
+  # provides and a developer's machine does not.
+  ( cd "$REPO" && export NOOMBAT_MEDIA_ROOT="$RUN_DIR/media" \
+    && exec nohup ./target/debug/noombat > "$LOG_FILE" 2>&1 ) &
   local server_pid=$!
   echo "$server_pid" > "$PID_FILE"
   # Assert on the process as well as the port, so a server that exited
