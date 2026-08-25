@@ -286,8 +286,39 @@ CREATE TABLE job_listings (
     published_at             TIMESTAMPTZ,
     expires_at               TIMESTAMPTZ,
     integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- The member who created it, where `actor_id` is the company that
+    -- publishes it. Null when the company actor posted as itself.
+    created_by               UUID REFERENCES actors(id) ON DELETE SET NULL,
+    -- Who, besides the owners and the creator, may read its applications.
+    -- Defaults to neither: a recruiter's listing is not every recruiter's
+    -- business until somebody says so.
+    application_readers      TEXT NOT NULL DEFAULT 'creator_only'
+                             CHECK (application_readers IN ('creator_only', 'all_recruiters', 'listed'))
 );
+
+-- Who acts for a company. A company is an actor, not a person, so
+-- "whoever published the listing" strands the pipeline when that person
+-- goes on leave, and the workaround is a shared login.
+CREATE TABLE organization_members (
+    organization_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    member_id       UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    role            TEXT NOT NULL CHECK (role IN ('owner', 'recruiter')),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (organization_id, member_id)
+);
+
+CREATE INDEX idx_organization_members_member ON organization_members (member_id);
+
+-- Recruiters named by `application_readers = 'listed'`. Owners and the
+-- listing's creator do not appear here; they are always admitted.
+CREATE TABLE job_listing_readers (
+    job_listing_id UUID NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+    member_id      UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
+    PRIMARY KEY (job_listing_id, member_id)
+);
+
 
 -- ..... POSTS .....
 
@@ -407,6 +438,58 @@ CREATE TABLE applications (
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (applicant_id, job_listing_id)
 );
+
+-- The bearer capability an employer dereferences to read an application.
+-- Minting is not built yet; the revocation path is, because what happens
+-- to a grant when its applicant migrates is cheaper to settle before the
+-- first grant exists than after.
+CREATE TABLE application_grants (
+    id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id          UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    -- Hashed: a database read must not yield a working capability.
+    token_hash              TEXT NOT NULL UNIQUE,
+    -- Immutable after mint. A capability that can be re-pointed can be walked.
+    audience_ap_id          TEXT NOT NULL,
+    audience_origin         TEXT NOT NULL,
+    -- Reporting only. Authorisation reads expires_at directly, or a lagging
+    -- expiry job could extend a grant.
+    state                   TEXT NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'revoked', 'expired')),
+    expires_at              TIMESTAMPTZ NOT NULL,
+    document_uses_remaining INTEGER NOT NULL,
+    cv_uses_remaining       INTEGER NOT NULL,
+    revoked_at              TIMESTAMPTZ,
+    revoked_reason          TEXT CHECK (revoked_reason IN ('applicant_withdrew', 'applicant_revoked', 'rejected_by_employer', 'listing_removed', 'listing_fraud_takedown', 'account_deleted', 'account_migrated', 'superseded', 'expired')),
+    created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- A time without a reason is a revocation nobody can explain.
+    CONSTRAINT revocation_is_complete CHECK (
+        (revoked_at IS NULL AND revoked_reason IS NULL)
+        OR (revoked_at IS NOT NULL AND revoked_reason IS NOT NULL)
+    )
+);
+
+CREATE INDEX idx_application_grants_application ON application_grants (application_id);
+
+-- Every disclosure of an application, and the applicant's own record of
+-- it. A moderator read is a disclosure like any other, so it lands here
+-- rather than in a log the applicant never sees. `grant_id` is null for a
+-- local read; an employer's dereference carries one once minting exists.
+CREATE TABLE application_accesses (
+    id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    grant_id       UUID REFERENCES application_grants(id) ON DELETE CASCADE,
+    reader_id      UUID REFERENCES actors(id) ON DELETE SET NULL,
+    kind           TEXT NOT NULL CHECK (kind IN ('grant_dereference', 'moderator_review')),
+    outcome        TEXT NOT NULL CHECK (outcome IN ('disclosed', 'denied')),
+    -- Required for a moderator review, and shown to the applicant.
+    reason         TEXT,
+    occurred_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT moderator_review_states_a_reason CHECK (
+        kind <> 'moderator_review'
+        OR (reader_id IS NOT NULL AND reason IS NOT NULL AND length(btrim(reason)) > 0)
+    )
+);
+
+CREATE INDEX idx_application_accesses_application ON application_accesses (application_id);
 
 -- ..... GROUPS .....
 
