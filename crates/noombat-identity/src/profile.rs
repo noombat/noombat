@@ -17,7 +17,7 @@ pub struct Experience {
     pub id: Uuid,
     pub actor_id: Uuid,
     pub title: String,
-    pub company: String,
+    pub organization: String,
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
     pub description_md: Option<String>,
@@ -30,7 +30,7 @@ pub struct Experience {
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewExperience {
     pub title: String,
-    pub company: String,
+    pub organization: String,
     pub start_date: NaiveDate,
     pub end_date: Option<NaiveDate>,
     pub description_md: Option<String>,
@@ -54,7 +54,7 @@ pub async fn create_experience(
     let ap_object = build_experience_ap_object(
         &id,
         &params.title,
-        &params.company,
+        &params.organization,
         params.start_date,
         params.end_date,
         desc_html.as_deref(),
@@ -62,16 +62,16 @@ pub async fn create_experience(
 
     let row = sqlx::query_as::<_, Experience>(
         r#"INSERT INTO experiences
-               (id, actor_id, title, company, start_date, end_date,
+               (id, actor_id, title, organization, start_date, end_date,
                 description_md, description_html, sort_order, visibility, ap_object)
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
-           RETURNING id, actor_id, title, company, start_date, end_date,
+           RETURNING id, actor_id, title, organization, start_date, end_date,
                      description_md, description_html, sort_order, visibility"#,
     )
     .bind(id)
     .bind(actor_id)
     .bind(&params.title)
-    .bind(&params.company)
+    .bind(&params.organization)
     .bind(params.start_date)
     .bind(params.end_date)
     .bind(&desc_md)
@@ -93,7 +93,7 @@ pub async fn list_experiences(
 ) -> Result<Vec<Experience>> {
     let allowed = visibility_filter(max_visibility);
     let rows = sqlx::query_as::<_, Experience>(
-        r#"SELECT id, actor_id, title, company, start_date, end_date,
+        r#"SELECT id, actor_id, title, organization, start_date, end_date,
                   description_md, description_html, sort_order, visibility
            FROM experiences
            WHERE actor_id = $1 AND visibility = ANY($2)
@@ -130,7 +130,7 @@ pub async fn delete_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Resul
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateExperience {
     pub title: Option<String>,
-    pub company: Option<String>,
+    pub organization: Option<String>,
     pub start_date: Option<NaiveDate>,
     pub end_date: Option<Option<NaiveDate>>,
     pub description_md: Option<Option<String>>,
@@ -151,7 +151,7 @@ pub async fn update_experience(
 
     // Fetch the current row to merge with partial updates.
     let current = sqlx::query_as::<_, Experience>(
-        r#"SELECT id, actor_id, title, company, start_date, end_date,
+        r#"SELECT id, actor_id, title, organization, start_date, end_date,
                   description_md, description_html, sort_order, visibility
            FROM experiences
            WHERE id = $1 AND actor_id = $2"#,
@@ -166,7 +166,10 @@ pub async fn update_experience(
     })?;
 
     let title = params.title.as_deref().unwrap_or(&current.title);
-    let company = params.company.as_deref().unwrap_or(&current.company);
+    let organization = params
+        .organization
+        .as_deref()
+        .unwrap_or(&current.organization);
     let start_date = params.start_date.unwrap_or(current.start_date);
     let end_date = params.end_date.unwrap_or(current.end_date);
     let sort_order = params.sort_order.unwrap_or(current.sort_order);
@@ -181,7 +184,7 @@ pub async fn update_experience(
     let ap_object = build_experience_ap_object(
         &id,
         title,
-        company,
+        organization,
         start_date,
         end_date,
         desc_html.as_deref(),
@@ -189,17 +192,17 @@ pub async fn update_experience(
 
     let row = sqlx::query_as::<_, Experience>(
         r#"UPDATE experiences
-           SET title = $3, company = $4, start_date = $5, end_date = $6,
+           SET title = $3, organization = $4, start_date = $5, end_date = $6,
                description_md = $7, description_html = $8, sort_order = $9,
                visibility = $10, ap_object = $11
            WHERE id = $1 AND actor_id = $2
-           RETURNING id, actor_id, title, company, start_date, end_date,
+           RETURNING id, actor_id, title, organization, start_date, end_date,
                      description_md, description_html, sort_order, visibility"#,
     )
     .bind(id)
     .bind(actor_id)
     .bind(title)
-    .bind(company)
+    .bind(organization)
     .bind(start_date)
     .bind(end_date)
     .bind(&desc_md)
@@ -822,7 +825,7 @@ async fn render_optional_markdown(
 fn build_experience_ap_object(
     id: &Uuid,
     title: &str,
-    company: &str,
+    organization: &str,
     start_date: NaiveDate,
     end_date: Option<NaiveDate>,
     description_html: Option<&str>,
@@ -831,7 +834,7 @@ fn build_experience_ap_object(
         "type": "noombat:Experience",
         "id": id.to_string(),
         "noombat:title": title,
-        "noombat:company": company,
+        "noombat:organization": organization,
         "noombat:startDate": start_date.to_string(),
         "noombat:endDate": end_date.map(|d| d.to_string()),
         "content": description_html,

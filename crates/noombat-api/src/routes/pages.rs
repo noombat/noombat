@@ -239,7 +239,7 @@ struct EditExperiencePage {
     nav_username: String,
     username: String,
     title: String,
-    company: String,
+    organization: String,
     start_date: String,
     end_date: String,
     description_md: String,
@@ -793,7 +793,7 @@ async fn edit_experience_page(
         nav_username: uname.clone(),
         username: uname,
         title: String::new(),
-        company: String::new(),
+        organization: String::new(),
         start_date: String::new(),
         end_date: String::new(),
         description_md: String::new(),
@@ -1417,7 +1417,7 @@ async fn search_html_page(
                 .to_owned();
             let subtitle = hit
                 .get("headline")
-                .or(hit.get("company"))
+                .or(hit.get("organization"))
                 .or(hit.get("location"))
                 .or(hit.get("journal"))
                 .and_then(|v| v.as_str())

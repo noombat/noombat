@@ -382,7 +382,7 @@ mod tests {
 
         let application = sqlx::query_scalar::<_, Uuid>(
             "INSERT INTO applications \
-                 (applicant_id, job_listing_id, listing_title, listing_company, ap_id) \
+                 (applicant_id, job_listing_id, listing_title, listing_organization, ap_id) \
              VALUES ($1, $2, 'Engineer', 'Acme', $3) RETURNING id",
         )
         .bind(applicant)

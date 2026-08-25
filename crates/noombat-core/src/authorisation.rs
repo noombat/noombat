@@ -240,12 +240,12 @@ pub fn may_moderate_group(role: GroupRole) -> bool {
     matches!(role, GroupRole::Moderator | GroupRole::Admin)
 }
 
-/// Standing of an actor within a company actor.
+/// Standing of an actor within an organisation actor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum OrganizationRole {
-    /// Acts for the company on every listing, and sets who else may.
+    /// Acts for the organisation on every listing, and sets who else may.
     Owner,
     /// Acts on the listings they created, and on those a listing has
     /// been opened to.
@@ -261,7 +261,7 @@ pub enum ListingAccess {
     /// Nobody. The default: a recruiter's listing is not every
     /// recruiter's business until somebody says so.
     CreatorOnly,
-    /// Every recruiter in the company.
+    /// Every recruiter in the organisation.
     AllRecruiters,
     /// The recruiters named in the listing's reader set.
     Listed,

@@ -76,7 +76,7 @@ async fn insert_application(pool: &PgPool) -> Uuid {
 
     sqlx::query_scalar(
         "INSERT INTO applications \
-             (applicant_id, listing_title, listing_company, ap_id, cover_letter_md) \
+             (applicant_id, listing_title, listing_organization, ap_id, cover_letter_md) \
          VALUES ($1, 'Engineer', 'Acme', $2, 'please hire me') RETURNING id",
     )
     .bind(applicant)

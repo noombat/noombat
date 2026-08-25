@@ -140,7 +140,7 @@ vis_unlisted: "Unlisted"
 # Experience.
 edit_experience_title: "Add experience"
 exp_title: "Title"
-exp_company: "Company"
+exp_organization: "Organization"
 exp_start_date: "Start date"
 exp_end_date: "End date"
 exp_description: "Description"

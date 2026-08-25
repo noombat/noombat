@@ -114,9 +114,9 @@ pub async fn generate_cv_pdf(
             .map(noombat_markup::md_to_typst_expr)
             .unwrap_or_else(|| "none".to_owned());
         src.push_str(&format!(
-            "  (title: \"{}\", company: \"{}\", dates: \"{dates}\", description: {desc}),\n",
+            "  (title: \"{}\", organization: \"{}\", dates: \"{dates}\", description: {desc}),\n",
             escape_typst_string(&exp.title),
-            escape_typst_string(&exp.company),
+            escape_typst_string(&exp.organization),
         ));
     }
     src.push_str(")\n");

@@ -203,7 +203,7 @@ CREATE TABLE experiences (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id         UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     title            TEXT NOT NULL,
-    company          TEXT NOT NULL,
+    organization     TEXT NOT NULL,
     start_date       DATE NOT NULL,
     end_date         DATE,
     description_md   TEXT,
@@ -287,8 +287,8 @@ CREATE TABLE job_listings (
     expires_at               TIMESTAMPTZ,
     integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    -- The member who created it, where `actor_id` is the company that
-    -- publishes it. Null when the company actor posted as itself.
+    -- The member who created it, where `actor_id` is the organisation
+    -- that publishes it. Null when that actor posted as itself.
     created_by               UUID REFERENCES actors(id) ON DELETE SET NULL,
     -- Who, besides the owners and the creator, may read its applications.
     -- Defaults to neither: a recruiter's listing is not every recruiter's
@@ -297,7 +297,7 @@ CREATE TABLE job_listings (
                              CHECK (application_readers IN ('creator_only', 'all_recruiters', 'listed'))
 );
 
--- Who acts for a company. A company is an actor, not a person, so
+-- Who acts for an organisation. It is an actor, not a person, so
 -- "whoever published the listing" strands the pipeline when that person
 -- goes on leave, and the workaround is a shared login.
 CREATE TABLE organization_members (
@@ -426,7 +426,7 @@ CREATE TABLE applications (
     -- copying at erasure would mean reading a row that is about to be
     -- deleted, which races anything else deleting it.
     listing_title     TEXT NOT NULL,
-    listing_company   TEXT NOT NULL,
+    listing_organization TEXT NOT NULL,
     applied_on        DATE NOT NULL DEFAULT CURRENT_DATE,
     ap_id             TEXT NOT NULL UNIQUE,
     cover_letter_md   TEXT,

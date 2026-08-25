@@ -80,7 +80,7 @@ async fn fetch_public_sections(
             visibility: SectionVisibility::Public,
             data: serde_json::json!({
                 "noombat:title": exp.title,
-                "noombat:company": exp.company,
+                "noombat:organization": exp.organization,
                 "noombat:startDate": exp.start_date.to_string(),
                 "noombat:endDate": exp.end_date.map(|d| d.to_string()),
                 "content": exp.description_html,

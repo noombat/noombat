@@ -110,7 +110,7 @@ struct ApplicationSummary {
 /// `GET /api/v1/jobs/{job_id}/applications`
 ///
 /// List all applications for a job listing. Requires an owner of the
-/// publishing company, the recruiter who created the listing, or a
+/// publishing organisation, the recruiter who created the listing, or a
 /// recruiter the listing has been opened to.
 ///
 /// Moderators are **not** admitted here. They read one application at a
@@ -172,7 +172,7 @@ struct UpdateStatusRequest {
 }
 
 /// An actor's standing for one listing. The publishing actor counts as
-/// `Owner` without a membership row, so a company posting as itself is
+/// `Owner` without a membership row, so an organisation posting as itself is
 /// not locked out of its own applications.
 struct Standing {
     role: Option<OrganizationRole>,
@@ -262,7 +262,7 @@ async fn update_application_status(
         ))));
     }
 
-    // No moderator override: moving an application is the company's
+    // No moderator override: moving an application is the organisation's
     // decision.
     let job = noombat_jobs::get_job(&state.pool, job_id).await?;
     let permitted = match principal.actor_uuid {

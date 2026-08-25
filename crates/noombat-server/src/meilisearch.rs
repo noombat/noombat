@@ -38,7 +38,7 @@ impl MeilisearchBackend {
                     "summary",
                     "skills",
                     "experience_titles",
-                    "experience_companies",
+                    "experience_organizations",
                     "education_institutions",
                     "education_fields",
                     "publication_titles",
@@ -48,7 +48,7 @@ impl MeilisearchBackend {
             ),
             (
                 "jobs",
-                vec!["title", "company", "description", "requirements"],
+                vec!["title", "organization", "description", "requirements"],
             ),
             ("posts", vec!["content"]),
             ("groups", vec!["name", "description", "tags"]),

@@ -25,8 +25,8 @@ pub struct ProfileSearchData {
     pub skills: Vec<String>,
     /// Job titles from experience entries (e.g. `["Senior Engineer"]`).
     pub experience_titles: Vec<String>,
-    /// Company names from experience entries.
-    pub experience_companies: Vec<String>,
+    /// Organisation names from experience entries.
+    pub experience_organizations: Vec<String>,
     /// Institution names from education entries.
     pub education_institutions: Vec<String>,
     /// Fields of study from education entries.
@@ -65,7 +65,7 @@ pub fn index_profile(
         "summary": actor.summary_html,
         "skills": data.skills,
         "experience_titles": data.experience_titles,
-        "experience_companies": data.experience_companies,
+        "experience_organizations": data.experience_organizations,
         "education_institutions": data.education_institutions,
         "education_fields": data.education_fields,
         "publication_titles": data.publication_titles,
@@ -119,7 +119,7 @@ pub async fn reindex_profile_from_db(
     let data = ProfileSearchData {
         skills: skills.into_iter().map(|s| s.name).collect(),
         experience_titles: experiences.iter().map(|e| e.title.clone()).collect(),
-        experience_companies: experiences.iter().map(|e| e.company.clone()).collect(),
+        experience_organizations: experiences.iter().map(|e| e.organization.clone()).collect(),
         education_institutions: educations.iter().map(|e| e.institution.clone()).collect(),
         education_fields: educations
             .iter()

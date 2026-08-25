@@ -755,7 +755,7 @@ pub struct ApplicationReview {
     pub id: Uuid,
     pub applicant_id: Uuid,
     pub listing_title: String,
-    pub listing_company: String,
+    pub listing_organization: String,
     pub status: String,
     pub cover_letter_md: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -768,7 +768,7 @@ pub struct ApplicationReview {
 /// the applicant's own record of who saw their application.
 ///
 /// A read is not authority to act: nothing here can move an application
-/// through its states. That stays with the company.
+/// through its states. That stays with the organisation.
 async fn review_application(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
@@ -794,7 +794,7 @@ async fn review_application(
     let mut tx = state.pool.begin().await.map_err(NoombatError::from)?;
 
     let application = sqlx::query_as::<_, ApplicationReview>(
-        "SELECT id, applicant_id, listing_title, listing_company, status, \
+        "SELECT id, applicant_id, listing_title, listing_organization, status, \
                 cover_letter_md, created_at \
          FROM applications WHERE id = $1",
     )

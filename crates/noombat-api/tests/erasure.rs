@@ -112,7 +112,7 @@ async fn insert_actor(pool: &PgPool, username: &str, requested_days_ago: Option<
 
     sqlx::query(
         "INSERT INTO experiences \
-             (actor_id, title, company, start_date, visibility, ap_object) \
+             (actor_id, title, organization, start_date, visibility, ap_object) \
          VALUES ($1, 'Engineer', 'Acme', '2020-01-01', 'public', '{}'::jsonb)",
     )
     .bind(id)
@@ -293,7 +293,7 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
 
     sqlx::query(
         "INSERT INTO applications \
-             (applicant_id, job_listing_id, listing_title, listing_company, ap_id, \
+             (applicant_id, job_listing_id, listing_title, listing_organization, ap_id, \
               cover_letter_md) \
          VALUES ($1, $2, 'Engineer', 'Acme', 'https://noombat.example/applications/1', \
                  'please hire me')",
@@ -320,8 +320,8 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
     );
 
     // The applicant's record is not.
-    let (title, company, orphaned): (String, String, Option<Uuid>) = sqlx::query_as(
-        "SELECT listing_title, listing_company, job_listing_id FROM applications \
+    let (title, organization, orphaned): (String, String, Option<Uuid>) = sqlx::query_as(
+        "SELECT listing_title, listing_organization, job_listing_id FROM applications \
          WHERE applicant_id = $1",
     )
     .bind(applicant)
@@ -331,7 +331,7 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
 
     assert_eq!(orphaned, None, "the reference is cleared, not cascaded");
     assert_eq!(title, "Engineer", "and the snapshot keeps it legible");
-    assert_eq!(company, "Acme");
+    assert_eq!(organization, "Acme");
 
     assert!(
         search
