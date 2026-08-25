@@ -33,6 +33,7 @@ on:
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
@@ -53,6 +54,7 @@ on:
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
@@ -171,6 +173,18 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: "Reject duplicate versions and irreversible migrations"
         run: scripts/check-migrations.sh
+
+  config-secrets:
+    name: Config secrets
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # `Secret` is what redacts a credential from Debug output and what
+      # makes NOOMBAT_<NAME>_FILE work. A field added as a bare String
+      # gets neither, and nothing else fails: the instance boots and the
+      # setting works. Only a name check catches it.
+      - name: "Reject a credential-bearing Config field that is not Secret"
+        run: python3 scripts/check-config-secrets.py
 
   typst-injection:
     name: Typst injection
