@@ -29,6 +29,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/me/export", get(export_data))
         .route("/api/v1/me/delete", post(request_deletion))
         .route("/api/v1/me/cancel-delete", post(cancel_deletion))
+        .route(
+            "/api/v1/me/applications/{id}/accesses",
+            get(application_accesses),
+        )
 }
 
 /// Require an authenticated principal with a known actor UUID.
@@ -327,4 +331,65 @@ async fn cancel_deletion(
     info!(actor_id = %actor_id, username = %username, "account deletion cancelled");
 
     Ok(Json(serde_json::json!({ "status": "deletion_cancelled" })))
+}
+
+// ..... WHO READ MY APPLICATION .....
+
+/// One disclosure of an application, as its applicant sees it.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct AccessEntry {
+    pub occurred_at: chrono::DateTime<chrono::Utc>,
+    /// `grant_dereference` or `moderator_review`.
+    pub kind: String,
+    pub outcome: String,
+    /// Stated by the moderator. Null for an employer's dereference,
+    /// which is authorised by the capability rather than by a reason.
+    pub reason: Option<String>,
+}
+
+/// `GET /api/v1/me/applications/{id}/accesses`
+///
+/// Who has read one of your applications, when, and why.
+///
+/// The moderator is not named. The applicant is entitled to know their
+/// application was read by a moderator of this instance and on what
+/// grounds; naming the individual invites retaliation against a person
+/// doing their job, and does not tell the applicant anything they can
+/// act on.
+async fn application_accesses(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    axum::extract::Path(id): axum::extract::Path<Uuid>,
+) -> Result<impl axum::response::IntoResponse, ApiError> {
+    let (actor_id, _username) = require_actor(&principal)?;
+
+    // Ownership is part of the same query: a separate existence check
+    // would let someone else's application id be distinguished from an
+    // unknown one by the difference between 403 and 404.
+    let owned: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM applications WHERE id = $1 AND applicant_id = $2)",
+    )
+    .bind(id)
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    if !owned {
+        return Err(ApiError(NoombatError::NotFound {
+            entity: "application",
+            id,
+        }));
+    }
+
+    let entries = sqlx::query_as::<_, AccessEntry>(
+        "SELECT occurred_at, kind, outcome, reason FROM application_accesses \
+         WHERE application_id = $1 ORDER BY occurred_at DESC",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    Ok(axum::Json(entries))
 }

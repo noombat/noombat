@@ -44,6 +44,11 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/reports", post(create_report))
         // Moderator: resolve an AP report.
         .route("/api/v1/admin/reports/{id}/resolve", post(resolve_report))
+        // Moderator: read one application, stating why.
+        .route(
+            "/api/v1/admin/applications/{id}/review",
+            post(review_application),
+        )
 }
 
 // ..... HELPERS .....
@@ -733,4 +738,94 @@ async fn resolve_report(
     // Return an empty body so that hx-swap="outerHTML" on the report
     // article removes the resolved entry from the moderation queue.
     Ok((StatusCode::OK, axum::response::Html(String::new())))
+}
+
+// ..... APPLICATION REVIEW .....
+
+/// Request body for `POST /api/v1/admin/applications/{id}/review`.
+#[derive(Debug, Deserialize)]
+pub struct ReviewApplicationRequest {
+    /// Why this application is being read. Shown to the applicant.
+    pub reason: String,
+}
+
+/// One application, as a moderator investigating a report sees it.
+#[derive(Debug, Serialize, sqlx::FromRow)]
+pub struct ApplicationReview {
+    pub id: Uuid,
+    pub applicant_id: Uuid,
+    pub listing_title: String,
+    pub listing_company: String,
+    pub status: String,
+    pub cover_letter_md: Option<String>,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// `POST /api/v1/admin/applications/{id}/review`
+///
+/// Read one application as a moderator, stating why. The read is written
+/// to `application_accesses` in the same transaction, so it appears in
+/// the applicant's own record of who saw their application.
+///
+/// A read is not authority to act: nothing here can move an application
+/// through its states. That stays with the company.
+async fn review_application(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ReviewApplicationRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let moderator = require_moderator(&principal)?;
+
+    let reason = body.reason.trim();
+    if reason.is_empty() {
+        return Err(ApiError(NoombatError::BadRequest(
+            "reason must not be empty".into(),
+        )));
+    }
+
+    // The moderator's own actor, so the log names a person rather than a
+    // role. An admin-token principal has none and is refused: an
+    // unattributable read is what this route exists to prevent.
+    let reader_id = moderator
+        .actor_uuid
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    let mut tx = state.pool.begin().await.map_err(NoombatError::from)?;
+
+    let application = sqlx::query_as::<_, ApplicationReview>(
+        "SELECT id, applicant_id, listing_title, listing_company, status, \
+                cover_letter_md, created_at \
+         FROM applications WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(NoombatError::from)?
+    .ok_or(ApiError(NoombatError::NotFound {
+        entity: "application",
+        id,
+    }))?;
+
+    sqlx::query(
+        "INSERT INTO application_accesses \
+             (application_id, reader_id, kind, outcome, reason) \
+         VALUES ($1, $2, 'moderator_review', 'disclosed', $3)",
+    )
+    .bind(id)
+    .bind(reader_id)
+    .bind(reason)
+    .execute(&mut *tx)
+    .await
+    .map_err(NoombatError::from)?;
+
+    tx.commit().await.map_err(NoombatError::from)?;
+
+    info!(
+        application_id = %id,
+        moderator = %reader_id,
+        "moderator read an application"
+    );
+
+    Ok(Json(application))
 }
