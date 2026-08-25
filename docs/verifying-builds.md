@@ -142,9 +142,9 @@ every script a page loads must appear in the manifest.
 ```sh
 for path in / /auth/login /auth/register /chat /settings/chat /compose; do
   curl -fsSL "${INSTANCE}${path}" \
-    | grep -o 'src="/assets/[^"]*"' \
-    | sed 's|src="/assets/||; s|"$||' \
-    | while read -r asset; do
+    | grep -o 'src="/assets/[^"]*"' \ |  |  |  |  |  |  |
+    |---------------------------------|--|--|--|--|--|--|
+    | while read -r asset; do         |  |  |  |  |  |  |
         if jq -e --arg a "$asset" '.assets | has($a)' \
              assets-manifest.json > /dev/null; then
           printf '  ok        %s -> %s\n' "$path" "$asset"

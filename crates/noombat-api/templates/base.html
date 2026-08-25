@@ -38,7 +38,7 @@
 
     <!--
       Announcement region for assistive technology.
-      
+
       A live region only announces reliably when it is already present and
       exposed and its text content then changes. Marking a hidden
       indicator aria-live does not work: `display: none` removes the
@@ -47,10 +47,10 @@
       that inconsistently. This region is therefore always present, never
       hidden from assistive technology, and empty until something updates
       its text.
-      
+
       Updated by out-of-band swap; see feed_page.html. `role="status"`
       implies aria-live="polite" and aria-atomic="true".
-      
+
       Kept outside <main> so a content swap cannot replace it: replacing
       the node would reintroduce the very problem it solves.
     -->
