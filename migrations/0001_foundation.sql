@@ -70,6 +70,11 @@ CREATE TABLE actors (
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
     headline                     TEXT,
     location                     TEXT, -- free-text location (e.g. "Berlin, Germany")
+    -- Organisations only: the corporate domain claimed. Publishing is gated
+    -- on a verified rel="me" link whose registrable domain matches it, so
+    -- without the claim the gate would admit any domain the actor happens
+    -- to control, including a personal blog.
+    claimed_domain               TEXT,
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
     last_sign_in_at              TIMESTAMPTZ, -- last accepted credential presentation; NULL = never signed in. NOT updated_at, see below
