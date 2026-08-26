@@ -53,10 +53,8 @@ else
 fi
 
 echo "==> Archiving uploaded media..."
-# Absent when the instance stores media in an S3-compatible bucket, which
-# is a legitimate configuration and not a failed backup. The message says
-# which of the two it is, because a silent skip is how avatars go
-# unarchived for months without anyone noticing.
+# Absent when media lives in an S3 bucket, which is a configuration and
+# not a failed backup, so the message below says which.
 MEDIA_VOLUME="$(podman volume ls --format '{{.Name}}' | grep media-data | head -1)"
 if [ -n "$MEDIA_VOLUME" ]; then
     MEDIA_MOUNT="$(podman volume inspect "$MEDIA_VOLUME" --format '{{.Mountpoint}}')"
