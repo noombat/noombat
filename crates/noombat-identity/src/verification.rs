@@ -126,16 +126,108 @@ pub async fn verify_link(
 /// Uses the `scraper` crate (backed by `html5ever`) to parse the HTML,
 /// handling arbitrary attribute ordering, single-quoted values,
 /// multi-line elements, and other edge cases that regex cannot cover.
+/// A back-link URL reduced to what identifies it, for comparison.
+///
+/// Only the parts that cannot change *which* URL is named: the scheme and
+/// host are case-folded, a default port is dropped, and a trailing slash
+/// and fragment are removed. The host itself is left alone, so a link to
+/// `www.` or to another domain stays a different URL.
+///
+/// Comparing raw strings instead refuses five back-links a person would
+/// reasonably write, and refuses them silently: the link simply never
+/// verifies and nothing says why.
+fn normalise_back_link(url: &str) -> String {
+    let url = url.trim();
+    let (scheme, rest) = match url.split_once("://") {
+        Some((s, r)) => (s.to_ascii_lowercase(), r),
+        None => (String::new(), url),
+    };
+    let (authority, path) = match rest.find('/') {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, ""),
+    };
+    let mut authority = authority.to_ascii_lowercase();
+    for default in [":443", ":80"] {
+        if let Some(stripped) = authority.strip_suffix(default) {
+            authority = stripped.to_owned();
+        }
+    }
+    let path = path.split('#').next().unwrap_or("");
+    let path = path.strip_suffix('/').unwrap_or(path);
+    // The scheme is dropped rather than compared. The href lives on the
+    // claimant's own site and points back here; whether they wrote http
+    // or https changes nothing about which profile is named.
+    let _ = scheme;
+    format!("{authority}{path}")
+}
+
 fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
+    let wanted: Vec<String> = profile_urls
+        .iter()
+        .map(|u| normalise_back_link(u))
+        .collect();
     let document = Html::parse_document(html);
     for element in document.select(&REL_ME_SELECTOR) {
         if let Some(href) = element.value().attr("href")
-            && profile_urls.contains(&href)
+            && wanted.contains(&normalise_back_link(href))
         {
             return true;
         }
     }
     false
+}
+
+#[cfg(test)]
+mod back_link_tests {
+    use super::*;
+
+    const AP: &str = "https://noombat.example/users/alice";
+    const HUMAN: &str = "https://noombat.example/@alice";
+
+    fn links_back(href: &str) -> bool {
+        let html = format!(r#"<html><body><a rel="me" href="{href}">me</a></body></html>"#);
+        check_rel_me(&html, &[AP, HUMAN])
+    }
+
+    #[test]
+    fn the_ways_a_person_reasonably_writes_the_same_link_all_verify() {
+        for href in [
+            "https://noombat.example/@alice",
+            "https://noombat.example/@alice/",
+            "http://noombat.example/@alice",
+            "https://NOOMBAT.example/@alice",
+            "https://noombat.example:443/@alice",
+            "https://noombat.example/@alice#me",
+            "https://noombat.example/users/alice",
+        ] {
+            assert!(links_back(href), "should verify: {href}");
+        }
+    }
+
+    #[test]
+    fn another_host_or_another_account_still_does_not() {
+        // Normalisation must not loosen which URL is named. `www.` is
+        // included deliberately: it is a different host unless the
+        // instance serves it, and assuming it would verify against a
+        // domain this instance may not control.
+        for href in [
+            "https://evil.example/@alice",
+            "https://noombat.example/@bob",
+            "https://noombat.example.evil.test/@alice",
+            "https://www.noombat.example/@alice",
+            "https://noombat.example/users/bob",
+        ] {
+            assert!(!links_back(href), "must not verify: {href}");
+        }
+    }
+
+    #[test]
+    fn a_page_with_no_rel_me_does_not_verify() {
+        // Guards the tests above: were the selector to match anything,
+        // every case would pass and prove nothing.
+        let html = r#"<html><body><a href="https://noombat.example/@alice">me</a></body></html>"#;
+        assert!(!check_rel_me(html, &[AP, HUMAN]));
+    }
 }
 
 /// Update the `verified_at` and `last_checked` timestamps.
@@ -293,4 +385,176 @@ mod tests {
         let html = r#"<a rel="me" href="https://noombat.social/@alice">Noombat</a>"#;
         assert!(check_rel_me(html, &["https://noombat.social/@alice"]));
     }
+}
+
+// ..... Domain control .....
+
+/// The registrable domain of a host, or `None` if it has no public suffix.
+///
+/// Public-suffix aware, and it has to be. Comparing the last two labels
+/// makes every `.co.uk` host look like every other, because `co.uk` is
+/// the suffix rather than a registration; `evil.co.uk` would then satisfy
+/// a claim on `acme.co.uk`. It also keeps `careers.acme.example` and
+/// `acme.example` the same organisation while `acme.example.evil.test`
+/// stays a different one.
+pub fn registrable_domain(host: &str) -> Option<String> {
+    let host = host.trim().trim_end_matches('.').to_ascii_lowercase();
+    let domain = psl::domain(host.as_bytes())?;
+    std::str::from_utf8(domain.as_bytes())
+        .ok()
+        .map(str::to_owned)
+}
+
+/// The registrable domain of a URL's host.
+pub fn registrable_domain_of_url(url: &str) -> Option<String> {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let host = rest
+        .split(['/', '?', '#'])
+        .next()?
+        .rsplit_once('@')
+        .map(|(_, h)| h)
+        .unwrap_or_else(|| rest.split(['/', '?', '#']).next().unwrap_or(""));
+    let host = host.split(':').next()?;
+    registrable_domain(host)
+}
+
+/// Whether this actor holds a verified link proving control of the domain
+/// it claims.
+///
+/// Both halves are required. A verified link to some other domain proves
+/// control of that domain and says nothing about the claim; a claim with
+/// no verified link is an assertion. `verified_at` non-NULL is what
+/// `verify_link` writes only when the back-link was actually found, so a
+/// lapsed domain demotes the actor as soon as re-verification clears it.
+pub async fn controls_claimed_domain(pool: &PgPool, actor_id: Uuid) -> Result<bool> {
+    let claimed: Option<String> =
+        sqlx::query_scalar("SELECT claimed_domain FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+
+    let Some(claimed) = claimed.as_deref().and_then(registrable_domain) else {
+        return Ok(false);
+    };
+
+    let urls: Vec<String> = sqlx::query_scalar(
+        "SELECT url FROM verified_links WHERE actor_id = $1 AND verified_at IS NOT NULL",
+    )
+    .bind(actor_id)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(urls
+        .iter()
+        .filter_map(|u| registrable_domain_of_url(u))
+        .any(|d| d == claimed))
+}
+
+#[cfg(test)]
+mod domain_tests {
+    use super::*;
+
+    #[test]
+    fn a_subdomain_is_the_same_organisation() {
+        assert_eq!(
+            registrable_domain("careers.acme.example").as_deref(),
+            Some("acme.example")
+        );
+        assert_eq!(
+            registrable_domain("acme.example").as_deref(),
+            Some("acme.example")
+        );
+    }
+
+    #[test]
+    fn a_lookalike_suffix_is_a_different_organisation() {
+        // The attack the claim exists to stop: registering the claimed
+        // name as a label under a domain you control.
+        assert_ne!(
+            registrable_domain("acme.example.evil.test").as_deref(),
+            Some("acme.example")
+        );
+        assert_eq!(
+            registrable_domain("acme.example.evil.test").as_deref(),
+            Some("evil.test")
+        );
+    }
+
+    #[test]
+    fn a_multi_label_public_suffix_is_not_a_registration() {
+        // Comparing the last two labels would make these equal, and every
+        // .co.uk host would satisfy every .co.uk claim.
+        assert_eq!(
+            registrable_domain("acme.co.uk").as_deref(),
+            Some("acme.co.uk")
+        );
+        assert_eq!(
+            registrable_domain("evil.co.uk").as_deref(),
+            Some("evil.co.uk")
+        );
+        assert_ne!(
+            registrable_domain("acme.co.uk"),
+            registrable_domain("evil.co.uk")
+        );
+        // The bare suffix is not registrable at all.
+        assert_eq!(registrable_domain("co.uk"), None);
+    }
+
+    #[test]
+    fn a_url_is_reduced_to_its_registrable_domain() {
+        for url in [
+            "https://careers.acme.example/jobs",
+            "http://acme.example",
+            "https://acme.example:8443/x?y=1#z",
+        ] {
+            assert_eq!(
+                registrable_domain_of_url(url).as_deref(),
+                Some("acme.example"),
+                "{url}"
+            );
+        }
+    }
+
+    #[test]
+    fn case_and_a_trailing_dot_do_not_change_the_answer() {
+        assert_eq!(
+            registrable_domain("ACME.Example.").as_deref(),
+            Some("acme.example")
+        );
+    }
+}
+
+/// Unpublish the listings of organisations that no longer control the
+/// domain they claim. Returns how many were unpublished.
+///
+/// Run after re-verification. A lapsed corporate domain is the classic
+/// recruitment-fraud vector: an expired domain is bought cheaply and the
+/// listings keep running under a badge that is no longer true. Refusing
+/// new listings is not enough on its own, because the ones already
+/// published are the ones applicants answer.
+pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<u64> {
+    let result = sqlx::query(
+        "UPDATE job_listings SET published_at = NULL \
+         WHERE published_at IS NOT NULL \
+           AND actor_id IN ( \
+               SELECT a.id FROM actors a \
+               WHERE a.actor_type = 'organization' \
+                 AND NOT EXISTS ( \
+                     SELECT 1 FROM verified_links v \
+                     WHERE v.actor_id = a.id AND v.verified_at IS NOT NULL \
+                 ) \
+           )",
+    )
+    .execute(pool)
+    .await?;
+
+    let unpublished = result.rows_affected();
+    if unpublished > 0 {
+        warn!(
+            unpublished,
+            "unpublished listings of organisations with no verified domain"
+        );
+    }
+    Ok(unpublished)
 }
