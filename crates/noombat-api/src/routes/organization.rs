@@ -27,12 +27,67 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route(
+            "/api/v1/organizations",
+            axum::routing::post(enrol_organization),
+        )
         .route("/api/v1/candidates", get(search_candidates))
         .route("/api/v1/jobs/{job_id}/applications", get(list_applications))
         .route(
             "/api/v1/jobs/{job_id}/applications/{app_id}/status",
             axum::routing::post(update_application_status),
         )
+}
+
+// ..... Enrolment .....
+
+/// Request body for `POST /api/v1/organizations`.
+#[derive(Debug, Deserialize)]
+struct EnrolRequest {
+    username: String,
+    display_name: Option<String>,
+    /// The corporate domain claimed. Publishing is gated on proving
+    /// control of it; without one the organisation can never publish.
+    claimed_domain: Option<String>,
+}
+
+/// `POST /api/v1/organizations`
+///
+/// Enrol an organisation, owned by the authenticated actor. Self-serve
+/// by decision: an administrator cannot adjudicate employment at any
+/// scale, so no route lets them try.
+///
+/// The organisation is enrolled but not verified. What it may publish is
+/// gated on a `rel="me"` link to its own domain, added afterwards.
+async fn enrol_organization(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Json(body): Json<EnrolRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let owner_id = principal
+        .as_ref()
+        .and_then(|p| p.actor_uuid)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    let actor = noombat_identity::registration::enrol_organization(
+        &state.pool,
+        &state.domain,
+        owner_id,
+        body.username.trim(),
+        body.display_name.clone(),
+        body.claimed_domain.as_deref(),
+    )
+    .await?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(serde_json::json!({
+            "id": actor.id,
+            "ap_id": actor.ap_id,
+            "username": actor.username,
+            "actor_type": actor.actor_type.as_str(),
+        })),
+    ))
 }
 
 // ..... Candidate search .....

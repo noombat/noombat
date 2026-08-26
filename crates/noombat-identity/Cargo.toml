@@ -30,3 +30,4 @@ jsonwebtoken = { workspace = true }
 totp-rs = { workspace = true }
 qrcode = { workspace = true }
 url = { workspace = true }
+psl = "2.1.226"

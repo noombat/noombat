@@ -443,6 +443,15 @@ async fn main() -> anyhow::Result<()> {
                             count = changed.len(),
                             "re-verification sweep: links changed state"
                         );
+                        // A link that lapsed may have been the one holding
+                        // an organisation's listings up. Refusing new ones
+                        // is not enough: the published ones are what
+                        // applicants answer.
+                        if let Err(e) =
+                            noombat_identity::verification::demote_lapsed_organizations(&pool).await
+                        {
+                            tracing::warn!(error = %e, "demotion sweep failed");
+                        }
                         // Broadcast an Update activity for each actor
                         // whose verification state changed, so that
                         // followers refresh their cached profile.

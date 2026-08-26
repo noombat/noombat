@@ -78,6 +78,18 @@ async fn create_job(
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    // An organisation publishes only once it has proved it controls the
+    // domain it claims. Domain control is not identity verification, and
+    // the refusal says so: it proves who runs a website at a point in
+    // time, which is what stops a listing claiming an employer it has no
+    // connection to.
+    if actor.actor_type == noombat_core::actor::ActorType::Organization
+        && !noombat_identity::verification::controls_claimed_domain(&state.pool, actor.id).await?
+    {
+        return Err(ApiError(noombat_core::error::NoombatError::Forbidden));
+    }
+
     let job = noombat_jobs::create_job(&state.pool, actor.id, &state.domain, &params).await?;
 
     // Synchronise search index (fire-and-forget).

@@ -11,11 +11,12 @@
 use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use noombat_core::actor::{ActorType, NewActor};
+use noombat_core::actor::{Actor, ActorType, NewActor};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::info;
+use uuid::Uuid;
 
 use crate::keys;
 
@@ -98,6 +99,20 @@ pub fn hash_auth_key(auth_key: &str) -> Result<String> {
 ///
 /// `ActorAlreadyExists` if the username is taken, `BadRequest` if the
 /// username or authentication key is invalid.
+/// Whether a local actor already holds this username on this domain.
+///
+/// Checked before key generation, which is the expensive part.
+async fn username_taken(pool: &PgPool, domain: &str, username: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM actors \
+         WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
+    )
+    .bind(username)
+    .bind(domain)
+    .fetch_one(pool)
+    .await?)
+}
+
 pub async fn register(
     pool: &PgPool,
     domain: &str,
@@ -107,15 +122,7 @@ pub async fn register(
     validate_auth_key(&req.auth_key)?;
 
     // Check uniqueness before generating keys (which is expensive).
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM actors WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
-    )
-    .bind(&req.username)
-    .bind(domain)
-    .fetch_one(pool)
-    .await?;
-
-    if exists {
+    if username_taken(pool, domain, &req.username).await? {
         return Err(NoombatError::ActorAlreadyExists(req.username.clone()));
     }
 
@@ -230,4 +237,92 @@ mod tests {
                 .is_ok()
         );
     }
+}
+
+// ..... Organisation enrolment .....
+
+/// Enrol an organisation as its own actor, owned by the actor enrolling it.
+///
+/// Self-serve by decision: an administrator cannot adjudicate employment
+/// at any scale, and a route that lets them try makes the operator the
+/// arbiter of who is a real employer.
+///
+/// The organisation gets no auth key and no session. It is never signed
+/// into; it is acted for, through `organization_members`. That keeps
+/// "which person did this" answerable, which a shared login destroys.
+///
+/// Enrolment does not confer verification. `rel="me"` against the
+/// organisation's own domain gates what it may publish, and is added
+/// afterwards through `verification::add_link`.
+pub async fn enrol_organization(
+    pool: &PgPool,
+    domain: &str,
+    owner_id: Uuid,
+    username: &str,
+    display_name: Option<String>,
+    claimed_domain: Option<&str>,
+) -> Result<Actor> {
+    validate_username(username)?;
+
+    if username_taken(pool, domain, username).await? {
+        return Err(NoombatError::ActorAlreadyExists(username.to_owned()));
+    }
+
+    let keypair = keys::generate_keypair_async().await?;
+
+    let new_actor = NewActor {
+        actor_type: ActorType::Organization,
+        username: username.to_owned(),
+        display_name,
+        domain: domain.to_owned(),
+        public_key_pem: keypair.rsa.public_pem,
+        private_key_pem: keypair.rsa.private_pem,
+        ed25519_public_key: keypair.ed25519.public_multibase,
+        ed25519_private_key: keypair.ed25519.private_base64,
+    };
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| NoombatError::Internal(format!("transaction begin failed: {e}")))?;
+
+    let actor = crate::repo::create_actor_tx(&mut tx, &new_actor).await?;
+
+    // Stored as the registrable domain, so the gate compares like with
+    // like and a claim on `careers.acme.example` is a claim on
+    // `acme.example`. A claim that parses to nothing is refused rather
+    // than stored, or it would be a claim no link could ever satisfy.
+    if let Some(raw) = claimed_domain {
+        let domain = crate::verification::registrable_domain(raw).ok_or_else(|| {
+            NoombatError::BadRequest(format!("{raw} is not a registrable domain"))
+        })?;
+        sqlx::query("UPDATE actors SET claimed_domain = $1 WHERE id = $2")
+            .bind(&domain)
+            .bind(actor.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
+    // In the same transaction as the actor. An organisation nobody can
+    // act for is unreachable: there is no login to fall back on, so a
+    // failure here has to take the actor with it.
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role) \
+         VALUES ($1, $2, 'owner')",
+    )
+    .bind(actor.id)
+    .bind(owner_id)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit()
+        .await
+        .map_err(|e| NoombatError::Internal(format!("transaction commit failed: {e}")))?;
+
+    info!(
+        organization = %actor.ap_id,
+        owner = %owner_id,
+        "organisation enrolled"
+    );
+    Ok(actor)
 }
