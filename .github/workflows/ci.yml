@@ -33,6 +33,7 @@ on:
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
@@ -54,6 +55,7 @@ on:
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
+      - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-typst-injection.sh"
@@ -92,34 +94,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Verify all first-party crates forbid unsafe code
-        run: |
-          FAIL=0
-          for crate_dir in crates/*/; do
-            crate_name=$(basename "$crate_dir")
-            entry=""
-            if [ -f "$crate_dir/src/lib.rs" ]; then
-              entry="$crate_dir/src/lib.rs"
-            elif [ -f "$crate_dir/src/main.rs" ]; then
-              entry="$crate_dir/src/main.rs"
-            else
-              echo "  ?  $crate_name: no lib.rs or main.rs found"
-              continue
-            fi
-
-            if grep -q 'forbid(unsafe_code)' "$entry"; then
-              echo "  ✓  $crate_name"
-            else
-              echo "  ✗  $crate_name: missing #![forbid(unsafe_code)] in $entry"
-              FAIL=$((FAIL + 1))
-            fi
-          done
-
-          if [ "$FAIL" -gt 0 ]; then
-            echo ""
-            echo "::error::$FAIL crate(s) missing #![forbid(unsafe_code)]"
-            exit 1
-          fi
+      # Every crate root, not one per crate directory. The attribute is
+      # per root, so a crate with two `[[bin]]` targets has two.
+      - name: Verify every crate root forbids unsafe code
+        run: scripts/check-safe-rust.sh
 
   markup-conventions:
     name: Markup conventions
