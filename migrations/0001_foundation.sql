@@ -73,6 +73,19 @@ CREATE TABLE actors (
     actor_status                 TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('pending', 'active', 'silenced', 'suspended')),
     chatmail_addr                TEXT,
     chatmail_cred                BYTEA,
+    -- The user's own address, requested at registration for verification and
+    -- account recovery. Never federated: build_federated_actor names its fields
+    -- one at a time, so a column cannot reach a peer by being added here, and
+    -- this one must not be added there.
+    --
+    -- Nullable, permanently. The OAuth sign-up paths mint an account with no
+    -- password and no address, and remote actors never have one.
+    --
+    -- Stored as entered, compared folded: uniqueness and every lookup go
+    -- through lower(email), via the index below. A query written against the
+    -- raw column finds nothing and reports no error.
+    email                        TEXT,
+    email_verified_at            TIMESTAMPTZ, -- non-NULL = control of the address proved
     chat_requires_reprovisioning BOOLEAN NOT NULL DEFAULT FALSE,
     orcid                        TEXT,
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
@@ -83,11 +96,45 @@ CREATE TABLE actors (
     -- without the claim the gate would admit any domain the actor happens
     -- to control, including a personal blog.
     claimed_domain               TEXT,
+    -- Organisations only: whether this actor recruits for itself or for third
+    -- parties. Declared at enrolment, never inferred, because rel="me" proves
+    -- the wrong thing for an agency: it establishes control of a domain, and a
+    -- reader takes it as a relationship to the roles advertised, which for an
+    -- agency it is not.
+    --
+    -- Nullable rather than defaulted. NULL means nobody was asked, which is
+    -- true of every individual, every group and every remote actor, and an
+    -- agency that never declared itself has to stay distinguishable from one
+    -- that declared itself a direct employer.
+    org_kind                     TEXT CHECK (org_kind IN ('employer', 'agency')),
+    -- The default a new post takes when the request states no visibility.
+    -- Deliberately not inside actor_privacy: that blob holds access-control
+    -- predicates, each with a read-enforcement site, and this has none. It is a
+    -- default for new objects, so the only thing that reads it is the compose
+    -- path.
+    --
+    -- The same three values as posts.visibility, which are NOT the three the
+    -- profile-section tables use: 'unlisted' here, 'private' there.
+    default_post_visibility      TEXT NOT NULL DEFAULT 'public' CHECK (default_post_visibility IN ('public', 'unlisted', 'followers')),
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
+    -- When the tombstone was written, which starts the retention window before
+    -- the row itself is hard-deleted. A second clock, after the grace period
+    -- deletion_requested_at starts, not the same one.
+    --
+    -- Not updated_at: trg_actors_updated_at is BEFORE UPDATE ... FOR EACH ROW,
+    -- so it moves on every later write to the row and cannot carry a window.
+    -- Not tombstoned_actors.tombstoned_at either: that is keyed on ap_id and
+    -- its INSERT is ON CONFLICT DO NOTHING, so a second erasure inherits the
+    -- first one's timestamp.
+    erased_at                    TIMESTAMPTZ, -- non-NULL = tombstoned; the purge clock
     last_sign_in_at              TIMESTAMPTZ, -- last accepted credential presentation; NULL = never signed in. NOT updated_at, see below
     created_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now()
+    updated_at                   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CONSTRAINT org_kind_is_for_organisations CHECK (
+        org_kind IS NULL
+        OR actor_type = 'organization'
+    )
 );
 
 CREATE INDEX idx_actors_username_domain ON actors (username, domain);
@@ -96,6 +143,14 @@ CREATE UNIQUE INDEX idx_actors_local_username_domain ON actors (username, domain
 -- two rows claiming one key id would make that ambiguous. Partial, so the
 -- local rows that leave it NULL do not collide with one another.
 CREATE UNIQUE INDEX idx_actors_public_key_id ON actors (public_key_id) WHERE public_key_id IS NOT NULL;
+-- Uniqueness and every lookup fold case, so both go through lower(email).
+-- lower() is IMMUTABLE, so this needs no extension.
+CREATE UNIQUE INDEX idx_actors_local_email ON actors (lower(email)) WHERE is_local AND email IS NOT NULL;
+-- The admission queue's work list, oldest first. Unlike
+-- idx_actors_sanitiser_version this one is intended to drain to empty.
+CREATE INDEX idx_actors_pending ON actors (created_at) WHERE actor_status = 'pending' AND is_local;
+-- The purge worker's work list: tombstoned rows past their retention window.
+CREATE INDEX idx_actors_erased ON actors (erased_at) WHERE erased_at IS NOT NULL;
 CREATE INDEX idx_actors_domain ON actors (domain);
 CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
 CREATE INDEX idx_actors_orcid ON actors (orcid) WHERE orcid IS NOT NULL;
@@ -298,6 +353,17 @@ CREATE TABLE job_listings (
     requirements             JSONB,
     published_at             TIMESTAMPTZ,
     expires_at               TIMESTAMPTZ,
+    -- Moderation approval, which is not publication. published_at distinguishes
+    -- draft from published; this distinguishes reviewed from not.
+    --
+    -- Nullable so "never reviewed" and "refused" stay distinguishable: a boolean
+    -- collapses them, and the refusal is the one a moderator has to be able to
+    -- find again. No DEFAULT: fail closed. A DEFAULT now() means any future
+    -- INSERT that forgets the column silently publishes an unreviewed listing.
+    approved_at              TIMESTAMPTZ,
+    -- Who approved it. Mirrors reports.resolved_by: approving is a moderation
+    -- decision, and an audit trail with no actor is half an audit trail.
+    approved_by              UUID REFERENCES actors(id) ON DELETE SET NULL,
     integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- The member who created it, where `actor_id` is the organisation
@@ -690,9 +756,18 @@ CREATE TABLE relay_subscriptions (
 -- the tombstone so that future resolution attempts short-circuit
 -- without an HTTP round-trip.
 --
--- Tombstones should be pruned periodically (e.g. after 30 days) by a
--- background worker so that actors who re-create their account on the
--- same URI become resolvable again.
+-- Two kinds of row live here and they have opposite lifetimes.
+--
+-- A row written for a REMOTE 410 (by resolve_actor or deliver_one) may be
+-- pruned periodically, so that an actor who re-creates their account on the
+-- same URI becomes resolvable again.
+--
+-- A row written by a LOCAL erasure (by tombstone_actor) is permanent. It is
+-- the sole record that the ap_id ever existed, and it is what keeps the
+-- username locked: freeing it would let a stranger re-register the name and
+-- inherit the erased user's mentions and inbound follows. A pruner written
+-- from the first paragraph alone would delete these, so it must scope itself
+-- to the remote rows.
 CREATE TABLE tombstoned_actors (
     ap_id         TEXT PRIMARY KEY,
     tombstoned_at TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -762,6 +837,8 @@ CREATE INDEX idx_custom_sections_actor ON custom_profile_sections (actor_id);
 CREATE INDEX idx_media_attachments_actor ON media_attachments (actor_id);
 CREATE INDEX idx_media_attachments_post ON media_attachments (post_id);
 CREATE INDEX idx_job_listings_actor ON job_listings (actor_id);
+-- The approval queue's work list, oldest first.
+CREATE INDEX idx_job_listings_pending_approval ON job_listings (created_at) WHERE approved_at IS NULL;
 CREATE INDEX idx_applications_job ON applications (job_listing_id);
 CREATE INDEX idx_group_memberships_group ON group_memberships (group_id);
 CREATE INDEX idx_event_rsvps_event ON event_rsvps (event_id);
