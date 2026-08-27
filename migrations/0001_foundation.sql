@@ -267,19 +267,49 @@ CREATE INDEX idx_oauth_identities_actor ON oauth_identities (actor_id);
 
 -- ..... PROFILE SECTIONS .....
 
+-- Employment is a two-sided claim. `organization` is what the person typed
+-- and is kept for employers that are not actors anywhere; `organization_id`
+-- is the actor they mean, where one exists, and is what makes the claim
+-- checkable at all. A row with the text and no reference is an ordinary
+-- self-assertion, which is most rows and is fine.
 CREATE TABLE experiences (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id         UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     title            TEXT NOT NULL,
     organization     TEXT NOT NULL,
+    -- ON DELETE SET NULL, not CASCADE: an organisation leaving the instance
+    -- must not delete a person's work history. The claim reverts to the free
+    -- text it always carried, and loses its confirmation with the reference.
+    organization_id  UUID REFERENCES actors(id) ON DELETE SET NULL,
+    -- When the employer side was established, and by which of the two routes
+    -- that carry equal force: the organisation confirming the person, or the
+    -- person proving an address at a domain the organisation has already
+    -- verified through rel="me", which is a standing pre-authorisation.
+    --
+    -- NULL is the honest default and is rendered as unconfirmed rather than
+    -- hidden. Absence of a badge is the signal, so there is deliberately no
+    -- DEFAULT that could make an unchecked row read as checked.
+    organization_confirmed_at  TIMESTAMPTZ,
+    organization_confirmed_via TEXT CHECK (organization_confirmed_via IN ('organisation', 'domain-email')),
     start_date       DATE NOT NULL,
     end_date         DATE,
     description_md   TEXT,
     description_html TEXT,
     sort_order       SMALLINT NOT NULL DEFAULT 0,
     visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
-    ap_object        JSONB NOT NULL
+    ap_object        JSONB NOT NULL,
+    -- A confirmation with nothing to point at is not a confirmation. This
+    -- stops a route setting the timestamp on a free-text row, which would
+    -- render a badge no organisation ever stood behind.
+    CONSTRAINT confirmation_names_an_organisation CHECK (
+        organization_confirmed_at IS NULL
+        OR (organization_id IS NOT NULL AND organization_confirmed_via IS NOT NULL)
+    )
 );
+
+-- The employer's work list: claims naming this organisation, unconfirmed first.
+CREATE INDEX idx_experiences_organization ON experiences (organization_id)
+    WHERE organization_id IS NOT NULL;
 
 CREATE TABLE educations (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),

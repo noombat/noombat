@@ -31,12 +31,105 @@ pub fn router() -> Router<AppState> {
             "/api/v1/organizations",
             axum::routing::post(enrol_organization),
         )
+        .route(
+            "/api/v1/organizations/{id}/employment-claims",
+            get(list_employment_claims),
+        )
+        .route(
+            "/api/v1/organizations/{id}/employment-claims/{experience_id}",
+            axum::routing::post(confirm_employment).delete(withdraw_employment),
+        )
         .route("/api/v1/candidates", get(search_candidates))
         .route("/api/v1/jobs/{job_id}/applications", get(list_applications))
         .route(
             "/api/v1/jobs/{job_id}/applications/{app_id}/status",
             axum::routing::post(update_application_status),
         )
+}
+
+// ..... Employment claims .....
+
+/// Whether the caller may act for this organisation.
+///
+/// The organisation's own session counts, because an enrolled organisation
+/// owns its actor row. Otherwise a membership row is required. The check
+/// runs before the claim is looked up, so a caller who may not act for the
+/// organisation cannot learn whether a claim exists from the error they get.
+async fn require_acts_for(
+    pool: &sqlx::PgPool,
+    organization_id: uuid::Uuid,
+    principal: &Option<axum::Extension<Principal>>,
+) -> Result<(), ApiError> {
+    let actor_id = principal
+        .as_ref()
+        .and_then(|p| p.actor_uuid)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    if actor_id == organization_id {
+        return Ok(());
+    }
+
+    let role: Option<OrganizationRole> = sqlx::query_scalar(
+        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(organization_id)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
+
+    role.map(|_| ()).ok_or(ApiError(NoombatError::Forbidden))
+}
+
+/// `GET /api/v1/organizations/{id}/employment-claims`
+///
+/// The employer's work list: everyone claiming to work here, unconfirmed
+/// first. Confirmed rows stay on the list so a confirmation can be
+/// withdrawn later.
+async fn list_employment_claims(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_acts_for(&state.pool, id, &principal).await?;
+    let claims = noombat_identity::profile::list_employment_claims(&state.pool, id).await?;
+    Ok(Json(claims))
+}
+
+/// `POST /api/v1/organizations/{id}/employment-claims/{experience_id}`
+///
+/// Establish the employer side of a claim.
+async fn confirm_employment(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Path((id, experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_acts_for(&state.pool, id, &principal).await?;
+    let claim = noombat_identity::profile::confirm_employment(
+        &state.pool,
+        experience_id,
+        id,
+        noombat_identity::profile::ConfirmedVia::Organisation,
+    )
+    .await?;
+    Ok(Json(claim))
+}
+
+/// `DELETE /api/v1/organizations/{id}/employment-claims/{experience_id}`
+///
+/// Withdraw a confirmation. The claim itself survives as self-asserted:
+/// disputing that somebody worked here is a moderation matter, not a
+/// licence to edit their history.
+async fn withdraw_employment(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Path((id, experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_acts_for(&state.pool, id, &principal).await?;
+    let claim =
+        noombat_identity::profile::withdraw_employment_confirmation(&state.pool, experience_id, id)
+            .await?;
+    Ok(Json(claim))
 }
 
 // ..... Enrolment .....
