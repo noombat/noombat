@@ -525,7 +525,7 @@ CREATE TABLE events (
     location_lon     DOUBLE PRECISION,
     virtual_url      TEXT,
     organiser_id     UUID NOT NULL REFERENCES actors(id),
-    group_id         UUID REFERENCES actors(id),
+    group_id         UUID REFERENCES actors(id) ON DELETE SET NULL,
     ap_object        JSONB NOT NULL,
     created_at       TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -611,7 +611,7 @@ CREATE TABLE domain_restrictions (
     domain      TEXT NOT NULL UNIQUE,
     restriction TEXT NOT NULL CHECK (restriction IN ('block', 'silence')),
     reason      TEXT,
-    created_by  UUID REFERENCES actors(id),
+    created_by  UUID REFERENCES actors(id) ON DELETE SET NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -626,7 +626,7 @@ CREATE TABLE reports (
     comment         TEXT,
     forwarded       BOOLEAN NOT NULL DEFAULT FALSE,
     status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
-    resolved_by     UUID REFERENCES actors(id),
+    resolved_by     UUID REFERENCES actors(id) ON DELETE SET NULL,
     resolution_note TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at     TIMESTAMPTZ,
@@ -644,7 +644,7 @@ CREATE TABLE chat_reports (
     reason          TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'illegal', 'impersonation', 'other')),
     comment         TEXT,
     status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
-    resolved_by     UUID REFERENCES actors(id),
+    resolved_by     UUID REFERENCES actors(id) ON DELETE SET NULL,
     resolution_note TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at     TIMESTAMPTZ
@@ -712,7 +712,7 @@ CREATE TABLE announcements (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     content     TEXT NOT NULL,
     active      BOOLEAN NOT NULL DEFAULT TRUE,
-    created_by  UUID REFERENCES actors(id),
+    created_by  UUID REFERENCES actors(id) ON DELETE SET NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ
 );
