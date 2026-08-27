@@ -95,10 +95,6 @@ pub fn hash_auth_key(auth_key: &str) -> Result<String> {
     Ok(hash.to_string())
 }
 
-/// Register a new local account.
-///
-/// `ActorAlreadyExists` if the username is taken, `BadRequest` if the
-/// username or authentication key is invalid.
 /// Whether a local actor already holds this username on this domain.
 ///
 /// Checked before key generation, which is the expensive part.
@@ -113,6 +109,10 @@ async fn username_taken(pool: &PgPool, domain: &str, username: &str) -> Result<b
     .await?)
 }
 
+/// Register a new local account.
+///
+/// `ActorAlreadyExists` if the username is taken, `BadRequest` if the
+/// username, authentication key or address is invalid.
 pub async fn register(
     pool: &PgPool,
     domain: &str,
@@ -185,61 +185,6 @@ pub async fn register(
         ap_id: actor.ap_id,
     })
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn valid_usernames() {
-        assert!(validate_username("alice").is_ok());
-        assert!(validate_username("alice_bob").is_ok());
-        assert!(validate_username("a123").is_ok());
-        assert!(validate_username("a").is_ok());
-    }
-
-    #[test]
-    fn invalid_usernames() {
-        assert!(validate_username("").is_err());
-        assert!(validate_username("Alice").is_err());
-        assert!(validate_username("1alice").is_err());
-        assert!(validate_username("alice-bob").is_err());
-        assert!(validate_username("alice.bob").is_err());
-        assert!(validate_username(&"a".repeat(31)).is_err());
-    }
-
-    #[test]
-    fn valid_auth_key() {
-        let key = "a".repeat(64);
-        assert!(validate_auth_key(&key).is_ok());
-    }
-
-    #[test]
-    fn invalid_auth_key_length() {
-        assert!(validate_auth_key("abcd").is_err());
-    }
-
-    #[test]
-    fn invalid_auth_key_chars() {
-        let key = "g".repeat(64);
-        assert!(validate_auth_key(&key).is_err());
-    }
-
-    #[test]
-    fn argon2_hash_roundtrip() {
-        use argon2::password_hash::PasswordVerifier;
-        let auth_key = "ab".repeat(32);
-        let hash = hash_auth_key(&auth_key).unwrap();
-        let parsed = argon2::password_hash::PasswordHash::new(&hash).unwrap();
-        assert!(
-            Argon2::default()
-                .verify_password(auth_key.as_bytes(), &parsed)
-                .is_ok()
-        );
-    }
-}
-
-// ..... Organisation enrolment .....
 
 /// Enrol an organisation as its own actor, owned by the actor enrolling it.
 ///
@@ -326,3 +271,58 @@ pub async fn enrol_organization(
     );
     Ok(actor)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn valid_usernames() {
+        assert!(validate_username("alice").is_ok());
+        assert!(validate_username("alice_bob").is_ok());
+        assert!(validate_username("a123").is_ok());
+        assert!(validate_username("a").is_ok());
+    }
+
+    #[test]
+    fn invalid_usernames() {
+        assert!(validate_username("").is_err());
+        assert!(validate_username("Alice").is_err());
+        assert!(validate_username("1alice").is_err());
+        assert!(validate_username("alice-bob").is_err());
+        assert!(validate_username("alice.bob").is_err());
+        assert!(validate_username(&"a".repeat(31)).is_err());
+    }
+
+    #[test]
+    fn valid_auth_key() {
+        let key = "a".repeat(64);
+        assert!(validate_auth_key(&key).is_ok());
+    }
+
+    #[test]
+    fn invalid_auth_key_length() {
+        assert!(validate_auth_key("abcd").is_err());
+    }
+
+    #[test]
+    fn invalid_auth_key_chars() {
+        let key = "g".repeat(64);
+        assert!(validate_auth_key(&key).is_err());
+    }
+
+    #[test]
+    fn argon2_hash_roundtrip() {
+        use argon2::password_hash::PasswordVerifier;
+        let auth_key = "ab".repeat(32);
+        let hash = hash_auth_key(&auth_key).unwrap();
+        let parsed = argon2::password_hash::PasswordHash::new(&hash).unwrap();
+        assert!(
+            Argon2::default()
+                .verify_password(auth_key.as_bytes(), &parsed)
+                .is_ok()
+        );
+    }
+}
+
+// ..... Organisation enrolment .....
