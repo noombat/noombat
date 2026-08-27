@@ -347,8 +347,14 @@ CREATE TABLE job_listings (
     description_html         TEXT NOT NULL,
     location                 TEXT,
     remote                   BOOLEAN NOT NULL DEFAULT FALSE,
-    salary_min               INTEGER,
-    salary_max               INTEGER,
+    -- BIGINT, not INTEGER. The amount is stored as entered, in the major
+    -- unit of `currency`, and INTEGER caps at 2,147,483,647. In a currency
+    -- with a small unit that ceiling is an ordinary senior salary rather
+    -- than an absurd one: it is roughly USD 85,000 in VND and roughly USD
+    -- 130,000 in IDR. A refused insert is the good outcome there, and a
+    -- value quietly stored wrong is the bad one.
+    salary_min               BIGINT,
+    salary_max               BIGINT,
     currency                 TEXT,
     requirements             JSONB,
     published_at             TIMESTAMPTZ,
