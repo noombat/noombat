@@ -624,8 +624,12 @@ async fn chat_credentials_page(
             .flatten()
             .unwrap_or_default();
     let chatmail_domain = state.chatmail_domain.clone().unwrap_or_default();
+    // Anything that is not a signed-in state reads as suspended to this page.
+    // Kept in step with the login allowlist rather than naming 'suspended'
+    // alone, so the two cannot diverge.
     let suspended: bool = sqlx::query_scalar(
-        "SELECT COALESCE(actor_status = 'suspended', FALSE) FROM actors WHERE id = $1",
+        "SELECT COALESCE(actor_status NOT IN ('active', 'silenced'), FALSE) \
+         FROM actors WHERE id = $1",
     )
     .bind(actor_id)
     .fetch_one(&state.pool)

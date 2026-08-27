@@ -55,7 +55,9 @@ async fn ws_upgrade(
             .await
             .map_err(|e| ApiError(NoombatError::Internal(format!("actor lookup failed: {e}"))))?;
 
-    if actor_status == "suspended" {
+    // An allowlist, not a denylist. Stated as `== "suspended"` this admitted
+    // every status added later, which the pending admission state made real.
+    if !matches!(actor_status.as_str(), "active" | "silenced") {
         return Err(ApiError(NoombatError::Forbidden));
     }
 

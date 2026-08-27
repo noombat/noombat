@@ -30,14 +30,19 @@ pub async fn verify_credentials(
     pool: &PgPool,
     req: &LoginRequest,
 ) -> Result<(Uuid, String, InstanceRole, bool)> {
-    // Fetch the stored hash. The query deliberately excludes
-    // suspended actors (login is disabled for them).
+    // Fetch the stored hash. The query admits only actors who may sign in,
+    // stated as an allowlist rather than as `!= 'suspended'`: a status added
+    // later is refused by default, and the pending state that admission
+    // introduced would otherwise have signed in like any other account.
+    //
+    // 'silenced' is admitted deliberately. Silencing withholds reach, not
+    // access, so a silenced actor still logs in.
     let row = sqlx::query_as::<_, (Uuid, String, Option<String>, InstanceRole)>(
         r#"SELECT a.id, a.username, a.auth_key_hash, a.instance_role
            FROM actors a
            WHERE a.username = $1
              AND a.is_local = TRUE
-             AND a.actor_status != 'suspended'"#,
+             AND a.actor_status IN ('active', 'silenced')"#,
     )
     .bind(&req.username)
     .fetch_optional(pool)
