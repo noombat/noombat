@@ -54,6 +54,7 @@ fn test_state(domain: &str) -> AppState {
         redis: None,
         session_config: None,
         orcid_config: None,
+        mailer: None,
         chatmail_domain: None,
         chatmail_admin_url: None,
         chatmail_admin_secret: None,

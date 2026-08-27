@@ -110,9 +110,14 @@ export async function sessionToken(
 ): Promise<string | null> {
   const credentials = { username: sessionUsername(workerIndex), auth_key: AUTH_KEY };
 
+  // Registration also needs an address now: the server keeps only a hash of
+  // the auth key, so a password account without one cannot be recovered and
+  // the route refuses to create it. Login takes the credentials alone.
+  const signUp = { ...credentials, email: `${credentials.username}@e2e.invalid` };
+
   // 201 on the first run of a worker against a fresh instance, 409
   // afterwards, at which point the account is there to be signed in to.
-  const registered = await request.post("/api/v1/auth/register", { data: credentials });
+  const registered = await request.post("/api/v1/auth/register", { data: signUp });
   if (registered.status() === 201) {
     return accessToken(await registered.text());
   }

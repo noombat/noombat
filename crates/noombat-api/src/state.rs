@@ -44,6 +44,10 @@ pub struct AppState {
     /// ORCID OAuth configuration. `None` when ORCID client
     /// credentials are not configured.
     pub orcid_config: Option<OrcidConfig>,
+    /// Outbound mail for verification challenges. `None` when no relay is
+    /// configured, and the routes that need it then refuse rather than
+    /// accepting a request whose message was never going to be sent.
+    pub mailer: Option<noombat_identity::mailer::Mailer>,
     /// Chatmail domain (e.g. `chat.noombat.social`). `None` when
     /// chat is not configured.
     pub chatmail_domain: Option<String>,

@@ -8,9 +8,11 @@
 
 pub mod cv;
 pub mod doi_client;
+pub mod email;
 pub mod hashtags;
 pub mod keys;
 pub mod login;
+pub mod mailer;
 pub mod oauth_mastodon;
 pub mod oauth_orcid;
 pub mod oauth_util;

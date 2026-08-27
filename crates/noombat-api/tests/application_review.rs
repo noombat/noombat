@@ -40,6 +40,7 @@ fn test_state(pool: PgPool) -> AppState {
             refresh_ttl_secs: 2_592_000,
         }),
         orcid_config: None,
+        mailer: None,
         chatmail_domain: None,
         chatmail_admin_url: None,
         chatmail_admin_secret: None,

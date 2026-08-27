@@ -52,6 +52,7 @@ fn test_state(pool: PgPool) -> AppState {
         redis: None,
         session_config: None,
         orcid_config: None,
+        mailer: None,
         chatmail_domain: None,
         chatmail_admin_url: None,
         chatmail_admin_secret: None,

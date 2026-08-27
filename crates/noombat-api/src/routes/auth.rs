@@ -29,15 +29,105 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/totp/verify", post(totp_verify))
         .route("/api/v1/auth/totp", delete(totp_disable))
         .route("/api/v1/auth/mastodon", get(mastodon_init))
+        .route("/api/v1/auth/mastodon/link", get(mastodon_link_init))
         .route("/api/v1/auth/mastodon/callback", get(mastodon_callback))
         .route("/api/v1/auth/orcid", get(orcid_init))
+        .route("/api/v1/auth/orcid/link", get(orcid_link_init))
         .route("/api/v1/auth/orcid/callback", get(orcid_callback))
         .route("/api/v1/auth/password", post(set_password))
+        .route("/api/v1/me/email", post(request_email_verification))
+        .route("/auth/verify-email", get(verify_email))
         .route("/api/v1/me/provision_chat", post(provision_chat))
         .route(
             "/api/v1/me/chatmail_cred",
             get(get_chatmail_cred).put(put_chatmail_cred),
         )
+}
+
+// ..... Email verification .....
+
+/// The signed-in actor, or a refusal.
+fn require_actor(principal: &Option<axum::Extension<Principal>>) -> Result<uuid::Uuid, ApiError> {
+    principal
+        .as_ref()
+        .and_then(|p| p.actor_id())
+        .ok_or(ApiError(NoombatError::Forbidden))
+}
+
+#[derive(Deserialize)]
+struct EmailRequest {
+    email: String,
+}
+
+/// Send a challenge, and say nothing about the address in the reply.
+///
+/// The mail goes out before the caller is answered, so a success here means
+/// the message left rather than that a row was written. Where no relay is
+/// configured this refuses: reporting success and dropping the message
+/// leaves somebody waiting for mail that was never sent, which they cannot
+/// tell from a slow inbox.
+async fn send_challenge(
+    state: &AppState,
+    actor_id: uuid::Uuid,
+    email: &str,
+) -> Result<(), ApiError> {
+    let mailer = state.mailer.as_ref().ok_or_else(|| {
+        ApiError(NoombatError::ServiceUnavailable(
+            "this instance cannot send mail, so an address cannot be verified".into(),
+        ))
+    })?;
+
+    let challenge =
+        noombat_identity::email::request_verification(&state.pool, actor_id, email).await?;
+
+    let link = format!(
+        "https://{}/auth/verify-email?token={}",
+        state.domain, challenge.token
+    );
+    let body = format!(
+        "Confirm this address so your account can be recovered if you forget your password.\n\n\
+         {link}\n\n\
+         The link stops working in 24 hours. If you did not ask for this, ignore it: \
+         nothing changes until the link is opened.\n"
+    );
+
+    mailer
+        .send(&challenge.email, "Confirm your email address", &body)
+        .await?;
+
+    Ok(())
+}
+
+/// `POST /api/v1/me/email`
+///
+/// Start proving control of an address, for the signed-in account.
+async fn request_email_verification(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Json(req): Json<EmailRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor_id = require_actor(&principal)?;
+    send_challenge(&state, actor_id, &req.email).await?;
+    Ok(StatusCode::ACCEPTED)
+}
+
+#[derive(Deserialize)]
+struct VerifyEmailQuery {
+    token: String,
+}
+
+/// `GET /auth/verify-email?token=...`
+///
+/// The target of the link in the message, so it is a GET and carries its
+/// credential in the query. Unauthenticated by design: somebody confirming
+/// an address is often doing it in whichever browser opened their mail,
+/// which is not the one holding their session.
+async fn verify_email(
+    State(state): State<AppState>,
+    Query(query): Query<VerifyEmailQuery>,
+) -> Result<Response, ApiError> {
+    noombat_identity::email::verify(&state.pool, &query.token).await?;
+    Ok(Redirect::temporary("/settings/account").into_response())
 }
 
 // ..... Local registration .....
@@ -50,7 +140,29 @@ async fn register(
         return Err(ApiError(NoombatError::Forbidden));
     }
 
+    // Refused before the account is made, not after. This path mints a
+    // password and the server can reset nothing, so an instance that cannot
+    // send the challenge cannot offer password sign-up at all: creating the
+    // account anyway would produce exactly the unrecoverable account the
+    // address exists to prevent. The OAuth paths are unaffected, because
+    // they mint no password and are recoverable through the provider.
+    if state.mailer.is_none() {
+        return Err(ApiError(NoombatError::ServiceUnavailable(
+            "this instance cannot send mail, so it cannot offer password sign-up; \
+             sign in with ORCID or Mastodon instead"
+                .into(),
+        )));
+    }
+
     let result = noombat_identity::registration::register(&state.pool, &state.domain, &req).await?;
+
+    // The address was validated during registration, so this fails only if
+    // the relay is unreachable. It is awaited rather than spawned: the
+    // person is about to be told their account exists, and they need to
+    // know in the same breath whether to go and look for the message.
+    if let Some(email) = req.email.as_deref() {
+        send_challenge(&state, result.actor_id, email).await?;
+    }
 
     let session_config = state.session_config.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
@@ -251,6 +363,32 @@ async fn mastodon_init(
         &state.http_client,
         &query.handle,
         &state.domain,
+        None,
+    )
+    .await?;
+
+    Ok(Redirect::temporary(&url).into_response())
+}
+
+/// `GET /api/v1/auth/mastodon/link`
+///
+/// Start the same flow as signing in, but bound to the account already
+/// signed in, so the callback links rather than creating. The account is
+/// taken from the session here and recorded with the state: nothing in the
+/// redirect that comes back is trusted to say whose account this is.
+async fn mastodon_link_init(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+    Query(query): Query<MastodonInitQuery>,
+) -> Result<Response, ApiError> {
+    let actor_id = require_actor(&principal)?;
+
+    let (url, _state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
+        &state.pool,
+        &state.http_client,
+        &query.handle,
+        &state.domain,
+        Some(actor_id),
     )
     .await?;
 
@@ -317,6 +455,33 @@ async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError>
         &state.pool,
         orcid_config,
         &state.domain,
+        None,
+    )
+    .await?;
+
+    Ok(Redirect::temporary(&url).into_response())
+}
+
+/// `GET /api/v1/auth/orcid/link`
+///
+/// As `orcid_init`, but bound to the signed-in account so the callback
+/// links rather than creating.
+async fn orcid_link_init(
+    State(state): State<AppState>,
+    principal: Option<axum::Extension<Principal>>,
+) -> Result<Response, ApiError> {
+    let actor_id = require_actor(&principal)?;
+    let orcid_config = state.orcid_config.as_ref().ok_or_else(|| {
+        ApiError(NoombatError::ServiceUnavailable(
+            "ORCID not configured".into(),
+        ))
+    })?;
+
+    let (url, _state_token) = noombat_identity::oauth_orcid::build_authorise_url(
+        &state.pool,
+        orcid_config,
+        &state.domain,
+        Some(actor_id),
     )
     .await?;
 
@@ -423,6 +588,21 @@ async fn set_password(
     .await?
     .flatten()
     .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    if !has_password {
+        // Setting a first password, which is an OAuth account adding the
+        // second way in. It needs a proved address first: the server keeps
+        // only a hash of the auth key and can reset nothing, so enabling
+        // password login without one manufactures an account that a
+        // forgotten password destroys. Changing an existing password is
+        // exempt, because that account was already made recoverable when
+        // the password was first set.
+        if !noombat_identity::email::has_verified_email(&state.pool, actor_id).await? {
+            return Err(ApiError(NoombatError::BadRequest(
+                "verify an email address before setting a password".into(),
+            )));
+        }
+    }
 
     if has_password {
         // Changing: require the old auth key.

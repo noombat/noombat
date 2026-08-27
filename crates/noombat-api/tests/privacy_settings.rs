@@ -112,6 +112,7 @@ fn test_state(pool: PgPool, search: Arc<dyn SearchBackend>) -> AppState {
         redis: None,
         session_config: Some(session_config()),
         orcid_config: None,
+        mailer: None,
         chatmail_domain: None,
         chatmail_admin_url: None,
         chatmail_admin_secret: None,

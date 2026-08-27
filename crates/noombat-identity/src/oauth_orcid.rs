@@ -61,21 +61,30 @@ pub struct OrcidAuthResult {
 
 /// Build the ORCID authorisation URL.
 ///
+/// `link_actor_id` is `Some` when an account that already exists is adding
+/// ORCID as a second way in, and `None` when this is a sign-in. It is taken
+/// from the session that starts the flow and recorded here, never read back
+/// from the redirect: a callback that took the account to link from
+/// anything it received would let an attacker attach their own ORCID to
+/// somebody else's account by handing them a link.
+///
 /// Returns `(authorise_url, state_token)`.
 pub async fn build_authorise_url(
     pool: &PgPool,
     orcid_config: &OrcidConfig,
     our_domain: &str,
+    link_actor_id: Option<Uuid>,
 ) -> Result<(String, String)> {
     let redirect_uri = format!("https://{our_domain}/api/v1/auth/orcid/callback");
     let state = crate::oauth_util::generate_state_token();
 
     let expires = chrono::Utc::now() + chrono::Duration::minutes(10);
     sqlx::query(
-        r#"INSERT INTO oauth_states (state, provider, instance_domain, expires_at)
-           VALUES ($1, 'orcid', NULL, $2)"#,
+        r#"INSERT INTO oauth_states (state, provider, instance_domain, link_actor_id, expires_at)
+           VALUES ($1, 'orcid', NULL, $2, $3)"#,
     )
     .bind(&state)
+    .bind(link_actor_id)
     .bind(expires)
     .execute(pool)
     .await?;
@@ -99,11 +108,12 @@ pub async fn handle_callback(
     code: &str,
     state: &str,
 ) -> Result<OrcidAuthResult> {
-    // Validate and consume the OAuth state.
-    let _consumed = sqlx::query_as::<_, (String,)>(
+    // Validate and consume the OAuth state, recovering the account to link
+    // to if this flow was started as a link rather than as a sign-in.
+    let (link_actor_id,) = sqlx::query_as::<_, (Option<Uuid>,)>(
         r#"DELETE FROM oauth_states
            WHERE state = $1 AND provider = 'orcid' AND expires_at > now()
-           RETURNING state"#,
+           RETURNING link_actor_id"#,
     )
     .bind(state)
     .fetch_optional(pool)
@@ -151,6 +161,42 @@ pub async fn handle_callback(
     .bind(&token.orcid)
     .fetch_optional(pool)
     .await?;
+
+    // Linking: attach this ORCID iD to the account that started the flow.
+    if let Some(actor_id) = link_actor_id {
+        if let Some((owner, _)) = existing {
+            // One iD, one account. Silently re-pointing it would take the
+            // second way in away from whoever holds it now.
+            return Err(if owner == actor_id {
+                NoombatError::BadRequest("that ORCID iD is already linked to this account".into())
+            } else {
+                NoombatError::BadRequest("that ORCID iD is linked to another account".into())
+            });
+        }
+
+        let username =
+            crate::oauth_util::link_identity(pool, actor_id, "orcid", &token.orcid).await?;
+
+        // The iD also lives on the actor, for display and for the profile
+        // import. Set after the link, so a refused link leaves nothing.
+        sqlx::query("UPDATE actors SET orcid = $1, updated_at = now() WHERE id = $2")
+            .bind(&token.orcid)
+            .bind(actor_id)
+            .execute(pool)
+            .await?;
+
+        info!(
+            username = %username,
+            orcid = %token.orcid,
+            "ORCID linked to an existing account"
+        );
+        return Ok(OrcidAuthResult {
+            actor_id,
+            username,
+            orcid: token.orcid,
+            is_new: false,
+        });
+    }
 
     if let Some((actor_id, username)) = existing {
         return Ok(OrcidAuthResult {

@@ -56,3 +56,45 @@ pub async fn ensure_unique_username(pool: &PgPool, base: &str, domain: &str) -> 
         "failed to generate unique username".into(),
     ))
 }
+
+/// Attach an external identity to an account that already exists.
+///
+/// This is a second way in being added, not a sign-in. Returns the
+/// account's username so the caller can answer with it.
+///
+/// Uniqueness of `(provider, external_id)` is enforced by the schema and
+/// surfaces here as a refusal rather than a 500. One external identity
+/// belongs to one account: quietly re-pointing it would take somebody
+/// else's second way in away from them without telling either party.
+pub async fn link_identity(
+    pool: &PgPool,
+    actor_id: uuid::Uuid,
+    provider: &str,
+    external_id: &str,
+) -> Result<String> {
+    let username: Option<String> =
+        sqlx::query_scalar("SELECT username FROM actors WHERE id = $1 AND is_local = TRUE")
+            .bind(actor_id)
+            .fetch_optional(pool)
+            .await?;
+
+    let username = username.ok_or(NoombatError::Forbidden)?;
+
+    sqlx::query(
+        "INSERT INTO oauth_identities (actor_id, provider, external_id) VALUES ($1, $2, $3)",
+    )
+    .bind(actor_id)
+    .bind(provider)
+    .bind(external_id)
+    .execute(pool)
+    .await
+    .map_err(|e| {
+        if matches!(&e, sqlx::Error::Database(db) if db.is_unique_violation()) {
+            NoombatError::BadRequest("that identity is already linked to an account".into())
+        } else {
+            NoombatError::from(e)
+        }
+    })?;
+
+    Ok(username)
+}

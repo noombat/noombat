@@ -71,6 +71,25 @@ struct Config {
     chatmail_admin_url: Option<String>,
     /// Shared secret for authenticating requests to the admin sidecar.
     chatmail_admin_secret: Option<Secret>,
+    /// SMTP relay for instance mail, which today is the address
+    /// verification challenge. Not the Chatmail relay: that carries
+    /// end-to-end encrypted bodies between people and is configured
+    /// separately, because they share a library and nothing else.
+    ///
+    /// Without a host, password sign-up is refused: an instance that
+    /// cannot send the challenge cannot make a password account
+    /// recoverable, and creating one anyway is the failure being avoided.
+    smtp_host: Option<String>,
+    #[serde(default = "default_smtp_port")]
+    smtp_port: u16,
+    smtp_username: Option<String>,
+    smtp_password: Option<Secret>,
+    /// The envelope sender. Defaults to `noreply@{domain}`.
+    smtp_from: Option<String>,
+    /// `true` upgrades with STARTTLS, which is what 587 expects; `false`
+    /// opens the connection already wrapped, which is what 465 expects.
+    #[serde(default = "default_smtp_starttls")]
+    smtp_starttls: bool,
     /// Administrative contact email address, used as the `mailto`
     /// parameter for the CrossRef polite pool. Defaults to
     /// `admin@{domain}` when not explicitly set.
@@ -256,6 +275,15 @@ fn default_deletion_grace_days() -> i32 {
     30
 }
 
+/// The submission port, which is where a relay expects STARTTLS.
+fn default_smtp_port() -> u16 {
+    587
+}
+
+fn default_smtp_starttls() -> bool {
+    true
+}
+
 impl Config {
     /// The key-encryption key, treating blank as absent.
     ///
@@ -366,6 +394,18 @@ async fn main() -> anyhow::Result<()> {
         .expect("failed to run database migrations");
 
     info!("database migrations applied");
+
+    // Mint the instance actor before anything can federate.
+    //
+    // Awaited rather than spawned, unlike the backfill below: until it
+    // exists, `find_local_signing_actor` falls back to an ordinary local
+    // actor and every outbound fetch in that window discloses whoever it
+    // picked. The window is the whole point of closing, so the listener
+    // waits for it. It is one indexed read on every boot after the first.
+    let instance_actor = noombat_identity::repo::ensure_instance_actor(&pool, &config.domain)
+        .await
+        .expect("failed to create the instance actor");
+    info!(actor_id = %instance_actor, "instance actor ready");
 
     // Re-derive any stored remote HTML left behind by an older
     // sanitiser policy.
@@ -735,6 +775,37 @@ async fn main() -> anyhow::Result<()> {
         );
     };
 
+    // Built once at boot rather than per request, so that a relay named but
+    // unusable stops the instance here with the reason, instead of failing
+    // every verification later with the same error one person at a time.
+    let mailer = match config.smtp_host.as_deref() {
+        Some(host) => {
+            let from = config
+                .smtp_from
+                .clone()
+                .unwrap_or_else(|| format!("noreply@{}", config.domain));
+            let mailer =
+                noombat_identity::mailer::Mailer::new(&noombat_identity::mailer::MailerConfig {
+                    host: host.to_owned(),
+                    port: config.smtp_port,
+                    username: config.smtp_username.clone(),
+                    password: config.smtp_password.as_ref().map(|s| s.expose().to_owned()),
+                    from: from.clone(),
+                    starttls: config.smtp_starttls,
+                })
+                .expect("SMTP configuration is unusable");
+            info!(host, from, "instance mail configured");
+            Some(mailer)
+        }
+        None => {
+            // Named at boot so an operator reading the log knows why
+            // password sign-up refuses, rather than finding out from a
+            // user who could not register.
+            tracing::warn!("no NOOMBAT_SMTP_HOST configured; password sign-up is unavailable");
+            None
+        }
+    };
+
     let state = AppState {
         pool,
         domain: config.domain.clone(),
@@ -755,6 +826,7 @@ async fn main() -> anyhow::Result<()> {
         redis,
         session_config,
         orcid_config,
+        mailer,
         chatmail_domain: config.chatmail_domain.clone(),
         chatmail_admin_url: config.chatmail_admin_url.clone(),
         chatmail_admin_secret: config

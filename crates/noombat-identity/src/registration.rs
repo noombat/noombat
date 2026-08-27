@@ -28,6 +28,19 @@ use crate::keys;
 pub struct RegisterRequest {
     pub username: String,
     pub display_name: Option<String>,
+    /// The address a recovery challenge is sent to.
+    ///
+    /// Required on this path, and only on this path. `auth_key` is derived
+    /// in the browser and the server keeps only a hash of it, so there is
+    /// nothing to reset: an account created with a password and no address
+    /// is one a forgotten password destroys. The OAuth sign-up paths mint
+    /// no password and are recoverable through the provider, which is why
+    /// they do not ask for one.
+    ///
+    /// `Option` in the type and required in [`register`], so that a request
+    /// omitting it is refused with a message about the field rather than
+    /// rejected as malformed JSON.
+    pub email: Option<String>,
     /// The authentication key (hex-encoded, 32 bytes / 64 hex chars),
     /// derived client-side from the user's password via
     /// PBKDF2-SHA256 to HKDF-Expand("noombat-auth").
@@ -120,6 +133,15 @@ pub async fn register(
 ) -> Result<RegisterResponse> {
     validate_username(&req.username)?;
     validate_auth_key(&req.auth_key)?;
+
+    // Checked before any key generation, so a mistyped address costs a
+    // round trip rather than an RSA keypair.
+    let email = req.email.as_deref().ok_or_else(|| {
+        NoombatError::BadRequest(
+            "email is required: a password account with no address cannot be recovered".into(),
+        )
+    })?;
+    noombat_core::email_address::qualify(email, "email")?;
 
     // Check uniqueness before generating keys (which is expensive).
     if username_taken(pool, domain, &req.username).await? {

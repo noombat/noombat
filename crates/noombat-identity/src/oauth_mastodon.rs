@@ -235,11 +235,15 @@ async fn get_or_register_client(
 ///
 /// Returns `(authorise_url, state_token)`. The caller must store the
 /// state token in the `oauth_states` table for CSRF validation.
+///
+/// `link_actor_id` is `Some` when an account that already exists is adding
+/// Mastodon as a second way in, and `None` when this is a sign-in.
 pub async fn build_authorise_url(
     pool: &PgPool,
     http_client: &reqwest::Client,
     handle: &str,
     our_domain: &str,
+    link_actor_id: Option<Uuid>,
 ) -> Result<(String, String)> {
     let (_user, instance_domain) = parse_mastodon_handle(handle)?;
     let instance_base = discover_instance(&instance_domain).await?;
@@ -257,11 +261,12 @@ pub async fn build_authorise_url(
     // Persist the OAuth state for CSRF validation on callback.
     let expires = chrono::Utc::now() + chrono::Duration::minutes(10);
     sqlx::query(
-        r#"INSERT INTO oauth_states (state, provider, instance_domain, expires_at)
-           VALUES ($1, 'mastodon', $2, $3)"#,
+        r#"INSERT INTO oauth_states (state, provider, instance_domain, link_actor_id, expires_at)
+           VALUES ($1, 'mastodon', $2, $3, $4)"#,
     )
     .bind(&state)
     .bind(&instance_domain)
+    .bind(link_actor_id)
     .bind(expires)
     .execute(pool)
     .await?;
@@ -288,10 +293,10 @@ pub async fn handle_callback(
     state: &str,
 ) -> Result<MastodonAuthResult> {
     // Validate and consume the OAuth state.
-    let row = sqlx::query_as::<_, (String,)>(
+    let row = sqlx::query_as::<_, (String, Option<Uuid>)>(
         r#"DELETE FROM oauth_states
            WHERE state = $1 AND provider = 'mastodon' AND expires_at > now()
-           RETURNING instance_domain"#,
+           RETURNING instance_domain, link_actor_id"#,
     )
     .bind(state)
     .fetch_optional(pool)
@@ -299,6 +304,10 @@ pub async fn handle_callback(
     .ok_or(NoombatError::Forbidden)?;
 
     let instance_domain = row.0;
+    // `Some` when this flow was started by a signed-in account adding
+    // Mastodon as a second way in. Taken from the session that started it,
+    // never from the redirect.
+    let link_actor_id = row.1;
     let instance_base = format!("https://{instance_domain}");
 
     let client = sqlx::query_as::<_, (String, String, String)>(
@@ -370,6 +379,38 @@ pub async fn handle_callback(
     .bind(&remote_acct)
     .fetch_optional(pool)
     .await?;
+
+    // Linking: attach this Mastodon account to the account that started
+    // the flow.
+    if let Some(actor_id) = link_actor_id {
+        if let Some((owner, _)) = existing {
+            // One remote account, one local account. Silently re-pointing
+            // it would take the second way in away from whoever holds it.
+            return Err(if owner == actor_id {
+                NoombatError::BadRequest(
+                    "that Mastodon account is already linked to this account".into(),
+                )
+            } else {
+                NoombatError::BadRequest(
+                    "that Mastodon account is linked to another account".into(),
+                )
+            });
+        }
+
+        let username =
+            crate::oauth_util::link_identity(pool, actor_id, "mastodon", &remote_acct).await?;
+
+        info!(
+            username = %username,
+            remote = %remote_acct,
+            "Mastodon account linked to an existing account"
+        );
+        return Ok(MastodonAuthResult {
+            actor_id,
+            username,
+            is_new: false,
+        });
+    }
 
     if let Some((actor_id, username)) = existing {
         return Ok(MastodonAuthResult {

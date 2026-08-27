@@ -255,9 +255,45 @@ CREATE TABLE oauth_states (
     -- For Mastodon: the remote instance domain.
     -- For ORCID: NULL (single provider).
     instance_domain TEXT,
+    -- Set when the flow is linking a provider to an account that already
+    -- exists, rather than signing in. It is recorded when the flow starts,
+    -- from the session that started it, so the callback cannot be talked
+    -- into attaching an identity to somebody else's account by anything in
+    -- the redirect it receives.
+    link_actor_id UUID REFERENCES actors(id) ON DELETE CASCADE,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at  TIMESTAMPTZ NOT NULL
 );
+
+-- ..... EMAIL VERIFICATION .....
+
+-- A challenge proving control of an address.
+--
+-- The address under test lives here and not on `actors` until it is proven.
+-- Writing it there first would let anyone claim any address by starting a
+-- verification they never finish, and the unique index would then hold that
+-- name against the person who actually owns it.
+--
+-- The token is stored as a SHA-256 hash, never in the clear. A read of this
+-- table would otherwise be a read of every live credential in flight, and
+-- these carry the same force as a password reset.
+CREATE TABLE email_verifications (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    actor_id    UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    email       TEXT NOT NULL,
+    token_hash  TEXT NOT NULL UNIQUE,
+    expires_at  TIMESTAMPTZ NOT NULL,
+    -- Non-NULL once redeemed. Kept rather than deleted so that a token
+    -- presented twice is refused as used instead of as unknown, which is
+    -- also what makes the rate limit below countable.
+    consumed_at TIMESTAMPTZ,
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- The rate limit's window, and the sweep for expired challenges.
+CREATE INDEX idx_email_verifications_actor ON email_verifications (actor_id, created_at DESC);
+CREATE INDEX idx_email_verifications_expiry ON email_verifications (expires_at)
+    WHERE consumed_at IS NULL;
 
 -- ..... OAUTH IDENTITIES .....
 

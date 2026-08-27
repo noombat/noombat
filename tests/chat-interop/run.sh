@@ -94,11 +94,16 @@ echo "--- Account Registration ---"
 echo ""
 
 AUTH_KEY_ALICE=$(mock_auth_key a)
+CREDS_ALICE="{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}"
+# Registration also needs an address: the server keeps only a hash of the
+# auth key, so a password account without one cannot be recovered.
+SIGNUP_ALICE="{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\",\
+\"email\":\"alice@interop.invalid\"}"
 
 # 1. Register alice.
 BODY=$(curl $CURL_OPTS -sf -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    -d "$SIGNUP_ALICE" \
     "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
 
 if echo "$BODY" | grep -q '"access_token"'; then
@@ -111,9 +116,10 @@ fi
 
 # 2. Register bob.
 AUTH_KEY_BOB=$(mock_auth_key b)
+SIGNUP_BOB="{\"username\":\"bob\",\"auth_key\":\"$AUTH_KEY_BOB\",\"email\":\"bob@interop.invalid\"}"
 BODY=$(curl $CURL_OPTS -sf -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"bob\",\"auth_key\":\"$AUTH_KEY_BOB\"}" \
+    -d "$SIGNUP_BOB" \
     "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
 
 if echo "$BODY" | grep -q '"access_token"'; then
@@ -127,7 +133,7 @@ fi
 # 3. Duplicate registration rejected.
 BODY=$(curl $CURL_OPTS -s -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    -d "$SIGNUP_ALICE" \
     "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
 
 if echo "$BODY" | grep -qi "already"; then
@@ -145,7 +151,7 @@ echo ""
 # 4. Login with correct credentials.
 BODY=$(curl $CURL_OPTS -sf -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}" \
+    -d "$CREDS_ALICE" \
     "$NOOMBAT/api/v1/auth/login" 2>/dev/null)
 
 if echo "$BODY" | grep -q '"access_token"'; then

@@ -26,6 +26,8 @@ tempfile = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 argon2 = { workspace = true }
+lettre = { workspace = true }
+sha2 = { workspace = true }
 jsonwebtoken = { workspace = true }
 totp-rs = { workspace = true }
 qrcode = { workspace = true }
