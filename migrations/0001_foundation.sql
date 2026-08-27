@@ -62,7 +62,15 @@ CREATE TABLE actors (
     inbox_url                    TEXT, -- remote actors only: their declared AP inbox URI
     shared_inbox_url             TEXT, -- remote actors only: their endpoints.sharedInbox URI (delivery deduplication)
     instance_role                TEXT NOT NULL DEFAULT 'user' CHECK (instance_role IN ('user', 'moderator', 'admin')),
-    actor_status                 TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('active', 'silenced', 'suspended')),
+    -- 'pending' is an admission state, not a moderation outcome: the account
+    -- exists, holds its username, and has never been signed into. It is not a
+    -- fourth degree of 'silenced'.
+    --
+    -- The DEFAULT stays 'active' deliberately. Neither insert path names this
+    -- column (create_actor_on writes local actors, upsert_remote_actor writes
+    -- remote ones, and both rely on the default), so a default of 'pending'
+    -- would hold every federated actor for approval.
+    actor_status                 TEXT NOT NULL DEFAULT 'active' CHECK (actor_status IN ('pending', 'active', 'silenced', 'suspended')),
     chatmail_addr                TEXT,
     chatmail_cred                BYTEA,
     chat_requires_reprovisioning BOOLEAN NOT NULL DEFAULT FALSE,

@@ -82,17 +82,31 @@ impl Actor {
         matches!(self.instance_role, InstanceRole::Admin)
     }
 
-    /// Whether this actor's account is active (not suspended).
+    /// Whether this actor's account is active (not suspended, not pending).
     ///
     /// A silenced actor is still active: they may log in, post, and
     /// interact. They are merely excluded from public timelines and
     /// search indices (see [`Actor::is_silenced`]). A suspended actor
-    /// is fully deactivated.
+    /// is fully deactivated, and a pending one has not been admitted
+    /// yet, so neither is active.
+    ///
+    /// The arms are written out rather than ending in a wildcard: a
+    /// later variant should be a compile error here, not a silent
+    /// admission.
     pub fn is_active(&self) -> bool {
         match self.actor_status {
             ActorStatus::Active | ActorStatus::Silenced => true,
-            ActorStatus::Suspended => false,
+            ActorStatus::Pending | ActorStatus::Suspended => false,
         }
+    }
+
+    /// Whether this actor is awaiting admission.
+    ///
+    /// True only where `registration_mode` is `approval` and no
+    /// administrator has acted yet. Distinct from suspension: nothing
+    /// has been taken away, because nothing was granted.
+    pub fn is_pending(&self) -> bool {
+        matches!(self.actor_status, ActorStatus::Pending)
     }
 
     /// Whether this actor has been silenced by a moderator.

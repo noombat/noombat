@@ -70,14 +70,39 @@ pub enum InstanceRole {
     Admin,
 }
 
-/// Moderation state of an actor.
+/// Lifecycle state of an actor.
+///
+/// Three of these are moderation outcomes. [`ActorStatus::Pending`] is not:
+/// it is an admission state, held by an account that exists and owns its
+/// username but has never been admitted, and it is reachable only where
+/// `instance_settings.registration_mode` is `approval`. It is not a fourth
+/// degree of [`ActorStatus::Silenced`], and a moderator action never
+/// produces it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ActorStatus {
+    Pending,
     Active,
     Silenced,
     Suspended,
+}
+
+impl ActorStatus {
+    /// The stored form, as the `actor_status` check constraint spells it.
+    ///
+    /// The derive already produces these strings for sqlx and serde. This
+    /// exists so hand-written SQL has one place to take them from: a value
+    /// spelled here and not in the migration is a row the constraint
+    /// rejects at runtime rather than a compile error.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Active => "active",
+            Self::Silenced => "silenced",
+            Self::Suspended => "suspended",
+        }
+    }
 }
 
 /// A Noombat actor: the central identity entity.
@@ -171,7 +196,7 @@ pub struct NewActor {
 
 #[cfg(test)]
 mod tests {
-    use super::ActorType;
+    use super::{ActorStatus, ActorType};
 
     /// Every variant, so adding one to the enum and not to this list is
     /// a compile error rather than a gap in the tests below.
@@ -180,6 +205,50 @@ mod tests {
         ActorType::Organization,
         ActorType::Group,
     ];
+
+    /// The same, for the status enum.
+    const ALL_STATUSES: [ActorStatus; 4] = [
+        ActorStatus::Pending,
+        ActorStatus::Active,
+        ActorStatus::Silenced,
+        ActorStatus::Suspended,
+    ];
+
+    #[test]
+    fn stored_status_matches_the_check_constraint() {
+        let migration = include_str!("../../../migrations/0001_foundation.sql");
+        let line = migration
+            .lines()
+            .find(|line| line.contains("actor_status") && line.contains("CHECK"))
+            .expect("no actor_status check constraint in the migration");
+
+        // Everything before CHECK is discarded first. Unlike the actor_type
+        // line, this one carries `DEFAULT 'active'`, so splitting the whole
+        // line on quotes counts that as an allowed value: it yields five
+        // entries with 'active' twice, which passes the membership loop
+        // below while making the count assertion wrong.
+        let constraint = line
+            .split("CHECK")
+            .nth(1)
+            .expect("the actor_status line has no CHECK clause");
+        let allowed: Vec<&str> = constraint.split('\'').skip(1).step_by(2).collect();
+
+        assert_eq!(
+            allowed.len(),
+            ALL_STATUSES.len(),
+            "the constraint allows {allowed:?}, which is not one value per variant"
+        );
+
+        for status in ALL_STATUSES {
+            assert!(
+                allowed.contains(&status.as_str()),
+                "{:?} stores as {:?}; the constraint allows {:?}",
+                status,
+                status.as_str(),
+                allowed
+            );
+        }
+    }
 
     #[test]
     fn stored_form_matches_the_check_constraint() {

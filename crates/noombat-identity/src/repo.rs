@@ -828,11 +828,11 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
 /// keeps appearing in public results, and `Active` by
 /// `search_sync::reindex_profile_from_db` if they are discoverable.
 pub async fn set_actor_status(pool: &PgPool, actor_id: Uuid, status: ActorStatus) -> Result<Actor> {
-    let status_str = match status {
-        ActorStatus::Active => "active",
-        ActorStatus::Silenced => "silenced",
-        ActorStatus::Suspended => "suspended",
-    };
+    // Taken from the enum rather than restated here, so this cannot drift
+    // from the check constraint. `Pending` is reachable through this function
+    // but never from a moderator action: admission writes it at registration
+    // and clears it on approval.
+    let status_str = status.as_str();
 
     let result = sqlx::query(
         "UPDATE actors SET actor_status = $1, updated_at = now() \
