@@ -6,6 +6,7 @@
 
 pub mod actor;
 pub mod authorisation;
+pub mod email_address;
 pub mod envelope;
 pub mod error;
 pub mod extension;

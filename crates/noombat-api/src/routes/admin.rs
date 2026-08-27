@@ -140,24 +140,17 @@ struct UnifiedReportEntry {
     created_at: String,
 }
 
-/// Row returned by the AP reports JOIN query.
+/// Row returned by the moderation queue query.
+///
+/// One row shape for every kind of report, because there is one table.
+/// Which target column is set is what the report is about.
 #[derive(sqlx::FromRow)]
-struct ApReportRow {
+struct ReportRow {
     id: Uuid,
     reporter_name: String,
     target_name: Option<String>,
     target_post_id: Option<Uuid>,
-    reason: String,
-    comment: Option<String>,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-/// Row returned by the chat reports JOIN query.
-#[derive(sqlx::FromRow)]
-struct ChatReportRow {
-    id: Uuid,
-    reporter_name: String,
-    target_addr: String,
+    target_chat_addr: Option<String>,
     reason: String,
     comment: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
@@ -185,88 +178,59 @@ async fn moderation_page(
     }
     let uname = nav_username(&principal);
 
-    // Fetch open AP reports with reporter and target names via JOIN.
-    let ap_rows: Vec<ApReportRow> = sqlx::query_as(
+    // One query, because there is one table. A second spine would cost a
+    // second read and a merge in Rust even where nothing goes wrong, and
+    // the ordering would have to be redone over the union.
+    let rows: Vec<ReportRow> = match sqlx::query_as(
         r#"SELECT r.id,
-                      COALESCE(reporter.display_name, reporter.username) AS reporter_name,
-                      COALESCE(target.display_name, target.username) AS target_name,
-                      r.target_post_id,
-                      r.reason,
-                      r.comment,
-                      r.created_at
-               FROM reports r
-               JOIN actors reporter ON reporter.id = r.reporter_id
-               LEFT JOIN actors target ON target.id = r.target_actor_id
-               WHERE r.status = 'open'
-               ORDER BY r.created_at ASC LIMIT 200"#,
+                  COALESCE(reporter.display_name, reporter.username) AS reporter_name,
+                  COALESCE(target.display_name, target.username) AS target_name,
+                  r.target_post_id,
+                  r.target_chat_addr,
+                  r.reason,
+                  r.comment,
+                  r.created_at
+           FROM reports r
+           JOIN actors reporter ON reporter.id = r.reporter_id
+           LEFT JOIN actors target ON target.id = r.target_actor_id
+           WHERE r.status = 'open'
+           ORDER BY r.created_at ASC LIMIT 200"#,
     )
     .fetch_all(&state.pool)
     .await
-    .unwrap_or_default();
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            // An empty queue and a queue that failed to load look identical
+            // on the page, and the difference is whether anybody is coming.
+            tracing::error!(error = %e, "moderation queue could not be read");
+            Vec::new()
+        }
+    };
 
-    // Fetch open chat reports with reporter name via JOIN.
-    let chat_rows: Vec<ChatReportRow> = sqlx::query_as(
-        r#"SELECT cr.id,
-                      COALESCE(reporter.display_name, reporter.username) AS reporter_name,
-                      cr.target_addr,
-                      cr.reason,
-                      cr.comment,
-                      cr.created_at
-               FROM chat_reports cr
-               JOIN actors reporter ON reporter.id = cr.reporter_id
-               WHERE cr.status = 'open'
-               ORDER BY cr.created_at ASC LIMIT 200"#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    // Build unified entries with raw timestamps for correct sorting.
-    struct RawEntry {
-        entry: UnifiedReportEntry,
-        ts: chrono::DateTime<chrono::Utc>,
-    }
-
-    let mut raw: Vec<RawEntry> = Vec::new();
-
-    for row in ap_rows {
-        let target_description = match (row.target_name, row.target_post_id) {
-            (Some(name), _) => format!("Actor: {name}"),
-            (None, Some(post_id)) => format!("Post: {post_id}"),
-            _ => "unknown target".into(),
-        };
-        raw.push(RawEntry {
-            ts: row.created_at,
-            entry: UnifiedReportEntry {
+    let reports: Vec<UnifiedReportEntry> = rows
+        .into_iter()
+        .map(|row| {
+            // The chat address wins where it is set, because it is the only
+            // one of the three that says which surface the report came from.
+            let (source, target_description) =
+                match (row.target_chat_addr, row.target_name, row.target_post_id) {
+                    (Some(addr), _, _) => ("chat", format!("Chat: {addr}")),
+                    (None, Some(name), _) => ("ap", format!("Actor: {name}")),
+                    (None, None, Some(post_id)) => ("ap", format!("Post: {post_id}")),
+                    _ => ("ap", "unknown target".to_owned()),
+                };
+            UnifiedReportEntry {
                 id: row.id.to_string(),
-                source: "ap".into(),
+                source: source.to_owned(),
                 reporter_name: row.reporter_name,
                 target_description,
                 reason: row.reason,
                 comment: row.comment.unwrap_or_default(),
                 created_at: row.created_at.format("%Y-%m-%d %H:%M UTC").to_string(),
-            },
-        });
-    }
-
-    for row in chat_rows {
-        raw.push(RawEntry {
-            ts: row.created_at,
-            entry: UnifiedReportEntry {
-                id: row.id.to_string(),
-                source: "chat".into(),
-                reporter_name: row.reporter_name,
-                target_description: format!("Chat: {}", row.target_addr),
-                reason: row.reason,
-                comment: row.comment.unwrap_or_default(),
-                created_at: row.created_at.format("%Y-%m-%d %H:%M UTC").to_string(),
-            },
-        });
-    }
-
-    // Sort by raw timestamp, not the formatted string.
-    raw.sort_by_key(|r| r.ts);
-    let reports: Vec<UnifiedReportEntry> = raw.into_iter().map(|r| r.entry).collect();
+            }
+        })
+        .collect();
 
     ModerationPage {
         i18n,

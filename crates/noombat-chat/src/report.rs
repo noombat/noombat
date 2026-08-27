@@ -57,24 +57,49 @@ pub struct ChatReportResponse {
     pub report_id: Uuid,
 }
 
+/// The largest quoted message accepted, matching the schema's cap.
+///
+/// Enforced here as well as there so that an oversized submission is a 400
+/// naming the field, rather than a constraint violation surfacing as a 500.
+const MAX_QUOTED_MESSAGE: usize = 8192;
+
+/// Long enough for a reporter to explain themselves, short enough that the
+/// moderation queue cannot be used as free storage.
+const MAX_COMMENT: usize = 2000;
+
 /// Submit a chat report.
+///
+/// Writes to `reports`, the one moderation spine, with the address in
+/// `target_chat_addr`. Everything owed to a reporter is owed once and
+/// implemented once, wherever the report came from.
 pub async fn submit_report(
     pool: &PgPool,
     reporter_id: Uuid,
     req: &ChatReportRequest,
 ) -> Result<ChatReportResponse> {
-    if req.target_addr.is_empty() {
-        return Err(NoombatError::BadRequest(
-            "target_addr must not be empty".into(),
-        ));
+    noombat_core::email_address::qualify(&req.target_addr, "target_addr")?;
+
+    if let Some(ref message) = req.message_content
+        && message.len() > MAX_QUOTED_MESSAGE
+    {
+        return Err(NoombatError::BadRequest(format!(
+            "message_content must be at most {MAX_QUOTED_MESSAGE} bytes"
+        )));
+    }
+    if let Some(ref comment) = req.comment
+        && comment.len() > MAX_COMMENT
+    {
+        return Err(NoombatError::BadRequest(format!(
+            "comment must be at most {MAX_COMMENT} bytes"
+        )));
     }
 
     let id = Uuid::new_v4();
 
     sqlx::query(
-        r#"INSERT INTO chat_reports
-               (id, reporter_id, target_addr, message_content,
-                message_date, reason, comment)
+        r#"INSERT INTO reports
+               (id, reporter_id, target_chat_addr, reported_message,
+                reported_message_at, reason, comment)
            VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
     )
     .bind(id)

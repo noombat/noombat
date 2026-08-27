@@ -727,11 +727,28 @@ CREATE TABLE domain_restrictions (
 
 -- ..... USER REPORTS .....
 
+-- One moderation spine, for every kind of report.
+--
+-- Chat reports were a second table with the same columns under different
+-- names. Two spines meant every duty owed to a reporter was owed twice and
+-- implemented once: a statement of reasons, a complaints route, a retention
+-- rule and a point of contact each had to be built, and then built again
+-- somewhere easy to forget. What a report is about is a column here, not a
+-- table of its own.
 CREATE TABLE reports (
     id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     reporter_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     target_actor_id UUID REFERENCES actors(id) ON DELETE CASCADE,
     target_post_id  UUID REFERENCES posts(id) ON DELETE CASCADE,
+    -- A Chatmail address, which is not an actor here and often not an actor
+    -- anywhere: the sender may be a stranger on another server, which is
+    -- exactly the case worth being able to report.
+    target_chat_addr TEXT,
+    -- The message complained of, quoted by the reporter as evidence. This
+    -- is attacker-supplied text on its way to a moderator's screen, so it
+    -- is bounded in the schema rather than trusted to a caller.
+    reported_message    TEXT,
+    reported_message_at TIMESTAMPTZ,
     reason          TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'illegal', 'impersonation', 'other')),
     comment         TEXT,
     forwarded       BOOLEAN NOT NULL DEFAULT FALSE,
@@ -740,25 +757,29 @@ CREATE TABLE reports (
     resolution_note TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     resolved_at     TIMESTAMPTZ,
-    CHECK (target_actor_id IS NOT NULL OR target_post_id IS NOT NULL)
+    -- A report about nothing cannot be actioned. Deliberately not "exactly
+    -- one": reporting a post also names its author, and both columns being
+    -- set is that report, not a malformed one.
+    CONSTRAINT report_names_a_target CHECK (
+        target_actor_id IS NOT NULL
+        OR target_post_id IS NOT NULL
+        OR target_chat_addr IS NOT NULL
+    ),
+    -- Quoted evidence belongs to the chat case. Allowing it everywhere
+    -- would give a moderator two places to look for the same thing.
+    CONSTRAINT quoted_message_belongs_to_a_chat_report CHECK (
+        (reported_message IS NULL AND reported_message_at IS NULL)
+        OR target_chat_addr IS NOT NULL
+    ),
+    -- 8 KiB is far more than any message a person quotes and far less than
+    -- what an attacker would send if nothing said otherwise.
+    CONSTRAINT quoted_message_is_bounded CHECK (
+        reported_message IS NULL OR length(reported_message) <= 8192
+    )
 );
 
--- ..... CHAT REPORTS .....
-
-CREATE TABLE chat_reports (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    reporter_id     UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
-    target_addr     TEXT NOT NULL,
-    message_content TEXT,
-    message_date    TIMESTAMPTZ,
-    reason          TEXT NOT NULL CHECK (reason IN ('spam', 'harassment', 'illegal', 'impersonation', 'other')),
-    comment         TEXT,
-    status          TEXT NOT NULL DEFAULT 'open' CHECK (status IN ('open', 'resolved', 'dismissed')),
-    resolved_by     UUID REFERENCES actors(id) ON DELETE SET NULL,
-    resolution_note TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    resolved_at     TIMESTAMPTZ
-);
+-- The moderation queue's work list: open reports, oldest first.
+CREATE INDEX idx_reports_open ON reports (created_at) WHERE status = 'open';
 
 -- ..... CHATMAIL BLOCKS .....
 
@@ -882,9 +903,10 @@ CREATE INDEX idx_events_group ON events (group_id) WHERE group_id IS NOT NULL;
 CREATE INDEX idx_reports_reporter ON reports (reporter_id);
 CREATE INDEX idx_reports_target_actor ON reports (target_actor_id) WHERE target_actor_id IS NOT NULL;
 CREATE INDEX idx_reports_target_post ON reports (target_post_id) WHERE target_post_id IS NOT NULL;
-CREATE INDEX idx_reports_status ON reports (status) WHERE status = 'open';
-CREATE INDEX idx_chat_reports_status ON chat_reports (status) WHERE status = 'open';
-CREATE INDEX idx_chat_reports_reporter ON chat_reports (reporter_id);
+-- The chat-filtered view of the queue, which is the same work list narrowed
+-- to the reports that carry an address.
+CREATE INDEX idx_reports_open_chat ON reports (created_at)
+    WHERE status = 'open' AND target_chat_addr IS NOT NULL;
 
 -- ..... UPDATED_AT TRIGGER .....
 

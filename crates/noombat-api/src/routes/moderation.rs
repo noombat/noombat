@@ -293,16 +293,21 @@ async fn resolve_chat_report(
     let moderator_id = moderator.actor_id();
 
     // Fetch the report.
-    let (reporter_id, target_addr, status): (Uuid, String, String) =
-        sqlx::query_as("SELECT reporter_id, target_addr, status FROM chat_reports WHERE id = $1")
-            .bind(report_id)
-            .fetch_optional(&state.pool)
-            .await
-            .map_err(NoombatError::from)?
-            .ok_or(NoombatError::NotFound {
-                entity: "chat_report",
-                id: report_id,
-            })?;
+    // `target_chat_addr IS NOT NULL` is what makes this the chat case, now
+    // that one table holds every kind of report. Without it this route would
+    // accept a post report and then try to block an address that is NULL.
+    let (reporter_id, target_addr, status): (Uuid, String, String) = sqlx::query_as(
+        "SELECT reporter_id, target_chat_addr, status FROM reports \
+         WHERE id = $1 AND target_chat_addr IS NOT NULL",
+    )
+    .bind(report_id)
+    .fetch_optional(&state.pool)
+    .await
+    .map_err(NoombatError::from)?
+    .ok_or(NoombatError::NotFound {
+        entity: "chat report",
+        id: report_id,
+    })?;
 
     if status != "open" {
         return Err(ApiError(NoombatError::BadRequest(
@@ -378,7 +383,7 @@ async fn resolve_chat_report(
         _ => "resolved",
     };
     sqlx::query(
-        r#"UPDATE chat_reports
+        r#"UPDATE reports
            SET status = $1, resolved_by = $2, resolution_note = $3,
                resolved_at = now()
            WHERE id = $4"#,
@@ -422,13 +427,17 @@ async fn list_chat_reports(
 ) -> Result<impl IntoResponse, ApiError> {
     require_moderator(&principal)?;
 
+    // A filtered view of the one report table, not a table of its own. The
+    // aliases keep the response shape the moderation queue already consumes.
     let reports: Vec<ChatReportEntry> = sqlx::query_as(
-        r#"SELECT id, reporter_id, target_addr, message_content,
-                      reason, comment, status, created_at
-               FROM chat_reports
-               WHERE status = 'open'
-               ORDER BY created_at ASC
-               LIMIT 100"#,
+        r#"SELECT id, reporter_id,
+                  target_chat_addr AS target_addr,
+                  reported_message AS message_content,
+                  reason, comment, status, created_at
+           FROM reports
+           WHERE status = 'open' AND target_chat_addr IS NOT NULL
+           ORDER BY created_at ASC
+           LIMIT 100"#,
     )
     .fetch_all(&state.pool)
     .await
