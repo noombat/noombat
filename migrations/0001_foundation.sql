@@ -42,7 +42,12 @@
 
 CREATE TABLE actors (
     id                           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    actor_type                   TEXT NOT NULL CHECK (actor_type IN ('individual', 'organization', 'group')),
+    -- 'application' is the instance speaking as itself, not a kind of user.
+    -- Server-to-server fetches are signed as it, so that asking a peer for a
+    -- document does not hand them the name of an administrator. There is at
+    -- most one per instance, nobody signs into it, and it is excluded from
+    -- the directory and from candidate search by actor_type.
+    actor_type                   TEXT NOT NULL CHECK (actor_type IN ('individual', 'organization', 'group', 'application')),
     ap_id                        TEXT NOT NULL UNIQUE,
     username                     TEXT NOT NULL,
     display_name                 TEXT,
@@ -146,6 +151,12 @@ CREATE UNIQUE INDEX idx_actors_public_key_id ON actors (public_key_id) WHERE pub
 -- Uniqueness and every lookup fold case, so both go through lower(email).
 -- lower() is IMMUTABLE, so this needs no extension.
 CREATE UNIQUE INDEX idx_actors_local_email ON actors (lower(email)) WHERE is_local AND email IS NOT NULL;
+-- At most one instance actor. The signing path selects it by type, so a
+-- second one would make which key signs an outbound fetch depend on row
+-- order. Unique on actor_type within the filtered set, which holds only
+-- the one value, is how "at most one row" is spelled.
+CREATE UNIQUE INDEX idx_actors_instance_actor ON actors (actor_type)
+    WHERE actor_type = 'application' AND is_local;
 -- The admission queue's work list, oldest first. Unlike
 -- idx_actors_sanitiser_version this one is intended to drain to empty.
 CREATE INDEX idx_actors_pending ON actors (created_at) WHERE actor_status = 'pending' AND is_local;

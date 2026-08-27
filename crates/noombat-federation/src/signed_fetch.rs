@@ -38,29 +38,32 @@ fn allow_unsigned_fallback() -> bool {
     ALLOW_UNSIGNED_FETCH.get().copied().unwrap_or(false)
 }
 
-/// Find any local actor with a private key to use for signed fetches.
+/// Find the actor whose key signs server-to-server fetches.
 ///
-/// Prefers an admin actor; falls back to any local actor with a
-/// private key. Returns an error if no suitable actor exists (which
-/// would mean the instance has no local actors at all, an unlikely
-/// but possible state during initial setup).
+/// The instance actor, where one exists: a signed fetch tells the peer who
+/// asked, and signing as an administrator names a privileged account to
+/// every host this instance fetches from, including hosts chosen by the
+/// party being fetched.
+///
+/// Falls back to any local actor with a key, because an instance mid-setup
+/// may not have minted one yet. `ensure_instance_actor` runs at boot, so
+/// that is a window rather than a resting state.
 ///
 /// This function is shared across the federation crate: it is used
 /// by `signed_get`, `handle_update_actor` (in `crate::inbox`), and
 /// `handle_inbound_move` (in `crate::move_actor`).
 pub async fn find_local_signing_actor(pool: &PgPool) -> Result<Uuid> {
-    // Try admins first (they are most likely to exist on any instance).
-    let admin: Option<Uuid> = sqlx::query_scalar(
+    let instance: Option<Uuid> = sqlx::query_scalar(
         "SELECT id FROM actors \
          WHERE is_local = TRUE AND private_key_pem IS NOT NULL \
-           AND instance_role = 'admin' \
+           AND actor_type = 'application' \
          LIMIT 1",
     )
     .fetch_optional(pool)
     .await
     .map_err(NoombatError::from)?;
 
-    if let Some(id) = admin {
+    if let Some(id) = instance {
         return Ok(id);
     }
 

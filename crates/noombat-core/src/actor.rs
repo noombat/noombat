@@ -8,7 +8,13 @@ use uuid::Uuid;
 
 use crate::privacy::ActorPrivacy;
 
-/// Discriminant for the three actor kinds.
+/// Discriminant for the actor kinds.
+///
+/// [`ActorType::Application`] is not a kind of user. It is the instance
+/// speaking as itself, which is what server-to-server fetches are signed
+/// as, so that asking a peer for a document does not disclose a named
+/// administrator to them. There is at most one per instance and nobody
+/// signs into it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
@@ -16,6 +22,7 @@ pub enum ActorType {
     Individual,
     Organization,
     Group,
+    Application,
 }
 
 impl ActorType {
@@ -29,6 +36,7 @@ impl ActorType {
             Self::Individual => "Person",
             Self::Organization => "Organization",
             Self::Group => "Group",
+            Self::Application => "Application",
         }
     }
 
@@ -43,6 +51,7 @@ impl ActorType {
             Self::Individual => "individual",
             Self::Organization => "organization",
             Self::Group => "group",
+            Self::Application => "application",
         }
     }
 
@@ -55,6 +64,9 @@ impl ActorType {
         match ap_type {
             "Organization" => Self::Organization,
             "Group" => Self::Group,
+            // `Service` is deliberately not folded in: it would change how
+            // remote actors already stored are read.
+            "Application" => Self::Application,
             _ => Self::Individual,
         }
     }
@@ -200,10 +212,11 @@ mod tests {
 
     /// Every variant, so adding one to the enum and not to this list is
     /// a compile error rather than a gap in the tests below.
-    const ALL: [ActorType; 3] = [
+    const ALL: [ActorType; 4] = [
         ActorType::Individual,
         ActorType::Organization,
         ActorType::Group,
+        ActorType::Application,
     ];
 
     /// The same, for the status enum.

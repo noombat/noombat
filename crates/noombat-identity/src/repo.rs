@@ -111,6 +111,54 @@ pub async fn create_actor_tx(tx: &mut sqlx::PgConnection, params: &NewActor) -> 
     create_actor_on(&mut *tx, params).await
 }
 
+/// The instance actor's id, if it has been minted.
+pub async fn find_instance_actor(pool: &PgPool) -> Result<Option<Uuid>> {
+    Ok(sqlx::query_scalar::<_, Uuid>(
+        "SELECT id FROM actors WHERE is_local = TRUE AND actor_type = 'application' LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?)
+}
+
+/// Create the instance actor if it is missing, and return its id.
+///
+/// Server-to-server fetches are signed as this actor, so that a peer being
+/// asked for a document learns that the server asked rather than which
+/// administrator did. Its username is the domain, which no person can take:
+/// usernames admit only lowercase letters, digits and underscores, so a dot
+/// cannot collide with one.
+///
+/// Idempotent, and safe to race. Two boots arriving together resolve
+/// against the unique index on the type, and the loser re-reads rather than
+/// minting a second key that would sign some fetches and not others.
+pub async fn ensure_instance_actor(pool: &PgPool, domain: &str) -> Result<Uuid> {
+    if let Some(id) = find_instance_actor(pool).await? {
+        return Ok(id);
+    }
+
+    let keypair = crate::keys::generate_keypair_async().await?;
+    let params = NewActor {
+        actor_type: ActorType::Application,
+        username: domain.to_owned(),
+        display_name: Some(domain.to_owned()),
+        domain: domain.to_owned(),
+        public_key_pem: keypair.rsa.public_pem,
+        private_key_pem: keypair.rsa.private_pem,
+        ed25519_public_key: keypair.ed25519.public_multibase,
+        ed25519_private_key: keypair.ed25519.private_base64,
+    };
+
+    match create_actor(pool, &params).await {
+        Ok(actor) => Ok(actor.id),
+        Err(e) => match find_instance_actor(pool).await? {
+            // Another boot won the race, and its actor serves as well as
+            // ours would have. Any other failure is still a failure.
+            Some(id) => Ok(id),
+            None => Err(e),
+        },
+    }
+}
+
 /// Shared implementation accepting any sqlx executor.
 async fn create_actor_on<'e, E>(executor: E, params: &NewActor) -> Result<Actor>
 where
