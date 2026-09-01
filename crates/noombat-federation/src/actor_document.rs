@@ -116,7 +116,11 @@ async fn fetch_public_sections(
             section_type: "publication".into(),
             visibility: SectionVisibility::Public,
             data: serde_json::json!({
-                "noombat:doi": pub_.doi,
+                "schema:identifier": {
+                    "type": "PropertyValue",
+                    "schema:propertyID": "DOI",
+                    "value": pub_.doi,
+                },
                 "name": pub_.title,
                 "noombat:authors": pub_.authors,
                 "noombat:journal": pub_.journal,

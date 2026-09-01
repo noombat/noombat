@@ -14,7 +14,7 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use noombat_ap::context::{AS_CONTEXT, default_context};
+use noombat_ap::context::{AS_CONTEXT, Extension, context_with};
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
@@ -324,8 +324,17 @@ fn build_create_activity(
     actor_ap_id: &str,
     ed25519_private_base64: Option<&str>,
 ) -> serde_json::Value {
+    // `Hashtag` is an ActivityStreams extension rather than a core
+    // term, so it is declared only when the post actually carries tags,
+    // which is how Mastodon and GoToSocial both spell it.
+    let extensions: &[Extension] = if post.tags.is_empty() {
+        &[]
+    } else {
+        &[Extension::Hashtag]
+    };
+
     let mut ap_object = json!({
-        "@context": default_context(),
+        "@context": context_with(extensions),
         "id": post.post_id,
         "type": post.ap_type,
         "attributedTo": actor_ap_id,
@@ -360,7 +369,7 @@ fn build_create_activity(
     }
 
     json!({
-        "@context": default_context(),
+        "@context": context_with(extensions),
         "id": format!("{}/activity", post.post_id),
         "type": "Create",
         "actor": actor_ap_id,

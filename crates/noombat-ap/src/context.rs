@@ -32,53 +32,90 @@ pub const MULTIKEY_CONTEXT: &str = "https://w3id.org/security/multikey/v1";
 pub const NOOMBAT_NS: &str = "https://noombat.org/ns#";
 
 /// The schema.org namespace.
-///
-/// Actor documents carry `PropertyValue` attachments by the Mastodon
-/// convention, and both that type and its `value` property are
-/// schema.org terms that the ActivityStreams context does not define.
-/// Emitted undeclared, a JSON-LD processor is free to drop them, and
-/// the profile fields go with them.
 pub const SCHEMA_NS: &str = "http://schema.org#";
 
-/// Terms this instance emits that none of the contexts it references
-/// defines, bound so a processor expanding the document keeps them.
+/// GoToSocial's namespace, which defines the interaction policy
+/// vocabulary that Mastodon has also adopted.
+pub const GTS_NS: &str = "https://gotosocial.org/ns#";
+
+/// A context entry added only when the document uses what it defines.
 ///
-/// `PropertyValue` and `value` are schema.org, carried on actor
-/// attachments by the Mastodon convention. `movedTo` is the migration
-/// pointer: in wide use, absent from the ActivityStreams context, and
-/// bound here to `as:movedTo` the way Mastodon binds it. The `as`
-/// prefix resolves because the ActivityStreams context precedes this
-/// entry in the array, and a JSON-LD context is processed in order.
-fn extension_terms() -> Value {
-    json!({
-        "schema": SCHEMA_NS,
-        "PropertyValue": "schema:PropertyValue",
-        "value": "schema:value",
-        "movedTo": { "@id": "as:movedTo", "@type": "@id" }
-    })
+/// Mastodon's serialisers work this way, one extension per feature
+/// rather than a fixed union, which keeps a plain `Follow` from carrying
+/// the vocabulary of a profile page. The alternative, a single context
+/// wide enough for every document, makes every document pay for the
+/// widest one and hides which terms a given document actually needs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Extension {
+    /// `publicKey`, `publicKeyPem` and `owner`.
+    Security,
+    /// `Multikey`, `publicKeyMultibase`, `assertionMethod`, `controller`.
+    Multikey,
+    /// `PropertyValue` and `value`, bound unprefixed because that is the
+    /// spelling Mastodon reads profile fields from. Anything else
+    /// schema.org supplies is written with an explicit `schema:` prefix
+    /// rather than growing this map.
+    Schema,
+    /// `movedTo`. Absent from the ActivityStreams context, so bound the
+    /// way Mastodon binds it.
+    MovedTo,
+    /// `Hashtag`, in a `tag` array.
+    Hashtag,
+    /// `interactionPolicy` and its sub-policies.
+    InteractionPolicy,
 }
 
-/// Produces the default `@context` array for outbound objects.
+/// Produces an `@context` carrying ActivityStreams, the `noombat`
+/// prefix, and exactly the extensions asked for.
+///
+/// Order matters: a prefix is only usable by entries after the one that
+/// defines it, which is why `as:` bindings sit in the trailing term map
+/// rather than before the ActivityStreams entry.
+pub fn context_with(extensions: &[Extension]) -> Value {
+    let mut entries = vec![json!(AS_CONTEXT)];
+    let mut terms = serde_json::Map::new();
+
+    let mut wanted = extensions.to_vec();
+    wanted.sort_unstable();
+    wanted.dedup();
+
+    for extension in wanted {
+        match extension {
+            Extension::Security => entries.push(json!(SECURITY_CONTEXT)),
+            Extension::Multikey => entries.push(json!(MULTIKEY_CONTEXT)),
+            Extension::Schema => {
+                terms.insert("schema".into(), json!(SCHEMA_NS));
+                terms.insert("PropertyValue".into(), json!("schema:PropertyValue"));
+                terms.insert("value".into(), json!("schema:value"));
+            }
+            Extension::MovedTo => {
+                terms.insert(
+                    "movedTo".into(),
+                    json!({ "@id": "as:movedTo", "@type": "@id" }),
+                );
+            }
+            Extension::Hashtag => {
+                terms.insert("Hashtag".into(), json!("as:Hashtag"));
+            }
+            Extension::InteractionPolicy => {
+                terms.insert("gts".into(), json!(GTS_NS));
+                terms.insert(
+                    "interactionPolicy".into(),
+                    json!({ "@id": "gts:interactionPolicy", "@type": "@id" }),
+                );
+            }
+        }
+    }
+
+    terms.insert("noombat".into(), json!(NOOMBAT_NS));
+    entries.push(Value::Object(terms));
+    Value::Array(entries)
+}
+
+/// Produces the `@context` for a document needing no extension: the
+/// activities that carry only ActivityStreams terms and `noombat:` ones.
 pub fn default_context() -> Value {
-    json!([
-        AS_CONTEXT,
-        SECURITY_CONTEXT,
-        extension_terms(),
-        { "noombat": NOOMBAT_NS }
-    ])
-}
-
-/// Produces the `@context` array for an actor that publishes an
-/// `assertionMethod`, i.e. [`default_context`] plus the terms that
-/// entry's contents need.
-pub fn actor_context() -> Value {
-    json!([
-        AS_CONTEXT,
-        SECURITY_CONTEXT,
-        MULTIKEY_CONTEXT,
-        extension_terms(),
-        { "noombat": NOOMBAT_NS }
-    ])
+    context_with(&[])
 }
 
 /// Produces a minimal `@context` array for objects that use the
@@ -97,28 +134,63 @@ pub fn error_context() -> Value {
 mod tests {
     use super::*;
 
+    fn declares(ctx: &Value, term: &str) -> bool {
+        ctx.as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry.get(term).is_some())
+    }
+
+    fn lists(ctx: &Value, url: &str) -> bool {
+        ctx.as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| entry.as_str())
+            .any(|entry| entry == url)
+    }
+
     #[test]
-    fn default_context_declares_every_namespace_it_needs() {
+    fn the_default_context_carries_nothing_a_plain_activity_does_not_use() {
         let ctx = default_context();
-        let arr = ctx.as_array().unwrap();
+        assert!(lists(&ctx, AS_CONTEXT));
+        assert!(declares(&ctx, "noombat"));
+        for absent in ["schema", "movedTo", "Hashtag", "interactionPolicy"] {
+            assert!(!declares(&ctx, absent), "{absent} should be opt-in");
+        }
+        assert!(!lists(&ctx, SECURITY_CONTEXT), "security should be opt-in");
+    }
 
-        let urls: Vec<&str> = arr.iter().filter_map(|entry| entry.as_str()).collect();
-        assert!(urls.contains(&AS_CONTEXT));
-        assert!(urls.contains(&SECURITY_CONTEXT));
+    #[test]
+    fn each_extension_declares_exactly_what_it_names() {
+        let ctx = context_with(&[Extension::Schema]);
+        assert!(declares(&ctx, "schema"));
+        assert!(declares(&ctx, "PropertyValue"));
+        assert!(declares(&ctx, "value"));
 
-        // Looked up rather than indexed: the previous version asserted a
-        // length of three and three fixed positions, so it failed the moment
-        // a namespace was added rather than telling anyone what was wrong.
-        let declares = |term: &str| arr.iter().any(|entry| entry.get(term).is_some());
-        assert!(declares("noombat"));
-        assert!(
-            declares("schema"),
-            "PropertyValue and value expand to nothing without the schema.org namespace"
+        let ctx = context_with(&[Extension::MovedTo]);
+        assert!(declares(&ctx, "movedTo"));
+
+        let ctx = context_with(&[Extension::Hashtag]);
+        assert_eq!(
+            ctx.as_array().unwrap()[1]["Hashtag"],
+            "as:Hashtag",
+            "bound the way Mastodon and GoToSocial bind it"
         );
-        assert!(
-            declares("movedTo"),
-            "movedTo is not an ActivityStreams term and must be bound explicitly"
-        );
+
+        let ctx = context_with(&[Extension::InteractionPolicy]);
+        assert_eq!(ctx.as_array().unwrap()[1]["gts"], GTS_NS);
+        assert!(declares(&ctx, "interactionPolicy"));
+
+        let ctx = context_with(&[Extension::Security, Extension::Multikey]);
+        assert!(lists(&ctx, SECURITY_CONTEXT));
+        assert!(lists(&ctx, MULTIKEY_CONTEXT));
+    }
+
+    #[test]
+    fn asking_twice_declares_once() {
+        let ctx = context_with(&[Extension::Schema, Extension::Schema]);
+        let urls = ctx.as_array().unwrap().len();
+        assert_eq!(urls, 2, "one named context and one term map");
     }
 
     #[test]

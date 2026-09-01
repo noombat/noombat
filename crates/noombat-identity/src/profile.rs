@@ -786,8 +786,13 @@ pub async fn create_scholarly_article(
 
     let ap_object = serde_json::json!({
         "type": "noombat:ScholarlyArticle",
-        "noombat:doi": params.doi,
-        "noombat:doiMetadata": params.doi_metadata,
+        // The DOI is the identifier; what it resolves to is not stored
+        // here, because a cached copy goes stale and cannot be checked.
+        "schema:identifier": {
+            "type": "PropertyValue",
+            "schema:propertyID": "DOI",
+            "value": params.doi,
+        },
         "name": params.title,
     });
 

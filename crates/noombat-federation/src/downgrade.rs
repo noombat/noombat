@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 
-use noombat_ap::context::{actor_context, default_context};
+use noombat_ap::context::{Extension, context_with};
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
 use noombat_core::privacy::SectionVisibility;
@@ -91,10 +91,15 @@ pub fn downgrade_job_posting(posting: &Value, actor_ap_id: &str) -> Value {
             .get("currency")
             .and_then(|v| v.as_str())
             .unwrap_or("USD");
-        object["noombat:salaryRange"] = json!({
-            "min": salary_min,
-            "max": salary_max,
-            "currency": currency,
+        // schema.org already types a salary range, and its property
+        // names are the ones consumers of job data expect. The former
+        // `noombat:salaryRange` nested bare `min`, `max` and `currency`
+        // that no context defined, so they expanded to nothing.
+        object["schema:baseSalary"] = json!({
+            "type": "schema:MonetaryAmount",
+            "schema:currency": currency,
+            "schema:minValue": salary_min,
+            "schema:maxValue": salary_max,
         });
     }
     if let Some(requirements) = posting.get("requirements") {
@@ -157,8 +162,16 @@ pub fn downgrade_scholarly_article(publication: &Value, actor_ap_id: &str) -> Va
         "attributedTo": actor_ap_id,
         "content": content,
         "url": doi_url,
-        "noombat:doi": doi,
-        "noombat:doiMetadata": publication.get("doi_metadata").cloned().unwrap_or(json!(null)),
+        // The DOI is the durable identifier and every receiver can resolve
+        // it, so carry the identifier and not a cached copy of what it
+        // resolves to. The former `noombat:doiMetadata` shipped an opaque
+        // blob whose keys no context defined, which went stale and could
+        // not be checked against anything.
+        "schema:identifier": {
+            "type": "PropertyValue",
+            "schema:propertyID": "DOI",
+            "value": doi,
+        },
     })
 }
 
@@ -206,12 +219,25 @@ pub fn build_federated_actor(
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
 
+    // The document declares what it carries and nothing else, so a
+    // keyless actor with no attachments does not advertise Multikey or
+    // schema.org terms it never uses.
+    let has_attachments = actor.orcid.is_some()
+        || (actor.actor_privacy.chatmail_visible && actor.chatmail_addr.is_some())
+        || !verified_links.is_empty();
+    let mut extensions = vec![Extension::Security];
+    if actor.ed25519_public_key.is_some() {
+        extensions.push(Extension::Multikey);
+    }
+    if has_attachments {
+        extensions.push(Extension::Schema);
+    }
+    if actor.moved_to.is_some() {
+        extensions.push(Extension::MovedTo);
+    }
+
     let mut obj = json!({
-        "@context": if actor.ed25519_public_key.is_some() {
-            actor_context()
-        } else {
-            default_context()
-        },
+        "@context": context_with(&extensions),
         "id": actor.ap_id,
         "type": actor.actor_type.ap_type(),
         "preferredUsername": actor.username,
@@ -382,7 +408,9 @@ mod tests {
                 .unwrap()
                 .contains("Rust Engineer")
         );
-        assert_eq!(object["noombat:salaryRange"]["currency"], "EUR");
+        assert_eq!(object["schema:baseSalary"]["schema:currency"], "EUR");
+        assert_eq!(object["schema:baseSalary"]["schema:minValue"], 80_000);
+        assert_eq!(object["schema:baseSalary"]["type"], "schema:MonetaryAmount");
         assert!(
             object["source"]["mediaType"]
                 .as_str()
@@ -404,7 +432,12 @@ mod tests {
         let object = downgrade_scholarly_article(&pub_data, "https://example.org/users/alice");
         let types = object["type"].as_array().unwrap();
         assert_eq!(types[1], vocab::SCHOLARLY_ARTICLE);
-        assert_eq!(object["noombat:doi"], "10.1000/xyz123");
+        assert_eq!(object["schema:identifier"]["value"], "10.1000/xyz123");
+        assert_eq!(object["schema:identifier"]["schema:propertyID"], "DOI");
+        assert!(
+            object.get("noombat:doiMetadata").is_none(),
+            "the cached blob is not shipped; the identifier is"
+        );
         assert!(object["content"].as_str().unwrap().contains("doi.org"));
     }
 
