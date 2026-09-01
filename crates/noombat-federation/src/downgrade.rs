@@ -558,32 +558,146 @@ mod tests {
     }
 
     #[test]
-    fn federated_actor_context_defines_the_terms_it_uses() {
+    fn federated_actor_context_defines_every_term_it_uses() {
         use noombat_ap::context::MULTIKEY_CONTEXT;
+        use std::collections::BTreeSet;
 
-        let with_key = build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None);
-        let declared: Vec<&str> = with_key["@context"]
+        // Terms a referenced context supplies, grouped by which one.
+        // Naming a term here asserts that the named context defines it.
+        // Anything neither listed nor declared inline fails, which is the
+        // point: the previous version of this test checked one term and so
+        // never noticed that `PropertyValue` and `movedTo` were emitted
+        // under a context defining neither.
+        // Properties.
+        const FROM_ACTIVITYSTREAMS: &[&str] = &[
+            "id",
+            "type",
+            "name",
+            "summary",
+            "url",
+            "icon",
+            "image",
+            "attachment",
+            "endpoints",
+            "sharedInbox",
+            "inbox",
+            "outbox",
+            "followers",
+            "following",
+            "preferredUsername",
+            "alsoKnownAs",
+            // Type names, which appear as the value of `type`.
+            "Person",
+            "Organization",
+            "Group",
+            "Application",
+            "Service",
+            "Image",
+            "Collection",
+            "OrderedCollection",
+        ];
+        const FROM_SECURITY_V1: &[&str] = &["publicKey", "publicKeyPem", "owner"];
+        const FROM_MULTIKEY_V1: &[&str] = &[
+            "assertionMethod",
+            "Multikey",
+            "publicKeyMultibase",
+            "controller",
+        ];
+
+        fn used_terms(value: &Value, out: &mut BTreeSet<String>) {
+            match value {
+                Value::Object(map) => {
+                    for (key, child) in map {
+                        if key == "@context" {
+                            continue;
+                        }
+                        out.insert(key.clone());
+                        if key == "type"
+                            && let Value::String(name) = child
+                        {
+                            out.insert(name.clone());
+                        }
+                        used_terms(child, out);
+                    }
+                }
+                Value::Array(items) => {
+                    for item in items {
+                        used_terms(item, out);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        fn declared_inline(context: &Value) -> BTreeSet<String> {
+            let mut out = BTreeSet::new();
+            if let Value::Array(entries) = context {
+                for entry in entries {
+                    if let Value::Object(map) = entry {
+                        out.extend(map.keys().cloned());
+                    }
+                }
+            }
+            out
+        }
+
+        // An actor exercising every conditional branch: a key, a migration
+        // pointer, and two attachment sources.
+        let mut actor = test_actor();
+        actor.orcid = Some("0000-0002-1825-0097".into());
+        actor.moved_to = Some("https://elsewhere.example/users/alice".into());
+        let links = [VerifiedLinkRef {
+            url: "https://alice.example",
+        }];
+        let doc = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None);
+
+        let mut used = BTreeSet::new();
+        used_terms(&doc, &mut used);
+
+        // A fixture that produced none of these would pass vacuously.
+        for expected in ["PropertyValue", "movedTo", "Multikey"] {
+            assert!(
+                used.contains(expected),
+                "fixture never emitted {expected}, so this test would prove nothing"
+            );
+        }
+
+        let declared = declared_inline(&doc["@context"]);
+        for term in &used {
+            if term.starts_with('@') || term.contains(':') {
+                continue;
+            }
+            let known = declared.contains(term)
+                || FROM_ACTIVITYSTREAMS.contains(&term.as_str())
+                || FROM_SECURITY_V1.contains(&term.as_str())
+                || FROM_MULTIKEY_V1.contains(&term.as_str());
+            assert!(
+                known,
+                "`{term}` is emitted under an @context that does not define it; \
+                 declare it or record which referenced context supplies it"
+            );
+        }
+
+        // The Multikey context is present only when there is a key to
+        // describe, which the original test asserted and is still true.
+        let declared_urls: Vec<&str> = doc["@context"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|entry| entry.as_str())
             .collect();
-        assert!(
-            declared.contains(&MULTIKEY_CONTEXT),
-            "Multikey and publicKeyMultibase are emitted under a context \
-             that does not define them: {declared:?}"
-        );
+        assert!(declared_urls.contains(&MULTIKEY_CONTEXT));
 
         let mut keyless = test_actor();
         keyless.ed25519_public_key = None;
         let without_key = build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None);
-        let declared: Vec<&str> = without_key["@context"]
+        let declared_urls: Vec<&str> = without_key["@context"]
             .as_array()
             .unwrap()
             .iter()
             .filter_map(|entry| entry.as_str())
             .collect();
-        assert!(!declared.contains(&MULTIKEY_CONTEXT));
+        assert!(!declared_urls.contains(&MULTIKEY_CONTEXT));
     }
 
     #[test]

@@ -31,11 +31,39 @@ pub const MULTIKEY_CONTEXT: &str = "https://w3id.org/security/multikey/v1";
 /// The Noombat extension namespace.
 pub const NOOMBAT_NS: &str = "https://noombat.org/ns#";
 
+/// The schema.org namespace.
+///
+/// Actor documents carry `PropertyValue` attachments by the Mastodon
+/// convention, and both that type and its `value` property are
+/// schema.org terms that the ActivityStreams context does not define.
+/// Emitted undeclared, a JSON-LD processor is free to drop them, and
+/// the profile fields go with them.
+pub const SCHEMA_NS: &str = "http://schema.org#";
+
+/// Terms this instance emits that none of the contexts it references
+/// defines, bound so a processor expanding the document keeps them.
+///
+/// `PropertyValue` and `value` are schema.org, carried on actor
+/// attachments by the Mastodon convention. `movedTo` is the migration
+/// pointer: in wide use, absent from the ActivityStreams context, and
+/// bound here to `as:movedTo` the way Mastodon binds it. The `as`
+/// prefix resolves because the ActivityStreams context precedes this
+/// entry in the array, and a JSON-LD context is processed in order.
+fn extension_terms() -> Value {
+    json!({
+        "schema": SCHEMA_NS,
+        "PropertyValue": "schema:PropertyValue",
+        "value": "schema:value",
+        "movedTo": { "@id": "as:movedTo", "@type": "@id" }
+    })
+}
+
 /// Produces the default `@context` array for outbound objects.
 pub fn default_context() -> Value {
     json!([
         AS_CONTEXT,
         SECURITY_CONTEXT,
+        extension_terms(),
         { "noombat": NOOMBAT_NS }
     ])
 }
@@ -48,6 +76,7 @@ pub fn actor_context() -> Value {
         AS_CONTEXT,
         SECURITY_CONTEXT,
         MULTIKEY_CONTEXT,
+        extension_terms(),
         { "noombat": NOOMBAT_NS }
     ])
 }
@@ -69,13 +98,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_context_includes_as_security_and_noombat() {
+    fn default_context_declares_every_namespace_it_needs() {
         let ctx = default_context();
         let arr = ctx.as_array().unwrap();
-        assert_eq!(arr.len(), 3);
-        assert_eq!(arr[0], AS_CONTEXT);
-        assert_eq!(arr[1], SECURITY_CONTEXT);
-        assert!(arr[2].get("noombat").is_some());
+
+        let urls: Vec<&str> = arr.iter().filter_map(|entry| entry.as_str()).collect();
+        assert!(urls.contains(&AS_CONTEXT));
+        assert!(urls.contains(&SECURITY_CONTEXT));
+
+        // Looked up rather than indexed: the previous version asserted a
+        // length of three and three fixed positions, so it failed the moment
+        // a namespace was added rather than telling anyone what was wrong.
+        let declares = |term: &str| arr.iter().any(|entry| entry.get(term).is_some());
+        assert!(declares("noombat"));
+        assert!(
+            declares("schema"),
+            "PropertyValue and value expand to nothing without the schema.org namespace"
+        );
+        assert!(
+            declares("movedTo"),
+            "movedTo is not an ActivityStreams term and must be bound explicitly"
+        );
     }
 
     #[test]
