@@ -60,9 +60,9 @@
   #v(2pt)
 ]
 
-// ..... Experience .....
-#if experiences.len() > 0 [
-  == Experience
+// ..... WorkExperience .....
+#if work_experiences.len() > 0 [
+  == WorkExperience
   #for exp in experiences [
     *#exp.title*, #exp.company #h(1fr) #exp.dates
     #v(2pt)
@@ -73,9 +73,9 @@
   ]
 ]
 
-// ..... Education .....
-#if educations.len() > 0 [
-  == Education
+// ..... EducationEntry .....
+#if education_entries.len() > 0 [
+  == EducationEntry
   #for edu in educations [
     *#edu.institution* #h(1fr) #edu.dates
     #v(2pt)
@@ -100,9 +100,9 @@
   #v(6pt)
 ]
 
-// ..... Publications .....
-#if publications.len() > 0 [
-  == Publications
+// ..... ScholarlyArticles .....
+#if scholarly_articles.len() > 0 [
+  == ScholarlyArticles
   #for pub_ in publications [
     #pub_.formatted
     #if "doi" in pub_ and pub_.doi != "" [

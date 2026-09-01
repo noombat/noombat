@@ -65,10 +65,10 @@ async fn fetch_public_sections(
     let vis = SectionVisibility::Public;
 
     let (experiences, educations, skills, publications, custom) = tokio::try_join!(
-        noombat_identity::profile::list_experiences(pool, actor_id, &vis),
-        noombat_identity::profile::list_educations(pool, actor_id, &vis),
+        noombat_identity::profile::list_work_experiences(pool, actor_id, &vis),
+        noombat_identity::profile::list_education_entries(pool, actor_id, &vis),
         noombat_identity::profile::list_skills(pool, actor_id, false),
-        noombat_identity::profile::list_publications(pool, actor_id, &vis),
+        noombat_identity::profile::list_scholarly_articles(pool, actor_id, &vis),
         noombat_identity::profile::list_custom_sections(pool, actor_id, &vis),
     )?;
 

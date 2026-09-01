@@ -982,11 +982,11 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
 
     // 1. Tables with `actor_id` FK column (excluding posts and
     //    media_attachments, which are handled later due to ordering).
-    sqlx::query("DELETE FROM experiences WHERE actor_id = $1")
+    sqlx::query("DELETE FROM work_experiences WHERE actor_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM educations WHERE actor_id = $1")
+    sqlx::query("DELETE FROM education_entries WHERE actor_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
@@ -994,7 +994,7 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM publications WHERE actor_id = $1")
+    sqlx::query("DELETE FROM scholarly_articles WHERE actor_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
@@ -1006,7 +1006,7 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM applications WHERE applicant_id = $1")
+    sqlx::query("DELETE FROM job_applications WHERE applicant_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
@@ -1058,11 +1058,11 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         .await?;
 
     // 6. Delivery queue entries for this actor.
-    // The recruiter's listings are their content and go with them.
-    // `applications.job_listing_id` is SET NULL rather than CASCADE, so
+    // The recruiter's postings are their content and go with them.
+    // `job_applications.job_posting_id` is SET NULL rather than CASCADE, so
     // applicants keep their own records; the snapshot columns on that
     // table are what keeps those records legible afterwards.
-    sqlx::query("DELETE FROM job_listings WHERE actor_id = $1")
+    sqlx::query("DELETE FROM job_postings WHERE actor_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
@@ -1558,7 +1558,7 @@ mod tests {
     /// it can also deadlock against the transaction whose locks it waits
     /// for.
     ///
-    /// `a_failed_erasure_leaves_the_job_listings_intact` asserts the same
+    /// `a_failed_erasure_leaves_the_job_postings_intact` asserts the same
     /// property behaviourally, but needs a database. This one runs on a
     /// bare `cargo test`, which is where a regression would be caught.
     #[test]
@@ -1603,8 +1603,8 @@ mod tests {
         }
     }
 
-    /// Insert a local actor that owns one job listing, and return its id.
-    async fn local_actor_with_a_job_listing(pool: &PgPool) -> Uuid {
+    /// Insert a local actor that owns one job posting, and return its id.
+    async fn local_actor_with_a_job_posting(pool: &PgPool) -> Uuid {
         let actor_id = Uuid::new_v4();
         sqlx::query(
             r#"INSERT INTO actors
@@ -1619,7 +1619,7 @@ mod tests {
         .expect("actor fixture inserted");
 
         sqlx::query(
-            r#"INSERT INTO job_listings
+            r#"INSERT INTO job_postings
                    (actor_id, ap_id, title, description_md, description_html)
                VALUES ($1, $2, 'Postdoctoral Fellow', 'A post.', '<p>A post.</p>')"#,
         )
@@ -1627,17 +1627,17 @@ mod tests {
         .bind(format!("https://noombat.social/jobs/{actor_id}"))
         .execute(pool)
         .await
-        .expect("job listing fixture inserted");
+        .expect("job posting fixture inserted");
 
         actor_id
     }
 
     /// A failure part-way through erasure rolls the whole thing back,
-    /// job listings included.
+    /// job postings included.
     ///
     /// The fault is injected by dropping `hashtag_follows`, which the last
     /// step of `tombstone_actor` deletes from, so the transaction fails
-    /// *after* the listings are gone. That ordering is the only one that
+    /// *after* the postings are gone. That ordering is the only one that
     /// distinguishes a statement on the transaction from one on the pool.
     /// Each `#[sqlx::test]` gets its own database, so the drop affects
     /// nothing else.
@@ -1646,8 +1646,8 @@ mod tests {
     /// rather than a description.
     #[ignore = "requires a database; run with --include-ignored"]
     #[sqlx::test(migrations = "../../migrations")]
-    async fn a_failed_erasure_leaves_the_job_listings_intact(pool: PgPool) {
-        let actor_id = local_actor_with_a_job_listing(&pool).await;
+    async fn a_failed_erasure_leaves_the_job_postings_intact(pool: PgPool) {
+        let actor_id = local_actor_with_a_job_posting(&pool).await;
 
         sqlx::query("DROP TABLE hashtag_follows CASCADE")
             .execute(&pool)
@@ -1661,15 +1661,15 @@ mod tests {
              the fault injection missed and the test proves nothing"
         );
 
-        let listings: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM job_listings WHERE actor_id = $1")
+        let postings: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM job_postings WHERE actor_id = $1")
                 .bind(actor_id)
                 .fetch_one(&pool)
                 .await
-                .expect("job_listings is readable");
+                .expect("job_postings is readable");
         assert_eq!(
-            listings, 1,
-            "the job listing was destroyed by an erasure that rolled back, so the \
+            postings, 1,
+            "the job posting was destroyed by an erasure that rolled back, so the \
              delete ran outside the transaction"
         );
 

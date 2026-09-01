@@ -47,7 +47,7 @@ pub fn router() -> Router<AppState> {
         // Moderator: read one application, stating why.
         .route(
             "/api/v1/admin/applications/{id}/review",
-            post(review_application),
+            post(review_job_application),
         )
 }
 
@@ -749,22 +749,22 @@ async fn resolve_report(
     Ok((StatusCode::OK, axum::response::Html(String::new())))
 }
 
-// ..... APPLICATION REVIEW .....
+// ..... JOB_APPLICATION REVIEW .....
 
 /// Request body for `POST /api/v1/admin/applications/{id}/review`.
 #[derive(Debug, Deserialize)]
-pub struct ReviewApplicationRequest {
+pub struct ReviewJobApplicationRequest {
     /// Why this application is being read. Shown to the applicant.
     pub reason: String,
 }
 
 /// One application, as a moderator investigating a report sees it.
 #[derive(Debug, Serialize, sqlx::FromRow)]
-pub struct ApplicationReview {
+pub struct JobApplicationReview {
     pub id: Uuid,
     pub applicant_id: Uuid,
-    pub listing_title: String,
-    pub listing_organization: String,
+    pub posting_title: String,
+    pub posting_organization: String,
     pub status: String,
     pub cover_letter_md: Option<String>,
     pub created_at: chrono::DateTime<chrono::Utc>,
@@ -773,16 +773,16 @@ pub struct ApplicationReview {
 /// `POST /api/v1/admin/applications/{id}/review`
 ///
 /// Read one application as a moderator, stating why. The read is written
-/// to `application_accesses` in the same transaction, so it appears in
+/// to `job_application_accesses` in the same transaction, so it appears in
 /// the applicant's own record of who saw their application.
 ///
 /// A read is not authority to act: nothing here can move an application
 /// through its states. That stays with the organisation.
-async fn review_application(
+async fn review_job_application(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
     Path(id): Path<Uuid>,
-    Json(body): Json<ReviewApplicationRequest>,
+    Json(body): Json<ReviewJobApplicationRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let moderator = require_moderator(&principal)?;
 
@@ -802,10 +802,10 @@ async fn review_application(
 
     let mut tx = state.pool.begin().await.map_err(NoombatError::from)?;
 
-    let application = sqlx::query_as::<_, ApplicationReview>(
-        "SELECT id, applicant_id, listing_title, listing_organization, status, \
+    let application = sqlx::query_as::<_, JobApplicationReview>(
+        "SELECT id, applicant_id, posting_title, posting_organization, status, \
                 cover_letter_md, created_at \
-         FROM applications WHERE id = $1",
+         FROM job_applications WHERE id = $1",
     )
     .bind(id)
     .fetch_optional(&mut *tx)
@@ -817,8 +817,8 @@ async fn review_application(
     }))?;
 
     sqlx::query(
-        "INSERT INTO application_accesses \
-             (application_id, reader_id, kind, outcome, reason) \
+        "INSERT INTO job_application_accesses \
+             (job_application_id, reader_id, kind, outcome, reason) \
          VALUES ($1, $2, 'moderator_review', 'disclosed', $3)",
     )
     .bind(id)
@@ -831,7 +831,7 @@ async fn review_application(
     tx.commit().await.map_err(NoombatError::from)?;
 
     info!(
-        application_id = %id,
+        job_application_id = %id,
         moderator = %reader_id,
         "moderator read an application"
     );

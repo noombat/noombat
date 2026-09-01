@@ -11,8 +11,8 @@
 
 use chrono::NaiveDate;
 use noombat_identity::profile::{
-    ConfirmedVia, NewExperience, UpdateExperience, confirm_employment, create_experience,
-    update_experience, withdraw_employment_confirmation,
+    ConfirmedVia, NewWorkExperience, UpdateWorkExperience, confirm_employment,
+    create_work_experience, update_work_experience, withdraw_employment_confirmation,
 };
 use sqlx::PgPool;
 use uuid::Uuid;
@@ -34,8 +34,8 @@ async fn actor(pool: &PgPool, kind: &str, label: &str) -> Uuid {
     .expect("insert actor")
 }
 
-fn claim(organization: &str, organization_id: Option<Uuid>) -> NewExperience {
-    NewExperience {
+fn claim(organization: &str, organization_id: Option<Uuid>) -> NewWorkExperience {
+    NewWorkExperience {
         title: "Engineer".to_owned(),
         organization: organization.to_owned(),
         organization_id,
@@ -47,8 +47,8 @@ fn claim(organization: &str, organization_id: Option<Uuid>) -> NewExperience {
     }
 }
 
-fn edit() -> UpdateExperience {
-    UpdateExperience {
+fn edit() -> UpdateWorkExperience {
+    UpdateWorkExperience {
         title: None,
         organization: None,
         organization_id: None,
@@ -65,7 +65,7 @@ async fn a_claim_starts_unconfirmed(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
 
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .expect("create claim");
 
@@ -77,7 +77,7 @@ async fn a_claim_starts_unconfirmed(pool: PgPool) {
 async fn the_organisation_confirms_and_can_withdraw(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .unwrap();
 
@@ -90,7 +90,7 @@ async fn the_organisation_confirms_and_can_withdraw(pool: PgPool) {
         Some("organisation")
     );
     let wire: serde_json::Value =
-        sqlx::query_scalar("SELECT ap_object FROM experiences WHERE id = $1")
+        sqlx::query_scalar("SELECT ap_object FROM work_experiences WHERE id = $1")
             .bind(row.id)
             .fetch_one(&pool)
             .await
@@ -116,7 +116,7 @@ async fn another_organisation_cannot_confirm_the_claim(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
     let globex = actor(&pool, "organization", "globex").await;
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .unwrap();
 
@@ -128,18 +128,18 @@ async fn another_organisation_cannot_confirm_the_claim(pool: PgPool) {
 async fn rewriting_the_employer_name_drops_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .unwrap();
     confirm_employment(&pool, row.id, acme, ConfirmedVia::Organisation)
         .await
         .unwrap();
 
-    let edited = update_experience(
+    let edited = update_work_experience(
         &pool,
         person,
         row.id,
-        &UpdateExperience {
+        &UpdateWorkExperience {
             organization: Some("Globex".to_owned()),
             ..edit()
         },
@@ -158,18 +158,18 @@ async fn repointing_the_reference_drops_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
     let globex = actor(&pool, "organization", "globex").await;
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .unwrap();
     confirm_employment(&pool, row.id, acme, ConfirmedVia::Organisation)
         .await
         .unwrap();
 
-    let edited = update_experience(
+    let edited = update_work_experience(
         &pool,
         person,
         row.id,
-        &UpdateExperience {
+        &UpdateWorkExperience {
             organization_id: Some(Some(globex)),
             ..edit()
         },
@@ -188,18 +188,18 @@ async fn repointing_the_reference_drops_the_confirmation(pool: PgPool) {
 async fn an_unrelated_edit_keeps_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
     let acme = actor(&pool, "organization", "acme").await;
-    let row = create_experience(&pool, person, &claim("Acme", Some(acme)))
+    let row = create_work_experience(&pool, person, &claim("Acme", Some(acme)))
         .await
         .unwrap();
     confirm_employment(&pool, row.id, acme, ConfirmedVia::Organisation)
         .await
         .unwrap();
 
-    let edited = update_experience(
+    let edited = update_work_experience(
         &pool,
         person,
         row.id,
-        &UpdateExperience {
+        &UpdateWorkExperience {
             title: Some("Senior engineer".to_owned()),
             ..edit()
         },
@@ -218,7 +218,7 @@ async fn the_schema_refuses_a_confirmation_with_nothing_to_point_at(pool: PgPool
     let person = actor(&pool, "individual", "alice").await;
 
     let refused = sqlx::query(
-        "INSERT INTO experiences \
+        "INSERT INTO work_experiences \
              (actor_id, title, organization, organization_confirmed_at, start_date, ap_object) \
          VALUES ($1, 'Engineer', 'Acme', now(), '2024-01-01', '{}'::jsonb)",
     )

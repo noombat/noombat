@@ -77,10 +77,10 @@
             {{ summary_html|safe }}
         </section>
 
-        {% if !experiences.is_empty() %}
-        <section aria-label="{{ i18n.t("profile_experience") }}" class="mb-8">
-            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_experience") }}</h2>
-            {% for exp in experiences %}
+        {% if !work_experiences.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_work_experience") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_work_experience") }}</h2>
+            {% for exp in work_experiences %}
             <article class="mb-4 border-b border-border-default pb-4">
                 <h3 class="font-semibold">{{ exp.title }}</h3>
                 <p class="text-text-secondary text-sm">{{ exp.organization }} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
@@ -92,10 +92,10 @@
         </section>
         {% endif %}
 
-        {% if !educations.is_empty() %}
-        <section aria-label="{{ i18n.t("profile_education") }}" class="mb-8">
-            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_education") }}</h2>
-            {% for edu in educations %}
+        {% if !education_entries.is_empty() %}
+        <section aria-label="{{ i18n.t("profile_education_entry") }}" class="mb-8">
+            <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_education_entry") }}</h2>
+            {% for edu in education_entries %}
             <article class="mb-4 border-b border-border-default pb-4">
                 <h3 class="font-semibold">{{ edu.institution }}</h3>
                 <p class="text-text-secondary text-sm">{% if let Some(degree) = edu.degree %}{{ degree }}{% endif %}{% if let Some(field) = edu.field_of_study %} · {{ field }}{% endif %} · {{ edu.start_date }}{% if let Some(end) = edu.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
@@ -117,10 +117,10 @@
         </section>
         {% endif %}
 
-        {% if !publications.is_empty() %}
+        {% if !scholarly_articles.is_empty() %}
         <section aria-label="{{ i18n.t("profile_publications") }}" class="mb-8">
             <h2 class="text-xl font-semibold mb-4">{{ i18n.t("profile_publications") }}</h2>
-            {% for pub_ in publications %}
+            {% for pub_ in scholarly_articles %}
             <article class="mb-4 border-b border-border-default pb-4">
                 <h3 class="font-semibold">{{ pub_.title }}</h3>
                 {% if let Some(journal) = pub_.journal %}

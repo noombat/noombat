@@ -188,7 +188,7 @@ async fn a_taken_username_is_refused_and_leaves_nothing(pool: PgPool) {
 
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
-async fn the_owner_can_read_applications_to_a_listing_it_publishes(pool: PgPool) {
+async fn the_owner_can_read_applications_to_a_posting_it_publishes(pool: PgPool) {
     // Enrolment is only useful if it grants standing. This is the join
     // between the member set and the authorisation decision.
     let person = insert_person(&pool, "alice").await;
@@ -199,18 +199,18 @@ async fn the_owner_can_read_applications_to_a_listing_it_publishes(pool: PgPool)
         .fetch_one(&pool)
         .await
         .expect("org");
-    let listing: Uuid = sqlx::query_scalar(
-        "INSERT INTO job_listings (actor_id, ap_id, title, description_md, description_html) \
+    let posting: Uuid = sqlx::query_scalar(
+        "INSERT INTO job_postings (actor_id, ap_id, title, description_md, description_html) \
          VALUES ($1, $2, 'Engineer', 'md', '<p>md</p>') RETURNING id",
     )
     .bind(org)
     .bind(format!("https://{DOMAIN}/jobs/1"))
     .fetch_one(&pool)
     .await
-    .expect("listing");
+    .expect("posting");
 
     let request = Request::builder()
-        .uri(format!("/api/v1/jobs/{listing}/applications"))
+        .uri(format!("/api/v1/jobs/{posting}/applications"))
         .header("authorization", format!("Bearer {token}"))
         .body(Body::empty())
         .expect("request");
@@ -341,7 +341,7 @@ async fn an_unverified_link_does_not_open_the_gate(pool: PgPool) {
 
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
-async fn a_lapsed_domain_unpublishes_existing_listings(pool: PgPool) {
+async fn a_lapsed_domain_unpublishes_existing_postings(pool: PgPool) {
     let person = insert_person(&pool, "alice").await;
     let token = token_for(&pool, person, "alice").await;
     let org = enrolled_org(&pool, &token).await;
@@ -356,13 +356,13 @@ async fn a_lapsed_domain_unpublishes_existing_listings(pool: PgPool) {
 
     assert_eq!(post_job(pool.clone(), "acme").await, StatusCode::CREATED);
     let published: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM job_listings WHERE actor_id = $1 AND published_at IS NOT NULL",
+        "SELECT COUNT(*) FROM job_postings WHERE actor_id = $1 AND published_at IS NOT NULL",
     )
     .bind(org)
     .fetch_one(&pool)
     .await
     .expect("count");
-    assert_eq!(published, 1, "a published listing is the precondition");
+    assert_eq!(published, 1, "a published posting is the precondition");
 
     // The domain lapses: re-verification clears `verified_at`.
     sqlx::query("UPDATE verified_links SET verified_at = NULL WHERE id = $1")
@@ -377,11 +377,11 @@ async fn a_lapsed_domain_unpublishes_existing_listings(pool: PgPool) {
 
     assert_eq!(demoted, 1);
     let still_published: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM job_listings WHERE actor_id = $1 AND published_at IS NOT NULL",
+        "SELECT COUNT(*) FROM job_postings WHERE actor_id = $1 AND published_at IS NOT NULL",
     )
     .bind(org)
     .fetch_one(&pool)
     .await
     .expect("count");
-    assert_eq!(still_published, 0, "the listing must not still be running");
+    assert_eq!(still_published, 0, "the posting must not still be running");
 }

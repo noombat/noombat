@@ -16,7 +16,7 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use noombat_core::authorisation::{ListingAccess, OrganizationRole, may_access_applications};
+use noombat_core::authorisation::{OrganizationRole, PostingAccess, may_access_job_applications};
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -36,14 +36,17 @@ pub fn router() -> Router<AppState> {
             get(list_employment_claims),
         )
         .route(
-            "/api/v1/organizations/{id}/employment-claims/{experience_id}",
+            "/api/v1/organizations/{id}/employment-claims/{work_experience_id}",
             axum::routing::post(confirm_employment).delete(withdraw_employment),
         )
         .route("/api/v1/candidates", get(search_candidates))
-        .route("/api/v1/jobs/{job_id}/applications", get(list_applications))
+        .route(
+            "/api/v1/jobs/{job_id}/applications",
+            get(list_job_applications),
+        )
         .route(
             "/api/v1/jobs/{job_id}/applications/{app_id}/status",
-            axum::routing::post(update_application_status),
+            axum::routing::post(update_job_application_status),
         )
 }
 
@@ -96,18 +99,18 @@ async fn list_employment_claims(
     Ok(Json(claims))
 }
 
-/// `POST /api/v1/organizations/{id}/employment-claims/{experience_id}`
+/// `POST /api/v1/organizations/{id}/employment-claims/{work_experience_id}`
 ///
 /// Establish the employer side of a claim.
 async fn confirm_employment(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
-    Path((id, experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+    Path((id, work_experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_acts_for(&state.pool, id, &principal).await?;
     let claim = noombat_identity::profile::confirm_employment(
         &state.pool,
-        experience_id,
+        work_experience_id,
         id,
         noombat_identity::profile::ConfirmedVia::Organisation,
     )
@@ -115,7 +118,7 @@ async fn confirm_employment(
     Ok(Json(claim))
 }
 
-/// `DELETE /api/v1/organizations/{id}/employment-claims/{experience_id}`
+/// `DELETE /api/v1/organizations/{id}/employment-claims/{work_experience_id}`
 ///
 /// Withdraw a confirmation. The claim itself survives as self-asserted:
 /// disputing that somebody worked here is a moderation matter, not a
@@ -123,12 +126,15 @@ async fn confirm_employment(
 async fn withdraw_employment(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
-    Path((id, experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
+    Path((id, work_experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
     require_acts_for(&state.pool, id, &principal).await?;
-    let claim =
-        noombat_identity::profile::withdraw_employment_confirmation(&state.pool, experience_id, id)
-            .await?;
+    let claim = noombat_identity::profile::withdraw_employment_confirmation(
+        &state.pool,
+        work_experience_id,
+        id,
+    )
+    .await?;
     Ok(Json(claim))
 }
 
@@ -242,7 +248,7 @@ async fn search_candidates(
 
 /// A job application row for the management dashboard.
 #[derive(Debug, Serialize, sqlx::FromRow)]
-struct ApplicationSummary {
+struct JobApplicationSummary {
     id: uuid::Uuid,
     applicant_id: uuid::Uuid,
     #[sqlx(rename = "applicant_username")]
@@ -257,14 +263,14 @@ struct ApplicationSummary {
 
 /// `GET /api/v1/jobs/{job_id}/applications`
 ///
-/// List all applications for a job listing. Requires an owner of the
-/// publishing organisation, the recruiter who created the listing, or a
-/// recruiter the listing has been opened to.
+/// List all applications for a job posting. Requires an owner of the
+/// publishing organisation, the recruiter who created the posting, or a
+/// recruiter the posting has been opened to.
 ///
 /// Moderators are **not** admitted here. They read one application at a
-/// time through `moderation::review_application`, which states a reason
+/// time through `moderation::review_job_application`, which states a reason
 /// and writes it to the applicant's own access log.
-async fn list_applications(
+async fn list_job_applications(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
     Path(job_id): Path<uuid::Uuid>,
@@ -277,7 +283,7 @@ async fn list_applications(
     let permitted = match principal.actor_uuid {
         Some(actor_id) => {
             let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
-            may_access_applications(s.role, s.access, s.is_creator, s.is_listed)
+            may_access_job_applications(s.role, s.access, s.is_creator, s.is_listed)
         }
         // An admin-token principal carries no actor.
         None => false,
@@ -287,7 +293,7 @@ async fn list_applications(
         return Err(ApiError(NoombatError::Forbidden));
     }
 
-    let applications = sqlx::query_as::<_, ApplicationSummary>(
+    let applications = sqlx::query_as::<_, JobApplicationSummary>(
         r#"
         SELECT
             a.id,
@@ -298,9 +304,9 @@ async fn list_applications(
             a.include_cv,
             a.created_at,
             a.updated_at
-        FROM applications a
+        FROM job_applications a
         INNER JOIN actors act ON act.id = a.applicant_id
-        WHERE a.job_listing_id = $1
+        WHERE a.job_posting_id = $1
         ORDER BY a.created_at DESC
         "#,
     )
@@ -319,12 +325,12 @@ struct UpdateStatusRequest {
     status: String,
 }
 
-/// An actor's standing for one listing. The publishing actor counts as
+/// An actor's standing for one posting. The publishing actor counts as
 /// `Owner` without a membership row, so an organisation posting as itself is
-/// not locked out of its own applications.
+/// not locked out of its own job_applications.
 struct Standing {
     role: Option<OrganizationRole>,
-    access: ListingAccess,
+    access: PostingAccess,
     is_creator: bool,
     is_listed: bool,
 }
@@ -332,15 +338,16 @@ struct Standing {
 async fn company_standing(
     pool: &sqlx::PgPool,
     organization_id: uuid::Uuid,
-    listing_id: uuid::Uuid,
+    posting_id: uuid::Uuid,
     actor_id: uuid::Uuid,
 ) -> Result<Standing, NoombatError> {
-    let (access, created_by): (ListingAccess, Option<uuid::Uuid>) =
-        sqlx::query_as("SELECT application_readers, created_by FROM job_listings WHERE id = $1")
-            .bind(listing_id)
-            .fetch_one(pool)
-            .await
-            .map_err(|e| NoombatError::Internal(e.to_string()))?;
+    let (access, created_by): (PostingAccess, Option<uuid::Uuid>) = sqlx::query_as(
+        "SELECT job_application_readers, created_by FROM job_postings WHERE id = $1",
+    )
+    .bind(posting_id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| NoombatError::Internal(e.to_string()))?;
 
     let is_creator = created_by == Some(actor_id);
 
@@ -363,10 +370,10 @@ async fn company_standing(
     .map_err(|e| NoombatError::Internal(e.to_string()))?;
 
     let is_listed: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM job_listing_readers \
-         WHERE job_listing_id = $1 AND member_id = $2)",
+        "SELECT EXISTS (SELECT 1 FROM job_posting_readers \
+         WHERE job_posting_id = $1 AND member_id = $2)",
     )
-    .bind(listing_id)
+    .bind(posting_id)
     .bind(actor_id)
     .fetch_one(pool)
     .await
@@ -384,7 +391,7 @@ async fn company_standing(
 ///
 /// Transition an application's status. Permitted transitions are
 /// validated against the schema CHECK constraint.
-async fn update_application_status(
+async fn update_job_application_status(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
     Path((job_id, app_id)): Path<(uuid::Uuid, uuid::Uuid)>,
@@ -416,7 +423,7 @@ async fn update_application_status(
     let permitted = match principal.actor_uuid {
         Some(actor_id) => {
             let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
-            may_access_applications(s.role, s.access, s.is_creator, s.is_listed)
+            may_access_job_applications(s.role, s.access, s.is_creator, s.is_listed)
         }
         None => false,
     };
@@ -426,8 +433,8 @@ async fn update_application_status(
     }
 
     let rows_affected = sqlx::query(
-        "UPDATE applications SET status = $1, updated_at = NOW() \
-         WHERE id = $2 AND job_listing_id = $3",
+        "UPDATE job_applications SET status = $1, updated_at = NOW() \
+         WHERE id = $2 AND job_posting_id = $3",
     )
     .bind(&body.status)
     .bind(app_id)

@@ -212,7 +212,7 @@ else
     fail "NodeInfo 2.1 software name incorrect"
 fi
 
-if echo "$BODY" | grep -q 'noombat:JobListing'; then
+if echo "$BODY" | grep -q 'noombat:JobPosting'; then
     pass "NodeInfo 2.1 includes supportedVocabulary"
 else
     fail "NodeInfo 2.1 missing supportedVocabulary"

@@ -231,8 +231,8 @@ struct EditProfilePage {
 }
 
 #[derive(Template, WebTemplate)]
-#[template(path = "edit_experience.html")]
-struct EditExperiencePage {
+#[template(path = "edit_work_experience.html")]
+struct EditWorkExperiencePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
@@ -247,8 +247,8 @@ struct EditExperiencePage {
 }
 
 #[derive(Template, WebTemplate)]
-#[template(path = "edit_education.html")]
-struct EditEducationPage {
+#[template(path = "edit_education_entry.html")]
+struct EditEducationEntryPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
@@ -280,8 +280,8 @@ struct EditSkillsPage {
 }
 
 #[derive(Template, WebTemplate)]
-#[template(path = "edit_publication.html")]
-struct EditPublicationPage {
+#[template(path = "edit_scholarly_article.html")]
+struct EditScholarlyArticlePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
@@ -444,10 +444,10 @@ pub fn router() -> Router<AppState> {
         // Settings hub.
         .route("/settings", get(settings_page))
         .route("/settings/profile", get(edit_profile_page))
-        .route("/settings/experience", get(edit_experience_page))
-        .route("/settings/education", get(edit_education_page))
+        .route("/settings/experience", get(edit_work_experience_page))
+        .route("/settings/education", get(edit_education_entry_page))
         .route("/settings/skills", get(edit_skills_page))
-        .route("/settings/publications", get(edit_publication_page))
+        .route("/settings/publications", get(edit_scholarly_article_page))
         .route("/settings/links", get(edit_links_page))
         .route("/settings/jobs/new", get(edit_job_page))
         .route(
@@ -779,7 +779,7 @@ async fn edit_profile_page(
     .into_response()
 }
 
-async fn edit_experience_page(
+async fn edit_work_experience_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
@@ -790,7 +790,7 @@ async fn edit_experience_page(
         Ok(u) => u,
         Err(r) => return r,
     };
-    EditExperiencePage {
+    EditWorkExperiencePage {
         i18n,
         theme,
         contrast,
@@ -806,7 +806,7 @@ async fn edit_experience_page(
     .into_response()
 }
 
-async fn edit_education_page(
+async fn edit_education_entry_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
@@ -817,7 +817,7 @@ async fn edit_education_page(
         Ok(u) => u,
         Err(r) => return r,
     };
-    EditEducationPage {
+    EditEducationEntryPage {
         i18n,
         theme,
         contrast,
@@ -869,7 +869,7 @@ async fn edit_skills_page(
     .into_response()
 }
 
-async fn edit_publication_page(
+async fn edit_scholarly_article_page(
     _state: State<AppState>,
     i18n: I18n,
     theme: Theme,
@@ -880,7 +880,7 @@ async fn edit_publication_page(
         Ok(u) => u,
         Err(r) => return r,
     };
-    EditPublicationPage {
+    EditScholarlyArticlePage {
         i18n,
         theme,
         contrast,
@@ -992,7 +992,7 @@ async fn privacy_page(
     let mut section_rows = Vec::new();
 
     let exp_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, visibility FROM experiences WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, title, visibility FROM work_experiences WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1008,7 +1008,7 @@ async fn privacy_page(
     }
 
     let edu_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, institution, visibility FROM educations WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, institution, visibility FROM education_entries WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1024,7 +1024,7 @@ async fn privacy_page(
     }
 
     let pub_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, visibility FROM publications WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, title, visibility FROM scholarly_articles WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1131,7 +1131,7 @@ async fn privacy_preview_partial(
     };
 
     let exp_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM experiences WHERE actor_id = $1 AND visibility = ANY($2)",
+        "SELECT COUNT(*) FROM work_experiences WHERE actor_id = $1 AND visibility = ANY($2)",
     )
     .bind(actor_id)
     .bind(vis_filter)
@@ -1140,7 +1140,7 @@ async fn privacy_preview_partial(
     .unwrap_or(0);
 
     let edu_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM educations WHERE actor_id = $1 AND visibility = ANY($2)",
+        "SELECT COUNT(*) FROM education_entries WHERE actor_id = $1 AND visibility = ANY($2)",
     )
     .bind(actor_id)
     .bind(vis_filter)
@@ -1149,7 +1149,7 @@ async fn privacy_preview_partial(
     .unwrap_or(0);
 
     let pub_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM publications WHERE actor_id = $1 AND visibility = ANY($2)",
+        "SELECT COUNT(*) FROM scholarly_articles WHERE actor_id = $1 AND visibility = ANY($2)",
     )
     .bind(actor_id)
     .bind(vis_filter)

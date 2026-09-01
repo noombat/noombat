@@ -3,7 +3,7 @@
 //! Downgrade serialisation for `noombat:*` vocabulary extensions.
 //!
 //! When delivering activities to non-Noombat instances, custom object
-//! types (e.g. `noombat:JobListing`, `noombat:Publication`) must degrade
+//! types (e.g. `noombat:JobPosting`, `noombat:ScholarlyArticle`) must degrade
 //! gracefully to standard ActivityStreams types (`Note`, `Article`) so
 //! that Mastodon, Lemmy, GotoSocial, and other Fediverse software can
 //! render them. The dual-typing approach follows the pattern established
@@ -43,24 +43,24 @@ fn escape_html(input: &str) -> String {
 /// Noombat instances parse the `noombat:*` type and its extension
 /// properties; non-Noombat instances see a valid `Note` with a
 /// human-readable summary in the `content` field.
-pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
-    let title = listing
+pub fn downgrade_job_posting(posting: &Value, actor_ap_id: &str) -> Value {
+    let title = posting
         .get("title")
         .and_then(|v| v.as_str())
-        .unwrap_or("Job Listing");
-    let description_html = listing
+        .unwrap_or("Job Posting");
+    let description_html = posting
         .get("description_html")
         .and_then(|v| v.as_str())
         .unwrap_or("");
-    let location = listing
+    let location = posting
         .get("location")
         .and_then(|v| v.as_str())
         .unwrap_or("Not specified");
-    let remote = listing
+    let remote = posting
         .get("remote")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
-    let ap_id = listing.get("ap_id").and_then(|v| v.as_str()).unwrap_or("");
+    let ap_id = posting.get("ap_id").and_then(|v| v.as_str()).unwrap_or("");
 
     let location_label = if remote {
         format!("{location} (Remote)")
@@ -71,9 +71,9 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
     let title_escaped = escape_html(title);
     let location_escaped = escape_html(&location_label);
 
-    // Build the dual-typed (Note + noombat:JobListing) object.
+    // Build the dual-typed (Note + noombat:JobPosting) object.
     let mut object = json!({
-        "type": ["Note", vocab::JOB_LISTING],
+        "type": ["Note", vocab::JOB_POSTING],
         "id": ap_id,
         "attributedTo": actor_ap_id,
         "name": title,
@@ -84,10 +84,10 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
     });
 
     // Attach noombat:* extension properties.
-    if let Some(salary_min) = listing.get("salary_min")
-        && let Some(salary_max) = listing.get("salary_max")
+    if let Some(salary_min) = posting.get("salary_min")
+        && let Some(salary_max) = posting.get("salary_max")
     {
-        let currency = listing
+        let currency = posting
             .get("currency")
             .and_then(|v| v.as_str())
             .unwrap_or("USD");
@@ -97,12 +97,12 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
             "currency": currency,
         });
     }
-    if let Some(requirements) = listing.get("requirements") {
+    if let Some(requirements) = posting.get("requirements") {
         object["noombat:requirements"] = requirements.clone();
     }
 
     // Provide the Mastodon-convention `source` for Markdown-aware clients.
-    if let Some(md) = listing.get("description_md").and_then(|v| v.as_str()) {
+    if let Some(md) = posting.get("description_md").and_then(|v| v.as_str()) {
         object["source"] = json!({
             "content": md,
             "mediaType": "text/markdown",
@@ -112,10 +112,10 @@ pub fn downgrade_job_listing(listing: &Value, actor_ap_id: &str) -> Value {
     object
 }
 
-/// Produce a federated representation of a `noombat:Publication` that
+/// Produce a federated representation of a `noombat:ScholarlyArticle` that
 /// degrades to a `Note` containing a formatted citation with a
 /// clickable DOI link.
-pub fn downgrade_publication(publication: &Value, actor_ap_id: &str) -> Value {
+pub fn downgrade_scholarly_article(publication: &Value, actor_ap_id: &str) -> Value {
     let doi = publication
         .get("doi")
         .and_then(|v| v.as_str())
@@ -153,7 +153,7 @@ pub fn downgrade_publication(publication: &Value, actor_ap_id: &str) -> Value {
     );
 
     json!({
-        "type": ["Note", vocab::PUBLICATION],
+        "type": ["Note", vocab::SCHOLARLY_ARTICLE],
         "attributedTo": actor_ap_id,
         "content": content,
         "url": doi_url,
@@ -357,8 +357,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn job_listing_dual_typed() {
-        let listing = json!({
+    fn job_posting_dual_typed() {
+        let posting = json!({
             "ap_id": "https://acme.example/jobs/1",
             "title": "Rust Engineer",
             "description_html": "<p>Build things.</p>",
@@ -371,11 +371,11 @@ mod tests {
             "requirements": ["Rust", "PostgreSQL"],
         });
 
-        let object = downgrade_job_listing(&listing, "https://acme.example/actor");
+        let object = downgrade_job_posting(&posting, "https://acme.example/actor");
         let types = object["type"].as_array().unwrap();
         assert_eq!(types.len(), 2);
         assert_eq!(types[0], "Note");
-        assert_eq!(types[1], vocab::JOB_LISTING);
+        assert_eq!(types[1], vocab::JOB_POSTING);
         assert!(
             object["content"]
                 .as_str()
@@ -392,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn publication_dual_typed() {
+    fn scholarly_article_dual_typed() {
         let pub_data = json!({
             "doi": "10.1000/xyz123",
             "title": "Federated Networks",
@@ -401,9 +401,9 @@ mod tests {
             "doi_metadata": { "source": "crossref" },
         });
 
-        let object = downgrade_publication(&pub_data, "https://example.org/users/alice");
+        let object = downgrade_scholarly_article(&pub_data, "https://example.org/users/alice");
         let types = object["type"].as_array().unwrap();
-        assert_eq!(types[1], vocab::PUBLICATION);
+        assert_eq!(types[1], vocab::SCHOLARLY_ARTICLE);
         assert_eq!(object["noombat:doi"], "10.1000/xyz123");
         assert!(object["content"].as_str().unwrap().contains("doi.org"));
     }

@@ -517,7 +517,7 @@ async fn orcid_callback(
         let pub_api = orcid_config.pub_api_uri.clone();
         let mailto = state.contact_email.clone();
         tokio::spawn(async move {
-            if let Err(e) = noombat_identity::orcid_import::import_orcid_publications(
+            if let Err(e) = noombat_identity::orcid_import::import_orcid_scholarly_articles(
                 &pool, &client, actor_id, &orcid, &pub_api, &mailto,
             )
             .await

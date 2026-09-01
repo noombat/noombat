@@ -64,18 +64,18 @@ pub struct NodeInfoFeatures {
 pub fn build(params: &NodeInfoParams) -> Value {
     let mut metadata = json!({
         "noombat:supportedVocabulary": [
-            "noombat:JobListing",
-            "noombat:Experience",
-            "noombat:Education",
+            "noombat:JobPosting",
+            "noombat:WorkExperience",
+            "noombat:EducationEntry",
             "noombat:Skill",
-            "noombat:Publication",
-            "noombat:Application",
-            "noombat:EventExtensions"
+            "noombat:ScholarlyArticle",
+            "noombat:JobApplication",
+            "noombat:eventExtensions"
         ],
-        // `jobListingsEnabled` is a capability: it tells a peer this
-        // software supports job listings, which is what discovery needs.
+        // `jobPostingsEnabled` is a capability: it tells a peer this
+        // software supports job postings, which is what discovery needs.
         //
-        // A count such as `noombat:activeJobListings` is not a
+        // A count such as `noombat:activeJobPostings` is not a
         // capability, and must not join it. This endpoint is
         // unauthenticated and polled on a schedule by Fediverse
         // observatories, so publishing one makes a machine-readable
@@ -83,7 +83,7 @@ pub fn build(params: &NodeInfoParams) -> Value {
         // single-company instance the inference is direct. NodeInfo 2.1
         // treats `metadata` as free-form and tells clients not to rely on
         // specific keys, so nothing federates worse for its absence.
-        "noombat:jobListingsEnabled": true,
+        "noombat:jobPostingsEnabled": true,
         "noombat:chatmailAvailable": params.features.chatmail_available,
         "noombat:groupsEnabled": params.features.groups_enabled,
         "noombat:eventsEnabled": params.features.events_enabled,
@@ -150,10 +150,10 @@ mod tests {
         assert_eq!(doc["usage"]["localPosts"], 42);
         assert_eq!(doc["openRegistrations"], true);
         // The capability is published; the count deliberately is not.
-        assert_eq!(doc["metadata"]["noombat:jobListingsEnabled"], true);
+        assert_eq!(doc["metadata"]["noombat:jobPostingsEnabled"], true);
         assert!(
-            doc["metadata"].get("noombat:activeJobListings").is_none(),
-            "the active job listing count is a business metric and must not be \
+            doc["metadata"].get("noombat:activeJobPostings").is_none(),
+            "the active job posting count is a business metric and must not be \
              published on an unauthenticated, observatory-polled endpoint"
         );
     }
@@ -181,7 +181,7 @@ mod tests {
         "usage.localPosts",
         "openRegistrations",
         "metadata.noombat:supportedVocabulary",
-        "metadata.noombat:jobListingsEnabled",
+        "metadata.noombat:jobPostingsEnabled",
         "metadata.noombat:chatmailAvailable",
         "metadata.noombat:groupsEnabled",
         "metadata.noombat:eventsEnabled",

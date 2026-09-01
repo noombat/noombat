@@ -146,7 +146,7 @@ mod tests {
         for (target_type, metric) in [
             ("profile", "download"),
             ("profile", "view"),
-            ("job_listing", "application"),
+            ("job_posting", "application"),
             ("event", "rsvp"),
         ] {
             backend

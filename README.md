@@ -36,6 +36,13 @@ participate in professional groups;
 organise events;
 and exchange end-to-end encrypted direct messages via an integrated Chatmail relay.
 
+## Federation
+
+The instance speaks ActivityPub (Server-to-Server), WebFinger, HTTP Signatures and NodeInfo 2.1, and implements FEP-8b32 object integrity proofs, FEP-521a actor keys and FEP-dc88 mathematics.
+[`FEDERATION.md`](FEDERATION.md) documents this in the form [FEP-67ff](https://codeberg.org/fediverse/fep/src/branch/main/fep/67ff/fep-67ff.md) prescribes:
+the endpoints, the activities accepted and sent in each direction, the `noombat:` extension properties, the NodeInfo metadata, and the limits a peer will meet.
+It closes with what is advertised but not reached from any call site, so that a peer does not plan around it.
+
 ## Prerequisites
 
 These are the versions CI exercises and the Compose stack pins. Older ones may work
@@ -97,7 +104,7 @@ noombat/
 │   ├── noombat-markup/           # (Markdown and LaTeX) to HTML pipeline and Markdown to Typst converter.
 │   ├── noombat-federation/       # ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, HTTP Signatures.
 │   ├── noombat-identity/         # Auth (local, Mastodon OAuth, ORCID), profiles, CV generation, DOI resolution.
-│   ├── noombat-jobs/             # Job listing CRUD, search, and matching.
+│   ├── noombat-jobs/             # Job posting CRUD, search, and matching.
 │   ├── noombat-groups/           # Group actor logic, membership, and redistribution.
 │   ├── noombat-events/           # Event CRUD, RSVP, and calendar feeds.
 │   ├── noombat-chat/             # IMAP/SMTP ciphertext relay for Chatmail, provisioning, moderation.
@@ -207,7 +214,7 @@ Do not use `SSL_CERT_FILE` for this. It replaces the trust store rather than ext
 | `/settings/skills`          | Manage skills.                        |
 | `/settings/publications`    | Add publication by DOI.               |
 | `/settings/links`           | Manage verified links.                |
-| `/settings/jobs/new`        | Post a job listing.                   |
+| `/settings/jobs/new`        | Post a job posting.                   |
 | `/settings/privacy`         | Privacy and safety settings.          |
 | `/settings/blocked`         | Blocked and muted accounts.           |
 | `/settings/follow-requests` | Pending follow requests.              |
@@ -262,7 +269,7 @@ Do not use `SSL_CERT_FILE` for this. It replaces the trust store rather than ext
 | `/users/{username}/experiences`                 | POST   | Add work experience.             |
 | `/users/{username}/educations`                  | POST   | Add education.                   |
 | `/users/{username}/publications`                | POST   | Add publication by DOI.          |
-| `/users/{username}/jobs`                        | POST   | Create job listing.              |
+| `/users/{username}/jobs`                        | POST   | Create job posting.              |
 | `/users/{username}/posts/{id}`                  | GET    | Single post (AP JSON or HTML).   |
 | `/.well-known/webfinger`                        | GET    | Actor discovery (RFC 7033).      |
 | `/.well-known/nodeinfo`                         | GET    | NodeInfo discovery.              |
@@ -380,6 +387,11 @@ The admin sidecar exposes a private REST API for account lifecycle operations (p
 4. Register the Chatmail domain in the project allowlist for inter-instance messaging.
 5. Set the following environment variables on the Noombat application server: `NOOMBAT_CHATMAIL_DOMAIN=chat.{DOMAIN}`, `NOOMBAT_CHATMAIL_AVAILABLE=true`, `NOOMBAT_CHATMAIL_ADMIN_URL=http://chatmail:9100`, and `NOOMBAT_CHATMAIL_ADMIN_SECRET` (matching the value from step 1).
 6. Mount a valid TLS certificate and key at `/etc/ssl/certs/chatmail.pem` and `/etc/ssl/private/chatmail.key` in the chatmail container. If no certificate is mounted, the entrypoint generates a self-signed certificate suitable only for development.
+
+## Changelog
+
+[`CHANGELOG.md`](CHANGELOG.md) records every change from the first commit, grouped by development stage.
+It opens with the implementation status of each subsystem, separating what is complete from what is partly built and what has not been started, so that a section's presence in this README is not read as a claim that it is finished.
 
 ## Licence
 

@@ -8,7 +8,7 @@ This document records what WEBCAT is, why it is relevant to Noombat, what remain
 
 ## What it is
 
-WEBCAT (Web-based Code Assurance and Transparency) is a framework from the Freedom of the Press Foundation providing blocking code signing and transparency verification for browser-based applications.
+WEBCAT (Web-based Code Assurance and Transparency) is a framework from the Freedom of the Press Foundation providing blocking code signing and transparency verification for browser-based job_applications.
 When a user visits an enrolled site, a browser extension verifies the served assets against a signed manifest *before any content executes*, and aborts the load with a warning on mismatch.
 
 - Repository: <https://github.com/freedomofpress/webcat>

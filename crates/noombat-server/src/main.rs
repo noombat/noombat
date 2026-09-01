@@ -484,7 +484,7 @@ async fn main() -> anyhow::Result<()> {
                             "re-verification sweep: links changed state"
                         );
                         // A link that lapsed may have been the one holding
-                        // an organisation's listings up. Refusing new ones
+                        // an organisation's postings up. Refusing new ones
                         // is not enough: the published ones are what
                         // applicants answer.
                         if let Err(e) =

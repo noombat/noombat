@@ -16,35 +16,35 @@ use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        // Experiences.
+        // WorkExperiences.
         .route(
             "/users/{username}/experiences",
-            get(list_experiences).post(create_experience),
+            get(list_work_experiences).post(create_work_experience),
         )
         .route(
             "/users/{username}/experiences/{id}",
-            patch(update_experience).delete(delete_experience),
+            patch(update_work_experience).delete(delete_work_experience),
         )
-        // Educations.
+        // EducationEntries.
         .route(
             "/users/{username}/educations",
-            get(list_educations).post(create_education),
+            get(list_education_entries).post(create_education_entry),
         )
         .route(
             "/users/{username}/educations/{id}",
-            patch(update_education).delete(delete_education),
+            patch(update_education_entry).delete(delete_education_entry),
         )
         // Skills.
         .route("/users/{username}/skills", get(list_skills).post(add_skill))
         .route("/users/{username}/skills/{id}", delete(delete_skill))
-        // Publications.
+        // ScholarlyArticles.
         .route(
             "/users/{username}/publications",
-            get(list_publications).post(create_publication),
+            get(list_scholarly_articles).post(create_scholarly_article),
         )
         .route(
             "/users/{username}/publications/{id}",
-            delete(delete_publication),
+            delete(delete_scholarly_article),
         )
         // Verified links.
         .route(
@@ -70,15 +70,15 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-// ..... Experiences .....
+// ..... WorkExperiences .....
 
-async fn list_experiences(
+async fn list_work_experiences(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
     // Public view: only public sections.
-    let items = noombat_identity::profile::list_experiences(
+    let items = noombat_identity::profile::list_work_experiences(
         &state.pool,
         actor.id,
         &SectionVisibility::Public,
@@ -87,56 +87,57 @@ async fn list_experiences(
     Ok((StatusCode::OK, Json(items)))
 }
 
-async fn create_experience(
+async fn create_work_experience(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    Json(params): Json<noombat_identity::profile::NewExperience>,
+    Json(params): Json<noombat_identity::profile::NewWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let exp = noombat_identity::profile::create_experience(&state.pool, actor.id, &params).await?;
+    let exp =
+        noombat_identity::profile::create_work_experience(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(exp)))
 }
 
-async fn delete_experience(
+async fn delete_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    noombat_identity::profile::delete_experience(&state.pool, actor.id, id).await?;
+    noombat_identity::profile::delete_work_experience(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn update_experience(
+async fn update_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
     headers: HeaderMap,
-    Json(params): Json<noombat_identity::profile::UpdateExperience>,
+    Json(params): Json<noombat_identity::profile::UpdateWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let exp =
-        noombat_identity::profile::update_experience(&state.pool, actor.id, id, &params).await?;
+    let exp = noombat_identity::profile::update_work_experience(&state.pool, actor.id, id, &params)
+        .await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(exp)))
 }
 
-// ..... Educations .....
+// ..... EducationEntries .....
 
-async fn list_educations(
+async fn list_education_entries(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let items = noombat_identity::profile::list_educations(
+    let items = noombat_identity::profile::list_education_entries(
         &state.pool,
         actor.id,
         &SectionVisibility::Public,
@@ -145,43 +146,44 @@ async fn list_educations(
     Ok((StatusCode::OK, Json(items)))
 }
 
-async fn create_education(
+async fn create_education_entry(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    Json(params): Json<noombat_identity::profile::NewEducation>,
+    Json(params): Json<noombat_identity::profile::NewEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let edu = noombat_identity::profile::create_education(&state.pool, actor.id, &params).await?;
+    let edu =
+        noombat_identity::profile::create_education_entry(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(edu)))
 }
 
-async fn delete_education(
+async fn delete_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    noombat_identity::profile::delete_education(&state.pool, actor.id, id).await?;
+    noombat_identity::profile::delete_education_entry(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn update_education(
+async fn update_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
     headers: HeaderMap,
-    Json(params): Json<noombat_identity::profile::UpdateEducation>,
+    Json(params): Json<noombat_identity::profile::UpdateEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let edu =
-        noombat_identity::profile::update_education(&state.pool, actor.id, id, &params).await?;
+    let edu = noombat_identity::profile::update_education_entry(&state.pool, actor.id, id, &params)
+        .await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::OK, Json(edu)))
@@ -243,14 +245,14 @@ async fn delete_skill(
     Ok(StatusCode::NO_CONTENT)
 }
 
-// ..... Publications .....
+// ..... ScholarlyArticles .....
 
-async fn list_publications(
+async fn list_scholarly_articles(
     State(state): State<AppState>,
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let items = noombat_identity::profile::list_publications(
+    let items = noombat_identity::profile::list_scholarly_articles(
         &state.pool,
         actor.id,
         &SectionVisibility::Public,
@@ -265,7 +267,7 @@ async fn list_publications(
 /// the CrossRef and DataCite APIs. If `title` and `authors` are also
 /// provided, they are used as-is (skipping resolution).
 #[derive(serde::Deserialize)]
-struct CreatePublicationRequest {
+struct CreateScholarlyArticleRequest {
     doi: String,
     title: Option<String>,
     authors: Option<serde_json::Value>,
@@ -277,11 +279,11 @@ struct CreatePublicationRequest {
     visibility: Option<String>,
 }
 
-async fn create_publication(
+async fn create_scholarly_article(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    Json(body): Json<CreatePublicationRequest>,
+    Json(body): Json<CreateScholarlyArticleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
@@ -289,7 +291,7 @@ async fn create_publication(
     // When the caller supplies only a bare DOI, resolve the metadata
     // server-side so that clients need not call the DOI endpoint first.
     let params = if body.title.is_some() && body.authors.is_some() {
-        noombat_identity::profile::NewPublication {
+        noombat_identity::profile::NewScholarlyArticle {
             doi: body.doi,
             title: body.title.unwrap_or_default(),
             authors: body.authors.unwrap_or(serde_json::json!([])),
@@ -308,7 +310,7 @@ async fn create_publication(
         let authors_json = serde_json::to_value(&meta.authors).unwrap_or(serde_json::json!([]));
         let published_date = meta.published_date.as_deref().and_then(parse_partial_date);
 
-        noombat_identity::profile::NewPublication {
+        noombat_identity::profile::NewScholarlyArticle {
             doi: body.doi,
             title: meta.title,
             authors: authors_json,
@@ -322,20 +324,20 @@ async fn create_publication(
     };
 
     let pub_ =
-        noombat_identity::profile::create_publication(&state.pool, actor.id, &params).await?;
+        noombat_identity::profile::create_scholarly_article(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok((StatusCode::CREATED, Json(pub_)))
 }
 
-async fn delete_publication(
+async fn delete_scholarly_article(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
     headers: HeaderMap,
 ) -> Result<StatusCode, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    noombat_identity::profile::delete_publication(&state.pool, actor.id, id).await?;
+    noombat_identity::profile::delete_scholarly_article(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)

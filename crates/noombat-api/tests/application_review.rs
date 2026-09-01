@@ -64,7 +64,7 @@ fn test_state(pool: PgPool) -> AppState {
     }
 }
 
-async fn insert_application(pool: &PgPool) -> Uuid {
+async fn insert_job_application(pool: &PgPool) -> Uuid {
     let applicant: Uuid = sqlx::query_scalar(
         "INSERT INTO actors (actor_type, ap_id, username, domain, public_key_pem, is_local) \
          VALUES ('individual', $1, 'alice', $2, 'KEY', TRUE) RETURNING id",
@@ -76,8 +76,8 @@ async fn insert_application(pool: &PgPool) -> Uuid {
     .expect("applicant fixture");
 
     sqlx::query_scalar(
-        "INSERT INTO applications \
-             (applicant_id, listing_title, listing_organization, ap_id, cover_letter_md) \
+        "INSERT INTO job_applications \
+             (applicant_id, posting_title, posting_organization, ap_id, cover_letter_md) \
          VALUES ($1, 'Engineer', 'Acme', $2, 'please hire me') RETURNING id",
     )
     .bind(applicant)
@@ -163,7 +163,7 @@ async fn review(pool: PgPool, id: Uuid, bearer: Option<&str>, body: &str) -> Sta
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_anonymous_request_is_refused(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
 
     let status = review(pool, id, None, r#"{"reason":"investigating a report"}"#).await;
 
@@ -173,7 +173,7 @@ async fn an_anonymous_request_is_refused(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_ordinary_user_is_refused(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
     let actor = insert_staff(&pool, "plain", "user").await;
     let token = token_for(&pool, actor, "plain").await;
 
@@ -191,7 +191,7 @@ async fn an_ordinary_user_is_refused(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_moderator_without_a_reason_is_refused(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
     let actor = insert_staff(&pool, "mod", "moderator").await;
     let token = token_for(&pool, actor, "mod").await;
 
@@ -203,7 +203,7 @@ async fn a_moderator_without_a_reason_is_refused(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_moderator_read_succeeds_and_is_logged(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
     let actor = insert_staff(&pool, "mod", "moderator").await;
     let token = token_for(&pool, actor, "mod").await;
 
@@ -211,7 +211,7 @@ async fn a_moderator_read_succeeds_and_is_logged(pool: PgPool) {
         pool.clone(),
         id,
         Some(&token),
-        r#"{"reason":"report #12, alleged fraudulent listing"}"#,
+        r#"{"reason":"report #12, alleged fraudulent posting"}"#,
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -219,8 +219,8 @@ async fn a_moderator_read_succeeds_and_is_logged(pool: PgPool) {
     // The row is the point. A 200 with no log row is the failure this
     // whole route exists to prevent.
     let (reader, reason): (Option<Uuid>, Option<String>) = sqlx::query_as(
-        "SELECT reader_id, reason FROM application_accesses \
-         WHERE application_id = $1 AND kind = 'moderator_review'",
+        "SELECT reader_id, reason FROM job_application_accesses \
+         WHERE job_application_id = $1 AND kind = 'moderator_review'",
     )
     .bind(id)
     .fetch_one(&pool)
@@ -230,14 +230,14 @@ async fn a_moderator_read_succeeds_and_is_logged(pool: PgPool) {
     assert_eq!(reader, Some(actor));
     assert_eq!(
         reason.as_deref(),
-        Some("report #12, alleged fraudulent listing")
+        Some("report #12, alleged fraudulent posting")
     );
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_database_refuses_a_moderator_read_without_a_reason(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
     let reader: Uuid = sqlx::query_scalar(
         "INSERT INTO actors (actor_type, ap_id, username, domain, public_key_pem, is_local) \
          VALUES ('individual', $1, 'mod', $2, 'KEY', TRUE) RETURNING id",
@@ -254,8 +254,8 @@ async fn the_database_refuses_a_moderator_read_without_a_reason(pool: PgPool) {
         (None, Some("investigating a report")),
     ] {
         let result = sqlx::query(
-            "INSERT INTO application_accesses \
-                 (application_id, reader_id, kind, outcome, reason) \
+            "INSERT INTO job_application_accesses \
+                 (job_application_id, reader_id, kind, outcome, reason) \
              VALUES ($1, $2, 'moderator_review', 'disclosed', $3)",
         )
         .bind(id)
@@ -273,8 +273,8 @@ async fn the_database_refuses_a_moderator_read_without_a_reason(pool: PgPool) {
     // The same row with both present is accepted, so the rejections
     // above are the constraint and not a broken statement.
     sqlx::query(
-        "INSERT INTO application_accesses \
-             (application_id, reader_id, kind, outcome, reason) \
+        "INSERT INTO job_application_accesses \
+             (job_application_id, reader_id, kind, outcome, reason) \
          VALUES ($1, $2, 'moderator_review', 'disclosed', 'investigating a report')",
     )
     .bind(id)
@@ -289,10 +289,10 @@ async fn the_database_refuses_a_moderator_read_without_a_reason(pool: PgPool) {
 async fn a_grant_dereference_needs_no_reason(pool: PgPool) {
     // The constraint is on moderator reads alone. An employer following
     // a capability URL is authorised by the capability itself.
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
 
     sqlx::query(
-        "INSERT INTO application_accesses (application_id, kind, outcome) \
+        "INSERT INTO job_application_accesses (job_application_id, kind, outcome) \
          VALUES ($1, 'grant_dereference', 'disclosed')",
     )
     .bind(id)
@@ -304,12 +304,13 @@ async fn a_grant_dereference_needs_no_reason(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_applicant_sees_the_moderator_read_and_its_reason(pool: PgPool) {
-    let id = insert_application(&pool).await;
-    let applicant: Uuid = sqlx::query_scalar("SELECT applicant_id FROM applications WHERE id = $1")
-        .bind(id)
-        .fetch_one(&pool)
-        .await
-        .expect("applicant");
+    let id = insert_job_application(&pool).await;
+    let applicant: Uuid =
+        sqlx::query_scalar("SELECT applicant_id FROM job_applications WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .expect("applicant");
     let moderator = insert_staff(&pool, "mod", "moderator").await;
     let mod_token = token_for(&pool, moderator, "mod").await;
     review(
@@ -334,7 +335,7 @@ async fn the_applicant_sees_the_moderator_read_and_its_reason(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn another_user_cannot_read_that_log(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
     let stranger = insert_staff(&pool, "eve", "user").await;
     let token = token_for(&pool, stranger, "eve").await;
 
@@ -347,7 +348,7 @@ async fn another_user_cannot_read_that_log(pool: PgPool) {
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_log_is_not_public(pool: PgPool) {
-    let id = insert_application(&pool).await;
+    let id = insert_job_application(&pool).await;
 
     let (status, _) = accesses(pool, id, None).await;
 

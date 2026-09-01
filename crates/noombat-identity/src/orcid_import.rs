@@ -84,7 +84,7 @@ struct ExternalId {
 /// `mailto` is sent to the CrossRef polite pool per their usage
 /// guidelines, so operators should configure a real administrative
 /// address.
-pub async fn import_orcid_publications(
+pub async fn import_orcid_scholarly_articles(
     pool: &PgPool,
     http_client: &reqwest::Client,
     actor_id: Uuid,
@@ -138,7 +138,7 @@ pub async fn import_orcid_publications(
 
         // Check whether this DOI already exists for the actor.
         let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM publications WHERE actor_id = $1 AND doi = $2)",
+            "SELECT EXISTS(SELECT 1 FROM scholarly_articles WHERE actor_id = $1 AND doi = $2)",
         )
         .bind(actor_id)
         .bind(&doi)
@@ -156,7 +156,7 @@ pub async fn import_orcid_publications(
             Ok(metadata) => {
                 let authors: serde_json::Value =
                     serde_json::to_value(&metadata.authors).unwrap_or(serde_json::json!([]));
-                let params = profile::NewPublication {
+                let params = profile::NewScholarlyArticle {
                     doi: metadata.doi.clone(),
                     title: metadata.title.clone(),
                     authors,
@@ -170,7 +170,7 @@ pub async fn import_orcid_publications(
                     doi_metadata: metadata.raw.clone(),
                     visibility: Some("public".into()),
                 };
-                if let Err(e) = profile::create_publication(pool, actor_id, &params).await {
+                if let Err(e) = profile::create_scholarly_article(pool, actor_id, &params).await {
                     warn!(doi = %doi, error = %e, "failed to insert ORCID publication");
                     summary.failed += 1;
                 } else {

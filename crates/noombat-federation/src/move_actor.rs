@@ -90,10 +90,10 @@ pub async fn list_aliases(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> 
 /// sentence to the applicant.
 pub async fn revoke_grants_for_migration(pool: &PgPool, source_actor_id: Uuid) -> Result<u64> {
     let result = sqlx::query(
-        "UPDATE application_grants g \
+        "UPDATE job_application_grants g \
          SET state = 'revoked', revoked_at = now(), revoked_reason = 'account_migrated' \
-         FROM applications a \
-         WHERE g.application_id = a.id \
+         FROM job_applications a \
+         WHERE g.job_application_id = a.id \
            AND a.applicant_id = $1 \
            AND g.state = 'active'",
     )
@@ -370,31 +370,31 @@ mod tests {
     /// An applicant, an application, and one active grant.
     async fn insert_grant(pool: &PgPool, applicant: Uuid, suffix: &str) -> Uuid {
         let recruiter = insert_actor(pool, &format!("recruiter{suffix}")).await;
-        let listing = sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO job_listings (actor_id, ap_id, title, description_md, description_html) \
+        let posting = sqlx::query_scalar::<_, Uuid>(
+            "INSERT INTO job_postings (actor_id, ap_id, title, description_md, description_html) \
              VALUES ($1, $2, 'Engineer', 'md', '<p>md</p>') RETURNING id",
         )
         .bind(recruiter)
         .bind(format!("https://noombat.example/jobs/{suffix}"))
         .fetch_one(pool)
         .await
-        .expect("listing fixture inserted");
+        .expect("posting fixture inserted");
 
         let application = sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO applications \
-                 (applicant_id, job_listing_id, listing_title, listing_organization, ap_id) \
+            "INSERT INTO job_applications \
+                 (applicant_id, job_posting_id, posting_title, posting_organization, ap_id) \
              VALUES ($1, $2, 'Engineer', 'Acme', $3) RETURNING id",
         )
         .bind(applicant)
-        .bind(listing)
+        .bind(posting)
         .bind(format!("https://noombat.example/applications/{suffix}"))
         .fetch_one(pool)
         .await
         .expect("application fixture inserted");
 
         sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO application_grants \
-                 (application_id, token_hash, audience_ap_id, audience_origin, \
+            "INSERT INTO job_application_grants \
+                 (job_application_id, token_hash, audience_ap_id, audience_origin, \
                   expires_at, document_uses_remaining, cv_uses_remaining) \
              VALUES ($1, $2, 'https://acme.example/actor', 'https://acme.example', \
                      now() + interval '7 days', 5, 5) RETURNING id",
@@ -407,7 +407,7 @@ mod tests {
     }
 
     async fn grant_state(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
-        sqlx::query_as("SELECT state, revoked_reason FROM application_grants WHERE id = $1")
+        sqlx::query_as("SELECT state, revoked_reason FROM job_application_grants WHERE id = $1")
             .bind(id)
             .fetch_one(pool)
             .await
@@ -455,7 +455,7 @@ mod tests {
         let applicant = insert_actor(&pool, "alice").await;
         let grant = insert_grant(&pool, applicant, "a").await;
         sqlx::query(
-            "UPDATE application_grants SET state = 'revoked', revoked_at = now(), \
+            "UPDATE job_application_grants SET state = 'revoked', revoked_at = now(), \
              revoked_reason = 'applicant_withdrew' WHERE id = $1",
         )
         .bind(grant)

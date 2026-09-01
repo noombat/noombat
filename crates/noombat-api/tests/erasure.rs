@@ -111,7 +111,7 @@ async fn insert_actor(pool: &PgPool, username: &str, requested_days_ago: Option<
     .expect("actor fixture inserted");
 
     sqlx::query(
-        "INSERT INTO experiences \
+        "INSERT INTO work_experiences \
              (actor_id, title, organization, start_date, visibility, ap_object) \
          VALUES ($1, 'Engineer', 'Acme', '2020-01-01', 'public', '{}'::jsonb)",
     )
@@ -123,8 +123,8 @@ async fn insert_actor(pool: &PgPool, username: &str, requested_days_ago: Option<
     id
 }
 
-async fn experience_count(pool: &PgPool, actor_id: Uuid) -> i64 {
-    sqlx::query_scalar("SELECT count(*) FROM experiences WHERE actor_id = $1")
+async fn work_experience_count(pool: &PgPool, actor_id: Uuid) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM work_experiences WHERE actor_id = $1")
         .bind(actor_id)
         .fetch_one(pool)
         .await
@@ -187,7 +187,7 @@ async fn the_sweep_erases_only_expired_requests(pool: PgPool) {
 async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
     let actor_id = insert_actor(&pool, "leaver", Some(GRACE_DAYS + 1)).await;
     assert_eq!(
-        experience_count(&pool, actor_id).await,
+        work_experience_count(&pool, actor_id).await,
         1,
         "fixture should start with career history"
     );
@@ -195,7 +195,7 @@ async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
     noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
 
     assert_eq!(
-        experience_count(&pool, actor_id).await,
+        work_experience_count(&pool, actor_id).await,
         0,
         "the experience row survived erasure"
     );
@@ -266,12 +266,12 @@ async fn erasure_withdraws_the_posts_from_the_search_index(pool: PgPool) {
     );
 }
 
-/// A recruiter's erasure takes their listings and spares the applicants.
+/// A recruiter's erasure takes their postings and spares the applicants.
 ///
-/// The whole decision in one assertion. The listing is the recruiter's
+/// The whole decision in one assertion. The posting is the recruiter's
 /// content and goes; the application is the applicant's and stays,
 /// legible because of the snapshot taken when it was created. A
-/// cascade from `applications.job_listing_id` would make erasing one
+/// cascade from `job_applications.job_posting_id` would make erasing one
 /// person destroy another person's records.
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
@@ -279,8 +279,8 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
     let recruiter = insert_actor(&pool, "recruiter", Some(GRACE_DAYS + 1)).await;
     let applicant = insert_actor(&pool, "applicant", None).await;
 
-    let listing: Uuid = sqlx::query_scalar(
-        "INSERT INTO job_listings \
+    let posting: Uuid = sqlx::query_scalar(
+        "INSERT INTO job_postings \
              (actor_id, ap_id, title, description_md, description_html) \
          VALUES ($1, 'https://noombat.example/jobs/1', 'Engineer', 'Build things', \
                  '<p>Build things</p>') \
@@ -289,17 +289,17 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
     .bind(recruiter)
     .fetch_one(&pool)
     .await
-    .expect("listing fixture inserted");
+    .expect("posting fixture inserted");
 
     sqlx::query(
-        "INSERT INTO applications \
-             (applicant_id, job_listing_id, listing_title, listing_organization, ap_id, \
+        "INSERT INTO job_applications \
+             (applicant_id, job_posting_id, posting_title, posting_organization, ap_id, \
               cover_letter_md) \
          VALUES ($1, $2, 'Engineer', 'Acme', 'https://noombat.example/applications/1', \
                  'please hire me')",
     )
     .bind(applicant)
-    .bind(listing)
+    .bind(posting)
     .execute(&pool)
     .await
     .expect("application fixture inserted");
@@ -310,18 +310,18 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
     tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
     // The recruiter's content is gone.
-    let listings: i64 = sqlx::query_scalar("SELECT count(*) FROM job_listings")
+    let postings: i64 = sqlx::query_scalar("SELECT count(*) FROM job_postings")
         .fetch_one(&pool)
         .await
         .expect("countable");
     assert_eq!(
-        listings, 0,
-        "the listing should have been erased with its author"
+        postings, 0,
+        "the posting should have been erased with its author"
     );
 
     // The applicant's record is not.
     let (title, organization, orphaned): (String, String, Option<Uuid>) = sqlx::query_as(
-        "SELECT listing_title, listing_organization, job_listing_id FROM applications \
+        "SELECT posting_title, posting_organization, job_posting_id FROM job_applications \
          WHERE applicant_id = $1",
     )
     .bind(applicant)
@@ -338,7 +338,7 @@ async fn erasing_a_recruiter_spares_the_applicants(pool: PgPool) {
             .calls
             .lock()
             .expect("not poisoned")
-            .contains(&format!("delete jobs {listing}")),
-        "the listing must leave the search index too"
+            .contains(&format!("delete jobs {posting}")),
+        "the posting must leave the search index too"
     );
 }

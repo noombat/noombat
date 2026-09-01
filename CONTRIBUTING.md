@@ -41,7 +41,7 @@ The dependency graph flows downward; no upward or circular dependencies exist.
 noombat-server                 (binary entry point)
   └── noombat-api              (Axum routes, templates, middleware)
         ├── noombat-identity   (auth, profiles, CV, DOI)
-        ├── noombat-jobs       (job listings)
+        ├── noombat-jobs       (job postings)
         ├── noombat-groups     (group actors)
         ├── noombat-events     (events, RSVP)
         ├── noombat-chat       (IMAP/SMTP ciphertext relay, admin client, closed federation allowlist)
@@ -84,7 +84,7 @@ Do not use `askama::filters::escape` directly; it is not part of the public Aska
 1. Define the handler function in the appropriate `routes/*.rs` module.
 2. Register the route in the module's `router()` function.
 3. If the route serves an HTML page, create an Askama template in `templates/` and a template struct in `routes/pages.rs`.
-4. Add i18n keys to all locale files (`en-US.yml`, `en-AU.yml`, `pt-BR.yml`) in the same commit. Use the existing naming convention (e.g. `edit_experience_title`, `exp_company`).
+4. Add i18n keys to all locale files (`en-US.yml`, `en-AU.yml`, `pt-BR.yml`) in the same commit. Use the existing naming convention (e.g. `edit_work_experience_title`, `exp_company`).
 5. If the route is an authenticated page, extend `base_auth.html` (not `base.html`) and include a `nav_username: String` field in the template struct.
 
 ### Adding a new i18n key

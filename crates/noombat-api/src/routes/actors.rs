@@ -157,11 +157,18 @@ async fn get_actor(
 
     // Load profile sections (public visibility only for unauthenticated view).
     let vis = noombat_core::privacy::SectionVisibility::Public;
-    let (experiences, educations, skills, publications, verified_links, custom_sections) = tokio::join!(
-        noombat_identity::profile::list_experiences(&state.pool, actor.id, &vis),
-        noombat_identity::profile::list_educations(&state.pool, actor.id, &vis),
+    let (
+        work_experiences,
+        education_entries,
+        skills,
+        scholarly_articles,
+        verified_links,
+        custom_sections,
+    ) = tokio::join!(
+        noombat_identity::profile::list_work_experiences(&state.pool, actor.id, &vis),
+        noombat_identity::profile::list_education_entries(&state.pool, actor.id, &vis),
         noombat_identity::profile::list_skills(&state.pool, actor.id, false),
-        noombat_identity::profile::list_publications(&state.pool, actor.id, &vis),
+        noombat_identity::profile::list_scholarly_articles(&state.pool, actor.id, &vis),
         noombat_identity::verification::list_links(&state.pool, actor.id),
         noombat_identity::profile::list_custom_sections(&state.pool, actor.id, &vis),
     );
@@ -183,10 +190,10 @@ async fn get_actor(
             .as_ref()
             .and_then(|p| p.username.as_deref())
             .is_some_and(|viewer| viewer != actor.username),
-        experiences: experiences.unwrap_or_default(),
-        educations: educations.unwrap_or_default(),
+        work_experiences: work_experiences.unwrap_or_default(),
+        education_entries: education_entries.unwrap_or_default(),
         skills: skills.unwrap_or_default(),
-        publications: publications.unwrap_or_default(),
+        scholarly_articles: scholarly_articles.unwrap_or_default(),
         verified_links: verified_links.unwrap_or_default(),
         custom_sections: custom_sections.unwrap_or_default(),
     };
@@ -753,10 +760,10 @@ struct ProfilePage {
     /// Whether to show the "Report" button (true when the viewer is
     /// authenticated and is not viewing their own profile).
     show_report: bool,
-    experiences: Vec<noombat_identity::profile::Experience>,
-    educations: Vec<noombat_identity::profile::Education>,
+    work_experiences: Vec<noombat_identity::profile::WorkExperience>,
+    education_entries: Vec<noombat_identity::profile::EducationEntry>,
     skills: Vec<noombat_identity::profile::Skill>,
-    publications: Vec<noombat_identity::profile::Publication>,
+    scholarly_articles: Vec<noombat_identity::profile::ScholarlyArticle>,
     verified_links: Vec<noombat_identity::verification::VerifiedLink>,
     custom_sections: Vec<noombat_identity::profile::CustomSection>,
 }

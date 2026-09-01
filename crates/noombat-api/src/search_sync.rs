@@ -31,7 +31,7 @@ pub struct ProfileSearchData {
     pub education_institutions: Vec<String>,
     /// Fields of study from education entries.
     pub education_fields: Vec<String>,
-    /// Publication titles.
+    /// ScholarlyArticle titles.
     pub publication_titles: Vec<String>,
 }
 
@@ -106,26 +106,33 @@ pub async fn reindex_profile_from_db(
     let skills = noombat_identity::profile::list_skills(pool, actor.id, false)
         .await
         .unwrap_or_default();
-    let experiences = noombat_identity::profile::list_experiences(pool, actor.id, vis)
+    let work_experiences = noombat_identity::profile::list_work_experiences(pool, actor.id, vis)
         .await
         .unwrap_or_default();
-    let educations = noombat_identity::profile::list_educations(pool, actor.id, vis)
+    let education_entries = noombat_identity::profile::list_education_entries(pool, actor.id, vis)
         .await
         .unwrap_or_default();
-    let publications = noombat_identity::profile::list_publications(pool, actor.id, vis)
-        .await
-        .unwrap_or_default();
+    let scholarly_articles =
+        noombat_identity::profile::list_scholarly_articles(pool, actor.id, vis)
+            .await
+            .unwrap_or_default();
 
     let data = ProfileSearchData {
         skills: skills.into_iter().map(|s| s.name).collect(),
-        experience_titles: experiences.iter().map(|e| e.title.clone()).collect(),
-        experience_organizations: experiences.iter().map(|e| e.organization.clone()).collect(),
-        education_institutions: educations.iter().map(|e| e.institution.clone()).collect(),
-        education_fields: educations
+        experience_titles: work_experiences.iter().map(|e| e.title.clone()).collect(),
+        experience_organizations: work_experiences
+            .iter()
+            .map(|e| e.organization.clone())
+            .collect(),
+        education_institutions: education_entries
+            .iter()
+            .map(|e| e.institution.clone())
+            .collect(),
+        education_fields: education_entries
             .iter()
             .filter_map(|e| e.field_of_study.clone())
             .collect(),
-        publication_titles: publications.iter().map(|p| p.title.clone()).collect(),
+        publication_titles: scholarly_articles.iter().map(|p| p.title.clone()).collect(),
     };
 
     index_profile(search, actor, &data);
@@ -193,8 +200,8 @@ pub fn index_post(search: &Option<Arc<dyn SearchBackend>>, post: &IndexedPost<'_
     });
 }
 
-/// Index a job listing in Meilisearch (fire-and-forget).
-pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::JobListing) {
+/// Index a job posting in Meilisearch (fire-and-forget).
+pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::JobPosting) {
     let Some(backend) = search.clone() else {
         return;
     };
@@ -211,7 +218,7 @@ pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::Jo
     let id = job.id.to_string();
     tokio::spawn(async move {
         if let Err(e) = backend.upsert("jobs", &id, doc).await {
-            warn!(id, error = %e, "failed to index job listing");
+            warn!(id, error = %e, "failed to index job posting");
         }
     });
 }

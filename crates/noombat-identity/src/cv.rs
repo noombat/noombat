@@ -32,15 +32,15 @@ pub async fn generate_cv_pdf(
     // ..... Fetch profile data .....
     let actor = crate::repo::find_by_id(pool, actor_id).await?;
 
-    let experiences = profile::list_experiences(pool, actor_id, max_vis).await?;
-    let educations = profile::list_educations(pool, actor_id, max_vis).await?;
+    let experiences = profile::list_work_experiences(pool, actor_id, max_vis).await?;
+    let educations = profile::list_education_entries(pool, actor_id, max_vis).await?;
     let skills = profile::list_skills(
         pool,
         actor_id,
         matches!(max_vis, SectionVisibility::Private),
     )
     .await?;
-    let publications = profile::list_publications(pool, actor_id, max_vis).await?;
+    let publications = profile::list_scholarly_articles(pool, actor_id, max_vis).await?;
     let links = crate::verification::list_links(pool, actor_id).await?;
 
     // ..... Load template .....
@@ -104,7 +104,7 @@ pub async fn generate_cv_pdf(
         None => src.push_str("#let orcid = \"\"\n"),
     }
 
-    // Experiences.
+    // WorkExperiences.
     src.push_str("#let experiences = (\n");
     for exp in &experiences {
         let dates = format_date_range(exp.start_date, exp.end_date);
@@ -121,7 +121,7 @@ pub async fn generate_cv_pdf(
     }
     src.push_str(")\n");
 
-    // Educations.
+    // EducationEntries.
     src.push_str("#let educations = (\n");
     for edu in &educations {
         let dates = format_date_range(edu.start_date, edu.end_date);
@@ -148,7 +148,7 @@ pub async fn generate_cv_pdf(
     }
     src.push_str(")\n");
 
-    // Publications (formatted per the requested citation style).
+    // ScholarlyArticles (formatted per the requested citation style).
     src.push_str(&format!(
         "#let citation_style = \"{}\"\n",
         escape_typst_string(citation_style)

@@ -56,10 +56,10 @@ pub async fn erase_actor(
         .await
         .unwrap_or_default();
 
-    // Same reason again: tombstoning deletes the listings, so the ids
+    // Same reason again: tombstoning deletes the postings, so the ids
     // have to be taken while they still exist.
     let indexed_jobs: Vec<Uuid> =
-        sqlx::query_scalar("SELECT id FROM job_listings WHERE actor_id = $1")
+        sqlx::query_scalar("SELECT id FROM job_postings WHERE actor_id = $1")
             .bind(actor_id)
             .fetch_all(pool)
             .await
@@ -119,7 +119,7 @@ pub async fn erase_actor(
         crate::search_sync::remove_from_index(search, "posts", &post_id.to_string());
     }
 
-    // `index_job` keys on the listing's primary key, so this matches.
+    // `index_job` keys on the posting's primary key, so this matches.
     for job_id in &indexed_jobs {
         crate::search_sync::remove_from_index(search, "jobs", &job_id.to_string());
     }

@@ -25,10 +25,10 @@ post_title_pattern: "Post by %{name}"
 
 # Profile.
 profile_title_pattern: "%{display_name} (@%{handle})"
-profile_experience: "Experience"
-profile_education: "Education"
+profile_work_experience: "WorkExperience"
+profile_education_entry: "EducationEntry"
 profile_skills: "Skills"
-profile_publications: "Publications"
+profile_publications: "ScholarlyArticles"
 profile_links: "Links"
 profile_present: "present"
 profile_verified: "Verified"
@@ -137,16 +137,16 @@ vis_followers: "Followers only"
 vis_private: "Private"
 vis_unlisted: "Unlisted"
 
-# Experience.
-edit_experience_title: "Add experience"
+# WorkExperience.
+edit_work_experience_title: "Add experience"
 exp_title: "Title"
 exp_organization: "Organisation"
 exp_start_date: "Start date"
 exp_end_date: "End date"
 exp_description: "Description"
 
-# Education.
-edit_education_title: "Add education"
+# EducationEntry.
+edit_education_entry_title: "Add education"
 edu_institution: "Institution"
 edu_degree: "Degree"
 edu_field: "Field of study"
@@ -157,7 +157,7 @@ skill_placeholder: "Add a skill"
 skill_add: "Add"
 skill_remove: "Remove"
 
-# Publications.
+# ScholarlyArticles.
 edit_pub_title: "Add publication"
 pub_doi: "DOI"
 pub_doi_help: "Enter a DOI and the metadata will be imported automatically."
@@ -170,7 +170,7 @@ link_add: "Add link"
 link_remove: "Remove"
 link_pending: "pending"
 
-# Job listings.
+# Job postings.
 edit_job_title: "Post a job"
 job_title_label: "Job title"
 job_description: "Description"
@@ -322,7 +322,7 @@ admin_settings_reg_open: "Open"
 admin_settings_reg_approval: "Requires approval"
 admin_settings_reg_closed: "Closed"
 admin_settings_federation: "Federation"
-admin_settings_job_approval: "Auto-approve remote job listings in local search"
+admin_settings_job_approval: "Auto-approve remote job postings in local search"
 admin_settings_analytics: "Analytics"
 admin_settings_retention_days: "Retention period (days)"
 

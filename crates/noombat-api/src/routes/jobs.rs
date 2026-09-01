@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Job listing routes: CRUD endpoints for job listings.
+//! Job posting routes: CRUD endpoints for job postings.
 
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -68,13 +68,13 @@ async fn get_job(
     Ok((StatusCode::OK, Json(job)))
 }
 
-// ..... Create a job listing .....
+// ..... Create a job posting .....
 
 async fn create_job(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    Json(params): Json<noombat_jobs::NewJobListing>,
+    Json(params): Json<noombat_jobs::NewJobPosting>,
 ) -> Result<impl IntoResponse, ApiError> {
     verify_bearer_token(&headers, &state.admin_token)?;
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
@@ -82,7 +82,7 @@ async fn create_job(
     // An organisation publishes only once it has proved it controls the
     // domain it claims. Domain control is not identity verification, and
     // the refusal says so: it proves who runs a website at a point in
-    // time, which is what stops a listing claiming an employer it has no
+    // time, which is what stops a posting claiming an employer it has no
     // connection to.
     if actor.actor_type == noombat_core::actor::ActorType::Organization
         && !noombat_identity::verification::controls_claimed_domain(&state.pool, actor.id).await?
@@ -98,7 +98,7 @@ async fn create_job(
     Ok((StatusCode::CREATED, Json(job)))
 }
 
-// ..... Delete a job listing .....
+// ..... Delete a job posting .....
 
 async fn delete_job(
     State(state): State<AppState>,

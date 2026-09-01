@@ -525,17 +525,17 @@ mod domain_tests {
     }
 }
 
-/// Unpublish the listings of organisations that no longer control the
+/// Unpublish the postings of organisations that no longer control the
 /// domain they claim. Returns how many were unpublished.
 ///
 /// Run after re-verification. A lapsed corporate domain is the classic
 /// recruitment-fraud vector: an expired domain is bought cheaply and the
-/// listings keep running under a badge that is no longer true. Refusing
-/// new listings is not enough on its own, because the ones already
+/// postings keep running under a badge that is no longer true. Refusing
+/// new postings is not enough on its own, because the ones already
 /// published are the ones applicants answer.
 pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<u64> {
     let result = sqlx::query(
-        "UPDATE job_listings SET published_at = NULL \
+        "UPDATE job_postings SET published_at = NULL \
          WHERE published_at IS NOT NULL \
            AND actor_id IN ( \
                SELECT a.id FROM actors a \
@@ -553,7 +553,7 @@ pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<u64> {
     if unpublished > 0 {
         warn!(
             unpublished,
-            "unpublished listings of organisations with no verified domain"
+            "unpublished postings of organisations with no verified domain"
         );
     }
     Ok(unpublished)

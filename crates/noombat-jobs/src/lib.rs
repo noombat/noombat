@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! Job listing CRUD, search, and matching.
+//! Job posting CRUD, search, and matching.
 
 use chrono::{DateTime, Utc};
 use noombat_core::error::{NoombatError, Result};
@@ -10,9 +10,9 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-/// A job listing row.
+/// A job posting row.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct JobListing {
+pub struct JobPosting {
     pub id: Uuid,
     pub actor_id: Uuid,
     pub ap_id: String,
@@ -30,9 +30,9 @@ pub struct JobListing {
     pub created_at: DateTime<Utc>,
 }
 
-/// Parameters for creating a new job listing.
+/// Parameters for creating a new job posting.
 #[derive(Debug, Clone, Deserialize)]
-pub struct NewJobListing {
+pub struct NewJobPosting {
     pub title: String,
     pub description_md: String,
     pub location: Option<String>,
@@ -42,7 +42,7 @@ pub struct NewJobListing {
     pub currency: Option<String>,
     pub requirements: Option<Vec<String>>,
     pub expires_at: Option<DateTime<Utc>>,
-    /// If `true`, the listing is published immediately.
+    /// If `true`, the posting is published immediately.
     #[serde(default = "default_true")]
     pub publish: bool,
 }
@@ -51,16 +51,16 @@ fn default_true() -> bool {
     true
 }
 
-/// Create a new job listing.
+/// Create a new job posting.
 ///
 /// The `description_md` field is rendered through the markup pipeline.
-/// The listing is published immediately if `params.publish` is `true`.
+/// The posting is published immediately if `params.publish` is `true`.
 pub async fn create_job(
     pool: &PgPool,
     actor_id: Uuid,
     domain: &str,
-    params: &NewJobListing,
-) -> Result<JobListing> {
+    params: &NewJobPosting,
+) -> Result<JobPosting> {
     let id = Uuid::new_v4();
     let ap_id = format!("https://{domain}/jobs/{id}");
     let output = noombat_markup::render_async(params.description_md.clone()).await?;
@@ -76,8 +76,8 @@ pub async fn create_job(
         None
     };
 
-    let row = sqlx::query_as::<_, JobListing>(
-        r#"INSERT INTO job_listings
+    let row = sqlx::query_as::<_, JobPosting>(
+        r#"INSERT INTO job_postings
                (id, actor_id, ap_id, title, description_md, description_html,
                 location, remote, salary_min, salary_max, currency,
                 requirements, published_at, expires_at)
@@ -106,38 +106,38 @@ pub async fn create_job(
     Ok(row)
 }
 
-/// Retrieve a job listing by UUID.
-pub async fn get_job(pool: &PgPool, id: Uuid) -> Result<JobListing> {
-    let row = sqlx::query_as::<_, JobListing>(
+/// Retrieve a job posting by UUID.
+pub async fn get_job(pool: &PgPool, id: Uuid) -> Result<JobPosting> {
+    let row = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
                   requirements, published_at, expires_at, created_at
-           FROM job_listings
+           FROM job_postings
            WHERE id = $1"#,
     )
     .bind(id)
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| NoombatError::NotFound {
-        entity: "job_listing",
+        entity: "job_posting",
         id,
     })?;
 
     Ok(row)
 }
 
-/// List published job listings by a specific actor.
+/// List published job postings by a specific actor.
 pub async fn list_jobs_by_actor(
     pool: &PgPool,
     actor_id: Uuid,
     limit: i64,
     offset: i64,
-) -> Result<Vec<JobListing>> {
-    let rows = sqlx::query_as::<_, JobListing>(
+) -> Result<Vec<JobPosting>> {
+    let rows = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
                   requirements, published_at, expires_at, created_at
-           FROM job_listings
+           FROM job_postings
            WHERE actor_id = $1 AND published_at IS NOT NULL
            ORDER BY published_at DESC
            LIMIT $2 OFFSET $3"#,
@@ -151,17 +151,17 @@ pub async fn list_jobs_by_actor(
     Ok(rows)
 }
 
-/// List all published, non-expired job listings (for the public jobs page).
+/// List all published, non-expired job postings (for the public jobs page).
 pub async fn list_published_jobs(
     pool: &PgPool,
     limit: i64,
     offset: i64,
-) -> Result<Vec<JobListing>> {
-    let rows = sqlx::query_as::<_, JobListing>(
+) -> Result<Vec<JobPosting>> {
+    let rows = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
                   requirements, published_at, expires_at, created_at
-           FROM job_listings
+           FROM job_postings
            WHERE published_at IS NOT NULL
              AND (expires_at IS NULL OR expires_at > now())
            ORDER BY published_at DESC
@@ -175,9 +175,9 @@ pub async fn list_published_jobs(
     Ok(rows)
 }
 
-/// Delete a job listing owned by the given actor.
+/// Delete a job posting owned by the given actor.
 pub async fn delete_job(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM job_listings WHERE id = $1 AND actor_id = $2")
+    let result = sqlx::query("DELETE FROM job_postings WHERE id = $1 AND actor_id = $2")
         .bind(id)
         .bind(actor_id)
         .execute(pool)
@@ -185,16 +185,16 @@ pub async fn delete_job(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
 
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
-            entity: "job_listing",
+            entity: "job_posting",
             id,
         });
     }
     Ok(())
 }
 
-/// Parameters for updating a job listing.
+/// Parameters for updating a job posting.
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateJobListing {
+pub struct UpdateJobPosting {
     pub title: Option<String>,
     pub description_md: Option<String>,
     pub location: Option<String>,
@@ -206,19 +206,19 @@ pub struct UpdateJobListing {
     pub expires_at: Option<DateTime<Utc>>,
 }
 
-/// Update a job listing. Only provided fields are changed.
+/// Update a job posting. Only provided fields are changed.
 pub async fn update_job(
     pool: &PgPool,
     actor_id: Uuid,
     id: Uuid,
-    params: &UpdateJobListing,
-) -> Result<JobListing> {
-    // Fetch the existing listing to verify ownership.
-    let existing = sqlx::query_as::<_, JobListing>(
+    params: &UpdateJobPosting,
+) -> Result<JobPosting> {
+    // Fetch the existing posting to verify ownership.
+    let existing = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
                   requirements, published_at, expires_at, created_at
-           FROM job_listings
+           FROM job_postings
            WHERE id = $1 AND actor_id = $2"#,
     )
     .bind(id)
@@ -226,7 +226,7 @@ pub async fn update_job(
     .fetch_optional(pool)
     .await?
     .ok_or_else(|| NoombatError::NotFound {
-        entity: "job_listing",
+        entity: "job_posting",
         id,
     })?;
 
@@ -249,8 +249,8 @@ pub async fn update_job(
         .map(|r| serde_json::to_value(r).unwrap_or_default())
         .or(existing.requirements);
 
-    let row = sqlx::query_as::<_, JobListing>(
-        r#"UPDATE job_listings SET
+    let row = sqlx::query_as::<_, JobPosting>(
+        r#"UPDATE job_postings SET
                title = $3, description_md = $4, description_html = $5,
                location = COALESCE($6, location),
                remote = COALESCE($7, remote),

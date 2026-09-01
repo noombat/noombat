@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Cross-post aggregation and de-duplication.
 //!
-//! When the same content (job listing, article, or post) is shared
+//! When the same content (job posting, article, or post) is shared
 //! across multiple Noombat instances or federated communities,
 //! duplicate entries may clutter feeds and fragment discussion.
 //!

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Profile section CRUD: experiences, educations, skills, publications.
+//! Profile section CRUD: experiences, educations, skills, scholarly_articles.
 
 use chrono::{DateTime, NaiveDate, Utc};
 use noombat_core::error::{NoombatError, Result};
@@ -9,11 +9,11 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-// ..... Experiences .....
+// ..... WorkExperiences .....
 
 /// A work experience entry on a profile.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Experience {
+pub struct WorkExperience {
     pub id: Uuid,
     pub actor_id: Uuid,
     pub title: String,
@@ -32,7 +32,7 @@ pub struct Experience {
     pub visibility: String,
 }
 
-impl Experience {
+impl WorkExperience {
     /// Whether the employer side of this claim has been established.
     pub fn is_confirmed(&self) -> bool {
         self.organization_confirmed_at.is_some()
@@ -41,7 +41,7 @@ impl Experience {
 
 /// Parameters for creating a new experience entry.
 #[derive(Debug, Clone, Deserialize)]
-pub struct NewExperience {
+pub struct NewWorkExperience {
     pub title: String,
     pub organization: String,
     /// Optional. A claim always starts unconfirmed, whether or not it
@@ -54,7 +54,7 @@ pub struct NewExperience {
     pub visibility: Option<String>,
 }
 
-/// The columns every experience query returns, in the order [`Experience`]
+/// The columns every experience query returns, in the order [`WorkExperience`]
 /// declares them.
 ///
 /// Written once because six queries return this same row, and a column
@@ -66,7 +66,7 @@ pub struct NewExperience {
 /// a query cannot be assembled from runtime values, and building these with
 /// `format!` would mean reaching for the escape hatch that exists to be
 /// audited.
-macro_rules! experience_columns {
+macro_rules! work_experience_columns {
     () => {
         "id, actor_id, title, organization, organization_id, \
          organization_confirmed_at, organization_confirmed_via, start_date, end_date, \
@@ -94,11 +94,11 @@ async fn organization_ap_id(
 }
 
 /// Insert a new experience entry.
-pub async fn create_experience(
+pub async fn create_work_experience(
     pool: &PgPool,
     actor_id: Uuid,
-    params: &NewExperience,
-) -> Result<Experience> {
+    params: &NewWorkExperience,
+) -> Result<WorkExperience> {
     let id = Uuid::new_v4();
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
@@ -107,7 +107,7 @@ pub async fn create_experience(
     let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref()).await?;
 
     let org_ap_id = organization_ap_id(pool, params.organization_id).await?;
-    let ap_object = build_experience_ap_object(
+    let ap_object = build_work_experience_ap_object(
         &id,
         &params.title,
         &params.organization,
@@ -118,13 +118,13 @@ pub async fn create_experience(
         desc_html.as_deref(),
     );
 
-    let row = sqlx::query_as::<_, Experience>(concat!(
-        "INSERT INTO experiences \
+    let row = sqlx::query_as::<_, WorkExperience>(concat!(
+        "INSERT INTO work_experiences \
              (id, actor_id, title, organization, organization_id, start_date, end_date, \
               description_md, description_html, sort_order, visibility, ap_object) \
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
          RETURNING ",
-        experience_columns!()
+        work_experience_columns!()
     ))
     .bind(id)
     .bind(actor_id)
@@ -145,16 +145,16 @@ pub async fn create_experience(
 }
 
 /// List experience entries for an actor, filtered by maximum visibility.
-pub async fn list_experiences(
+pub async fn list_work_experiences(
     pool: &PgPool,
     actor_id: Uuid,
     max_visibility: &SectionVisibility,
-) -> Result<Vec<Experience>> {
+) -> Result<Vec<WorkExperience>> {
     let allowed = visibility_filter(max_visibility);
-    let rows = sqlx::query_as::<_, Experience>(concat!(
+    let rows = sqlx::query_as::<_, WorkExperience>(concat!(
         "SELECT ",
-        experience_columns!(),
-        " FROM experiences \
+        work_experience_columns!(),
+        " FROM work_experiences \
           WHERE actor_id = $1 AND visibility = ANY($2) \
           ORDER BY sort_order ASC, start_date DESC"
     ))
@@ -167,8 +167,8 @@ pub async fn list_experiences(
 }
 
 /// Delete an experience entry owned by the given actor.
-pub async fn delete_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM experiences WHERE id = $1 AND actor_id = $2")
+pub async fn delete_work_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
+    let result = sqlx::query("DELETE FROM work_experiences WHERE id = $1 AND actor_id = $2")
         .bind(id)
         .bind(actor_id)
         .execute(pool)
@@ -187,7 +187,7 @@ pub async fn delete_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Resul
 ///
 /// All fields are optional; only supplied fields are modified.
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateExperience {
+pub struct UpdateWorkExperience {
     pub title: Option<String>,
     pub organization: Option<String>,
     /// Outer `None` leaves the reference alone; inner `None` clears it.
@@ -200,21 +200,21 @@ pub struct UpdateExperience {
 }
 
 /// Update an existing experience entry.
-pub async fn update_experience(
+pub async fn update_work_experience(
     pool: &PgPool,
     actor_id: Uuid,
     id: Uuid,
-    params: &UpdateExperience,
-) -> Result<Experience> {
+    params: &UpdateWorkExperience,
+) -> Result<WorkExperience> {
     if let Some(ref v) = params.visibility {
         validate_section_visibility(v)?;
     }
 
     // Fetch the current row to merge with partial updates.
-    let current = sqlx::query_as::<_, Experience>(concat!(
+    let current = sqlx::query_as::<_, WorkExperience>(concat!(
         "SELECT ",
-        experience_columns!(),
-        " FROM experiences WHERE id = $1 AND actor_id = $2"
+        work_experience_columns!(),
+        " FROM work_experiences WHERE id = $1 AND actor_id = $2"
     ))
     .bind(id)
     .bind(actor_id)
@@ -262,7 +262,7 @@ pub async fn update_experience(
     };
 
     let org_ap_id = organization_ap_id(pool, organization_id).await?;
-    let ap_object = build_experience_ap_object(
+    let ap_object = build_work_experience_ap_object(
         &id,
         title,
         organization,
@@ -273,15 +273,15 @@ pub async fn update_experience(
         desc_html.as_deref(),
     );
 
-    let row = sqlx::query_as::<_, Experience>(concat!(
-        "UPDATE experiences \
+    let row = sqlx::query_as::<_, WorkExperience>(concat!(
+        "UPDATE work_experiences \
          SET title = $3, organization = $4, organization_id = $5, \
              organization_confirmed_at = $6, organization_confirmed_via = $7, \
              start_date = $8, end_date = $9, description_md = $10, \
              description_html = $11, sort_order = $12, visibility = $13, ap_object = $14 \
          WHERE id = $1 AND actor_id = $2 \
          RETURNING ",
-        experience_columns!()
+        work_experience_columns!()
     ))
     .bind(id)
     .bind(actor_id)
@@ -333,11 +333,11 @@ impl ConfirmedVia {
 /// matches no row and returns `NotFound` rather than confirming anything.
 pub async fn confirm_employment(
     pool: &PgPool,
-    experience_id: Uuid,
+    work_experience_id: Uuid,
     organization_id: Uuid,
     via: ConfirmedVia,
-) -> Result<Experience> {
-    set_employment_confirmation(pool, experience_id, organization_id, Some(via)).await
+) -> Result<WorkExperience> {
+    set_employment_confirmation(pool, work_experience_id, organization_id, Some(via)).await
 }
 
 /// Withdraw a confirmation, leaving the claim standing as self-asserted.
@@ -347,10 +347,10 @@ pub async fn confirm_employment(
 /// else's history.
 pub async fn withdraw_employment_confirmation(
     pool: &PgPool,
-    experience_id: Uuid,
+    work_experience_id: Uuid,
     organization_id: Uuid,
-) -> Result<Experience> {
-    set_employment_confirmation(pool, experience_id, organization_id, None).await
+) -> Result<WorkExperience> {
+    set_employment_confirmation(pool, work_experience_id, organization_id, None).await
 }
 
 /// Set or clear the confirmation, keeping the wire form in step.
@@ -360,27 +360,27 @@ pub async fn withdraw_employment_confirmation(
 /// peer ever sees, or the reverse.
 async fn set_employment_confirmation(
     pool: &PgPool,
-    experience_id: Uuid,
+    work_experience_id: Uuid,
     organization_id: Uuid,
     via: Option<ConfirmedVia>,
-) -> Result<Experience> {
-    let current = sqlx::query_as::<_, Experience>(concat!(
+) -> Result<WorkExperience> {
+    let current = sqlx::query_as::<_, WorkExperience>(concat!(
         "SELECT ",
-        experience_columns!(),
-        " FROM experiences WHERE id = $1 AND organization_id = $2"
+        work_experience_columns!(),
+        " FROM work_experiences WHERE id = $1 AND organization_id = $2"
     ))
-    .bind(experience_id)
+    .bind(work_experience_id)
     .bind(organization_id)
     .fetch_optional(pool)
     .await?
     .ok_or(NoombatError::NotFound {
         entity: "employment claim",
-        id: experience_id,
+        id: work_experience_id,
     })?;
 
     let confirmed_at = via.map(|_| Utc::now());
     let org_ap_id = organization_ap_id(pool, Some(organization_id)).await?;
-    let ap_object = build_experience_ap_object(
+    let ap_object = build_work_experience_ap_object(
         &current.id,
         &current.title,
         &current.organization,
@@ -391,14 +391,14 @@ async fn set_employment_confirmation(
         current.description_html.as_deref(),
     );
 
-    let row = sqlx::query_as::<_, Experience>(concat!(
-        "UPDATE experiences \
+    let row = sqlx::query_as::<_, WorkExperience>(concat!(
+        "UPDATE work_experiences \
          SET organization_confirmed_at = $3, organization_confirmed_via = $4, ap_object = $5 \
          WHERE id = $1 AND organization_id = $2 \
          RETURNING ",
-        experience_columns!()
+        work_experience_columns!()
     ))
-    .bind(experience_id)
+    .bind(work_experience_id)
     .bind(organization_id)
     .bind(confirmed_at)
     .bind(via.map(ConfirmedVia::as_str))
@@ -417,11 +417,11 @@ async fn set_employment_confirmation(
 pub async fn list_employment_claims(
     pool: &PgPool,
     organization_id: Uuid,
-) -> Result<Vec<Experience>> {
-    let rows = sqlx::query_as::<_, Experience>(concat!(
+) -> Result<Vec<WorkExperience>> {
+    let rows = sqlx::query_as::<_, WorkExperience>(concat!(
         "SELECT ",
-        experience_columns!(),
-        " FROM experiences \
+        work_experience_columns!(),
+        " FROM work_experiences \
           WHERE organization_id = $1 \
           ORDER BY organization_confirmed_at IS NOT NULL, start_date DESC"
     ))
@@ -432,11 +432,11 @@ pub async fn list_employment_claims(
     Ok(rows)
 }
 
-// ..... Educations .....
+// ..... EducationEntries .....
 
 /// An educational history entry on a profile.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Education {
+pub struct EducationEntry {
     pub id: Uuid,
     pub actor_id: Uuid,
     pub institution: String,
@@ -452,7 +452,7 @@ pub struct Education {
 
 /// Parameters for creating a new education entry.
 #[derive(Debug, Clone, Deserialize)]
-pub struct NewEducation {
+pub struct NewEducationEntry {
     pub institution: String,
     pub degree: Option<String>,
     pub field_of_study: Option<String>,
@@ -464,11 +464,11 @@ pub struct NewEducation {
 }
 
 /// Insert a new education entry.
-pub async fn create_education(
+pub async fn create_education_entry(
     pool: &PgPool,
     actor_id: Uuid,
-    params: &NewEducation,
-) -> Result<Education> {
+    params: &NewEducationEntry,
+) -> Result<EducationEntry> {
     let id = Uuid::new_v4();
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
@@ -476,14 +476,14 @@ pub async fn create_education(
     let (desc_md, desc_html) = render_optional_markdown(params.description_md.as_deref()).await?;
 
     let ap_object = serde_json::json!({
-        "type": "noombat:Education",
+        "type": "noombat:EducationEntry",
         "noombat:institution": params.institution,
         "noombat:degree": params.degree,
         "noombat:fieldOfStudy": params.field_of_study,
     });
 
-    let row = sqlx::query_as::<_, Education>(
-        r#"INSERT INTO educations
+    let row = sqlx::query_as::<_, EducationEntry>(
+        r#"INSERT INTO education_entries
                (id, actor_id, institution, degree, field_of_study,
                 start_date, end_date, description_md, description_html,
                 sort_order, visibility, ap_object)
@@ -511,17 +511,17 @@ pub async fn create_education(
 }
 
 /// List education entries for an actor, filtered by maximum visibility.
-pub async fn list_educations(
+pub async fn list_education_entries(
     pool: &PgPool,
     actor_id: Uuid,
     max_visibility: &SectionVisibility,
-) -> Result<Vec<Education>> {
+) -> Result<Vec<EducationEntry>> {
     let allowed = visibility_filter(max_visibility);
-    let rows = sqlx::query_as::<_, Education>(
+    let rows = sqlx::query_as::<_, EducationEntry>(
         r#"SELECT id, actor_id, institution, degree, field_of_study,
                   start_date, end_date, description_md, description_html,
                   sort_order, visibility
-           FROM educations
+           FROM education_entries
            WHERE actor_id = $1 AND visibility = ANY($2)
            ORDER BY sort_order ASC, start_date DESC"#,
     )
@@ -534,8 +534,8 @@ pub async fn list_educations(
 }
 
 /// Delete an education entry owned by the given actor.
-pub async fn delete_education(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM educations WHERE id = $1 AND actor_id = $2")
+pub async fn delete_education_entry(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
+    let result = sqlx::query("DELETE FROM education_entries WHERE id = $1 AND actor_id = $2")
         .bind(id)
         .bind(actor_id)
         .execute(pool)
@@ -552,7 +552,7 @@ pub async fn delete_education(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result
 
 /// Parameters for updating an existing education entry.
 #[derive(Debug, Clone, Deserialize)]
-pub struct UpdateEducation {
+pub struct UpdateEducationEntry {
     pub institution: Option<String>,
     pub degree: Option<Option<String>>,
     pub field_of_study: Option<Option<String>>,
@@ -564,21 +564,21 @@ pub struct UpdateEducation {
 }
 
 /// Update an existing education entry.
-pub async fn update_education(
+pub async fn update_education_entry(
     pool: &PgPool,
     actor_id: Uuid,
     id: Uuid,
-    params: &UpdateEducation,
-) -> Result<Education> {
+    params: &UpdateEducationEntry,
+) -> Result<EducationEntry> {
     if let Some(ref v) = params.visibility {
         validate_section_visibility(v)?;
     }
 
-    let current = sqlx::query_as::<_, Education>(
+    let current = sqlx::query_as::<_, EducationEntry>(
         r#"SELECT id, actor_id, institution, degree, field_of_study,
                   start_date, end_date, description_md, description_html,
                   sort_order, visibility
-           FROM educations
+           FROM education_entries
            WHERE id = $1 AND actor_id = $2"#,
     )
     .bind(id)
@@ -614,7 +614,7 @@ pub async fn update_education(
     let (desc_md, desc_html) = render_optional_markdown(desc_md_source).await?;
 
     let ap_object = serde_json::json!({
-        "type": "noombat:Education",
+        "type": "noombat:EducationEntry",
         "id": id.to_string(),
         "noombat:institution": institution,
         "noombat:degree": degree,
@@ -624,8 +624,8 @@ pub async fn update_education(
         "content": desc_html.as_deref(),
     });
 
-    let row = sqlx::query_as::<_, Education>(
-        r#"UPDATE educations
+    let row = sqlx::query_as::<_, EducationEntry>(
+        r#"UPDATE education_entries
            SET institution = $3, degree = $4, field_of_study = $5,
                start_date = $6, end_date = $7,
                description_md = $8, description_html = $9,
@@ -738,11 +738,11 @@ pub async fn delete_skill(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()>
     Ok(())
 }
 
-// ..... Publications .....
+// ..... ScholarlyArticles .....
 
 /// A scholarly publication linked via DOI.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Publication {
+pub struct ScholarlyArticle {
     pub id: Uuid,
     pub actor_id: Uuid,
     pub doi: String,
@@ -759,7 +759,7 @@ pub struct Publication {
 
 /// Parameters for creating a new publication entry.
 #[derive(Debug, Clone, Deserialize)]
-pub struct NewPublication {
+pub struct NewScholarlyArticle {
     pub doi: String,
     pub title: String,
     pub authors: serde_json::Value,
@@ -772,11 +772,11 @@ pub struct NewPublication {
 }
 
 /// Insert a new publication entry.
-pub async fn create_publication(
+pub async fn create_scholarly_article(
     pool: &PgPool,
     actor_id: Uuid,
-    params: &NewPublication,
-) -> Result<Publication> {
+    params: &NewScholarlyArticle,
+) -> Result<ScholarlyArticle> {
     let id = Uuid::new_v4();
     let visibility = params.visibility.as_deref().unwrap_or("public");
     validate_section_visibility(visibility)?;
@@ -785,14 +785,14 @@ pub async fn create_publication(
     let now = chrono::Utc::now();
 
     let ap_object = serde_json::json!({
-        "type": "noombat:Publication",
+        "type": "noombat:ScholarlyArticle",
         "noombat:doi": params.doi,
         "noombat:doiMetadata": params.doi_metadata,
         "name": params.title,
     });
 
-    let row = sqlx::query_as::<_, Publication>(
-        r#"INSERT INTO publications
+    let row = sqlx::query_as::<_, ScholarlyArticle>(
+        r#"INSERT INTO scholarly_articles
                (id, actor_id, doi, title, authors, abstract_md, abstract_html,
                 journal, publisher, published_date, doi_metadata, fetched_at,
                 visibility, ap_object)
@@ -827,17 +827,17 @@ pub async fn create_publication(
 }
 
 /// List publications for an actor, filtered by maximum visibility.
-pub async fn list_publications(
+pub async fn list_scholarly_articles(
     pool: &PgPool,
     actor_id: Uuid,
     max_visibility: &SectionVisibility,
-) -> Result<Vec<Publication>> {
+) -> Result<Vec<ScholarlyArticle>> {
     let allowed = visibility_filter(max_visibility);
-    let rows = sqlx::query_as::<_, Publication>(
+    let rows = sqlx::query_as::<_, ScholarlyArticle>(
         r#"SELECT id, actor_id, doi, title, authors, abstract_md,
                   abstract_html, journal, publisher, published_date,
                   visibility, fetched_at
-           FROM publications
+           FROM scholarly_articles
            WHERE actor_id = $1 AND visibility = ANY($2)
            ORDER BY published_date DESC NULLS LAST"#,
     )
@@ -850,8 +850,8 @@ pub async fn list_publications(
 }
 
 /// Delete a publication entry owned by the given actor.
-pub async fn delete_publication(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM publications WHERE id = $1 AND actor_id = $2")
+pub async fn delete_scholarly_article(pool: &PgPool, actor_id: Uuid, id: Uuid) -> Result<()> {
+    let result = sqlx::query("DELETE FROM scholarly_articles WHERE id = $1 AND actor_id = $2")
         .bind(id)
         .bind(actor_id)
         .execute(pool)
@@ -1047,7 +1047,7 @@ async fn render_optional_markdown(
 /// distinguishes an unconfirmed claim from an older document that predates
 /// the field.
 #[allow(clippy::too_many_arguments)]
-fn build_experience_ap_object(
+fn build_work_experience_ap_object(
     id: &Uuid,
     title: &str,
     organization: &str,
@@ -1058,7 +1058,7 @@ fn build_experience_ap_object(
     description_html: Option<&str>,
 ) -> serde_json::Value {
     serde_json::json!({
-        "type": "noombat:Experience",
+        "type": "noombat:WorkExperience",
         "id": id.to_string(),
         "noombat:title": title,
         "noombat:organization": organization,

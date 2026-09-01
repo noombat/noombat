@@ -31,7 +31,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/me/cancel-delete", post(cancel_deletion))
         .route(
             "/api/v1/me/applications/{id}/accesses",
-            get(application_accesses),
+            get(job_application_accesses),
         )
 }
 
@@ -88,25 +88,25 @@ async fn export_data(
 
         write_json_entry(&mut zip, "actor.json", &actor, opts)?;
 
-        // Experiences.
+        // WorkExperiences.
         let experiences: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(e) FROM experiences e WHERE actor_id = $1 ORDER BY sort_order",
+            "SELECT row_to_json(e) FROM work_experiences e WHERE actor_id = $1 ORDER BY sort_order",
         )
         .bind(actor_id)
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
-        write_json_entry(&mut zip, "experiences.json", &experiences, opts)?;
+        write_json_entry(&mut zip, "work_experiences.json", &experiences, opts)?;
 
-        // Educations.
+        // EducationEntries.
         let educations: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(e) FROM educations e WHERE actor_id = $1 ORDER BY sort_order",
+            "SELECT row_to_json(e) FROM education_entries e WHERE actor_id = $1 ORDER BY sort_order",
         )
         .bind(actor_id)
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
-        write_json_entry(&mut zip, "educations.json", &educations, opts)?;
+        write_json_entry(&mut zip, "education_entries.json", &educations, opts)?;
 
         // Skills.
         let skills: Vec<serde_json::Value> =
@@ -117,15 +117,15 @@ async fn export_data(
                 .unwrap_or_default();
         write_json_entry(&mut zip, "skills.json", &skills, opts)?;
 
-        // Publications.
+        // ScholarlyArticles.
         let publications: Vec<serde_json::Value> = sqlx::query_scalar(
-            "SELECT row_to_json(p) FROM publications p WHERE actor_id = $1 ORDER BY sort_order",
+            "SELECT row_to_json(p) FROM scholarly_articles p WHERE actor_id = $1 ORDER BY sort_order",
         )
         .bind(actor_id)
         .fetch_all(&state.pool)
         .await
         .unwrap_or_default();
-        write_json_entry(&mut zip, "publications.json", &publications, opts)?;
+        write_json_entry(&mut zip, "scholarly_articles.json", &publications, opts)?;
 
         // Custom sections.
         let custom_sections: Vec<serde_json::Value> = sqlx::query_scalar(
@@ -217,12 +217,13 @@ async fn export_data(
         write_json_entry(&mut zip, "mutes.json", &mutes, opts)?;
 
         // Job applications (applicant side).
-        let applications: Vec<serde_json::Value> =
-            sqlx::query_scalar("SELECT row_to_json(a) FROM applications a WHERE applicant_id = $1")
-                .bind(actor_id)
-                .fetch_all(&state.pool)
-                .await
-                .unwrap_or_default();
+        let applications: Vec<serde_json::Value> = sqlx::query_scalar(
+            "SELECT row_to_json(a) FROM job_applications a WHERE applicant_id = $1",
+        )
+        .bind(actor_id)
+        .fetch_all(&state.pool)
+        .await
+        .unwrap_or_default();
         write_json_entry(&mut zip, "job_applications.json", &applications, opts)?;
 
         zip.finish()
@@ -333,7 +334,7 @@ async fn cancel_deletion(
     Ok(Json(serde_json::json!({ "status": "deletion_cancelled" })))
 }
 
-// ..... WHO READ MY APPLICATION .....
+// ..... WHO READ MY JOB_APPLICATION .....
 
 /// One disclosure of an application, as its applicant sees it.
 #[derive(Debug, Serialize, sqlx::FromRow)]
@@ -356,7 +357,7 @@ pub struct AccessEntry {
 /// grounds; naming the individual invites retaliation against a person
 /// doing their job, and does not tell the applicant anything they can
 /// act on.
-async fn application_accesses(
+async fn job_application_accesses(
     State(state): State<AppState>,
     principal: Option<axum::Extension<Principal>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
@@ -367,7 +368,7 @@ async fn application_accesses(
     // would let someone else's application id be distinguished from an
     // unknown one by the difference between 403 and 404.
     let owned: bool = sqlx::query_scalar(
-        "SELECT EXISTS (SELECT 1 FROM applications WHERE id = $1 AND applicant_id = $2)",
+        "SELECT EXISTS (SELECT 1 FROM job_applications WHERE id = $1 AND applicant_id = $2)",
     )
     .bind(id)
     .bind(actor_id)
@@ -383,8 +384,8 @@ async fn application_accesses(
     }
 
     let entries = sqlx::query_as::<_, AccessEntry>(
-        "SELECT occurred_at, kind, outcome, reason FROM application_accesses \
-         WHERE application_id = $1 ORDER BY occurred_at DESC",
+        "SELECT occurred_at, kind, outcome, reason FROM job_application_accesses \
+         WHERE job_application_id = $1 ORDER BY occurred_at DESC",
     )
     .bind(id)
     .fetch_all(&state.pool)

@@ -319,7 +319,7 @@ CREATE INDEX idx_oauth_identities_actor ON oauth_identities (actor_id);
 -- is the actor they mean, where one exists, and is what makes the claim
 -- checkable at all. A row with the text and no reference is an ordinary
 -- self-assertion, which is most rows and is fine.
-CREATE TABLE experiences (
+CREATE TABLE work_experiences (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id         UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     title            TEXT NOT NULL,
@@ -355,10 +355,10 @@ CREATE TABLE experiences (
 );
 
 -- The employer's work list: claims naming this organisation, unconfirmed first.
-CREATE INDEX idx_experiences_organization ON experiences (organization_id)
+CREATE INDEX idx_work_experiences_organization ON work_experiences (organization_id)
     WHERE organization_id IS NOT NULL;
 
-CREATE TABLE educations (
+CREATE TABLE education_entries (
     id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id         UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     institution      TEXT NOT NULL,
@@ -395,7 +395,7 @@ CREATE TABLE verified_links (
 
 -- ..... PUBLICATIONS .....
 
-CREATE TABLE publications (
+CREATE TABLE scholarly_articles (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id       UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     doi            TEXT NOT NULL,
@@ -413,9 +413,9 @@ CREATE TABLE publications (
     UNIQUE (actor_id, doi)
 );
 
--- ..... JOB LISTINGS .....
+-- ..... JOB POSTINGS .....
 
-CREATE TABLE job_listings (
+CREATE TABLE job_postings (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id                 UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     ap_id                    TEXT NOT NULL UNIQUE,
@@ -442,7 +442,7 @@ CREATE TABLE job_listings (
     -- Nullable so "never reviewed" and "refused" stay distinguishable: a boolean
     -- collapses them, and the refusal is the one a moderator has to be able to
     -- find again. No DEFAULT: fail closed. A DEFAULT now() means any future
-    -- INSERT that forgets the column silently publishes an unreviewed listing.
+    -- INSERT that forgets the column silently publishes an unreviewed posting.
     approved_at              TIMESTAMPTZ,
     -- Who approved it. Mirrors reports.resolved_by: approving is a moderation
     -- decision, and an audit trail with no actor is half an audit trail.
@@ -452,15 +452,15 @@ CREATE TABLE job_listings (
     -- The member who created it, where `actor_id` is the organisation
     -- that publishes it. Null when that actor posted as itself.
     created_by               UUID REFERENCES actors(id) ON DELETE SET NULL,
-    -- Who, besides the owners and the creator, may read its applications.
-    -- Defaults to neither: a recruiter's listing is not every recruiter's
+    -- Who, besides the owners and the creator, may read its job_applications.
+    -- Defaults to neither: a recruiter's posting is not every recruiter's
     -- business until somebody says so.
-    application_readers      TEXT NOT NULL DEFAULT 'creator_only'
-                             CHECK (application_readers IN ('creator_only', 'all_recruiters', 'listed'))
+    job_application_readers      TEXT NOT NULL DEFAULT 'creator_only'
+                             CHECK (job_application_readers IN ('creator_only', 'all_recruiters', 'listed'))
 );
 
 -- Who acts for an organisation. It is an actor, not a person, so
--- "whoever published the listing" strands the pipeline when that person
+-- "whoever published the posting" strands the pipeline when that person
 -- goes on leave, and the workaround is a shared login.
 CREATE TABLE organization_members (
     organization_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
@@ -472,13 +472,13 @@ CREATE TABLE organization_members (
 
 CREATE INDEX idx_organization_members_member ON organization_members (member_id);
 
--- Recruiters named by `application_readers = 'listed'`. Owners and the
--- listing's creator do not appear here; they are always admitted.
-CREATE TABLE job_listing_readers (
-    job_listing_id UUID NOT NULL REFERENCES job_listings(id) ON DELETE CASCADE,
+-- Recruiters named by `job_application_readers = 'listed'`. Owners and the
+-- posting's creator do not appear here; they are always admitted.
+CREATE TABLE job_posting_readers (
+    job_posting_id UUID NOT NULL REFERENCES job_postings(id) ON DELETE CASCADE,
     member_id      UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     created_at     TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (job_listing_id, member_id)
+    PRIMARY KEY (job_posting_id, member_id)
 );
 
 
@@ -574,21 +574,21 @@ CREATE TABLE likes (
 
 -- ..... JOB APPLICATIONS .....
 
-CREATE TABLE applications (
+CREATE TABLE job_applications (
     id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     applicant_id      UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     -- Nullable, and SET NULL rather than CASCADE, because erasing the
-    -- recruiter deletes their listings and must not take the
-    -- applicants' records with them: the listing is the recruiter's
+    -- recruiter deletes their postings and must not take the
+    -- applicants' records with them: the posting is the recruiter's
     -- content, the application is the applicant's.
-    job_listing_id    UUID REFERENCES job_listings(id) ON DELETE SET NULL,
+    job_posting_id    UUID REFERENCES job_postings(id) ON DELETE SET NULL,
     -- Denormalised at insert, never at erasure. These are what keeps an
-    -- application meaningful once the listing is gone ("I applied to X
+    -- application meaningful once the posting is gone ("I applied to X
     -- at Y on Z"), and NOT NULL so a future insert cannot forget them:
     -- copying at erasure would mean reading a row that is about to be
     -- deleted, which races anything else deleting it.
-    listing_title     TEXT NOT NULL,
-    listing_organization TEXT NOT NULL,
+    posting_title     TEXT NOT NULL,
+    posting_organization TEXT NOT NULL,
     applied_on        DATE NOT NULL DEFAULT CURRENT_DATE,
     ap_id             TEXT NOT NULL UNIQUE,
     cover_letter_md   TEXT,
@@ -598,16 +598,16 @@ CREATE TABLE applications (
     status            TEXT NOT NULL DEFAULT 'submitted' CHECK (status IN ('submitted', 'reviewed', 'shortlisted', 'rejected', 'withdrawn')),
     created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (applicant_id, job_listing_id)
+    UNIQUE (applicant_id, job_posting_id)
 );
 
 -- The bearer capability an employer dereferences to read an application.
 -- Minting is not built yet; the revocation path is, because what happens
 -- to a grant when its applicant migrates is cheaper to settle before the
 -- first grant exists than after.
-CREATE TABLE application_grants (
+CREATE TABLE job_application_grants (
     id                      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id          UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
+    job_application_id          UUID NOT NULL REFERENCES job_applications(id) ON DELETE CASCADE,
     -- Hashed: a database read must not yield a working capability.
     token_hash              TEXT NOT NULL UNIQUE,
     -- Immutable after mint. A capability that can be re-pointed can be walked.
@@ -620,7 +620,7 @@ CREATE TABLE application_grants (
     document_uses_remaining INTEGER NOT NULL,
     cv_uses_remaining       INTEGER NOT NULL,
     revoked_at              TIMESTAMPTZ,
-    revoked_reason          TEXT CHECK (revoked_reason IN ('applicant_withdrew', 'applicant_revoked', 'rejected_by_employer', 'listing_removed', 'listing_fraud_takedown', 'account_deleted', 'account_migrated', 'superseded', 'expired')),
+    revoked_reason          TEXT CHECK (revoked_reason IN ('applicant_withdrew', 'applicant_revoked', 'rejected_by_employer', 'posting_removed', 'posting_fraud_takedown', 'account_deleted', 'account_migrated', 'superseded', 'expired')),
     created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- A time without a reason is a revocation nobody can explain.
     CONSTRAINT revocation_is_complete CHECK (
@@ -629,16 +629,16 @@ CREATE TABLE application_grants (
     )
 );
 
-CREATE INDEX idx_application_grants_application ON application_grants (application_id);
+CREATE INDEX idx_job_application_grants ON job_application_grants (job_application_id);
 
 -- Every disclosure of an application, and the applicant's own record of
 -- it. A moderator read is a disclosure like any other, so it lands here
 -- rather than in a log the applicant never sees. `grant_id` is null for a
 -- local read; an employer's dereference carries one once minting exists.
-CREATE TABLE application_accesses (
+CREATE TABLE job_application_accesses (
     id             UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
-    grant_id       UUID REFERENCES application_grants(id) ON DELETE CASCADE,
+    job_application_id UUID NOT NULL REFERENCES job_applications(id) ON DELETE CASCADE,
+    grant_id       UUID REFERENCES job_application_grants(id) ON DELETE CASCADE,
     reader_id      UUID REFERENCES actors(id) ON DELETE SET NULL,
     kind           TEXT NOT NULL CHECK (kind IN ('grant_dereference', 'moderator_review')),
     outcome        TEXT NOT NULL CHECK (outcome IN ('disclosed', 'denied')),
@@ -651,7 +651,7 @@ CREATE TABLE application_accesses (
     )
 );
 
-CREATE INDEX idx_application_accesses_application ON application_accesses (application_id);
+CREATE INDEX idx_job_application_accesses ON job_application_accesses (job_application_id);
 
 -- ..... GROUPS .....
 
@@ -720,7 +720,7 @@ CREATE TABLE hashtag_follows (
 
 CREATE TABLE analytics_counters (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    target_type TEXT NOT NULL CHECK (target_type IN ('job_listing', 'profile', 'article', 'event')),
+    target_type TEXT NOT NULL CHECK (target_type IN ('job_posting', 'profile', 'article', 'event')),
     target_id   UUID NOT NULL,
     metric      TEXT NOT NULL CHECK (metric IN ('view', 'application', 'rsvp', 'download')),
     period      DATE NOT NULL,
@@ -932,18 +932,18 @@ CREATE TRIGGER trg_delivery_queue_notify AFTER INSERT ON delivery_queue FOR EACH
 
 -- ..... FOREIGN-KEY INDICES .....
 
-CREATE INDEX idx_experiences_actor ON experiences (actor_id);
-CREATE INDEX idx_educations_actor ON educations (actor_id);
+CREATE INDEX idx_work_experiences_actor ON work_experiences (actor_id);
+CREATE INDEX idx_education_entries_actor ON education_entries (actor_id);
 CREATE INDEX idx_skills_actor ON skills (actor_id);
-CREATE INDEX idx_publications_actor ON publications (actor_id);
+CREATE INDEX idx_scholarly_articles_actor ON scholarly_articles (actor_id);
 CREATE INDEX idx_verified_links_actor ON verified_links (actor_id);
 CREATE INDEX idx_custom_sections_actor ON custom_profile_sections (actor_id);
 CREATE INDEX idx_media_attachments_actor ON media_attachments (actor_id);
 CREATE INDEX idx_media_attachments_post ON media_attachments (post_id);
-CREATE INDEX idx_job_listings_actor ON job_listings (actor_id);
+CREATE INDEX idx_job_postings_actor ON job_postings (actor_id);
 -- The approval queue's work list, oldest first.
-CREATE INDEX idx_job_listings_pending_approval ON job_listings (created_at) WHERE approved_at IS NULL;
-CREATE INDEX idx_applications_job ON applications (job_listing_id);
+CREATE INDEX idx_job_postings_pending_approval ON job_postings (created_at) WHERE approved_at IS NULL;
+CREATE INDEX idx_job_applications_posting ON job_applications (job_posting_id);
 CREATE INDEX idx_group_memberships_group ON group_memberships (group_id);
 CREATE INDEX idx_event_rsvps_event ON event_rsvps (event_id);
 CREATE INDEX idx_events_group ON events (group_id) WHERE group_id IS NOT NULL;
@@ -967,7 +967,7 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER trg_actors_updated_at BEFORE UPDATE ON actors FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
-CREATE TRIGGER trg_applications_updated_at BEFORE UPDATE ON applications FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+CREATE TRIGGER trg_job_applications_updated_at BEFORE UPDATE ON job_applications FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
 CREATE TRIGGER trg_relay_subscriptions_updated_at BEFORE UPDATE ON relay_subscriptions FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
