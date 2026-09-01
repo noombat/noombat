@@ -79,10 +79,10 @@ async fn fetch_public_sections(
             section_type: "experience".into(),
             visibility: SectionVisibility::Public,
             data: serde_json::json!({
-                "noombat:title": exp.title,
-                "noombat:organization": exp.organization,
-                "noombat:startDate": exp.start_date.to_string(),
-                "noombat:endDate": exp.end_date.map(|d| d.to_string()),
+                "schema:roleName": exp.title,
+                "schema:worksFor": exp.organization,
+                "schema:startDate": exp.start_date.to_string(),
+                "schema:endDate": exp.end_date.map(|d| d.to_string()),
                 "content": exp.description_html,
             }),
         });
@@ -93,11 +93,11 @@ async fn fetch_public_sections(
             section_type: "education".into(),
             visibility: SectionVisibility::Public,
             data: serde_json::json!({
-                "noombat:institution": edu.institution,
-                "noombat:degree": edu.degree,
+                "schema:alumniOf": edu.institution,
+                "schema:credentialCategory": edu.degree,
                 "noombat:fieldOfStudy": edu.field_of_study,
-                "noombat:startDate": edu.start_date.to_string(),
-                "noombat:endDate": edu.end_date.map(|d| d.to_string()),
+                "schema:startDate": edu.start_date.to_string(),
+                "schema:endDate": edu.end_date.map(|d| d.to_string()),
                 "content": edu.description_html,
             }),
         });
@@ -122,8 +122,8 @@ async fn fetch_public_sections(
                     "value": pub_.doi,
                 },
                 "name": pub_.title,
-                "noombat:authors": pub_.authors,
-                "noombat:journal": pub_.journal,
+                "schema:author": pub_.authors,
+                "schema:isPartOf": pub_.journal,
             }),
         });
     }

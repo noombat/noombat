@@ -477,8 +477,8 @@ pub async fn create_education_entry(
 
     let ap_object = serde_json::json!({
         "type": "noombat:EducationEntry",
-        "noombat:institution": params.institution,
-        "noombat:degree": params.degree,
+        "schema:alumniOf": params.institution,
+        "schema:credentialCategory": params.degree,
         "noombat:fieldOfStudy": params.field_of_study,
     });
 
@@ -616,11 +616,11 @@ pub async fn update_education_entry(
     let ap_object = serde_json::json!({
         "type": "noombat:EducationEntry",
         "id": id.to_string(),
-        "noombat:institution": institution,
-        "noombat:degree": degree,
+        "schema:alumniOf": institution,
+        "schema:credentialCategory": degree,
         "noombat:fieldOfStudy": field_of_study,
-        "noombat:startDate": start_date.to_string(),
-        "noombat:endDate": end_date.map(|d| d.to_string()),
+        "schema:startDate": start_date.to_string(),
+        "schema:endDate": end_date.map(|d| d.to_string()),
         "content": desc_html.as_deref(),
     });
 
@@ -1065,13 +1065,13 @@ fn build_work_experience_ap_object(
     serde_json::json!({
         "type": "noombat:WorkExperience",
         "id": id.to_string(),
-        "noombat:title": title,
-        "noombat:organization": organization,
+        "schema:roleName": title,
+        "schema:worksFor": organization,
         "noombat:organizationId": organization_ap_id,
         "noombat:organizationConfirmed": confirmed_at.is_some(),
         "noombat:organizationConfirmedAt": confirmed_at.map(|t| t.to_rfc3339()),
-        "noombat:startDate": start_date.to_string(),
-        "noombat:endDate": end_date.map(|d| d.to_string()),
+        "schema:startDate": start_date.to_string(),
+        "schema:endDate": end_date.map(|d| d.to_string()),
         "content": description_html,
     })
 }

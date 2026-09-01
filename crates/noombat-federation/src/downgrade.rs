@@ -103,7 +103,7 @@ pub fn downgrade_job_posting(posting: &Value, actor_ap_id: &str) -> Value {
         });
     }
     if let Some(requirements) = posting.get("requirements") {
-        object["noombat:requirements"] = requirements.clone();
+        object["schema:qualifications"] = requirements.clone();
     }
 
     // Provide the Mastodon-convention `source` for Markdown-aware clients.
@@ -229,7 +229,9 @@ pub fn build_federated_actor(
     if actor.ed25519_public_key.is_some() {
         extensions.push(Extension::Multikey);
     }
-    if has_attachments {
+    // Sections carry schema.org property names, so the prefix is needed
+    // whenever there is either an attachment or a section.
+    if has_attachments || !sections.is_empty() {
         extensions.push(Extension::Schema);
     }
     if actor.moved_to.is_some() {
@@ -346,6 +348,30 @@ pub fn build_federated_actor(
                 escape_html(link.url),
                 escape_html(link.url),
             ),
+        }));
+    }
+
+    // The same links again as FEP-fb2a `Link` attachments, which carry the
+    // href and the `me` relation as data rather than as markup inside a
+    // string. Emitted alongside the `PropertyValue` form and not instead
+    // of it, because Mastodon, Misskey and Pleroma all read profile fields
+    // by filtering for `PropertyValue`, so replacing it would blank the
+    // profile on all three. Every term here is ActivityStreams core, so
+    // this adds no namespace.
+    if let Some(ref orcid) = actor.orcid {
+        attachments.push(json!({
+            "type": "Link",
+            "name": "ORCID",
+            "href": format!("https://orcid.org/{orcid}"),
+            "rel": "me",
+        }));
+    }
+    for link in verified_links {
+        attachments.push(json!({
+            "type": "Link",
+            "name": link.url,
+            "href": link.url,
+            "rel": "me",
         }));
     }
 
@@ -619,6 +645,10 @@ mod tests {
             "following",
             "preferredUsername",
             "alsoKnownAs",
+            // FEP-fb2a link attachments; all three are ActivityStreams core.
+            "Link",
+            "href",
+            "rel",
             // Type names, which appear as the value of `type`.
             "Person",
             "Organization",
