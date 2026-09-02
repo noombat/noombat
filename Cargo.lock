@@ -2178,7 +2178,7 @@ dependencies = [
  "js-sys",
  "p256",
  "p384",
- "rand 0.8.7",
+ "rand 0.8.8",
  "rsa",
  "serde",
  "serde_json",
@@ -2201,7 +2201,7 @@ dependencies = [
  "p256",
  "p384",
  "pem",
- "rand 0.8.7",
+ "rand 0.8.8",
  "rsa",
  "serde",
  "serde_json",
@@ -2603,7 +2603,7 @@ dependencies = [
  "lettre",
  "mailparse",
  "noombat-core",
- "rand 0.8.7",
+ "rand 0.8.8",
  "reqwest 0.13.4",
  "rustls",
  "rustls-native-certs",
@@ -2625,7 +2625,7 @@ dependencies = [
  "base64 0.23.1",
  "hmac 0.12.1",
  "mailparse",
- "rand 0.8.7",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2676,7 +2676,7 @@ dependencies = [
  "noombat-core",
  "noombat-identity",
  "noombat-markup",
- "rand 0.8.7",
+ "rand 0.8.8",
  "reqwest 0.13.4",
  "rsa",
  "serde",
@@ -2712,7 +2712,7 @@ dependencies = [
  "noombat-markup",
  "psl",
  "qrcode",
- "rand 0.8.7",
+ "rand 0.8.8",
  "reqwest 0.13.4",
  "rsa",
  "scraper",
@@ -2735,7 +2735,7 @@ dependencies = [
  "chrono",
  "noombat-core",
  "noombat-markup",
- "rand 0.8.7",
+ "rand 0.8.8",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -2770,7 +2770,7 @@ dependencies = [
  "noombat-core",
  "noombat-federation",
  "noombat-identity",
- "rand 0.8.7",
+ "rand 0.8.8",
  "redis",
  "serde",
  "serde_json",
@@ -2830,7 +2830,7 @@ dependencies = [
  "num-integer",
  "num-iter",
  "num-traits",
- "rand 0.8.7",
+ "rand 0.8.8",
  "smallvec",
  "zeroize",
 ]
@@ -3343,9 +3343,9 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 
 [[package]]
 name = "rand"
-version = "0.8.7"
+version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "22f6172bdec972074665ed81ed53b71da00bfc44b65a753cfde883ec4c702a1a"
+checksum = "e058c7de0b26af77780c769414d6257830bb240f3c38477dbc2c16e5f54d6d4c"
 dependencies = [
  "libc",
  "rand_chacha 0.3.1",
@@ -4546,7 +4546,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand",
- "getrandom 0.4.3",
+ "getrandom 0.3.4",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",
@@ -5136,9 +5136,9 @@ checksum = "b6c140620e7ffbb22c2dee59cafe6084a59b5ffc27a8859a5f0d494b5d52b6be"
 
 [[package]]
 name = "uuid"
-version = "1.25.0"
+version = "1.26.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f053576934f05a761a402421fbbe3d425d9366f75f978806a037b3ca481abecc"
+checksum = "b5772d71c9be8a8a6ac2117d949c5b224c1b72241bb611d9a3012edcf8af7812"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
