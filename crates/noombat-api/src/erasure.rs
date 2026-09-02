@@ -77,6 +77,27 @@ pub async fn erase_actor(
             .await
             .unwrap_or_default();
 
+    // And once more, for the mailbox. `tombstone_actor` clears
+    // `chatmail_addr`, so after it runs nothing knows which maildir
+    // belonged to this account. Recorded here rather than deleted here:
+    // the sidecar is a separate process that can be down, and an
+    // erasure that fails because of that must be retryable rather than
+    // lost. The mailbox is part of what erasure removes: leaving
+    // it is the erasure failing silently.
+    let chatmail_addr: Option<String> =
+        sqlx::query_scalar("SELECT chatmail_addr FROM actors WHERE id = $1")
+            .bind(actor_id)
+            .fetch_optional(pool)
+            .await
+            .unwrap_or(None)
+            .flatten();
+
+    if let Some(ref address) = chatmail_addr
+        && let Err(error) = crate::chatmail_ops::enqueue_delete(pool, actor_id, address).await
+    {
+        error!(%error, %actor_id, "erasure could not record the maildir deletion it owes");
+    }
+
     let pre_tombstone = noombat_identity::repo::tombstone_actor(pool, actor_id).await?;
 
     // After the rows are gone, so nothing can serve an object whose
@@ -142,6 +163,72 @@ async fn due_for_erasure(pool: &PgPool, grace_days: i32) -> Result<Vec<Uuid>> {
     Ok(ids)
 }
 
+/// How long a tombstoned actor row is kept before it is hard-deleted.
+///
+/// A backstop, not a schedule. The row goes as soon as the Chatmail work
+/// it owes is settled; this is the outer bound for the case where that
+/// never settles, so a sidecar that is permanently gone does not keep
+/// every erased row alive forever.
+const TOMBSTONE_RETENTION_DAYS: i64 = 30;
+
+/// Hard-delete tombstoned actors whose retention window has closed.
+///
+/// Two conditions, and the first is the one that matters:
+/// **`fetch_signing_credentials` uses `fetch_one`**, so deleting the row
+/// while a `Delete` is still queued for it makes that activity
+/// permanently unsignable, and the peers that never received it keep
+/// their copy forever. The queue has to be empty first.
+///
+/// The second is the Chatmail work: the row carries the actor id the
+/// operations are keyed on, so purging early loses the link between a
+/// failed maildir deletion and the account it belonged to.
+///
+/// Both are subject to the 30-day backstop, because either could stay
+/// unsatisfied indefinitely and an erasure that never completes is the
+/// defect this path exists to close.
+pub async fn purge_retained(pool: &PgPool) -> u64 {
+    let due = sqlx::query_scalar::<_, Uuid>(
+        "SELECT a.id FROM actors a \
+         WHERE a.erased_at IS NOT NULL \
+           AND ( \
+             ( NOT EXISTS (SELECT 1 FROM delivery_queue q WHERE q.actor_id = a.id) \
+               AND NOT EXISTS ( \
+                 SELECT 1 FROM chatmail_operations o \
+                 WHERE o.actor_id = a.id AND o.state = 'pending' \
+               ) \
+             ) \
+             OR a.erased_at < now() - ($1 || ' days')::interval \
+           ) \
+         LIMIT 200",
+    )
+    .bind(TOMBSTONE_RETENTION_DAYS.to_string())
+    .fetch_all(pool)
+    .await;
+
+    let due = match due {
+        Ok(ids) => ids,
+        Err(e) => {
+            error!("could not list actors due for purge: {e}");
+            return 0;
+        }
+    };
+
+    let mut purged = 0;
+    for actor_id in due {
+        match noombat_identity::repo::purge_tombstoned_actor(pool, actor_id).await {
+            Ok(()) => {
+                // `tombstoned_actors` keeps the ap_id, so federation
+                // requests still get 410 rather than 404.
+                info!(%actor_id, "purged a tombstoned actor row");
+                purged += 1;
+            }
+            Err(e) => warn!(%actor_id, "failed to purge, will retry next sweep: {e}"),
+        }
+    }
+
+    purged
+}
+
 /// Erase every account whose grace period has elapsed, once.
 ///
 /// Returns how many were erased. One failure does not stop the rest:
@@ -197,6 +284,16 @@ pub async fn run_worker(
         if erased > 0 {
             info!(erased, "erasure sweep complete");
         }
+
+        // The second clock, in the same worker: the grace period,
+        // then the tombstone standing until its work is settled.
+        // Not one long timer, because the second period ends on a
+        // condition and the days are only a backstop.
+        let purged = purge_retained(&pool).await;
+        if purged > 0 {
+            info!(purged, "tombstone retention sweep complete");
+        }
+
         tokio::time::sleep(interval).await;
     }
 }

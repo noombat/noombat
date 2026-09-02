@@ -21,7 +21,7 @@ use zip::ZipWriter;
 use zip::write::SimpleFileOptions;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -35,21 +35,10 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-/// Require an authenticated principal with a known actor UUID.
-fn require_actor(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<(Uuid, String), ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let username = principal
-        .username
-        .clone()
-        .unwrap_or_else(|| actor_id.to_string());
-    Ok((actor_id, username))
+/// Require an authenticated viewer with a known actor UUID.
+fn require_actor(viewer: &Option<axum::Extension<Viewer>>) -> Result<(Uuid, String), ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    Ok((viewer.actor_id, viewer.username.clone()))
 }
 
 // ..... DATA EXPORT .....
@@ -60,9 +49,9 @@ fn require_actor(
 /// JSON-LD-compatible format. The archive is generated in memory.
 async fn export_data(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
-    let (actor_id, _username) = require_actor(&principal)?;
+    let (actor_id, _username) = require_actor(&viewer)?;
 
     let mut buf = Vec::new();
     {
@@ -270,9 +259,9 @@ fn write_json_entry<W: Write + std::io::Seek>(
 /// elapses.
 async fn request_deletion(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (actor_id, username) = require_actor(&principal)?;
+    let (actor_id, username) = require_actor(&viewer)?;
 
     // Check whether a deletion is already pending.
     let existing: Option<chrono::DateTime<chrono::Utc>> =
@@ -310,9 +299,9 @@ async fn request_deletion(
 /// elapsed.
 async fn cancel_deletion(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let (actor_id, username) = require_actor(&principal)?;
+    let (actor_id, username) = require_actor(&viewer)?;
 
     let result = sqlx::query(
         "UPDATE actors SET deletion_requested_at = NULL, updated_at = now() \
@@ -359,10 +348,10 @@ pub struct AccessEntry {
 /// act on.
 async fn job_application_accesses(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     axum::extract::Path(id): axum::extract::Path<Uuid>,
 ) -> Result<impl axum::response::IntoResponse, ApiError> {
-    let (actor_id, _username) = require_actor(&principal)?;
+    let (actor_id, _username) = require_actor(&viewer)?;
 
     // Ownership is part of the same query: a separate existence check
     // would let someone else's application id be distinguished from an

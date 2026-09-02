@@ -32,6 +32,16 @@ pub enum NoombatError {
     #[error("forbidden")]
     Forbidden,
 
+    /// An inbound `Move` this instance refuses to follow.
+    ///
+    /// Distinct from `BadRequest` because the peer needs to tell a
+    /// malformed activity from a well-formed one whose target does not
+    /// claim the source: the first is a bug on their side, the second is
+    /// a step they have not completed yet, and a generic 400 does not
+    /// say which. FEP-c180 gives it its own error code.
+    #[error("move rejected: {0}")]
+    MoveRejected(String),
+
     #[error("bad request: {0}")]
     BadRequest(String),
 

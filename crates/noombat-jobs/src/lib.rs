@@ -2,7 +2,10 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 #![forbid(unsafe_code)]
-//! Job posting CRUD, search, and matching.
+//! Job posting CRUD, search, and matching, plus the application write
+//! path and the capability an employer reads an application with.
+
+pub mod applications;
 
 use chrono::{DateTime, Utc};
 use noombat_core::error::{NoombatError, Result};
@@ -55,9 +58,16 @@ fn default_true() -> bool {
 ///
 /// The `description_md` field is rendered through the markup pipeline.
 /// The posting is published immediately if `params.publish` is `true`.
+/// `created_by` is the member who wrote it, where `actor_id` is the
+/// organisation that publishes it, and `None` where an actor posted as
+/// itself. It is what `is_creator` reads, so the whole `PostingAccess`
+/// model turns on it being written: with no writer, every posting looked
+/// as though nobody had created it, and a recruiter could not reach
+/// their own applications.
 pub async fn create_job(
     pool: &PgPool,
     actor_id: Uuid,
+    created_by: Option<Uuid>,
     domain: &str,
     params: &NewJobPosting,
 ) -> Result<JobPosting> {
@@ -80,8 +90,8 @@ pub async fn create_job(
         r#"INSERT INTO job_postings
                (id, actor_id, ap_id, title, description_md, description_html,
                 location, remote, salary_min, salary_max, currency,
-                requirements, published_at, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+                requirements, published_at, expires_at, created_by)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            RETURNING id, actor_id, ap_id, title, description_md, description_html,
                      location, remote, salary_min, salary_max, currency,
                      requirements, published_at, expires_at, created_at"#,
@@ -100,6 +110,9 @@ pub async fn create_job(
     .bind(&requirements_json)
     .bind(published_at)
     .bind(params.expires_at)
+    // NULL where the publishing actor wrote it themselves, which the
+    // schema comment already specifies.
+    .bind(created_by.filter(|id| *id != actor_id))
     .fetch_one(pool)
     .await?;
 

@@ -49,24 +49,29 @@ use crate::inbox::resolve_actor;
 /// This is the prerequisite step on the **target** instance: before
 /// the old account can send a `Move`, the new account must declare
 /// the old account as an alias.
-pub async fn add_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Result<()> {
-    sqlx::query(
+/// Returns the alias row's id, whether it was inserted now or already
+/// there. The caller needs an id to address the row with, and an alias
+/// added twice is the same alias: reporting a conflict would make the
+/// interface fail on a repeated click.
+pub async fn add_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Result<Uuid> {
+    let id = sqlx::query_scalar::<_, Uuid>(
         "INSERT INTO actor_aliases (actor_id, alias) \
          VALUES ($1, $2) \
-         ON CONFLICT (actor_id, alias) DO NOTHING",
+         ON CONFLICT (actor_id, alias) DO UPDATE SET alias = EXCLUDED.alias \
+         RETURNING id",
     )
     .bind(actor_id)
     .bind(alias_uri)
-    .execute(pool)
+    .fetch_one(pool)
     .await?;
-    Ok(())
+    Ok(id)
 }
 
-/// Remove an alias from a local actor's `alsoKnownAs` list.
-pub async fn remove_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Result<()> {
-    sqlx::query("DELETE FROM actor_aliases WHERE actor_id = $1 AND alias = $2")
+/// Remove an alias by its row id, which is what the interface holds.
+pub async fn remove_alias_by_id(pool: &PgPool, actor_id: Uuid, alias_id: Uuid) -> Result<()> {
+    sqlx::query("DELETE FROM actor_aliases WHERE id = $1 AND actor_id = $2")
+        .bind(alias_id)
         .bind(actor_id)
-        .bind(alias_uri)
         .execute(pool)
         .await?;
     Ok(())
@@ -211,8 +216,8 @@ pub async fn handle_inbound_move(
 
     // Step 1: actor == object.
     if source_uri != object_uri {
-        return Err(NoombatError::BadRequest(
-            "Move: actor and object must match".into(),
+        return Err(NoombatError::MoveRejected(
+            "the Move's actor and object must be the same account".into(),
         ));
     }
 
@@ -260,9 +265,12 @@ pub async fn handle_inbound_move(
             target = %target_uri,
             "Move rejected: target does not list source in alsoKnownAs"
         );
-        return Err(NoombatError::Federation(
-            "Move rejected: target actor does not list source as alias".into(),
-        ));
+        // The peer is told which step is missing, because it is one
+        // they can complete: adding the source to the target's
+        // alsoKnownAs and re-sending the Move.
+        return Err(NoombatError::MoveRejected(format!(
+            "the target actor does not list {source_uri} in its alsoKnownAs"
+        )));
     }
 
     // Resolve the source actor locally.

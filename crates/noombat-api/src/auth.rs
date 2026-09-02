@@ -13,9 +13,9 @@ use noombat_core::authorisation::OrganizationRole;
 use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 
-/// Whether the authenticated principal may act for `subject_id`.
+/// Whether the authenticated viewer may act for `subject_id`.
 ///
 /// Two ways to qualify: being that account, or holding a role in it
 /// where it is an organisation. The account's own session counts
@@ -33,12 +33,12 @@ use crate::middleware::Principal;
 pub async fn require_acts_for(
     pool: &sqlx::PgPool,
     subject_id: uuid::Uuid,
-    principal: &Option<Extension<Principal>>,
+    viewer: &Option<Extension<Viewer>>,
 ) -> Result<Option<OrganizationRole>, ApiError> {
-    let actor_id = principal
+    let actor_id = viewer
         .as_ref()
-        .and_then(|p| p.actor_uuid)
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+        .ok_or(ApiError(NoombatError::Forbidden))?
+        .actor_id;
 
     if actor_id == subject_id {
         return Ok(None);
@@ -64,17 +64,17 @@ pub async fn require_acts_for(
 /// carry one account's session into another account's authorisation.
 pub async fn require_local_actor(
     pool: &sqlx::PgPool,
-    principal: &Option<Extension<Principal>>,
+    viewer: &Option<Extension<Viewer>>,
     username: &str,
 ) -> Result<Actor, ApiError> {
     // Authentication is checked before the lookup, so an anonymous
     // caller cannot tell an existing account from a missing one by the
     // difference between 403 and 404.
-    if principal.as_ref().and_then(|p| p.actor_uuid).is_none() {
+    if viewer.is_none() {
         return Err(ApiError(NoombatError::Forbidden));
     }
 
     let actor = noombat_identity::repo::find_local_by_username(pool, username).await?;
-    require_acts_for(pool, actor.id, principal).await?;
+    require_acts_for(pool, actor.id, viewer).await?;
     Ok(actor)
 }

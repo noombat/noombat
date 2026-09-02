@@ -51,6 +51,7 @@ async fn a_vietnamese_senior_salary_round_trips(pool: PgPool) {
     let job = create_job(
         &pool,
         actor,
+        None,
         DOMAIN,
         &posting(2_000_000_000, 2_600_000_000, "VND"),
     )
@@ -67,6 +68,7 @@ async fn an_indonesian_senior_salary_round_trips(pool: PgPool) {
     let job = create_job(
         &pool,
         actor,
+        None,
         DOMAIN,
         &posting(1_800_000_000, 3_500_000_000, "IDR"),
     )
@@ -83,9 +85,15 @@ async fn the_value_one_above_the_old_ceiling_survives(pool: PgPool) {
     // regression to INTEGER fails here even if the figures above were
     // ever revised downwards.
     let just_over = i64::from(i32::MAX) + 1;
-    let job = create_job(&pool, actor, DOMAIN, &posting(just_over, just_over, "VND"))
-        .await
-        .expect("create posting");
+    let job = create_job(
+        &pool,
+        actor,
+        None,
+        DOMAIN,
+        &posting(just_over, just_over, "VND"),
+    )
+    .await
+    .expect("create posting");
 
     assert_eq!(job.salary_min, Some(2_147_483_648));
 }

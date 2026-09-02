@@ -10,7 +10,7 @@
 use std::borrow::Cow;
 
 use noombat_core::actor::Actor;
-use noombat_core::privacy::SectionVisibility;
+use noombat_core::privacy::{ListVisibility, SectionVisibility};
 use serde_json::Value;
 use sqlx::PgPool;
 use tracing::warn;
@@ -49,7 +49,31 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
         .map(|link| VerifiedLinkRef { url: &link.url })
         .collect();
 
-    downgrade::build_federated_actor(actor, domain, &sections, &aliases, &link_refs, None)
+    // Advertised only where the owner has made the list public. The
+    // collection endpoint enforces the setting again, so this decides
+    // what a peer is told exists, not what it may read.
+    let connections = match noombat_identity::connections::list_settings(pool, actor.id).await {
+        Ok(settings) => matches!(settings.connections, ListVisibility::Public)
+            .then(|| format!("{}/connections", actor.ap_id)),
+        Err(error) => {
+            warn!(
+                actor = %actor.ap_id,
+                %error,
+                "failed to read the list settings; omitting the connections collection"
+            );
+            None
+        }
+    };
+
+    downgrade::build_federated_actor(
+        actor,
+        domain,
+        &sections,
+        &aliases,
+        &link_refs,
+        None,
+        connections.as_deref(),
+    )
 }
 
 /// Fetch all public-visibility profile sections for an actor,
@@ -67,7 +91,7 @@ async fn fetch_public_sections(
     let (experiences, educations, skills, publications, custom) = tokio::try_join!(
         noombat_identity::profile::list_work_experiences(pool, actor_id, &vis),
         noombat_identity::profile::list_education_entries(pool, actor_id, &vis),
-        noombat_identity::profile::list_skills(pool, actor_id, false),
+        noombat_identity::profile::list_skills(pool, actor_id, &vis),
         noombat_identity::profile::list_scholarly_articles(pool, actor_id, &vis),
         noombat_identity::profile::list_custom_sections(pool, actor_id, &vis),
     )?;

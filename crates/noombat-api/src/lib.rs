@@ -8,10 +8,14 @@ rust_i18n::i18n!("locales", fallback = "en-US");
 
 pub mod analytics;
 pub mod auth;
+pub mod chatmail_ops;
 pub mod cookie;
 pub mod erasure;
 pub mod error;
+pub mod housekeeping;
 pub mod i18n;
+pub mod interactions;
+pub mod jobs_federation;
 pub mod media;
 pub mod middleware;
 pub mod rate_limit;
@@ -40,8 +44,10 @@ pub fn build_router(state: AppState) -> Router {
     let router = Router::new()
         .merge(routes::federation::router())
         .merge(routes::actors::router())
+        .merge(routes::applications::router())
         .merge(routes::auth::router())
         .merge(routes::chat::router())
+        .merge(routes::connections::router())
         .merge(routes::cv::router())
         .merge(routes::feed::router())
         .merge(routes::follows::router())

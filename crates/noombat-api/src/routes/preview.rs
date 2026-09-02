@@ -22,7 +22,7 @@ use noombat_core::error::NoombatError;
 use serde::Deserialize;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 /// Largest source accepted for preview, in bytes.
@@ -57,16 +57,12 @@ pub struct PreviewRequest {
 /// Renders Markdown and returns a sanitised HTML fragment.
 async fn preview(
     State(_state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(request): Form<PreviewRequest>,
 ) -> Result<Html<String>, ApiError> {
     // A session is required. Without it this is an anonymous endpoint
     // that runs a parser on demand for anyone who asks.
-    if principal
-        .as_ref()
-        .and_then(|principal| principal.actor_id())
-        .is_none()
-    {
+    if viewer.as_ref().map(|viewer| viewer.actor_id).is_none() {
         return Err(ApiError(NoombatError::Forbidden));
     }
 

@@ -118,9 +118,15 @@ CREATE TABLE actors (
     -- default for new objects, so the only thing that reads it is the compose
     -- path.
     --
-    -- The same three values as posts.visibility, which are NOT the three the
+    -- The same four values as posts.visibility, which are NOT the four the
     -- profile-section tables use: 'unlisted' here, 'private' there.
-    default_post_visibility      TEXT NOT NULL DEFAULT 'public' CHECK (default_post_visibility IN ('public', 'unlisted', 'followers')),
+    default_post_visibility      TEXT NOT NULL DEFAULT 'public' CHECK (default_post_visibility IN ('public', 'unlisted', 'followers', 'connections')),
+    -- Who may read the connection, following and follower lists. Private by
+    -- default: the graph is the one thing a professional network holds that a
+    -- competitor most wants, and a default that leaks it cannot be recalled.
+    connections_visibility       TEXT NOT NULL DEFAULT 'private' CHECK (connections_visibility IN ('public', 'followers', 'connections', 'private')),
+    following_visibility         TEXT NOT NULL DEFAULT 'private' CHECK (following_visibility IN ('public', 'followers', 'connections', 'private')),
+    followers_visibility         TEXT NOT NULL DEFAULT 'private' CHECK (followers_visibility IN ('public', 'followers', 'connections', 'private')),
     actor_privacy                JSONB NOT NULL DEFAULT '{"discoverable":true,"indexable":true,"require_follow_approval":false,"federate_profile":true,"chatmail_visible":true,"show_followers_count":true,"cv_download":"public"}',
     deletion_requested_at        TIMESTAMPTZ, -- non-NULL = grace-period deletion pending
     -- When the tombstone was written, which starts the retention window before
@@ -343,7 +349,7 @@ CREATE TABLE work_experiences (
     description_md   TEXT,
     description_html TEXT,
     sort_order       SMALLINT NOT NULL DEFAULT 0,
-    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     ap_object        JSONB NOT NULL,
     -- A confirmation with nothing to point at is not a confirmation. This
     -- stops a route setting the timestamp on a free-text row, which would
@@ -369,7 +375,7 @@ CREATE TABLE education_entries (
     description_md   TEXT,
     description_html TEXT,
     sort_order       SMALLINT NOT NULL DEFAULT 0,
-    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility       TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     ap_object        JSONB NOT NULL
 );
 
@@ -377,7 +383,7 @@ CREATE TABLE skills (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id   UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     name       TEXT NOT NULL,
-    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     UNIQUE (actor_id, name)
 );
 
@@ -389,7 +395,7 @@ CREATE TABLE verified_links (
     url          TEXT NOT NULL,
     verified_at  TIMESTAMPTZ,
     last_checked TIMESTAMPTZ NOT NULL DEFAULT now(),
-    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     UNIQUE (actor_id, url)
 );
 
@@ -408,7 +414,7 @@ CREATE TABLE scholarly_articles (
     published_date DATE,
     doi_metadata   JSONB NOT NULL,
     fetched_at     TIMESTAMPTZ NOT NULL,
-    visibility     TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility     TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     ap_object      JSONB NOT NULL,
     UNIQUE (actor_id, doi)
 );
@@ -496,8 +502,20 @@ CREATE TABLE posts (
     sanitiser_version        SMALLINT NOT NULL DEFAULT 0, -- policy that produced content_html; 0 = not the ingestion sanitiser
     in_reply_to              TEXT,
     canonical_uri            TEXT,
-    visibility               TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers')),
+    visibility               TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'unlisted', 'followers', 'connections')),
     integrity_proof_verified BOOLEAN, -- NULL = nothing checkable; TRUE = verified. FALSE is unreachable: ingestion discards a document whose proof fails
+    -- Accepted on a relay's word alone, under the `trust-relay` policy.
+    --
+    -- A separate column from integrity_proof_verified because that one
+    -- cannot express this: a directly delivered post with no proof is
+    -- also NULL there, and it is not the same thing at all. Direct
+    -- delivery is authenticated by an HTTP Signature bound to the actor;
+    -- a relayed post under trust-relay is authenticated by the relay
+    -- saying so, and the relay is not the author.
+    --
+    -- Read by the surfaces where that difference decides something:
+    -- trending, search, and the badge on the post itself.
+    relayed_unverified       BOOLEAN NOT NULL DEFAULT FALSE,
     ap_object                JSONB NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -553,6 +571,41 @@ CREATE TABLE follows (
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (follower_id, following_id)
 );
+
+-- A mutual, accepted relationship, and the second axis of the social graph.
+-- Independent of follows on purpose: a connection is granted by an act and
+-- revoked by an act, so access it carries cannot drift with follow churn.
+--
+-- Directed columns for an undirected fact. requester_id is who invited, which
+-- has to be kept because only they may withdraw before acceptance, but the
+-- relationship itself has no direction once accepted. The unique index below
+-- is on the ordered pair (least, greatest), so A inviting B and B inviting A
+-- collide rather than producing two rows that disagree.
+--
+-- Local-only in v1: the AS2 Relationship travels, but nothing accepts one from
+-- a peer yet, so both sides are local actors.
+CREATE TABLE connections (
+    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    requester_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    addressee_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    ap_id        TEXT UNIQUE,
+    -- NULL until accepted. A row is the invitation; the timestamp is the
+    -- acceptance. Rejection and withdrawal both delete the row, because a
+    -- refused invitation that lingers is a record of who asked, which is
+    -- exactly what the addressee declined to enter into.
+    accepted_at  TIMESTAMPTZ,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    CHECK (requester_id <> addressee_id)
+);
+
+CREATE UNIQUE INDEX idx_connections_pair ON connections (
+    least(requester_id, addressee_id),
+    greatest(requester_id, addressee_id)
+);
+
+CREATE INDEX idx_connections_addressee_pending
+    ON connections (addressee_id)
+    WHERE accepted_at IS NULL;
 
 CREATE TABLE boosts (
     id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -739,7 +792,7 @@ CREATE TABLE custom_profile_sections (
     content_html TEXT,
     data         JSONB,
     sort_order   SMALLINT NOT NULL DEFAULT 0,
-    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'private')),
+    visibility   TEXT NOT NULL DEFAULT 'public' CHECK (visibility IN ('public', 'followers', 'connections', 'private')),
     ap_object    JSONB NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
@@ -832,6 +885,42 @@ CREATE INDEX idx_reports_open ON reports (created_at) WHERE status = 'open';
 
 -- Chatmail address block list (application-level, enforced by the
 -- noombat-chat proxy before relaying messages to the browser).
+-- Chatmail work this instance owes the sidecar, and could not complete.
+--
+-- Erasure is the case that matters: a maildir left behind after an
+-- account is erased is the erasure failing silently, and the sidecar is
+-- a separate process that can be down while this one is up. So the
+-- intent is written here first and drained by a worker with backoff,
+-- rather than attempted once and lost.
+--
+-- This is also the outage record. An administrator asking "is Chatmail
+-- deletion working" reads this table, which is why a failure keeps its
+-- error text rather than only a state.
+CREATE TABLE chatmail_operations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- SET NULL rather than CASCADE: the actor row is hard-deleted at the
+    -- end of the retention window, and the maildir may still be owed
+    -- deletion after it. The address below is what the work needs.
+    actor_id        UUID REFERENCES actors(id) ON DELETE SET NULL,
+    address         TEXT NOT NULL,
+    operation       TEXT NOT NULL CHECK (operation IN ('delete_account')),
+    state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'succeeded', 'failed')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    -- Kept on a failure, because "it is not working" without "why" is
+    -- not an outage record.
+    last_error      TEXT,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+    -- One outstanding operation per address and kind. A second erasure
+    -- of the same address is the same work, not more of it.
+    UNIQUE (address, operation)
+);
+
+CREATE INDEX idx_chatmail_operations_due
+    ON chatmail_operations (next_attempt_at)
+    WHERE state = 'pending';
+
 CREATE TABLE chatmail_blocks (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id    UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,

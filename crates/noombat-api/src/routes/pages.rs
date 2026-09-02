@@ -9,12 +9,14 @@
 use askama::Template;
 use askama_web::WebTemplate;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{Path, State};
+
+use crate::error::ApiError;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
 use crate::i18n::I18n;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 use crate::theme::{Contrast, Theme};
 
@@ -22,22 +24,22 @@ use crate::theme::{Contrast, Theme};
 
 /// Extract the authenticated username or redirect to login.
 #[allow(clippy::result_large_err)]
-fn require_auth(principal: &Option<axum::Extension<Principal>>) -> Result<String, Response> {
-    principal
+fn require_auth(viewer: &Option<axum::Extension<Viewer>>) -> Result<String, Response> {
+    viewer
         .as_ref()
-        .and_then(|p| p.username.clone())
+        .map(|p| p.username.clone())
         .ok_or_else(|| Redirect::temporary("/auth/login").into_response())
 }
 
-fn nav_username(principal: &Option<axum::Extension<Principal>>) -> String {
-    principal
+fn nav_username(viewer: &Option<axum::Extension<Viewer>>) -> String {
+    viewer
         .as_ref()
-        .and_then(|p| p.username.clone())
+        .map(|p| p.username.clone())
         .unwrap_or_default()
 }
 
-fn actor_uuid(principal: &Option<axum::Extension<Principal>>) -> Option<uuid::Uuid> {
-    principal.as_ref().and_then(|p| p.actor_id())
+fn actor_uuid(viewer: &Option<axum::Extension<Viewer>>) -> Option<uuid::Uuid> {
+    viewer.as_ref().map(|p| p.actor_id)
 }
 
 // ..... Privacy settings write path .....
@@ -65,15 +67,99 @@ pub struct PrivacySettingsForm {
     chatmail_visible: bool,
     #[serde(default)]
     cv_download: noombat_core::privacy::CvDownload,
-    /// Posted by the form and deliberately unused.
-    ///
-    /// `default_visibility` is not a field on `ActorPrivacy` and has
-    /// nowhere to be stored yet. Accepted so the submission does not
-    /// fail wholesale on an unknown field, and dropped rather than
-    /// silently half-applied.
+    /// Stored on `actors.default_post_visibility`, not inside
+    /// `actor_privacy`: that blob holds access-control predicates, each
+    /// with a read-enforcement site, and a default for new objects has
+    /// none. The only thing that reads it is the compose path.
     #[serde(default)]
-    #[allow(dead_code)]
     default_visibility: Option<String>,
+    /// Who may read each relationship list. Absent means unchanged
+    /// rather than private, because a form that omits a select must not
+    /// silently narrow a setting the owner never touched.
+    #[serde(default)]
+    connections_visibility: Option<String>,
+    #[serde(default)]
+    following_visibility: Option<String>,
+    #[serde(default)]
+    followers_visibility: Option<String>,
+}
+
+/// Persist the four settings that live in columns rather than in the
+/// `actor_privacy` blob: the default post visibility and the three list
+/// tiers.
+///
+/// A value the form did not send leaves its column alone. A value it did
+/// send but that no tier names is refused, rather than being folded to
+/// the narrowest one: reporting success on a setting that was not stored
+/// is how a privacy control comes to be cosmetic.
+async fn save_visibility_columns(
+    state: &AppState,
+    actor_id: uuid::Uuid,
+    form: &PrivacySettingsForm,
+) -> Result<(), Response> {
+    let bad_request =
+        |message: String| (axum::http::StatusCode::BAD_REQUEST, message).into_response();
+
+    if let Some(ref value) = form.default_visibility {
+        if !matches!(
+            value.as_str(),
+            "public" | "unlisted" | "followers" | "connections"
+        ) {
+            return Err(bad_request(format!(
+                "default post visibility must be 'public', 'unlisted', \
+                 'followers' or 'connections', not {value:?}"
+            )));
+        }
+        if let Err(e) = sqlx::query("UPDATE actors SET default_post_visibility = $2 WHERE id = $1")
+            .bind(actor_id)
+            .bind(value)
+            .execute(&state.pool)
+            .await
+        {
+            tracing::error!(%actor_id, "failed to save the default post visibility: {e}");
+            return Err((
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "could not save privacy settings",
+            )
+                .into_response());
+        }
+    }
+
+    let current = noombat_identity::connections::list_settings(&state.pool, actor_id)
+        .await
+        .unwrap_or(noombat_identity::connections::ListSettings {
+            connections: noombat_core::privacy::ListVisibility::Private,
+            following: noombat_core::privacy::ListVisibility::Private,
+            followers: noombat_core::privacy::ListVisibility::Private,
+        });
+
+    let mut settings = current;
+    for (posted, target) in [
+        (&form.connections_visibility, &mut settings.connections),
+        (&form.following_visibility, &mut settings.following),
+        (&form.followers_visibility, &mut settings.followers),
+    ] {
+        if let Some(value) = posted {
+            match crate::routes::connections::parse_list_setting(value) {
+                Ok(parsed) => *target = parsed,
+                Err(e) => return Err(bad_request(e.to_string())),
+            }
+        }
+    }
+
+    if settings != current
+        && let Err(e) =
+            noombat_identity::connections::set_list_settings(&state.pool, actor_id, settings).await
+    {
+        tracing::error!(%actor_id, "failed to save the list visibility settings: {e}");
+        return Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "could not save privacy settings",
+        )
+            .into_response());
+    }
+
+    Ok(())
 }
 
 /// Persist the profile privacy settings of the signed-in actor.
@@ -83,10 +169,10 @@ pub struct PrivacySettingsForm {
 /// authorise against and no confused-deputy shape to get wrong.
 async fn save_privacy_settings(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     axum::Form(form): axum::Form<PrivacySettingsForm>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return (
             axum::http::StatusCode::UNAUTHORIZED,
             "sign in to change privacy settings",
@@ -113,6 +199,10 @@ async fn save_privacy_settings(
             "could not save privacy settings",
         )
             .into_response();
+    }
+
+    if let Err(response) = save_visibility_columns(&state, actor_id, &form).await {
+        return response;
     }
 
     // Bring the search index into line with the setting that was just
@@ -315,7 +405,37 @@ struct EditJobPage {
     theme: Theme,
     contrast: Contrast,
     nav_username: String,
-    username: String,
+    /// Where the form posts. A new posting goes to `/settings/jobs`, an
+    /// existing one to `/settings/jobs/{id}`, and the template does not
+    /// have to know which case it is in.
+    form_action: String,
+    title: String,
+    description_md: String,
+    location: String,
+    remote: bool,
+    salary_min: String,
+    salary_max: String,
+    currency: String,
+}
+
+impl EditJobPage {
+    /// An empty form for a posting that does not exist yet.
+    fn blank(i18n: I18n, theme: Theme, contrast: Contrast, username: String) -> Self {
+        Self {
+            i18n,
+            theme,
+            contrast,
+            nav_username: username,
+            form_action: "/settings/jobs".to_owned(),
+            title: String::new(),
+            description_md: String::new(),
+            location: String::new(),
+            remote: false,
+            salary_min: String::new(),
+            salary_max: String::new(),
+            currency: String::new(),
+        }
+    }
 }
 
 #[derive(Template, WebTemplate)]
@@ -375,6 +495,13 @@ struct MuteEntry {
     target_name: String,
 }
 
+/// A blocked Chatmail sender, which is an address rather than an actor:
+/// the sender may have no account here at all.
+struct ChatmailBlockEntry {
+    address: String,
+    address_encoded: String,
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "blocked_muted.html")]
 struct BlockedMutedPage {
@@ -384,6 +511,7 @@ struct BlockedMutedPage {
     nav_username: String,
     username: String,
     blocked: Vec<BlockEntry>,
+    chatmail_blocked: Vec<ChatmailBlockEntry>,
     muted: Vec<MuteEntry>,
 }
 
@@ -410,6 +538,9 @@ struct PrivacyPage {
     chatmail_visible: bool,
     cv_download: String,
     default_visibility: String,
+    connections_visibility: String,
+    following_visibility: String,
+    followers_visibility: String,
     section_rows: Vec<SectionVisibilityRow>,
 }
 
@@ -450,6 +581,11 @@ pub fn router() -> Router<AppState> {
         .route("/settings/publications", get(edit_scholarly_article_page))
         .route("/settings/links", get(edit_links_page))
         .route("/settings/jobs/new", get(edit_job_page))
+        .route("/settings/jobs", post(create_job_from_form))
+        .route(
+            "/settings/jobs/{id}",
+            get(edit_existing_job_page).post(update_job_from_form),
+        )
         .route(
             "/settings/privacy",
             get(privacy_page).post(save_privacy_settings),
@@ -507,13 +643,13 @@ async fn totp_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> impl IntoResponse {
     let mut totp_enabled = false;
     let mut qr_data_uri = None;
     let mut secret_base32 = String::new();
 
-    if let Some(actor_id) = actor_uuid(&principal) {
+    if let Some(actor_id) = actor_uuid(&viewer) {
         totp_enabled = sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS(SELECT 1 FROM totp_secrets WHERE actor_id = $1 AND verified = TRUE)",
         )
@@ -523,7 +659,7 @@ async fn totp_page(
         .unwrap_or(false);
 
         if !totp_enabled {
-            let uname = nav_username(&principal);
+            let uname = nav_username(&viewer);
             if let Ok(enrolment) =
                 noombat_identity::totp::enrol_totp(&state.pool, actor_id, &uname, &state.domain)
                     .await
@@ -539,7 +675,7 @@ async fn totp_page(
         i18n,
         theme,
         contrast,
-        nav_username: nav_username(&principal),
+        nav_username: nav_username(&viewer),
         totp_enabled,
         qr_data_uri,
         secret_base32,
@@ -551,9 +687,9 @@ async fn chat_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
     let (chatmail_addr, chat_suspended): (Option<String>, bool) =
@@ -572,7 +708,7 @@ async fn chat_page(
         "{}/api/v1/chat/ws",
         crate::middleware::websocket_origin(&state.domain, state.public_port)
     );
-    let username = nav_username(&principal);
+    let username = nav_username(&viewer);
     ChatPage {
         i18n,
         theme,
@@ -591,9 +727,9 @@ async fn upgrade_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    match require_auth(&principal) {
+    match require_auth(&viewer) {
         Ok(uname) => UpgradePage {
             i18n,
             theme,
@@ -610,9 +746,9 @@ async fn chat_credentials_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
     let chatmail_addr =
@@ -635,7 +771,7 @@ async fn chat_credentials_page(
     .fetch_one(&state.pool)
     .await
     .unwrap_or(false);
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
     ChatCredentialsPage {
         i18n,
         theme,
@@ -723,9 +859,9 @@ async fn settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    match require_auth(&principal) {
+    match require_auth(&viewer) {
         Ok(uname) => SettingsPage {
             i18n,
             theme,
@@ -742,12 +878,12 @@ async fn edit_profile_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
     let row = sqlx::query_as::<
         _,
         (
@@ -784,9 +920,9 @@ async fn edit_work_experience_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let uname = match require_auth(&principal) {
+    let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -811,9 +947,9 @@ async fn edit_education_entry_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let uname = match require_auth(&principal) {
+    let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -838,12 +974,12 @@ async fn edit_skills_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
     let rows = sqlx::query_as::<_, (uuid::Uuid, String)>(
         "SELECT id, name FROM skills WHERE actor_id = $1 ORDER BY name",
     )
@@ -874,9 +1010,9 @@ async fn edit_scholarly_article_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let uname = match require_auth(&principal) {
+    let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -895,12 +1031,12 @@ async fn edit_links_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
     let rows = sqlx::query_as::<_, (uuid::Uuid, String, Option<chrono::DateTime<chrono::Utc>>)>(
         "SELECT id, url, verified_at FROM verified_links WHERE actor_id = $1 ORDER BY url",
     )
@@ -933,20 +1069,205 @@ async fn edit_job_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let uname = match require_auth(&principal) {
+    let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
+    EditJobPage::blank(i18n, theme, contrast, uname).into_response()
+}
+
+// ..... The job write path .....
+
+/// Body of `POST /settings/jobs` and `POST /settings/jobs/{id}`.
+///
+/// Form-encoded, because that is what the page posts. The JSON route on
+/// `/users/{username}/jobs` takes the same fields as JSON, and the form
+/// used to post at it: an HTML form cannot send `application/json`, so
+/// every submission was rejected on content type before authorisation
+/// was even reached.
+#[derive(Debug, serde::Deserialize)]
+pub struct JobPostingForm {
+    title: String,
+    description_md: String,
+    #[serde(default)]
+    location: String,
+    /// An unchecked checkbox submits nothing at all, so this must
+    /// default rather than fail to deserialise.
+    #[serde(default)]
+    remote: bool,
+    #[serde(default)]
+    salary_min: String,
+    #[serde(default)]
+    salary_max: String,
+    #[serde(default)]
+    currency: String,
+    /// One requirement per line, which is what a textarea gives.
+    #[serde(default)]
+    requirements: String,
+}
+
+impl JobPostingForm {
+    /// An empty text field is absent, not an empty value.
+    fn optional(value: &str) -> Option<String> {
+        let trimmed = value.trim();
+        (!trimmed.is_empty()).then(|| trimmed.to_owned())
+    }
+
+    /// A blank or unparsable salary is absent rather than zero. Zero is
+    /// a salary somebody could mean.
+    fn salary(value: &str) -> Option<i64> {
+        value.trim().parse().ok()
+    }
+
+    fn requirement_list(&self) -> Option<Vec<String>> {
+        let items: Vec<String> = self
+            .requirements
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(str::to_owned)
+            .collect();
+        (!items.is_empty()).then_some(items)
+    }
+}
+
+/// `POST /settings/jobs`
+async fn create_job_from_form(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    axum::Form(form): axum::Form<JobPostingForm>,
+) -> Response {
+    let Some(actor_id) = viewer.as_ref().map(|v| v.actor_id) else {
+        return Redirect::temporary("/auth/login").into_response();
+    };
+
+    let actor = match noombat_identity::repo::find_by_id(&state.pool, actor_id).await {
+        Ok(a) => a,
+        Err(e) => return ApiError(e).into_response(),
+    };
+
+    // The same gate the JSON route applies, and it has to be applied
+    // here too rather than trusted from there: two write paths that
+    // disagree about the gate are one write path that has none.
+    if actor.actor_type == noombat_core::actor::ActorType::Organization
+        && !noombat_identity::verification::controls_claimed_domain(&state.pool, actor.id)
+            .await
+            .unwrap_or(false)
+    {
+        return (
+            axum::http::StatusCode::FORBIDDEN,
+            "this organisation has not yet proved it controls the domain it claims",
+        )
+            .into_response();
+    }
+
+    let params = noombat_jobs::NewJobPosting {
+        title: form.title.clone(),
+        description_md: form.description_md.clone(),
+        location: JobPostingForm::optional(&form.location),
+        remote: Some(form.remote),
+        salary_min: JobPostingForm::salary(&form.salary_min),
+        salary_max: JobPostingForm::salary(&form.salary_max),
+        currency: JobPostingForm::optional(&form.currency),
+        requirements: form.requirement_list(),
+        expires_at: None,
+        publish: true,
+    };
+
+    match noombat_jobs::create_job(
+        &state.pool,
+        actor.id,
+        Some(actor_id),
+        &state.domain,
+        &params,
+    )
+    .await
+    {
+        Ok(job) => {
+            crate::search_sync::index_job(&state.search, &job);
+            crate::jobs_federation::announce_published(&state.pool, &state.domain, &actor, &job)
+                .await;
+            Redirect::to(&format!("/jobs/{}", job.id)).into_response()
+        }
+        Err(e) => ApiError(e).into_response(),
+    }
+}
+
+/// `GET /settings/jobs/{id}`: the same form, filled in.
+async fn edit_existing_job_page(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    i18n: I18n,
+    theme: Theme,
+    contrast: Contrast,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Response {
+    let uname = match require_auth(&viewer) {
+        Ok(u) => u,
+        Err(r) => return r,
+    };
+
+    let job = match noombat_jobs::get_job(&state.pool, id).await {
+        Ok(j) => j,
+        Err(e) => return ApiError(e).into_response(),
+    };
+    if let Err(e) = crate::auth::require_acts_for(&state.pool, job.actor_id, &viewer).await {
+        return e.into_response();
+    }
+
     EditJobPage {
         i18n,
         theme,
         contrast,
-        nav_username: uname.clone(),
-        username: uname,
+        nav_username: uname,
+        form_action: format!("/settings/jobs/{id}"),
+        title: job.title,
+        description_md: job.description_md,
+        location: job.location.unwrap_or_default(),
+        remote: job.remote,
+        salary_min: job.salary_min.map(|v| v.to_string()).unwrap_or_default(),
+        salary_max: job.salary_max.map(|v| v.to_string()).unwrap_or_default(),
+        currency: job.currency.unwrap_or_default(),
     }
     .into_response()
+}
+
+/// `POST /settings/jobs/{id}`
+async fn update_job_from_form(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+    axum::Form(form): axum::Form<JobPostingForm>,
+) -> Response {
+    let job = match noombat_jobs::get_job(&state.pool, id).await {
+        Ok(j) => j,
+        Err(e) => return ApiError(e).into_response(),
+    };
+    if let Err(e) = crate::auth::require_acts_for(&state.pool, job.actor_id, &viewer).await {
+        return e.into_response();
+    }
+
+    let params = noombat_jobs::UpdateJobPosting {
+        title: Some(form.title.clone()),
+        description_md: Some(form.description_md.clone()),
+        location: JobPostingForm::optional(&form.location),
+        remote: Some(form.remote),
+        salary_min: JobPostingForm::salary(&form.salary_min),
+        salary_max: JobPostingForm::salary(&form.salary_max),
+        currency: JobPostingForm::optional(&form.currency),
+        requirements: form.requirement_list(),
+        expires_at: None,
+    };
+
+    match noombat_jobs::update_job(&state.pool, job.actor_id, id, &params).await {
+        Ok(updated) => {
+            crate::search_sync::index_job(&state.search, &updated);
+            Redirect::to(&format!("/jobs/{id}")).into_response()
+        }
+        Err(e) => ApiError(e).into_response(),
+    }
 }
 
 async fn compose_page(
@@ -954,9 +1275,9 @@ async fn compose_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let uname = match require_auth(&principal) {
+    let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
@@ -975,18 +1296,42 @@ async fn privacy_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
     let privacy: serde_json::Value =
         sqlx::query_scalar("SELECT actor_privacy FROM actors WHERE id = $1")
             .bind(actor_id)
             .fetch_one(&state.pool)
             .await
             .unwrap_or_default();
+
+    // The four columns the form's selects reflect. Read rather than
+    // assumed: a select that always renders its first option reports
+    // "public" to an owner who chose otherwise.
+    let (default_visibility, list_settings_str) =
+        sqlx::query_as::<_, (String, String, String, String)>(
+            "SELECT default_post_visibility, connections_visibility, \
+                following_visibility, followers_visibility \
+         FROM actors WHERE id = $1",
+        )
+        .bind(actor_id)
+        .fetch_one(&state.pool)
+        .await
+        .map(|row| (row.0, (row.1, row.2, row.3)))
+        .unwrap_or_else(|_| {
+            (
+                "public".to_owned(),
+                (
+                    "private".to_owned(),
+                    "private".to_owned(),
+                    "private".to_owned(),
+                ),
+            )
+        });
 
     // Gather section visibility rows from each profile section table.
     let mut section_rows = Vec::new();
@@ -1086,7 +1431,10 @@ async fn privacy_page(
             .as_str()
             .unwrap_or("public")
             .to_owned(),
-        default_visibility: "public".into(),
+        default_visibility,
+        connections_visibility: list_settings_str.0,
+        following_visibility: list_settings_str.1,
+        followers_visibility: list_settings_str.2,
         section_rows,
     }
     .into_response()
@@ -1102,10 +1450,10 @@ struct PreviewQuery {
 async fn privacy_preview_partial(
     State(state): State<AppState>,
     _i18n: I18n,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     axum::extract::Query(params): axum::extract::Query<PreviewQuery>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
     let perspective = params.perspective.unwrap_or_else(|| "public".into());
@@ -1202,12 +1550,12 @@ async fn account_settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let deletion_requested: Option<chrono::DateTime<chrono::Utc>> =
         sqlx::query_scalar("SELECT deletion_requested_at FROM actors WHERE id = $1")
@@ -1231,12 +1579,12 @@ async fn blocked_muted_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let block_rows = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
         "SELECT id, target_id FROM blocks WHERE actor_id = $1",
@@ -1286,6 +1634,24 @@ async fn blocked_muted_page(
         });
     }
 
+    // Chatmail senders. A user could block one and had no way to undo
+    // it: `unblock_sender` existed with no caller and no surface, and
+    // nothing listed `chatmail_blocks` at all, so the block was
+    // invisible as well as permanent.
+    let chatmail_blocked = sqlx::query_scalar::<_, String>(
+        "SELECT blocked_addr FROM chatmail_blocks WHERE actor_id = $1 ORDER BY blocked_addr",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|address| ChatmailBlockEntry {
+        address_encoded: urlencoding::encode(&address).into_owned(),
+        address,
+    })
+    .collect();
+
     BlockedMutedPage {
         i18n,
         theme,
@@ -1294,6 +1660,7 @@ async fn blocked_muted_page(
         username: uname,
         blocked,
         muted,
+        chatmail_blocked,
     }
     .into_response()
 }
@@ -1303,12 +1670,12 @@ async fn follow_requests_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let rows = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
         "SELECT id, follower_id FROM follows WHERE following_id = $1 AND accepted = FALSE ORDER BY created_at DESC"
@@ -1348,12 +1715,12 @@ async fn migrate_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let rows = sqlx::query_as::<_, (uuid::Uuid, String)>(
         "SELECT id, alias FROM actor_aliases WHERE actor_id = $1 ORDER BY alias",

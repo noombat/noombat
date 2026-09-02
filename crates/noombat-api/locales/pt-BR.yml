@@ -21,6 +21,7 @@ feed_loading_more: "Carregando mais..."
 feed_permalink: "Link permanente"
 
 # Publicação.
+post_unverified_notice: "Esta publicação chegou a este servidor por um relay, e nada além do relay a liga à conta que ela nomeia."
 post_title_pattern: "Publicação de %{name}"
 
 # Perfil.
@@ -32,6 +33,7 @@ profile_publications: "Publicações"
 profile_links: "Links"
 profile_present: "presente"
 profile_verified: "Verificado"
+profile_employer_confirmed: "Confirmado pelo empregador"
 
 # Rótulos ARIA.
 aria_nav_main: "Principal"
@@ -136,6 +138,7 @@ vis_public: "Público"
 vis_followers: "Somente seguidores"
 vis_private: "Privado"
 vis_unlisted: "Não listado"
+vis_connections: "Somente conexões"
 
 # Experiência.
 edit_work_experience_title: "Adicionar experiência"
@@ -180,6 +183,7 @@ job_salary_min: "Salário mínimo"
 job_salary_max: "Salário máximo"
 job_currency: "Moeda"
 job_publish: "Publicar"
+job_federation_note: "A vaga permanece nesta instância. O que chega a outros servidores é uma publicação comum, da sua organização, com link de volta para cá."
 
 # Busca.
 search_title: "Buscar"
@@ -205,6 +209,8 @@ blocked_muted_heading: "Contas bloqueadas e silenciadas"
 blocked_heading: "Bloqueados"
 blocked_empty: "Nenhuma conta bloqueada."
 blocked_unblock: "Desbloquear"
+chatmail_blocked_heading: "Remetentes de chat bloqueados"
+chatmail_blocked_empty: "Nenhum remetente de chat bloqueado."
 muted_heading: "Silenciados"
 muted_empty: "Nenhuma conta silenciada."
 muted_unmute: "Deixar de silenciar"
@@ -339,6 +345,16 @@ admin_federation_queue_depth: "Profundidade da fila de entrega"
 admin_federation_tombstoned: "Atores desativados"
 admin_federation_failing_domains: "Domínios com falhas"
 admin_federation_failing_heading: "Domínios com falhas de entrega"
+admin_federation_relayed_unverified: "Publicações aceitas apenas pela palavra do relay"
+admin_federation_relayed_unverified_note: "Excluídas das tendências. Chegaram sob a política trust-relay, então nada além do relay as liga à conta que nomeiam."
+admin_chatmail_heading: "Exclusões de chat pendentes"
+admin_chatmail_clear: "Todas as exclusões do Chatmail foram concluídas."
+admin_chatmail_col_address: "Endereço"
+admin_chatmail_col_state: "Estado"
+admin_chatmail_col_attempts: "Tentativas"
+admin_chatmail_col_error: "Último erro"
+admin_chatmail_state_pending: "Repetindo"
+admin_chatmail_state_failed: "Desistiu"
 admin_federation_col_domain: "Domínio"
 admin_federation_col_failed: "Entregas com falha"
 
@@ -353,6 +369,10 @@ account_delete_pending: "A exclusão da conta está pendente."
 
 # Aprimoramentos de privacidade.
 privacy_section_visibility: "Visibilidade das seções"
+privacy_list_visibility: "Quem pode ver suas listas"
+privacy_list_connections: "Lista de conexões"
+privacy_list_following: "Lista de seguidos"
+privacy_list_followers: "Lista de seguidores"
 privacy_no_sections: "Nenhuma seção de perfil para configurar."
 privacy_preview: "Visualização do perfil"
 privacy_preview_as_public: "Como visitante público"

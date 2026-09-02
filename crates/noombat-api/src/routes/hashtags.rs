@@ -12,7 +12,7 @@ use noombat_identity::hashtags;
 
 use crate::auth::require_local_actor;
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -44,10 +44,10 @@ async fn list_followed(
 async fn follow(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<FollowRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     let tag = hashtags::follow_hashtag(&state.pool, actor.id, &body.name).await?;
     Ok((StatusCode::OK, Json(tag)))
@@ -60,9 +60,9 @@ async fn follow(
 async fn unfollow(
     State(state): State<AppState>,
     Path((username, tag)): Path<(String, String)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     hashtags::unfollow_hashtag(&state.pool, actor.id, &tag).await?;
     Ok(StatusCode::NO_CONTENT)

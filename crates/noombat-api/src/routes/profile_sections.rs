@@ -12,7 +12,7 @@ use noombat_core::privacy::SectionVisibility;
 
 use crate::auth::require_local_actor;
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -91,10 +91,10 @@ async fn list_work_experiences(
 async fn create_work_experience(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_identity::profile::NewWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let exp =
         noombat_identity::profile::create_work_experience(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
@@ -105,9 +105,9 @@ async fn create_work_experience(
 async fn delete_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::profile::delete_work_experience(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -117,10 +117,10 @@ async fn delete_work_experience(
 async fn update_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_identity::profile::UpdateWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let exp = noombat_identity::profile::update_work_experience(&state.pool, actor.id, id, &params)
         .await?;
     reindex_profile(&state, &actor).await;
@@ -147,10 +147,10 @@ async fn list_education_entries(
 async fn create_education_entry(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_identity::profile::NewEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let edu =
         noombat_identity::profile::create_education_entry(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
@@ -161,9 +161,9 @@ async fn create_education_entry(
 async fn delete_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::profile::delete_education_entry(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -173,10 +173,10 @@ async fn delete_education_entry(
 async fn update_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_identity::profile::UpdateEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let edu = noombat_identity::profile::update_education_entry(&state.pool, actor.id, id, &params)
         .await?;
     reindex_profile(&state, &actor).await;
@@ -191,7 +191,12 @@ async fn list_skills(
     Path(username): Path<String>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
-    let items = noombat_identity::profile::list_skills(&state.pool, actor.id, false).await?;
+    let items = noombat_identity::profile::list_skills(
+        &state.pool,
+        actor.id,
+        &noombat_core::privacy::SectionVisibility::Public,
+    )
+    .await?;
     Ok((StatusCode::OK, Json(items)))
 }
 
@@ -204,10 +209,10 @@ struct AddSkillBody {
 async fn add_skill(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<AddSkillBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let skill = noombat_identity::profile::add_skill(
         &state.pool,
         actor.id,
@@ -226,9 +231,9 @@ async fn add_skill(
 async fn delete_skill(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::profile::delete_skill(&state.pool, actor.id, id).await?;
 
     // Re-index profile in Meilisearch (fire-and-forget).
@@ -275,10 +280,10 @@ struct CreateScholarlyArticleRequest {
 async fn create_scholarly_article(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<CreateScholarlyArticleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // When the caller supplies only a bare DOI, resolve the metadata
     // server-side so that clients need not call the DOI endpoint first.
@@ -325,9 +330,9 @@ async fn create_scholarly_article(
 async fn delete_scholarly_article(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::profile::delete_scholarly_article(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -353,10 +358,10 @@ struct AddLinkBody {
 async fn add_verified_link(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<AddLinkBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let link = noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
 
     // Trigger immediate verification (non-blocking). If verification
@@ -387,9 +392,9 @@ async fn add_verified_link(
 async fn delete_verified_link(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::verification::delete_link(&state.pool, actor.id, id).await?;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
@@ -414,10 +419,10 @@ async fn list_custom_sections(
 async fn create_custom_section(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_identity::profile::NewCustomSection>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let section =
         noombat_identity::profile::create_custom_section(&state.pool, actor.id, &params).await?;
     enqueue_profile_update(&state, &actor).await;
@@ -427,9 +432,9 @@ async fn create_custom_section(
 async fn delete_custom_section(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     noombat_identity::profile::delete_custom_section(&state.pool, actor.id, id).await?;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
@@ -491,12 +496,12 @@ struct VisibilityUpdate {
 async fn update_section_visibility(
     State(state): State<AppState>,
     Path(section_id): Path<uuid::Uuid>,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
     axum::Form(body): axum::Form<VisibilityUpdate>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = principal
+    let actor_id = viewer
         .as_ref()
-        .and_then(|p| p.actor_id())
+        .map(|p| p.actor_id)
         .ok_or(ApiError(noombat_core::error::NoombatError::Forbidden))?;
 
     let valid = ["public", "followers", "private"];

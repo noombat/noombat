@@ -21,6 +21,7 @@ feed_loading_more: "Loading more..."
 feed_permalink: "Permalink"
 
 # Post.
+post_unverified_notice: "This post reached this server through a relay, and nothing but the relay connects it to the account it names."
 post_title_pattern: "Post by %{name}"
 
 # Profile.
@@ -32,6 +33,7 @@ profile_publications: "ScholarlyArticles"
 profile_links: "Links"
 profile_present: "present"
 profile_verified: "Verified"
+profile_employer_confirmed: "Employer confirmed"
 
 # ARIA labels.
 aria_nav_main: "Main"
@@ -136,6 +138,7 @@ vis_public: "Public"
 vis_followers: "Followers only"
 vis_private: "Private"
 vis_unlisted: "Unlisted"
+vis_connections: "Connections only"
 
 # WorkExperience.
 edit_work_experience_title: "Add experience"
@@ -180,6 +183,7 @@ job_salary_min: "Salary min"
 job_salary_max: "Salary max"
 job_currency: "Currency"
 job_publish: "Publish"
+job_federation_note: "The listing stays on this instance. What reaches other servers is an ordinary post, from your organisation, linking back here."
 
 # Search.
 search_title: "Search"
@@ -205,6 +209,8 @@ blocked_muted_heading: "Blocked and muted accounts"
 blocked_heading: "Blocked"
 blocked_empty: "No blocked accounts."
 blocked_unblock: "Unblock"
+chatmail_blocked_heading: "Blocked chat senders"
+chatmail_blocked_empty: "No blocked chat senders."
 muted_heading: "Muted"
 muted_empty: "No muted accounts."
 muted_unmute: "Unmute"
@@ -339,6 +345,16 @@ admin_federation_queue_depth: "Delivery queue depth"
 admin_federation_tombstoned: "Tombstoned actors"
 admin_federation_failing_domains: "Failing domains"
 admin_federation_failing_heading: "Domains with delivery failures"
+admin_federation_relayed_unverified: "Posts admitted on a relay's word"
+admin_federation_relayed_unverified_note: "Held out of trending. They arrived under the trust-relay policy, so nothing but the relay connects them to the account they name."
+admin_chatmail_heading: "Chat deletions owed"
+admin_chatmail_clear: "Every Chatmail deletion has completed."
+admin_chatmail_col_address: "Address"
+admin_chatmail_col_state: "State"
+admin_chatmail_col_attempts: "Attempts"
+admin_chatmail_col_error: "Last error"
+admin_chatmail_state_pending: "Retrying"
+admin_chatmail_state_failed: "Given up"
 admin_federation_col_domain: "Domain"
 admin_federation_col_failed: "Failed deliveries"
 
@@ -353,6 +369,10 @@ account_delete_pending: "Account deletion is pending."
 
 # Privacy settings enhancements.
 privacy_section_visibility: "Section visibility"
+privacy_list_visibility: "Who may see your lists"
+privacy_list_connections: "Connections list"
+privacy_list_following: "Following list"
+privacy_list_followers: "Followers list"
 privacy_no_sections: "No profile sections to configure."
 privacy_preview: "Profile preview"
 privacy_preview_as_public: "As public viewer"

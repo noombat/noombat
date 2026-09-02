@@ -20,14 +20,14 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Form, Json, Router};
-use noombat_core::actor::{ActorStatus, InstanceRole};
+use noombat_core::actor::ActorStatus;
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::{info, warn};
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -53,17 +53,14 @@ pub fn router() -> Router<AppState> {
 
 // ..... HELPERS .....
 
-/// Verify that the authenticated principal holds the moderator or
-/// admin role. Returns the principal on success.
-fn require_moderator(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    match principal.instance_role {
-        Some(InstanceRole::Moderator | InstanceRole::Admin) => Ok(principal),
-        _ => Err(ApiError(NoombatError::Forbidden)),
+/// Verify that the authenticated viewer holds the moderator or
+/// admin role. Returns the viewer on success.
+fn require_moderator(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    if viewer.may_moderate() {
+        Ok(viewer)
+    } else {
+        Err(ApiError(NoombatError::Forbidden))
     }
 }
 
@@ -153,10 +150,10 @@ async fn execute_suspension(state: &AppState, actor_id: Uuid) -> Result<(), ApiE
 async fn suspend_actor(
     State(state): State<AppState>,
     Path(actor_id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<SuspendRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator(&principal)?;
+    let moderator = require_moderator(&viewer)?;
 
     execute_suspension(&state, actor_id).await?;
 
@@ -186,9 +183,9 @@ async fn suspend_actor(
 async fn unsuspend_actor(
     State(state): State<AppState>,
     Path(actor_id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator(&principal)?;
+    let moderator = require_moderator(&viewer)?;
 
     // Step 1: set actor_status to active.
     let actor =
@@ -226,7 +223,7 @@ async fn unsuspend_actor(
     // Re-index if the actor is discoverable. Re-fetch the actor to
     // capture the updated chat_requires_reprovisioning flag and
     // actor_status.
-    if actor.actor_privacy.discoverable
+    if actor.is_discoverable()
         && let Some(ref search) = state.search
         && let Ok(fresh_actor) = noombat_identity::repo::find_by_id(&state.pool, actor_id).await
     {
@@ -286,11 +283,11 @@ pub struct ResolveReportRequest {
 async fn resolve_chat_report(
     State(state): State<AppState>,
     Path(report_id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<ResolveReportRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator(&principal)?;
-    let moderator_id = moderator.actor_id();
+    let moderator = require_moderator(&viewer)?;
+    let moderator_id = moderator.actor_id;
 
     // Fetch the report.
     // `target_chat_addr IS NOT NULL` is what makes this the chat case, now
@@ -423,9 +420,9 @@ pub struct ChatReportEntry {
 /// `GET /api/v1/admin/chat-reports`: list open chat reports.
 async fn list_chat_reports(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_moderator(&principal)?;
+    require_moderator(&viewer)?;
 
     // A filtered view of the one report table, not a table of its own. The
     // aliases keep the response shape the moderation queue already consumes.
@@ -462,9 +459,9 @@ pub struct ReportEntry {
 /// `GET /api/v1/admin/reports`: list open ActivityPub reports.
 async fn list_reports(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_moderator(&principal)?;
+    require_moderator(&viewer)?;
 
     let reports: Vec<ReportEntry> = sqlx::query_as(
         r#"SELECT id, reporter_id, target_actor_id, target_post_id,
@@ -506,15 +503,11 @@ pub struct CreateReportRequest {
 /// `application/json`.
 async fn create_report(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(body): Form<CreateReportRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let reporter = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let reporter_id = reporter
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let reporter = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    let reporter_id = reporter.actor_id;
 
     if body.target_actor_id.is_none() && body.target_post_id.is_none() {
         return Err(ApiError(NoombatError::BadRequest(
@@ -576,8 +569,20 @@ async fn create_report(
     ))
 }
 
-/// Forward a report to the target actor's origin instance as a `Flag`
-/// activity, following the Mastodon convention.
+/// Forward a report to the target actor's origin instance as a `Flag`.
+///
+/// Delegates to `noombat_federation::flag::forward_report`, which was
+/// written, tested and called by nothing while this route carried its
+/// own copy. The two differed in the way that matters: the copy signed
+/// the `Flag` as the **reporter**, so forwarding a report disclosed who
+/// made it to the instance being complained about. The helper signs as
+/// the instance actor, which is the posture server-to-server fetches
+/// already take.
+///
+/// Forwarding stays opt-in per report. A complaint needs a route to
+/// the host of the content; that host does not need to be told who
+/// complained, and a reporter who did not ask for it must not have
+/// their handle sent abroad.
 async fn forward_flag(
     state: &AppState,
     reporter_id: Uuid,
@@ -585,46 +590,48 @@ async fn forward_flag(
     reason: &str,
     comment: Option<&str>,
 ) -> Result<(), ApiError> {
-    let reporter = noombat_identity::repo::find_by_id(&state.pool, reporter_id).await?;
     let target = noombat_identity::repo::find_by_id(&state.pool, target_actor_id).await?;
 
-    // Only forward to remote actors.
+    // Only forward to remote actors. A local target's origin is here.
     if target.is_local {
         return Ok(());
     }
 
-    let flag_id = format!(
-        "{}#flag-{}",
-        reporter.ap_id,
-        chrono::Utc::now().timestamp_millis()
-    );
+    let instance_actor_id =
+        noombat_federation::signed_fetch::find_local_signing_actor(&state.pool).await?;
+    let instance_actor = noombat_identity::repo::find_by_id(&state.pool, instance_actor_id).await?;
 
-    let mut flag_activity = serde_json::json!({
-        "@context": noombat_ap::context::default_context(),
-        "id": flag_id,
-        "type": "Flag",
-        "actor": reporter.ap_id,
-        "object": [target.ap_id],
-    });
+    // Every reported post by that actor travels with the Flag, so the
+    // receiving moderator sees what the complaint is about rather than
+    // only who it is about.
+    let reported_posts: Vec<String> = sqlx::query_scalar(
+        "SELECT p.ap_id FROM reports r \
+         JOIN posts p ON p.id = r.target_post_id \
+         WHERE r.reporter_id = $1 AND r.target_actor_id = $2 AND r.status = 'open'",
+    )
+    .bind(reporter_id)
+    .bind(target_actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
 
-    // Include the reason and comment in the content field.
-    let content = match comment {
-        Some(c) => format!("{reason}: {c}"),
-        None => reason.to_string(),
-    };
-    flag_activity["content"] = serde_json::Value::String(content);
+    noombat_federation::flag::forward_report(
+        &state.pool,
+        instance_actor_id,
+        &instance_actor.ap_id,
+        &target.ap_id,
+        &reported_posts,
+        reason,
+        comment,
+    )
+    .await?;
 
-    let target_inbox = target
-        .inbox_url
-        .clone()
-        .unwrap_or_else(|| format!("{}/inbox", target.ap_id));
-
-    noombat_federation::delivery::enqueue(&state.pool, reporter_id, &flag_activity, &target_inbox)
-        .await?;
-
-    // Mark the report as forwarded.
+    // Marked here rather than in the helper: what was forwarded is this
+    // instance's record, and the helper builds an activity without
+    // knowing which rows produced it.
     sqlx::query(
-        "UPDATE reports SET forwarded = TRUE WHERE reporter_id = $1 AND target_actor_id = $2 AND status = 'open'",
+        "UPDATE reports SET forwarded = TRUE \
+         WHERE reporter_id = $1 AND target_actor_id = $2 AND status = 'open'",
     )
     .bind(reporter_id)
     .bind(target_actor_id)
@@ -632,11 +639,10 @@ async fn forward_flag(
     .await
     .map_err(NoombatError::from)?;
 
-    info!(
-        reporter = %reporter.ap_id,
-        target = %target.ap_id,
-        "Flag activity forwarded to remote instance"
-    );
+    // No reporter in the log line: the point of signing as the instance
+    // is that the reporter's identity does not travel, and a log pairing
+    // them re-creates the link locally.
+    info!(target = %target.ap_id, "report forwarded to the origin instance");
 
     Ok(())
 }
@@ -665,11 +671,11 @@ pub struct ResolveApReportRequest {
 async fn resolve_report(
     State(state): State<AppState>,
     Path(report_id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(body): Form<ResolveApReportRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator(&principal)?;
-    let moderator_id = moderator.actor_id();
+    let moderator = require_moderator(&viewer)?;
+    let moderator_id = moderator.actor_id;
 
     // Fetch the report.
     let (target_actor_id, target_post_id, status): (Option<Uuid>, Option<Uuid>, String) =
@@ -780,11 +786,11 @@ pub struct JobApplicationReview {
 /// through its states. That stays with the organisation.
 async fn review_job_application(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path(id): Path<Uuid>,
     Json(body): Json<ReviewJobApplicationRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator(&principal)?;
+    let moderator = require_moderator(&viewer)?;
 
     let reason = body.reason.trim();
     if reason.is_empty() {
@@ -794,11 +800,9 @@ async fn review_job_application(
     }
 
     // The moderator's own actor, so the log names a person rather than a
-    // role. A principal carrying no actor id is refused: an
+    // role. A viewer carrying no actor id is refused: an
     // unattributable read is what this route exists to prevent.
-    let reader_id = moderator
-        .actor_uuid
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let reader_id = moderator.actor_id;
 
     let mut tx = state.pool.begin().await.map_err(NoombatError::from)?;
 

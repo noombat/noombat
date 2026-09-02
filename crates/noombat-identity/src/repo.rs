@@ -965,6 +965,13 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
                ed25519_private_key = NULL,
                orcid = NULL,
                actor_status = 'suspended',
+               -- The purge clock. A second, separate timestamp from
+               -- deletion_requested_at: that one measures the grace
+               -- period before erasure, this one the retention window
+               -- before the row itself goes. Set here rather than
+               -- inferred from actor_status, which erasure and
+               -- suspension would otherwise share.
+               erased_at = COALESCE(erased_at, now()),
                actor_privacy = '{"discoverable":false,"indexable":false,"require_follow_approval":true,"federate_profile":false,"chatmail_visible":false,"show_followers_count":false,"cv_download":"self"}'
            WHERE id = $1"#,
     )
@@ -1135,7 +1142,7 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
 /// existed (ensuring that federation requests continue to receive
 /// `410 Gone`).
 pub async fn purge_tombstoned_actor(pool: &PgPool, actor_id: Uuid) -> Result<()> {
-    let result = sqlx::query("DELETE FROM actors WHERE id = $1 AND actor_status = 'suspended'")
+    let result = sqlx::query("DELETE FROM actors WHERE id = $1 AND erased_at IS NOT NULL")
         .bind(actor_id)
         .execute(pool)
         .await?;
@@ -1148,6 +1155,27 @@ pub async fn purge_tombstoned_actor(pool: &PgPool, actor_id: Uuid) -> Result<()>
     }
 
     Ok(())
+}
+
+/// When an `ap_id` was tombstoned, if it was.
+///
+/// The timestamp is what an AS2 `Tombstone` carries as `deleted`, which
+/// is the only thing that distinguishes "this identity was withdrawn"
+/// from "this identity never existed" for a peer holding a cached copy.
+/// Before this had a reader the column was filled by its default and
+/// never looked at, and the 410 path did not exist at all.
+pub async fn tombstoned_at(
+    pool: &PgPool,
+    ap_id: &str,
+) -> Result<Option<chrono::DateTime<chrono::Utc>>> {
+    let at = sqlx::query_scalar::<_, chrono::DateTime<chrono::Utc>>(
+        "SELECT tombstoned_at FROM tombstoned_actors WHERE ap_id = $1",
+    )
+    .bind(ap_id)
+    .fetch_optional(pool)
+    .await?;
+
+    Ok(at)
 }
 
 // ..... SOCIAL GRAPH COUNTS AND LISTS .....

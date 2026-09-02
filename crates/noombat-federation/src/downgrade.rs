@@ -17,6 +17,7 @@ use std::borrow::Cow;
 use noombat_ap::context::{Extension, context_with};
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
+use noombat_core::authorisation::Relationship;
 use noombat_core::privacy::SectionVisibility;
 use serde_json::{Value, json};
 
@@ -216,6 +217,7 @@ pub fn build_federated_actor(
     aliases: &[String],
     verified_links: &[VerifiedLinkRef<'_>],
     ttl_secs: Option<u64>,
+    connections: Option<&str>,
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
 
@@ -223,15 +225,16 @@ pub fn build_federated_actor(
     // keyless actor with no attachments does not advertise Multikey or
     // schema.org terms it never uses.
     let has_attachments = actor.orcid.is_some()
-        || (actor.actor_privacy.chatmail_visible && actor.chatmail_addr.is_some())
+        || (actor.chatmail_visible_to(None, &Relationship::NONE) && actor.chatmail_addr.is_some())
         || !verified_links.is_empty();
     let mut extensions = vec![Extension::Security];
     if actor.ed25519_public_key.is_some() {
         extensions.push(Extension::Multikey);
     }
     // Sections carry schema.org property names, so the prefix is needed
-    // whenever there is either an attachment or a section.
-    if has_attachments || !sections.is_empty() {
+    // whenever there is either an attachment or a section. `schema:knows`
+    // needs it for the same reason.
+    if has_attachments || !sections.is_empty() || connections.is_some() {
         extensions.push(Extension::Schema);
     }
     if actor.moved_to.is_some() {
@@ -257,6 +260,15 @@ pub fn build_federated_actor(
             "publicKeyPem": actor.public_key_pem,
         },
     });
+
+    // The connections collection, as `schema:knows`. Published only
+    // where the owner has made the list public: `followers` and
+    // `following` are advertised unconditionally because ActivityPub
+    // requires them, and this one is not required, so advertising a URL
+    // that refuses every caller would be noise a peer cannot act on.
+    if let Some(url) = connections {
+        obj["schema:knows"] = json!(url);
+    }
 
     // Omitted when absent, never sent as `null`: a peer can read a null
     // as an instruction to clear what it has cached.
@@ -313,7 +325,7 @@ pub fn build_federated_actor(
     // it. Below it sit the ORCID, the Chatmail address and the verified
     // links, and a return placed after them suppresses the sections while
     // pushing the attachments to every peer anyway.
-    if !actor.actor_privacy.federate_profile {
+    if !actor.should_federate_profile() {
         return obj;
     }
 
@@ -328,7 +340,10 @@ pub fn build_federated_actor(
         }));
     }
 
-    if actor.actor_privacy.chatmail_visible
+    // No viewer and no relationship: this document is built for
+    // whoever dereferences it, so the predicate is asked its
+    // anonymous question.
+    if actor.chatmail_visible_to(None, &Relationship::NONE)
         && let Some(ref addr) = actor.chatmail_addr
     {
         attachments.push(json!({
@@ -478,7 +493,7 @@ mod tests {
             data: json!({"title": "Engineer"}),
         }];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None, None);
         assert!(obj.get("noombat:experience").is_none());
         assert!(obj.get(vocab::TTL).is_some());
     }
@@ -500,7 +515,7 @@ mod tests {
             url: "https://example.org/alice",
         }];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None);
 
         let rendered = obj.to_string();
         assert!(
@@ -544,7 +559,7 @@ mod tests {
             },
         ];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None, None);
 
         // Only the public experience section should be present.
         let exp = obj["noombat:experience"].as_array().unwrap();
@@ -558,7 +573,7 @@ mod tests {
     #[test]
     fn federated_actor_includes_ttl() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], Some(3600));
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], Some(3600), None);
         assert_eq!(obj[vocab::TTL], 3600);
     }
 
@@ -566,7 +581,7 @@ mod tests {
     fn federated_actor_includes_moved_to() {
         let mut actor = test_actor();
         actor.moved_to = Some("https://new.example/users/alice".into());
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
         assert_eq!(obj["movedTo"], "https://new.example/users/alice");
     }
 
@@ -574,7 +589,7 @@ mod tests {
     fn federated_actor_includes_also_known_as() {
         let actor = test_actor();
         let aliases = vec!["https://old.example/users/alice".to_owned()];
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &aliases, &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &aliases, &[], None, None);
         let aka = obj["alsoKnownAs"].as_array().unwrap();
         assert_eq!(aka.len(), 1);
         assert_eq!(aka[0], "https://old.example/users/alice");
@@ -583,7 +598,7 @@ mod tests {
     #[test]
     fn federated_actor_publishes_the_ed25519_key() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
 
         let methods = obj["assertionMethod"].as_array().unwrap();
         assert_eq!(methods.len(), 1);
@@ -611,7 +626,7 @@ mod tests {
         let mut actor = test_actor();
         actor.actor_privacy.federate_profile = false;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
         assert!(obj.get("assertionMethod").is_some());
         assert!(obj.get("publicKey").is_some());
     }
@@ -712,7 +727,7 @@ mod tests {
         let links = [VerifiedLinkRef {
             url: "https://alice.example",
         }];
-        let doc = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None);
+        let doc = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None);
 
         let mut used = BTreeSet::new();
         used_terms(&doc, &mut used);
@@ -753,7 +768,8 @@ mod tests {
 
         let mut keyless = test_actor();
         keyless.ed25519_public_key = None;
-        let without_key = build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None);
+        let without_key =
+            build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None, None);
         let declared_urls: Vec<&str> = without_key["@context"]
             .as_array()
             .unwrap()
@@ -769,11 +785,12 @@ mod tests {
         actor.display_name = None;
         actor.summary_html = None;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
         assert!(obj.get("name").is_none(), "name sent as {}", obj["name"]);
         assert!(obj.get("summary").is_none());
 
-        let present = build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None);
+        let present =
+            build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None, None);
         assert_eq!(present["name"], "Alice");
         assert_eq!(present["summary"], "<p>Hello</p>");
     }
@@ -789,7 +806,7 @@ mod tests {
         ] {
             let mut actor = test_actor();
             actor.actor_type = actor_type;
-            let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None);
+            let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
             assert_eq!(obj["type"], expected);
         }
     }

@@ -11,7 +11,9 @@ use noombat_identity::repo;
 use reqwest::Url;
 use serde_json::json;
 use sqlx::PgPool;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
+
+use crate::relay_verify::{RelayVerificationOutcome, RelayVerificationPolicy};
 
 use crate::delivery;
 use crate::integrity_proof::VerificationResult;
@@ -726,7 +728,7 @@ async fn handle_follow(
     )?;
 
     // Determine whether to auto-accept based on the local actor's privacy settings.
-    let auto_accept = !local_actor.actor_privacy.require_follow_approval;
+    let auto_accept = !local_actor.requires_follow_approval();
 
     // Persist the follow relationship, recording the Follow activity's
     // AP id so that Accept / Reject can reference it.
@@ -1447,11 +1449,135 @@ async fn handle_reject(
 
 // ..... ANNOUNCE .....
 
+/// The verification policy in force for one relay.
+///
+/// The per-relay override wins, and the instance default fills in. An
+/// unrecognised stored value is `Verify`, the strictest: a policy this
+/// build cannot parse must not be read as the most permissive one.
+async fn policy_for_relay(pool: &PgPool, actor_uri: &str) -> RelayVerificationPolicy {
+    let derived_inbox = format!("{actor_uri}/inbox");
+    let stored: Option<Option<String>> = sqlx::query_scalar(
+        "SELECT verification_policy FROM relay_subscriptions \
+         WHERE status = 'accepted' AND (inbox_url = $1 OR inbox_url ^@ $2) LIMIT 1",
+    )
+    .bind(&derived_inbox)
+    .bind(actor_uri)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
+    let instance_default: Option<String> =
+        sqlx::query_scalar("SELECT relay_verification_policy FROM instance_settings LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten()
+            .flatten();
+
+    stored
+        .flatten()
+        .or(instance_default)
+        .and_then(|s| RelayVerificationPolicy::from_str_opt(&s))
+        .unwrap_or(RelayVerificationPolicy::Verify)
+}
+
+/// Ingest an activity that reached this instance through a relay.
+///
+/// **This is what makes the three policies differ.** Before this branch
+/// existed, an `Announce` from a relay was handled as an ordinary boost:
+/// the embedded object was ignored, the post was re-fetched from its
+/// origin, and `trust-relay` therefore behaved exactly like
+/// `verify-or-fetch`. An administrator could select any of the three and
+/// the instance did the same thing.
+///
+/// A relay's `Announce` carries the activity itself, not a reference to
+/// it, and that embedded copy is the thing a policy is about: whether to
+/// require a proof over it, re-fetch it from the origin, or accept the
+/// relay's word and mark what it delivered as unverified.
+async fn handle_relayed_announce(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    activity: &Activity,
+) -> Result<()> {
+    // Only an embedded object can be verified. A relay that sends a bare
+    // reference has delivered nothing to check, so it falls through to
+    // the ordinary boost path and the origin is fetched as usual.
+    if !activity.object.is_object() {
+        return Ok(());
+    }
+
+    let policy = policy_for_relay(pool, &activity.actor).await;
+    let outcome =
+        crate::relay_verify::verify_relayed_activity(pool, http_client, &activity.object, policy)
+            .await;
+
+    match outcome {
+        RelayVerificationOutcome::Discard => {
+            warn!(
+                relay = %activity.actor,
+                %policy,
+                "relayed activity discarded by the verification policy"
+            );
+            Ok(())
+        }
+        RelayVerificationOutcome::Verified | RelayVerificationOutcome::Unverified => {
+            // Handled as a directly delivered activity, which is
+            // what it is: an inner `Create` with its own actor and
+            // object.
+            let inner: Activity = match serde_json::from_value(activity.object.clone()) {
+                Ok(inner) => inner,
+                Err(e) => {
+                    warn!(
+                        relay = %activity.actor,
+                        error = %e,
+                        "relayed object is not an activity"
+                    );
+                    return Ok(());
+                }
+            };
+
+            if inner.activity_type != "Create" {
+                debug!(
+                    kind = %inner.activity_type,
+                    "relayed activity is not a Create; ignoring"
+                );
+                return Ok(());
+            }
+
+            handle_create(pool, http_client, &inner).await?;
+
+            // `trust-relay` accepted it on the relay's word alone. The
+            // flag is what every trust-sensitive surface reads to know
+            // that, and setting it is the other half of offering the
+            // policy at all: without it, choosing trust-relay changes
+            // nothing a reader could ever see.
+            if outcome == RelayVerificationOutcome::Unverified
+                && let Some(ap_id) = inner.object.get("id").and_then(|v| v.as_str())
+            {
+                sqlx::query("UPDATE posts SET relayed_unverified = TRUE WHERE ap_id = $1")
+                    .bind(ap_id)
+                    .execute(pool)
+                    .await?;
+            }
+
+            Ok(())
+        }
+    }
+}
+
 async fn handle_announce(
     pool: &PgPool,
     http_client: &reqwest::Client,
     activity: &Activity,
 ) -> Result<()> {
+    // A relay's Announce is not a boost. It is how relayed content
+    // arrives, and it is subject to the verification policy rather than
+    // to the boost path.
+    if crate::relay_verify::is_relay_announce(pool, &activity.actor).await {
+        return handle_relayed_announce(pool, http_client, activity).await;
+    }
+
     // The `object` of an Announce is the AP ID of the boosted post.
     let object_uri = activity
         .object

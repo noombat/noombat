@@ -64,25 +64,18 @@ fn html_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// Verify that the authenticated principal owns the actor identified
+/// Verify that the authenticated viewer owns the actor identified
 /// by the path `username`. Returns the actor's UUID on success, or
-/// `Forbidden` if the principal does not match.
+/// `Forbidden` if the viewer does not match.
 fn require_owner(
-    principal: &Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: &Option<axum::Extension<crate::middleware::Viewer>>,
     path_username: &str,
 ) -> Result<Uuid, ApiError> {
-    let p = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = p.actor_id().ok_or(ApiError(NoombatError::Forbidden))?;
-    let principal_username = p
-        .username
-        .as_deref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    if principal_username != path_username {
+    let p = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    if p.username != path_username {
         return Err(ApiError(NoombatError::Forbidden));
     }
-    Ok(actor_id)
+    Ok(p.actor_id)
 }
 
 fn wants_activity_json(headers: &HeaderMap) -> bool {
@@ -94,8 +87,8 @@ fn wants_activity_json(headers: &HeaderMap) -> bool {
 }
 
 use crate::auth::{require_acts_for, require_local_actor};
-use crate::middleware::Principal;
-use noombat_core::authorisation::OrganizationRole;
+use crate::middleware::Viewer;
+use noombat_core::authorisation::{InteractionService, OrganizationRole};
 
 // ..... GET /users/{username} .....
 
@@ -103,34 +96,46 @@ async fn get_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
     headers: HeaderMap,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
+    // A withdrawn identity answers `410 Gone` with a `Tombstone`, not a
+    // stripped actor document. `is_suspended`'s own doc comment says
+    // federation requests receive 410, and nothing served one: a peer
+    // that fetched an erased actor got a nameless but live-looking
+    // document and had no reason to drop its cached copy.
+    //
+    // `deleted` is what makes the answer actionable. Without it the
+    // peer knows the identity is gone but not when, which is the
+    // difference between "withdrawn" and "never existed".
+    if let Some(deleted) = noombat_identity::repo::tombstoned_at(&state.pool, &actor.ap_id).await? {
+        let body = json!({
+            "@context": AS_CONTEXT,
+            "id": actor.ap_id,
+            "type": "Tombstone",
+            "formerType": actor.actor_type.ap_type(),
+            "deleted": deleted.to_rfc3339(),
+        });
+
+        return Ok((
+            StatusCode::GONE,
+            [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
+            Json(body),
+        )
+            .into_response());
+    }
+
     // Block guard: if the viewer is blocked by the profile owner,
     // return 403 before serving any content.
-    if let Some(ref principal) = principal
-        && let Some(ref viewer_username) = principal.username
-    {
-        let is_blocked: bool = sqlx::query_scalar(
-            "SELECT EXISTS(
-                     SELECT 1 FROM blocks b
-                     JOIN actors blocker ON blocker.id = b.actor_id
-                     JOIN actors target  ON target.id  = b.target_id
-                     WHERE blocker.username = $1 AND blocker.is_local = TRUE
-                       AND target.username  = $2 AND target.is_local  = TRUE
-                 )",
-        )
-        .bind(&actor.username)
-        .bind(viewer_username.as_str())
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or(false);
-
-        if is_blocked {
+    if let Some(ref viewer) = viewer {
+        let restriction = crate::interactions::Interactions::new(state.pool.clone())
+            .owner_restriction(&actor.id, &viewer.actor_id)
+            .await;
+        if !restriction.may_view_profile() {
             return Err(NoombatError::Forbidden.into());
         }
     }
@@ -157,8 +162,15 @@ async fn get_actor(
         &[("display_name", &display_name), ("handle", &handle)],
     );
 
-    // Load profile sections (public visibility only for unauthenticated view).
-    let vis = noombat_core::privacy::SectionVisibility::Public;
+    // Load profile sections at the widest tier this viewer qualifies
+    // for. Passing `Public` unconditionally, as this did, hid an
+    // owner's own followers-only and private sections from their own
+    // profile page while the CV route showed them, so the two surfaces
+    // disagreed about the same rows.
+    let viewer_id = viewer.as_ref().map(|v| v.actor_id);
+    let relationship =
+        noombat_identity::connections::relationship(&state.pool, viewer_id, actor.id).await?;
+    let vis = noombat_core::authorisation::section_tier_for(viewer_id, actor.id, &relationship);
     let (
         work_experiences,
         education_entries,
@@ -169,7 +181,7 @@ async fn get_actor(
     ) = tokio::join!(
         noombat_identity::profile::list_work_experiences(&state.pool, actor.id, &vis),
         noombat_identity::profile::list_education_entries(&state.pool, actor.id, &vis),
-        noombat_identity::profile::list_skills(&state.pool, actor.id, false),
+        noombat_identity::profile::list_skills(&state.pool, actor.id, &vis),
         noombat_identity::profile::list_scholarly_articles(&state.pool, actor.id, &vis),
         noombat_identity::verification::list_links(&state.pool, actor.id),
         noombat_identity::profile::list_custom_sections(&state.pool, actor.id, &vis),
@@ -186,11 +198,11 @@ async fn get_actor(
         location: actor.location.clone().unwrap_or_default(),
         summary_html: actor.summary_html.clone().unwrap_or_default(),
         domain: state.domain.clone(),
-        indexable: actor.actor_privacy.indexable,
+        indexable: actor.is_indexable(),
         actor_id: actor.id.to_string(),
-        show_report: principal
+        show_report: viewer
             .as_ref()
-            .and_then(|p| p.username.as_deref())
+            .map(|p| p.username.as_str())
             .is_some_and(|viewer| viewer != actor.username),
         work_experiences: work_experiences.unwrap_or_default(),
         education_entries: education_entries.unwrap_or_default(),
@@ -217,12 +229,12 @@ async fn get_actor_human(
     state: State<AppState>,
     path: Path<String>,
     headers: HeaderMap,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
 ) -> Result<impl IntoResponse, ApiError> {
-    get_actor(state, path, headers, principal, i18n, theme, contrast).await
+    get_actor(state, path, headers, viewer, i18n, theme, contrast).await
 }
 
 // ..... GET /users/{username}/outbox .......
@@ -265,10 +277,15 @@ async fn get_outbox(
 #[derive(Deserialize)]
 struct OutboxPostBody {
     content: String,
-    /// Post visibility: `"public"`, `"unlisted"`, or `"followers"`.
-    /// Defaults to `"public"`.
-    #[serde(default = "default_visibility")]
-    visibility: String,
+    /// Post visibility: `"public"`, `"unlisted"`, `"followers"` or
+    /// `"connections"`.
+    ///
+    /// Absent means the account's stored `default_post_visibility`, not
+    /// `"public"`. A compose path that ignores the setting makes it a
+    /// control that changes nothing, which is the whole reason the
+    /// column had no reader.
+    #[serde(default)]
+    visibility: Option<String>,
     /// Post type: `"note"` (default) or `"article"`.
     #[serde(default = "default_post_type")]
     post_type: String,
@@ -280,10 +297,6 @@ struct OutboxPostBody {
     /// The AP URI of the post this is a reply to. `None` for
     /// top-level posts.
     in_reply_to: Option<String>,
-}
-
-fn default_visibility() -> String {
-    "public".to_owned()
 }
 
 fn default_post_type() -> String {
@@ -390,19 +403,31 @@ fn build_create_activity(
 async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<OutboxPostBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     // Posting to an outbox is acting as that account.
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
-    // Validate visibility.
+    // Validate visibility, falling back to the account's own default
+    // where the request states none.
+    let visibility = match body.visibility.clone() {
+        Some(stated) => stated,
+        None => sqlx::query_scalar::<_, String>(
+            "SELECT default_post_visibility FROM actors WHERE id = $1",
+        )
+        .bind(actor.id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(NoombatError::from)?,
+    };
+
     if !matches!(
-        body.visibility.as_str(),
-        "public" | "unlisted" | "followers"
+        visibility.as_str(),
+        "public" | "unlisted" | "followers" | "connections"
     ) {
         return Err(NoombatError::BadRequest(
-            "visibility must be public, unlisted, or followers".into(),
+            "visibility must be public, unlisted, followers, or connections".into(),
         )
         .into());
     }
@@ -451,7 +476,7 @@ async fn post_outbox(
     // Build the ActivityPub addressing arrays.
     let mut to = vec![];
     let mut cc = vec![];
-    match body.visibility.as_str() {
+    match visibility.as_str() {
         "public" => {
             to.push("https://www.w3.org/ns/activitystreams#Public".to_owned());
             cc.push(format!("{}/followers", actor.ap_id));
@@ -462,6 +487,12 @@ async fn post_outbox(
         }
         "followers" => {
             to.push(format!("{}/followers", actor.ap_id));
+        }
+        // Addressed to the connections collection alone. Followers are
+        // deliberately not included: the nesting runs the other way, so
+        // a follower who is not a connection is not an audience here.
+        "connections" => {
+            to.push(format!("{}/connections", actor.ap_id));
         }
         _ => {}
     }
@@ -542,7 +573,7 @@ async fn post_outbox(
         content_md: body.content.clone(),
         content_html: content_html.clone(),
         in_reply_to: body.in_reply_to.clone(),
-        visibility: body.visibility.clone(),
+        visibility: visibility.clone(),
         ap_object: create_activity.clone(),
     };
     let created = noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
@@ -567,7 +598,7 @@ async fn post_outbox(
             ap_id: &post_id,
             actor_id: &actor.id.to_string(),
             content_html: &content_html,
-            visibility: &body.visibility,
+            visibility: &visibility,
             post_type: &body.post_type,
             title: body.title.as_deref(),
         },
@@ -594,6 +625,27 @@ async fn post_outbox(
         .await;
     }
 
+    // And to the relays this instance subscribes to, which is the half
+    // that made the subscription one-way: an administrator could
+    // subscribe, the instance received relayed content, and nothing it
+    // published ever reached the relay. Public posts only, because a
+    // relay fans out to everyone by definition and a followers-tier
+    // post addressed to one is a post published to strangers.
+    if visibility == "public"
+        && let Ok(instance_actor_id) =
+            noombat_federation::signed_fetch::find_local_signing_actor(&state.pool).await
+        && let Ok(instance_actor) =
+            noombat_identity::repo::find_by_id(&state.pool, instance_actor_id).await
+    {
+        noombat_federation::relay::broadcast_to_relays(
+            &state.pool,
+            instance_actor_id,
+            &instance_actor.ap_id,
+            &create_activity,
+        )
+        .await;
+    }
+
     Ok((
         StatusCode::CREATED,
         [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
@@ -614,10 +666,10 @@ struct PatchActorBody {
 async fn patch_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<PatchActorBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // Render Markdown summary through the noombat-markup pipeline.
     let summary_html = match body.summary_md.as_deref() {
@@ -642,9 +694,13 @@ async fn patch_actor(
     noombat_federation::update::enqueue_actor_update(&state.pool, &updated, &state.domain).await;
 
     // Synchronise search index with current skills (fire-and-forget).
-    let skills = noombat_identity::profile::list_skills(&state.pool, actor.id, false)
-        .await
-        .unwrap_or_default();
+    let skills = noombat_identity::profile::list_skills(
+        &state.pool,
+        actor.id,
+        &noombat_core::privacy::SectionVisibility::Public,
+    )
+    .await
+    .unwrap_or_default();
     let search_data = crate::search_sync::ProfileSearchData {
         skills: skills.into_iter().map(|s| s.name).collect(),
         ..Default::default()
@@ -669,7 +725,7 @@ async fn patch_actor(
 async fn delete_actor_handler(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
@@ -677,7 +733,7 @@ async fn delete_actor_handler(
     // so the general "acts for" rule is not enough here: a recruiter
     // acting for an organisation must not be able to erase it. The
     // account itself and an organisation's owners, nobody else.
-    match require_acts_for(&state.pool, actor.id, &principal).await? {
+    match require_acts_for(&state.pool, actor.id, &viewer).await? {
         None | Some(OrganizationRole::Owner) => {}
         Some(OrganizationRole::Recruiter) => {
             return Err(ApiError(NoombatError::Forbidden));
@@ -694,13 +750,74 @@ async fn delete_actor_handler(
     Ok(StatusCode::NO_CONTENT)
 }
 
+// ..... Relationship collections .....
+
+/// Build a relationship collection, honouring the owner's count setting.
+///
+/// `totalItems` is governed separately from the items, because the two
+/// disclose different things: an owner may publish that they have five
+/// hundred followers without publishing who they are, and `totalItems`
+/// is the only part of this document a peer can use to build a metric.
+/// It is omitted rather than sent as zero, which would be a lie a peer
+/// would cache.
+fn relationship_collection(
+    owner: &noombat_core::actor::Actor,
+    viewer: &Option<axum::Extension<Viewer>>,
+    collection: &str,
+    total: i64,
+    items: Vec<String>,
+) -> serde_json::Value {
+    let is_owner = viewer.as_ref().map(|v| v.actor_id) == Some(owner.id);
+
+    let mut document = json!({
+        "@context": AS_CONTEXT,
+        "id": format!("{}/{collection}", owner.ap_id),
+        "type": "OrderedCollection",
+        "orderedItems": items,
+    });
+
+    if is_owner || owner.shows_followers_count() {
+        document["totalItems"] = json!(total);
+    }
+
+    document
+}
+
+/// Refuse a relationship-list request the owner's setting does not admit.
+///
+/// The refusal is [`NoombatError::ActorNotFound`], as on the CV route: a
+/// `403` distinguishes "this account exists and keeps its list private"
+/// from "no such account", and the list setting exists precisely to stop
+/// an outsider mapping the graph.
+async fn require_list_visible(
+    state: &AppState,
+    actor: &noombat_core::actor::Actor,
+    viewer: &Option<axum::Extension<Viewer>>,
+    setting: noombat_core::privacy::ListVisibility,
+) -> Result<(), ApiError> {
+    let viewer_id = viewer.as_ref().map(|v| v.actor_id);
+    let relationship =
+        noombat_identity::connections::relationship(&state.pool, viewer_id, actor.id).await?;
+
+    if noombat_core::authorisation::list_visible_to(setting, viewer_id, actor.id, &relationship) {
+        Ok(())
+    } else {
+        Err(ApiError(NoombatError::ActorNotFound(
+            actor.username.clone(),
+        )))
+    }
+}
+
 // ..... GET /users/{username}/followers .....
 
 async fn get_followers(
     State(state): State<AppState>,
     Path(username): Path<String>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let settings = noombat_identity::connections::list_settings(&state.pool, actor.id).await?;
+    require_list_visible(&state, &actor, &viewer, settings.followers).await?;
 
     let total = noombat_identity::repo::count_followers(&state.pool, actor.id)
         .await
@@ -709,13 +826,7 @@ async fn get_followers(
         .await
         .unwrap_or_default();
 
-    let collection = json!({
-        "@context": AS_CONTEXT,
-        "id": format!("{}/followers", actor.ap_id),
-        "type": "OrderedCollection",
-        "totalItems": total,
-        "orderedItems": items
-    });
+    let collection = relationship_collection(&actor, &viewer, "followers", total, items);
 
     Ok((
         StatusCode::OK,
@@ -729,8 +840,11 @@ async fn get_followers(
 async fn get_following(
     State(state): State<AppState>,
     Path(username): Path<String>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let settings = noombat_identity::connections::list_settings(&state.pool, actor.id).await?;
+    require_list_visible(&state, &actor, &viewer, settings.following).await?;
 
     let total = noombat_identity::repo::count_following(&state.pool, actor.id)
         .await
@@ -739,13 +853,7 @@ async fn get_following(
         .await
         .unwrap_or_default();
 
-    let collection = json!({
-        "@context": AS_CONTEXT,
-        "id": format!("{}/following", actor.ap_id),
-        "type": "OrderedCollection",
-        "totalItems": total,
-        "orderedItems": items
-    });
+    let collection = relationship_collection(&actor, &viewer, "following", total, items);
 
     Ok((
         StatusCode::OK,
@@ -793,18 +901,15 @@ struct CreateAliasRequest {
 async fn create_alias(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
     Json(req): Json<CreateAliasRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = require_owner(&principal, &username)?;
+    let actor_id = require_owner(&viewer, &username)?;
 
-    let id: Uuid = sqlx::query_scalar(
-        "INSERT INTO actor_aliases (actor_id, alias) VALUES ($1, $2) RETURNING id",
-    )
-    .bind(actor_id)
-    .bind(&req.alias)
-    .fetch_one(&state.pool)
-    .await?;
+    // Through the helper rather than inlined: the inline INSERT had no
+    // conflict clause, so adding an alias twice failed the request, and
+    // it was the same shape as the move route bypassing initiate_move.
+    let id = noombat_federation::move_actor::add_alias(&state.pool, actor_id, &req.alias).await?;
 
     // Return an HTML fragment for HTMX to append.
     let html = format!(
@@ -819,15 +924,11 @@ async fn create_alias(
 async fn delete_alias(
     State(state): State<AppState>,
     Path((username, alias_id)): Path<(String, Uuid)>,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let actor_id = require_owner(&principal, &username)?;
+    let actor_id = require_owner(&viewer, &username)?;
 
-    sqlx::query("DELETE FROM actor_aliases WHERE id = $1 AND actor_id = $2")
-        .bind(alias_id)
-        .bind(actor_id)
-        .execute(&state.pool)
-        .await?;
+    noombat_federation::move_actor::remove_alias_by_id(&state.pool, actor_id, alias_id).await?;
 
     Ok(StatusCode::OK)
 }
@@ -842,21 +943,22 @@ struct MoveRequest {
 async fn initiate_move(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<crate::middleware::Principal>>,
+    viewer: Option<axum::Extension<crate::middleware::Viewer>>,
     Json(req): Json<MoveRequest>,
 ) -> Result<StatusCode, ApiError> {
-    let actor_id = require_owner(&principal, &username)?;
+    let actor_id = require_owner(&viewer, &username)?;
+    let actor = noombat_identity::repo::find_by_id(&state.pool, actor_id).await?;
 
-    // Store the move target on the actor record.
-    sqlx::query("UPDATE actors SET moved_to = $1 WHERE id = $2")
-        .bind(&req.target)
-        .bind(actor_id)
-        .execute(&state.pool)
+    // Three things, in this order. The grants are revoked *before*
+    // `moved_to` is set, so a CV capability is never still served from
+    // an instance the applicant has left; then the column is set; then
+    // the `Move` reaches the followers who have to follow the new
+    // account.
+    //
+    // Nothing detects a non-NULL `moved_to` and emits the activity
+    // later, so a route that only writes the column emits nothing.
+    noombat_federation::move_actor::initiate_move(&state.pool, actor_id, &actor.ap_id, &req.target)
         .await?;
-
-    // The federation service will emit a Move activity to all
-    // followers when it detects a non-NULL moved_to value.
-    // That logic is in noombat-federation and is not duplicated here.
 
     Ok(StatusCode::NO_CONTENT)
 }

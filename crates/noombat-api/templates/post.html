@@ -23,6 +23,14 @@
                remote posts, by `noombat_markup::render` for local ones,
                and re-derived for pre-guard rows by
                `noombat_federation::backfill`. #}
+            {% if relayed_unverified %}
+            <!-- This post reached the instance through a relay under
+                 the trust-relay policy, so nothing but the relay's word
+                 connects it to the account it names. -->
+            <p class="mb-3 text-sm text-text-secondary border-s-2 border-border-default ps-3">
+                {{ i18n.t("post_unverified_notice") }}
+            </p>
+            {% endif %}
             <div class="leading-relaxed">{{ content_html|safe }}</div>
             <footer class="mt-3 flex gap-3 text-xs text-text-secondary">
                 <button type="button"

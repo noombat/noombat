@@ -11,7 +11,7 @@
 use argon2::Argon2;
 use argon2::password_hash::rand_core::OsRng;
 use argon2::password_hash::{PasswordHasher, SaltString};
-use noombat_core::actor::{Actor, ActorType, NewActor};
+use noombat_core::actor::{Actor, ActorStatus, ActorType, NewActor};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -53,6 +53,58 @@ pub struct RegisterResponse {
     pub actor_id: uuid::Uuid,
     pub username: String,
     pub ap_id: String,
+    /// Whether the account was created awaiting admission.
+    ///
+    /// The caller must not mint a session for one: a pending account
+    /// holds its username and nothing else, and `login` already refuses
+    /// it, so issuing a token here would be the one way in.
+    pub awaiting_approval: bool,
+}
+
+/// What the instance currently does with a sign-up request.
+///
+/// Read from `instance_settings.registration_mode`, which is what the
+/// administration page writes. Before this existed the column had no
+/// reader at all, so closing registration closed nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RegistrationMode {
+    /// Accounts are created active.
+    Open,
+    /// Accounts are created `pending` and cannot sign in until an
+    /// administrator admits them.
+    Approval,
+    /// No account is created.
+    Closed,
+}
+
+impl RegistrationMode {
+    /// Read a stored value.
+    ///
+    /// An unrecognised setting is `Closed`. Every other reading admits
+    /// accounts on a value the instance does not understand, and the
+    /// cost of being wrong this way is a sign-up form that refuses.
+    pub fn from_stored(s: &str) -> Self {
+        match s {
+            "open" => Self::Open,
+            "approval" => Self::Approval,
+            _ => Self::Closed,
+        }
+    }
+}
+
+/// The instance's current registration mode.
+///
+/// A missing settings row is `Closed`, for the same reason an unknown
+/// value is.
+pub async fn registration_mode(pool: &PgPool) -> Result<RegistrationMode> {
+    let stored =
+        sqlx::query_scalar::<_, String>("SELECT registration_mode FROM instance_settings LIMIT 1")
+            .fetch_optional(pool)
+            .await?;
+
+    Ok(stored
+        .as_deref()
+        .map_or(RegistrationMode::Closed, RegistrationMode::from_stored))
 }
 
 /// Validate a proposed username.
@@ -131,6 +183,14 @@ pub async fn register(
     domain: &str,
     req: &RegisterRequest,
 ) -> Result<RegisterResponse> {
+    // The instance setting first, before anything is validated or
+    // generated. A closed instance should cost a sign-up attempt one
+    // query, and should not disclose whether the username was free.
+    let mode = registration_mode(pool).await?;
+    if mode == RegistrationMode::Closed {
+        return Err(NoombatError::Forbidden);
+    }
+
     validate_username(&req.username)?;
     validate_auth_key(&req.auth_key)?;
 
@@ -189,8 +249,22 @@ pub async fn register(
         Err(e) => return Err(e),
     };
 
-    sqlx::query("UPDATE actors SET auth_key_hash = $1 WHERE id = $2")
+    // The status goes in the same transaction as the key, so there is
+    // no window in which an approval-mode account exists as active.
+    // `create_actor_tx` names no status and takes the column default,
+    // which is `active` deliberately, so an approval instance has to
+    // set it here rather than by changing that default: the default
+    // also governs every federated actor.
+    let awaiting_approval = mode == RegistrationMode::Approval;
+    let status = if awaiting_approval {
+        ActorStatus::Pending
+    } else {
+        ActorStatus::Active
+    };
+
+    sqlx::query("UPDATE actors SET auth_key_hash = $1, actor_status = $2 WHERE id = $3")
         .bind(&auth_key_hash)
+        .bind(status.as_str())
         .bind(actor.id)
         .execute(&mut *tx)
         .await?;
@@ -199,12 +273,17 @@ pub async fn register(
         .await
         .map_err(|e| NoombatError::Internal(format!("transaction commit failed: {e}")))?;
 
-    info!(username = %actor.username, "local account registered");
+    info!(
+        username = %actor.username,
+        awaiting_approval,
+        "local account registered"
+    );
 
     Ok(RegisterResponse {
         actor_id: actor.id,
         username: actor.username,
         ap_id: actor.ap_id,
+        awaiting_approval,
     })
 }
 

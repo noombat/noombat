@@ -11,13 +11,16 @@ use serde::Deserialize;
 
 use crate::auth::{require_acts_for, require_local_actor};
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/jobs", get(list_jobs))
-        .route("/jobs/{id}", get(get_job).delete(delete_job))
+        .route(
+            "/jobs/{id}",
+            get(get_job).patch(patch_job).delete(delete_job),
+        )
         .route(
             "/users/{username}/jobs",
             get(list_user_jobs).post(create_job),
@@ -74,12 +77,12 @@ async fn get_job(
 async fn create_job(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(params): Json<noombat_jobs::NewJobPosting>,
 ) -> Result<impl IntoResponse, ApiError> {
     // An organisation is posted for by its members, never by itself, so
     // this admits both the account and anyone holding a role in it.
-    let actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // An organisation publishes only once it has proved it controls the
     // domain it claims. Domain control is not identity verification, and
@@ -92,12 +95,51 @@ async fn create_job(
         return Err(ApiError(noombat_core::error::NoombatError::Forbidden));
     }
 
-    let job = noombat_jobs::create_job(&state.pool, actor.id, &state.domain, &params).await?;
+    let job = noombat_jobs::create_job(
+        &state.pool,
+        actor.id,
+        viewer.as_ref().map(|v| v.actor_id),
+        &state.domain,
+        &params,
+    )
+    .await?;
 
     // Synchronise search index (fire-and-forget).
     crate::search_sync::index_job(&state.search, &job);
 
+    // The listing stays here; what travels is a Note. Fires on the
+    // `published_at` transition, which is also the verification gate:
+    // an unpublished posting publicises nothing.
+    crate::jobs_federation::announce_published(&state.pool, &state.domain, &actor, &job).await;
+
     Ok((StatusCode::CREATED, Json(job)))
+}
+
+// ..... Edit a job posting .....
+
+/// `PATCH /jobs/{id}`
+///
+/// The posting had no edit route at all: `update_job` was written,
+/// tested and reachable from nowhere, and the edit form pointed at the
+/// create route. Authorisation is the same as deletion's, settled
+/// against the posting's own actor rather than anything the caller
+/// supplies.
+async fn patch_job(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Json(params): Json<noombat_jobs::UpdateJobPosting>,
+) -> Result<impl IntoResponse, ApiError> {
+    let job = noombat_jobs::get_job(&state.pool, id).await?;
+    require_acts_for(&state.pool, job.actor_id, &viewer).await?;
+
+    let updated = noombat_jobs::update_job(&state.pool, job.actor_id, id, &params).await?;
+
+    // The index carries the title, description and location, so an edit
+    // that does not reach it leaves search answering with the old text.
+    crate::search_sync::index_job(&state.search, &updated);
+
+    Ok((StatusCode::OK, Json(updated)))
 }
 
 // ..... Delete a job posting .....
@@ -105,16 +147,26 @@ async fn create_job(
 async fn delete_job(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
     // The posting names its own actor, so ownership is settled against
     // that rather than against anything the caller supplies.
     let job = noombat_jobs::get_job(&state.pool, id).await?;
-    require_acts_for(&state.pool, job.actor_id, &principal).await?;
+    require_acts_for(&state.pool, job.actor_id, &viewer).await?;
+
+    // Withdrawn before the row goes, because the Delete is built from
+    // the posting's own AP id and the actor it names.
+    let was_published = job.published_at.is_some();
     noombat_jobs::delete_job(&state.pool, job.actor_id, id).await?;
 
     // Remove from search index (fire-and-forget).
     crate::search_sync::remove_from_index(&state.search, "jobs", &id.to_string());
+
+    if was_published {
+        let organisation = noombat_identity::repo::find_by_id(&state.pool, job.actor_id).await?;
+        let activity = crate::jobs_federation::withdrawing_delete(&organisation.ap_id, &job.ap_id);
+        crate::jobs_federation::deliver(&state.pool, &organisation, &activity).await;
+    }
 
     Ok(StatusCode::NO_CONTENT)
 }

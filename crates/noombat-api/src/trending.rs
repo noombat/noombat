@@ -86,6 +86,13 @@ pub async fn compute_trending(
         INNER JOIN posts p ON p.id = ph.post_id
         WHERE p.created_at >= NOW() - make_interval(hours => $1)
           AND p.visibility = 'public'
+          -- Trending is the one surface where a relay could manufacture
+          -- consensus: enough relayed posts on a tag and the tag is
+          -- promoted to every reader here, with nothing but the relay's
+          -- word behind any of them. Excluded rather than badged: a
+          -- trending list has no room for a badge, and the list is the
+          -- claim.
+          AND p.relayed_unverified = FALSE
         GROUP BY h.name
         ORDER BY post_count DESC
         LIMIT $2

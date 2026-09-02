@@ -114,12 +114,15 @@ impl RelayConfig {
 
 /// Track the last-activity timestamp for idle timeout enforcement.
 ///
-/// The WebSocket relay handler must call `touch()` on every inbound
-/// client message and check `is_expired()` periodically (e.g. on a
-/// tokio interval tick). When `is_expired()` returns `true`, the
-/// handler must close the WebSocket, clear the Chatmail password
-/// from memory, and optionally call the `noombat-chatmail-admin`
-/// sidecar's `kick` endpoint to terminate the IMAP session.
+/// The WebSocket relay handler calls [`IdleTimer::touch`] on every
+/// inbound client message and races [`IdleTimer::remaining`] against the
+/// socket in a `tokio::select!`. When the sleep wins, the handler closes
+/// the WebSocket and clears the Chatmail password from memory.
+///
+/// There is deliberately no `is_expired` to poll. A poll on an interval
+/// tick either wakes a sleeping connection many times an hour to learn
+/// nothing, or closes it up to one tick late; sleeping on the remaining
+/// duration does neither.
 #[derive(Debug)]
 pub struct IdleTimer {
     last_activity: std::time::Instant,
@@ -138,11 +141,6 @@ impl IdleTimer {
     /// Record activity (call on every inbound client message).
     pub fn touch(&mut self) {
         self.last_activity = std::time::Instant::now();
-    }
-
-    /// Check whether the idle timeout has elapsed.
-    pub fn is_expired(&self) -> bool {
-        self.last_activity.elapsed() >= self.timeout
     }
 
     /// Return the remaining duration before timeout, for use with

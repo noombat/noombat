@@ -34,6 +34,27 @@
 
         <!-- Muted users -->
         <section>
+            <h2 class="text-lg font-semibold mb-3">{{ i18n.t("chatmail_blocked_heading") }}</h2>
+            {% if chatmail_blocked.is_empty() %}
+            <p class="text-text-secondary text-sm">{{ i18n.t("chatmail_blocked_empty") }}</p>
+            {% else %}
+            <ul class="space-y-2 max-w-lg mb-8">
+                {% for entry in chatmail_blocked %}
+                <li class="flex items-center gap-2 border-b border-border-default pb-2"
+                    id="chatmail-block-{{ loop.index }}">
+                    <span class="text-sm flex-1 truncate font-mono">{{ entry.address }}</span>
+                    <button type="button"
+                            hx-delete="/users/{{ username }}/chat/blocks/{{ entry.address_encoded }}"
+                            hx-target="#chatmail-block-{{ loop.index }}"
+                            hx-swap="outerHTML"
+                            class="text-sm text-text-secondary hover:text-text-danger">
+                        {{ i18n.t("blocked_unblock") }}
+                    </button>
+                </li>
+                {% endfor %}
+            </ul>
+            {% endif %}
+
             <h2 class="text-lg font-semibold mb-3">{{ i18n.t("muted_heading") }}</h2>
             {% if muted.is_empty() %}
             <p class="text-text-secondary text-sm">{{ i18n.t("muted_empty") }}</p>

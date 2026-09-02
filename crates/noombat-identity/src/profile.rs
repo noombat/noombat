@@ -696,28 +696,24 @@ pub async fn add_skill(
 }
 
 /// List skills for an actor, filtered by maximum visibility.
+///
+/// Takes a maximum tier, like its five siblings. A two-way boolean
+/// can express only "everything" or "public", which would give a
+/// follower reading a CV followers-tier experience alongside
+/// public-only skills: one document answering one question two ways.
 pub async fn list_skills(
     pool: &PgPool,
     actor_id: Uuid,
-    include_private: bool,
+    max_vis: &SectionVisibility,
 ) -> Result<Vec<Skill>> {
-    let rows = if include_private {
-        sqlx::query_as::<_, Skill>(
-            "SELECT id, actor_id, name, visibility FROM skills
-             WHERE actor_id = $1 ORDER BY name",
-        )
-        .bind(actor_id)
-        .fetch_all(pool)
-        .await?
-    } else {
-        sqlx::query_as::<_, Skill>(
-            "SELECT id, actor_id, name, visibility FROM skills
-             WHERE actor_id = $1 AND visibility = 'public' ORDER BY name",
-        )
-        .bind(actor_id)
-        .fetch_all(pool)
-        .await?
-    };
+    let rows = sqlx::query_as::<_, Skill>(
+        "SELECT id, actor_id, name, visibility FROM skills
+         WHERE actor_id = $1 AND visibility = ANY($2) ORDER BY name",
+    )
+    .bind(actor_id)
+    .bind(visibility_filter(max_vis))
+    .fetch_all(pool)
+    .await?;
     Ok(rows)
 }
 
@@ -1004,18 +1000,30 @@ pub async fn delete_custom_section(pool: &PgPool, actor_id: Uuid, id: Uuid) -> R
 /// Validate a section visibility string.
 fn validate_section_visibility(v: &str) -> Result<()> {
     match v {
-        "public" | "followers" | "private" => Ok(()),
+        "public" | "followers" | "connections" | "private" => Ok(()),
         _ => Err(NoombatError::BadRequest(
-            "visibility must be 'public', 'followers', or 'private'".into(),
+            "visibility must be 'public', 'followers', 'connections', or 'private'".into(),
         )),
     }
 }
 
 /// Compute the set of visibility values allowed for a given maximum level.
+///
+/// The arms widen in the enum's own order, so a tier added to
+/// [`SectionVisibility`] is a compile error here rather than a section
+/// that silently stops being returned.
 fn visibility_filter(max: &SectionVisibility) -> Vec<String> {
     match max {
         SectionVisibility::Private => {
-            vec!["public".into(), "followers".into(), "private".into()]
+            vec![
+                "public".into(),
+                "followers".into(),
+                "connections".into(),
+                "private".into(),
+            ]
+        }
+        SectionVisibility::Connections => {
+            vec!["public".into(), "followers".into(), "connections".into()]
         }
         SectionVisibility::Followers => {
             vec!["public".into(), "followers".into()]

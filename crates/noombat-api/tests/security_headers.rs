@@ -15,7 +15,7 @@
 //!
 //! These tests need no database. `/` and `/auth/login` are template
 //! renders that touch no state, the authentication middleware queries
-//! only once a principal resolves (no request here carries a token),
+//! only once a viewer resolves (no request here carries a token),
 //! and the rate limiter falls back to its in-process governor when
 //! `redis` is `None`. The pool is therefore constructed lazily and
 //! never connects.
@@ -218,7 +218,7 @@ async fn unmatched_paths_carry_the_header_set() {
 
 #[tokio::test]
 async fn redirects_carry_the_header_set() {
-    // Authenticated pages redirect when no principal resolves. The
+    // Authenticated pages redirect when no viewer resolves. The
     // response never reaches a template, so it is a distinct path
     // again.
     let response = get(DOMAIN, "/chat").await;

@@ -6,6 +6,7 @@
 //! CRUD, DOI resolution, domain verification, authentication, session
 //! management, TOTP 2FA, and OAuth (Mastodon, ORCID).
 
+pub mod connections;
 pub mod cv;
 pub mod doi_client;
 pub mod email;

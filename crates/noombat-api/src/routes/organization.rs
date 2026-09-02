@@ -16,14 +16,16 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use noombat_core::authorisation::{OrganizationRole, PostingAccess, may_access_job_applications};
+use noombat_core::authorisation::{
+    OrganizationRole, PostingAccess, may_access_job_applications, may_delegate_posting,
+};
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
 use crate::auth::require_acts_for;
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -49,6 +51,141 @@ pub fn router() -> Router<AppState> {
             "/api/v1/jobs/{job_id}/applications/{app_id}/status",
             axum::routing::post(update_job_application_status),
         )
+        .route(
+            "/api/v1/jobs/{job_id}/readers",
+            get(list_posting_readers).put(set_posting_readers),
+        )
+}
+
+// ..... Who may read a posting's applications .....
+
+/// The reader set of one posting.
+#[derive(Debug, Deserialize)]
+struct ReaderSet {
+    /// `creator_only`, `all_recruiters` or `listed`.
+    access: PostingAccess,
+    /// The recruiters named when `access` is `listed`. Ignored
+    /// otherwise, and stored anyway, so switching to `listed` and back
+    /// does not silently lose the list somebody assembled.
+    #[serde(default)]
+    members: Vec<uuid::Uuid>,
+}
+
+/// `GET /api/v1/jobs/{job_id}/readers`
+async fn list_posting_readers(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Path(job_id): Path<uuid::Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    let job = noombat_jobs::get_job(&state.pool, job_id).await?;
+    let standing = company_standing(&state.pool, job.actor_id, job_id, viewer.actor_id).await?;
+
+    // Reading the set is part of reading the applications, so it takes
+    // the same predicate rather than a looser one of its own.
+    if !may_access_job_applications(
+        standing.role,
+        standing.access,
+        standing.is_creator,
+        standing.is_listed,
+    ) {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+
+    let members = sqlx::query_scalar::<_, uuid::Uuid>(
+        "SELECT member_id FROM job_posting_readers WHERE job_posting_id = $1",
+    )
+    .bind(job_id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    Ok(Json(serde_json::json!({
+        "access": standing.access,
+        "members": members,
+        // Whether this caller may change it, so the interface does not
+        // offer a control that will be refused.
+        "may_delegate": may_delegate_posting(standing.role, standing.is_creator),
+    })))
+}
+
+/// `PUT /api/v1/jobs/{job_id}/readers`
+///
+/// The first caller of `may_delegate_posting`, and the first writer of
+/// `job_posting_readers`: membership was checked here and granted
+/// nowhere, so `listed` named an empty set forever.
+async fn set_posting_readers(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Path(job_id): Path<uuid::Uuid>,
+    Json(body): Json<ReaderSet>,
+) -> Result<impl IntoResponse, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    let job = noombat_jobs::get_job(&state.pool, job_id).await?;
+    let standing = company_standing(&state.pool, job.actor_id, job_id, viewer.actor_id).await?;
+
+    // Owners, and the recruiter who created it. A recruiter opening
+    // their own posting to colleagues does not need an owner to do it,
+    // and cannot widen anybody else's.
+    if !may_delegate_posting(standing.role, standing.is_creator) {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+
+    // Naming an outsider grants nothing, because the predicate refuses a
+    // non-member whatever the set says. Refused here as well, so a
+    // mistake is reported rather than stored as a row that does nothing.
+    for member_id in &body.members {
+        let is_member: bool = sqlx::query_scalar(
+            "SELECT EXISTS (SELECT 1 FROM organization_members \
+             WHERE organization_id = $1 AND member_id = $2)",
+        )
+        .bind(job.actor_id)
+        .bind(member_id)
+        .fetch_one(&state.pool)
+        .await
+        .map_err(NoombatError::from)?;
+
+        if !is_member {
+            return Err(ApiError(NoombatError::BadRequest(format!(
+                "{member_id} is not a member of this organisation"
+            ))));
+        }
+    }
+
+    let mut tx = state.pool.begin().await.map_err(NoombatError::from)?;
+
+    sqlx::query("UPDATE job_postings SET job_application_readers = $2 WHERE id = $1")
+        .bind(job_id)
+        .bind(match body.access {
+            PostingAccess::CreatorOnly => "creator_only",
+            PostingAccess::AllRecruiters => "all_recruiters",
+            PostingAccess::Listed => "listed",
+        })
+        .execute(&mut *tx)
+        .await
+        .map_err(NoombatError::from)?;
+
+    sqlx::query("DELETE FROM job_posting_readers WHERE job_posting_id = $1")
+        .bind(job_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(NoombatError::from)?;
+
+    for member_id in &body.members {
+        sqlx::query(
+            "INSERT INTO job_posting_readers (job_posting_id, member_id) VALUES ($1, $2) \
+             ON CONFLICT DO NOTHING",
+        )
+        .bind(job_id)
+        .bind(member_id)
+        .execute(&mut *tx)
+        .await
+        .map_err(NoombatError::from)?;
+    }
+
+    tx.commit().await.map_err(NoombatError::from)?;
+
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ..... Employment claims .....
@@ -60,10 +197,10 @@ pub fn router() -> Router<AppState> {
 /// withdrawn later.
 async fn list_employment_claims(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_acts_for(&state.pool, id, &principal).await?;
+    require_acts_for(&state.pool, id, &viewer).await?;
     let claims = noombat_identity::profile::list_employment_claims(&state.pool, id).await?;
     Ok(Json(claims))
 }
@@ -73,10 +210,10 @@ async fn list_employment_claims(
 /// Establish the employer side of a claim.
 async fn confirm_employment(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path((id, work_experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_acts_for(&state.pool, id, &principal).await?;
+    require_acts_for(&state.pool, id, &viewer).await?;
     let claim = noombat_identity::profile::confirm_employment(
         &state.pool,
         work_experience_id,
@@ -94,10 +231,10 @@ async fn confirm_employment(
 /// licence to edit their history.
 async fn withdraw_employment(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path((id, work_experience_id)): Path<(uuid::Uuid, uuid::Uuid)>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_acts_for(&state.pool, id, &principal).await?;
+    require_acts_for(&state.pool, id, &viewer).await?;
     let claim = noombat_identity::profile::withdraw_employment_confirmation(
         &state.pool,
         work_experience_id,
@@ -129,12 +266,12 @@ struct EnrolRequest {
 /// gated on a `rel="me"` link to its own domain, added afterwards.
 async fn enrol_organization(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<EnrolRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let owner_id = principal
+    let owner_id = viewer
         .as_ref()
-        .and_then(|p| p.actor_uuid)
+        .map(|p| p.actor_id)
         .ok_or(ApiError(NoombatError::Forbidden))?;
 
     let actor = noombat_identity::registration::enrol_organization(
@@ -184,7 +321,7 @@ fn default_limit() -> usize {
 /// `discoverable` profiles is indexed (enforced at indexing time).
 async fn search_candidates(
     State(state): State<AppState>,
-    _principal: Option<axum::Extension<Principal>>,
+    _viewer: Option<axum::Extension<Viewer>>,
     Query(query): Query<CandidateSearchQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
     let backend = state.search.as_ref().ok_or_else(|| {
@@ -241,22 +378,21 @@ struct JobApplicationSummary {
 /// and writes it to the applicant's own access log.
 async fn list_job_applications(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path(job_id): Path<uuid::Uuid>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
 
     let job = noombat_jobs::get_job(&state.pool, job_id).await?;
-    let permitted = match principal.actor_uuid {
-        Some(actor_id) => {
-            let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
-            may_access_job_applications(s.role, s.access, s.is_creator, s.is_listed)
-        }
-        // An anonymous request carries no actor to have standing.
-        None => false,
-    };
+    // An anonymous request carries no actor to have standing, and is
+    // already refused above by the absent extension.
+    let standing = company_standing(&state.pool, job.actor_id, job_id, viewer.actor_id).await?;
+    let permitted = may_access_job_applications(
+        standing.role,
+        standing.access,
+        standing.is_creator,
+        standing.is_listed,
+    );
 
     if !permitted {
         return Err(ApiError(NoombatError::Forbidden));
@@ -362,13 +498,11 @@ async fn company_standing(
 /// validated against the schema CHECK constraint.
 async fn update_job_application_status(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path((job_id, app_id)): Path<(uuid::Uuid, uuid::Uuid)>,
     Json(body): Json<UpdateStatusRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
 
     // Validate status value.
     let valid_statuses = [
@@ -389,13 +523,13 @@ async fn update_job_application_status(
     // No moderator override: moving an application is the organisation's
     // decision.
     let job = noombat_jobs::get_job(&state.pool, job_id).await?;
-    let permitted = match principal.actor_uuid {
-        Some(actor_id) => {
-            let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
-            may_access_job_applications(s.role, s.access, s.is_creator, s.is_listed)
-        }
-        None => false,
-    };
+    let standing = company_standing(&state.pool, job.actor_id, job_id, viewer.actor_id).await?;
+    let permitted = may_access_job_applications(
+        standing.role,
+        standing.access,
+        standing.is_creator,
+        standing.is_listed,
+    );
 
     if !permitted {
         return Err(ApiError(NoombatError::Forbidden));

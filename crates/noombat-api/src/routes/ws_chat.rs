@@ -21,7 +21,7 @@ use noombat_core::error::NoombatError;
 use tracing::{info, warn};
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -32,12 +32,10 @@ pub fn router() -> Router<AppState> {
 async fn ws_upgrade(
     State(state): State<AppState>,
     ws: WebSocketUpgrade,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     let chatmail_domain = state
         .chatmail_domain

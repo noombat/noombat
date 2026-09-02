@@ -16,7 +16,7 @@ use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -47,10 +47,10 @@ pub fn router() -> Router<AppState> {
 // ..... Email verification .....
 
 /// The signed-in actor, or a refusal.
-fn require_actor(principal: &Option<axum::Extension<Principal>>) -> Result<uuid::Uuid, ApiError> {
-    principal
+fn require_actor(viewer: &Option<axum::Extension<Viewer>>) -> Result<uuid::Uuid, ApiError> {
+    viewer
         .as_ref()
-        .and_then(|p| p.actor_id())
+        .map(|p| p.actor_id)
         .ok_or(ApiError(NoombatError::Forbidden))
 }
 
@@ -103,10 +103,10 @@ async fn send_challenge(
 /// Start proving control of an address, for the signed-in account.
 async fn request_email_verification(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(req): Json<EmailRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let actor_id = require_actor(&principal)?;
+    let actor_id = require_actor(&viewer)?;
     send_challenge(&state, actor_id, &req.email).await?;
     Ok(StatusCode::ACCEPTED)
 }
@@ -162,6 +162,22 @@ async fn register(
     // know in the same breath whether to go and look for the message.
     if let Some(email) = req.email.as_deref() {
         send_challenge(&state, result.actor_id, email).await?;
+    }
+
+    // An account awaiting admission gets no session. `login` already
+    // refuses a pending account, so minting a token here would be the
+    // one way past the approval an administrator has not given yet.
+    if result.awaiting_approval {
+        return Ok((
+            StatusCode::ACCEPTED,
+            Json(serde_json::json!({
+                "username": result.username,
+                "status": "pending",
+                "detail": "this instance admits new accounts by approval; \
+                           you will be able to sign in once an administrator admits yours",
+            })),
+        )
+            .into_response());
     }
 
     let session_config = state.session_config.as_ref().ok_or_else(|| {
@@ -293,16 +309,11 @@ async fn logout(
 
 async fn totp_enrol(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let username = principal
-        .username
-        .as_deref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
+    let username = viewer.username.as_str();
 
     let enrolment =
         noombat_identity::totp::enrol_totp(&state.pool, actor_id, username, &state.domain).await?;
@@ -317,13 +328,11 @@ struct TotpVerifyRequest {
 
 async fn totp_verify(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(req): Json<TotpVerifyRequest>,
 ) -> Result<Response, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     noombat_identity::totp::verify_totp(&state.pool, actor_id, &req.code).await?;
 
@@ -335,12 +344,10 @@ async fn totp_verify(
 
 async fn totp_disable(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     noombat_identity::totp::disable_totp(&state.pool, actor_id).await?;
 
@@ -378,10 +385,10 @@ async fn mastodon_init(
 /// redirect that comes back is trusted to say whose account this is.
 async fn mastodon_link_init(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Query(query): Query<MastodonInitQuery>,
 ) -> Result<Response, ApiError> {
-    let actor_id = require_actor(&principal)?;
+    let actor_id = require_actor(&viewer)?;
 
     let (url, _state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
         &state.pool,
@@ -468,9 +475,9 @@ async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError>
 /// links rather than creating.
 async fn orcid_link_init(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
-    let actor_id = require_actor(&principal)?;
+    let actor_id = require_actor(&viewer)?;
     let orcid_config = state.orcid_config.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
             "ORCID not configured".into(),
@@ -571,13 +578,11 @@ struct SetPasswordRequest {
 
 async fn set_password(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(req): Json<SetPasswordRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     // Verify the actor exists.
     let has_password = sqlx::query_scalar::<_, Option<bool>>(
@@ -614,7 +619,7 @@ async fn set_password(
 
         // Verify the old key.
         let login_req = noombat_identity::login::LoginRequest {
-            username: principal.username.clone().unwrap_or_default(),
+            username: viewer.username.clone(),
             auth_key: old_key.to_owned(),
             totp_code: None,
         };
@@ -682,16 +687,11 @@ struct ProvisionChatResponse {
 /// Returns 503 if Chatmail is not configured on this instance.
 async fn provision_chat(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Json<ProvisionChatResponse>, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    let username = principal
-        .username
-        .as_deref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
+    let username = viewer.username.as_str();
 
     // Check that chat is not already provisioned.
     let existing: Option<Option<String>> =
@@ -736,12 +736,10 @@ async fn provision_chat(
 /// (`application/octet-stream`). Returns 404 if no blob exists.
 async fn get_chatmail_cred(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     let blob: Option<Vec<u8>> =
         sqlx::query_scalar("SELECT chatmail_cred FROM actors WHERE id = $1")
@@ -776,13 +774,11 @@ async fn get_chatmail_cred(
 /// before transmission. The server stores opaque ciphertext.
 async fn put_chatmail_cred(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     body: axum::body::Bytes,
 ) -> Result<StatusCode, ApiError> {
-    let principal = principal.ok_or(ApiError(NoombatError::Forbidden))?;
-    let actor_id = principal
-        .actor_id()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor_id = viewer.actor_id;
 
     const MAX_BLOB_SIZE: usize = 65_536;
     if body.len() > MAX_BLOB_SIZE {

@@ -81,8 +81,48 @@
                     <option value="public" {% if default_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
                     <option value="unlisted" {% if default_visibility == "unlisted" %}selected{% endif %}>{{ i18n.t("vis_unlisted") }}</option>
                     <option value="followers" {% if default_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                    <option value="connections" {% if default_visibility == "connections" %}selected{% endif %}>{{ i18n.t("vis_connections") }}</option>
                 </select>
             </div>
+
+            <!-- Who may read each relationship list. Private by default,
+                 and each select carries the same four tiers, because the
+                 three lists differ only in which rows they return. -->
+            <fieldset class="border border-border-default rounded p-4">
+                <legend class="text-lg font-semibold px-2">{{ i18n.t("privacy_list_visibility") }}</legend>
+                <div class="space-y-3">
+                    <div>
+                        <label for="connections-visibility" class="block text-sm mb-1">{{ i18n.t("privacy_list_connections") }}</label>
+                        <select id="connections-visibility" name="connections_visibility"
+                                class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
+                            <option value="public" {% if connections_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                            <option value="followers" {% if connections_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                            <option value="connections" {% if connections_visibility == "connections" %}selected{% endif %}>{{ i18n.t("vis_connections") }}</option>
+                            <option value="private" {% if connections_visibility == "private" %}selected{% endif %}>{{ i18n.t("vis_private") }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="following-visibility" class="block text-sm mb-1">{{ i18n.t("privacy_list_following") }}</label>
+                        <select id="following-visibility" name="following_visibility"
+                                class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
+                            <option value="public" {% if following_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                            <option value="followers" {% if following_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                            <option value="connections" {% if following_visibility == "connections" %}selected{% endif %}>{{ i18n.t("vis_connections") }}</option>
+                            <option value="private" {% if following_visibility == "private" %}selected{% endif %}>{{ i18n.t("vis_private") }}</option>
+                        </select>
+                    </div>
+                    <div>
+                        <label for="followers-visibility" class="block text-sm mb-1">{{ i18n.t("privacy_list_followers") }}</label>
+                        <select id="followers-visibility" name="followers_visibility"
+                                class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
+                            <option value="public" {% if followers_visibility == "public" %}selected{% endif %}>{{ i18n.t("vis_public") }}</option>
+                            <option value="followers" {% if followers_visibility == "followers" %}selected{% endif %}>{{ i18n.t("vis_followers") }}</option>
+                            <option value="connections" {% if followers_visibility == "connections" %}selected{% endif %}>{{ i18n.t("vis_connections") }}</option>
+                            <option value="private" {% if followers_visibility == "private" %}selected{% endif %}>{{ i18n.t("vis_private") }}</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
 
             <button type="submit"
                     class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">

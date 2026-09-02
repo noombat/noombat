@@ -526,15 +526,21 @@ mod domain_tests {
 }
 
 /// Unpublish the postings of organisations that no longer control the
-/// domain they claim. Returns how many were unpublished.
+/// domain they claim. Returns the ids of the postings it demoted.
 ///
 /// Run after re-verification. A lapsed corporate domain is the classic
 /// recruitment-fraud vector: an expired domain is bought cheaply and the
 /// postings keep running under a badge that is no longer true. Refusing
 /// new postings is not enough on its own, because the ones already
 /// published are the ones applicants answer.
-pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<u64> {
-    let result = sqlx::query(
+///
+/// **The ids are the point, not the count.** Publicity federates as a
+/// `Note`, so a posting demoted here is still running on every instance
+/// that received one. Returning `rows_affected()` gave the caller
+/// nothing to withdraw with, which exported the vector this function
+/// exists to close to every peer that cannot see the demotion.
+pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<Vec<uuid::Uuid>> {
+    let demoted = sqlx::query_scalar::<_, uuid::Uuid>(
         "UPDATE job_postings SET published_at = NULL \
          WHERE published_at IS NOT NULL \
            AND actor_id IN ( \
@@ -544,17 +550,17 @@ pub async fn demote_lapsed_organizations(pool: &PgPool) -> Result<u64> {
                      SELECT 1 FROM verified_links v \
                      WHERE v.actor_id = a.id AND v.verified_at IS NOT NULL \
                  ) \
-           )",
+           ) \
+         RETURNING id",
     )
-    .execute(pool)
+    .fetch_all(pool)
     .await?;
 
-    let unpublished = result.rows_affected();
-    if unpublished > 0 {
+    if !demoted.is_empty() {
         warn!(
-            unpublished,
+            unpublished = demoted.len(),
             "unpublished postings of organisations with no verified domain"
         );
     }
-    Ok(unpublished)
+    Ok(demoted)
 }

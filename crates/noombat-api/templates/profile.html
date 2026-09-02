@@ -83,7 +83,12 @@
             {% for exp in work_experiences %}
             <article class="mb-4 border-b border-border-default pb-4">
                 <h3 class="font-semibold">{{ exp.title }}</h3>
-                <p class="text-text-secondary text-sm">{{ exp.organization }} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
+                <p class="text-text-secondary text-sm">{{ exp.organization }}{% if exp.is_confirmed() %}
+                    <!-- Shown only where the employer itself confirmed the
+                         claim. Anyone can type an employer's name; this
+                         says that employer agreed. -->
+                    <span class="ml-1 text-text-brand">{{ i18n.t("profile_employer_confirmed") }}</span>
+                    {% endif %} · {{ exp.start_date }}{% if let Some(end) = exp.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
                 {% if let Some(html) = exp.description_html %}
                 <div class="mt-2 leading-relaxed">{{ html|safe }}</div>
                 {% endif %}

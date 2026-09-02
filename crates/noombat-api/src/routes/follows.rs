@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::auth::require_local_actor;
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -52,10 +52,10 @@ struct FollowTarget {
 async fn initiate_follow(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<FollowTarget>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // Resolve (and cache) the remote actor.
     let remote_actor = noombat_federation::inbox::resolve_actor(
@@ -114,9 +114,9 @@ struct PendingFollow {
 async fn list_pending_follows(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     let rows = sqlx::query_as::<_, PendingFollow>(
         r#"SELECT f.id, f.follower_id,
@@ -139,9 +139,9 @@ async fn list_pending_follows(
 async fn accept_pending_follow(
     State(state): State<AppState>,
     Path((username, follow_id)): Path<(String, Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // Fetch the follow row, verifying it targets this actor and is pending.
     let row = sqlx::query_as::<_, (Uuid, bool, Option<String>)>(
@@ -209,9 +209,9 @@ async fn accept_pending_follow(
 async fn reject_pending_follow(
     State(state): State<AppState>,
     Path((username, follow_id)): Path<(String, Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
         r#"SELECT follower_id, ap_id FROM follows

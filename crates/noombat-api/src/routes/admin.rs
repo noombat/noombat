@@ -36,7 +36,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::i18n::I18n;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 use crate::theme::{Contrast, Theme};
 
@@ -66,58 +66,50 @@ pub fn router() -> Router<AppState> {
 
 // ..... GUARDS .....
 
-fn require_moderator(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, Box<Response>> {
-    let principal = principal
+fn require_moderator(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, Box<Response>> {
+    let viewer = viewer
         .as_ref()
         .ok_or_else(|| Box::new(Redirect::temporary("/auth/login").into_response()))?;
-    match principal.instance_role {
-        Some(InstanceRole::Moderator | InstanceRole::Admin) => Ok(principal),
-        _ => Err(Box::new(Redirect::temporary("/").into_response())),
+    if viewer.may_moderate() {
+        Ok(viewer)
+    } else {
+        Err(Box::new(Redirect::temporary("/").into_response()))
     }
 }
 
-fn require_admin(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, Box<Response>> {
-    let principal = principal
+fn require_admin(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, Box<Response>> {
+    let viewer = viewer
         .as_ref()
         .ok_or_else(|| Box::new(Redirect::temporary("/auth/login").into_response()))?;
-    match principal.instance_role {
-        Some(InstanceRole::Admin) => Ok(principal),
-        _ => Err(Box::new(Redirect::temporary("/").into_response())),
+    if viewer.may_administer() {
+        Ok(viewer)
+    } else {
+        Err(Box::new(Redirect::temporary("/").into_response()))
     }
 }
 
-fn require_moderator_api(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    match principal.instance_role {
-        Some(InstanceRole::Moderator | InstanceRole::Admin) => Ok(principal),
-        _ => Err(ApiError(NoombatError::Forbidden)),
+fn require_moderator_api(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    if viewer.may_moderate() {
+        Ok(viewer)
+    } else {
+        Err(ApiError(NoombatError::Forbidden))
     }
 }
 
-fn require_admin_api(
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<&Principal, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    match principal.instance_role {
-        Some(InstanceRole::Admin) => Ok(principal),
-        _ => Err(ApiError(NoombatError::Forbidden)),
+fn require_admin_api(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    if viewer.may_administer() {
+        Ok(viewer)
+    } else {
+        Err(ApiError(NoombatError::Forbidden))
     }
 }
 
-fn nav_username(principal: &Option<axum::Extension<Principal>>) -> String {
-    principal
+fn nav_username(viewer: &Option<axum::Extension<Viewer>>) -> String {
+    viewer
         .as_ref()
-        .and_then(|p| p.username.clone())
+        .map(|p| p.username.clone())
         .unwrap_or_default()
 }
 
@@ -171,12 +163,12 @@ async fn moderation_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) {
+    if let Err(r) = require_moderator(&viewer) {
         return *r;
     }
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     // One query, because there is one table. A second spine would cost a
     // second read and a merge in Rust even where nothing goes wrong, and
@@ -287,13 +279,13 @@ async fn users_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     axum::extract::Query(params): axum::extract::Query<UsersQuery>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) {
+    if let Err(r) = require_moderator(&viewer) {
         return *r;
     }
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let filter_role = params.role.unwrap_or_default();
     let filter_status = params.status.unwrap_or_default();
@@ -385,12 +377,12 @@ async fn domains_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    if let Err(r) = require_moderator(&principal) {
+    if let Err(r) = require_moderator(&viewer) {
         return *r;
     }
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let rows: Vec<DomainRestrictionRow> = sqlx::query_as(
         r#"SELECT dr.id, dr.domain, dr.restriction, dr.reason,
@@ -437,11 +429,11 @@ struct AddDomainRequest {
 
 async fn add_domain_restriction(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(body): Form<AddDomainRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator_api(&principal)?;
-    let moderator_id = moderator.actor_id();
+    let moderator = require_moderator_api(&viewer)?;
+    let moderator_id = moderator.actor_id;
 
     sqlx::query(
         "INSERT INTO domain_restrictions (domain, restriction, reason, created_by) \
@@ -469,9 +461,9 @@ async fn add_domain_restriction(
 async fn remove_domain_restriction(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let moderator = require_moderator_api(&principal)?;
+    let moderator = require_moderator_api(&viewer)?;
 
     sqlx::query("DELETE FROM domain_restrictions WHERE id = $1")
         .bind(id)
@@ -515,12 +507,12 @@ async fn settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    if let Err(r) = require_admin(&principal) {
+    if let Err(r) = require_admin(&viewer) {
         return *r;
     }
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let settings: Option<(String, bool, i32)> = sqlx::query_as(
         "SELECT registration_mode, default_job_approval, analytics_retention_days \
@@ -574,10 +566,10 @@ struct UpdateSettingsRequest {
 
 async fn update_settings(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(body): Form<UpdateSettingsRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_admin_api(&principal)?;
+    require_admin_api(&viewer)?;
 
     sqlx::query(
         r#"UPDATE instance_settings SET
@@ -606,11 +598,11 @@ struct CreateAnnouncementRequest {
 
 async fn create_announcement(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Form(body): Form<CreateAnnouncementRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let admin = require_admin_api(&principal)?;
-    let admin_id = admin.actor_id();
+    let admin = require_admin_api(&viewer)?;
+    let admin_id = admin.actor_id;
 
     sqlx::query("INSERT INTO announcements (content, created_by, expires_at) VALUES ($1, $2, $3)")
         .bind(&body.content)
@@ -626,9 +618,9 @@ async fn create_announcement(
 async fn delete_announcement(
     State(state): State<AppState>,
     Path(id): Path<Uuid>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_admin_api(&principal)?;
+    require_admin_api(&viewer)?;
 
     sqlx::query("DELETE FROM announcements WHERE id = $1")
         .bind(id)
@@ -656,6 +648,17 @@ struct FederationPage {
     queue_depth: i64,
     failed_domains: Vec<FailedDomainEntry>,
     tombstoned_count: i64,
+    /// Chatmail deletions still owed, and those given up on. Erasure is
+    /// the one operation whose failure nobody would otherwise notice:
+    /// the account is gone and the mail is not.
+    chatmail_pending: Vec<crate::chatmail_ops::PendingOperation>,
+    chatmail_failed: Vec<crate::chatmail_ops::FailedOperation>,
+    /// Posts admitted on a relay's word alone, and so held out of
+    /// trending. Counted here because an exclusion nobody can see is
+    /// indistinguishable from there being nothing to exclude, and an
+    /// administrator choosing `trust-relay` is owed the figure it
+    /// produces.
+    relayed_unverified_posts: i64,
 }
 
 async fn federation_page(
@@ -663,12 +666,12 @@ async fn federation_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
-    if let Err(r) = require_admin(&principal) {
+    if let Err(r) = require_admin(&viewer) {
         return *r;
     }
-    let uname = nav_username(&principal);
+    let uname = nav_username(&viewer);
 
     let queue_depth: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM delivery_queue WHERE attempts < 10")
@@ -703,6 +706,19 @@ async fn federation_page(
         .await
         .unwrap_or(0);
 
+    let chatmail_pending = crate::chatmail_ops::pending(&state.pool)
+        .await
+        .unwrap_or_default();
+    let chatmail_failed = crate::chatmail_ops::failures(&state.pool)
+        .await
+        .unwrap_or_default();
+
+    let relayed_unverified_posts: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE relayed_unverified")
+            .fetch_one(&state.pool)
+            .await
+            .unwrap_or(0);
+
     FederationPage {
         i18n,
         theme,
@@ -711,6 +727,9 @@ async fn federation_page(
         queue_depth,
         failed_domains,
         tombstoned_count,
+        chatmail_pending,
+        chatmail_failed,
+        relayed_unverified_posts,
     }
     .into_response()
 }
@@ -728,15 +747,15 @@ struct RoleChange {
 /// administrator may not be demoted by anyone.
 async fn set_user_role(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path(username): Path<String>,
     Form(body): Form<RoleChange>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let admin = require_admin_api(&principal)?;
+    let admin = require_admin_api(&viewer)?;
 
     let target = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
-    if admin.actor_id() == Some(target.id) {
+    if admin.actor_id == target.id {
         return Err(ApiError(NoombatError::BadRequest(
             "an administrator cannot change their own role; ask another administrator".into(),
         )));

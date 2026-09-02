@@ -60,6 +60,24 @@ pub struct NodeInfoFeatures {
     pub relay_verification_policy: Option<String>,
 }
 
+/// The FEPs this instance implements, published under
+/// `metadata.activitypub.extensions`.
+///
+/// A list of names and nothing else. A peer must not read a capability
+/// out of it and change behaviour: the endpoint is unauthenticated, so
+/// anything derived from it is derived from a claim the claimant
+/// controls. This instance reads no peer's NodeInfo for the same reason.
+///
+/// Adding an entry here is a statement that the mechanism is wired, not
+/// that a type for it exists. Two of these were added by the phases that
+/// wired them: FEP-8b32 proofs are checked on every inbound activity,
+/// and c180 is what `MoveRejected` gives its own error code.
+/// - `FEP-8b32`: integrity proofs (eddsa-jcs-2022), verified on
+///   ingestion and on relayed activities.
+/// - `FEP-c180`: typed error bodies on the inbox.
+/// - `FEP-fb2a`: actor metadata as `attachment` PropertyValue entries.
+const AP_EXTENSIONS: &[&str] = &["FEP-8b32", "FEP-c180", "FEP-fb2a"];
+
 /// Build the full NodeInfo 2.1 document with Noombat-specific metadata.
 pub fn build(params: &NodeInfoParams) -> Value {
     let mut metadata = json!({
@@ -88,6 +106,19 @@ pub fn build(params: &NodeInfoParams) -> Value {
         "noombat:groupsEnabled": params.features.groups_enabled,
         "noombat:eventsEnabled": params.features.events_enabled,
         "noombat:articlesEnabled": params.features.articles_enabled,
+        // The interoperable half of the same disclosure. A peer looking
+        // for "does this instance sign its objects" should not have to
+        // learn a `noombat:` key to find out, and `supportedVocabulary`
+        // answers a different question: which object types exist here,
+        // not which mechanisms are implemented.
+        //
+        // Names, not capabilities inferred from them. Nothing on this
+        // instance reads a peer's NodeInfo to decide anything, and this
+        // array is published on the same terms: informational, and not
+        // a negotiation.
+        "activitypub": {
+            "extensions": AP_EXTENSIONS,
+        },
     });
     if let Some(ref domain) = params.features.chatmail_domain {
         metadata["noombat:chatmailDomain"] = json!(domain);
@@ -158,6 +189,35 @@ mod tests {
         );
     }
 
+    #[test]
+    fn the_implemented_feps_are_published_under_activitypub() {
+        let params = NodeInfoParams {
+            total_users: 0,
+            active_month: 0,
+            active_half_year: 0,
+            local_posts: 0,
+            open_registrations: false,
+            features: NodeInfoFeatures::default(),
+        };
+        let doc = build(&params);
+
+        let extensions = doc["metadata"]["activitypub"]["extensions"]
+            .as_array()
+            .expect("the extensions array is published");
+
+        // Unconditional, unlike the `noombat:` feature keys: these
+        // describe mechanisms this build implements, not what an
+        // operator switched on.
+        assert!(extensions.iter().any(|v| v == "FEP-8b32"));
+        assert!(extensions.iter().any(|v| v == "FEP-c180"));
+
+        // Names only. Anything structured here invites a peer to derive
+        // a capability from an unauthenticated claim.
+        for entry in extensions {
+            assert!(entry.is_string(), "not a bare name: {entry}");
+        }
+    }
+
     /// Every key `build` can emit, as a flat path list.
     ///
     /// A golden list whose point is the failure it causes: adding a key
@@ -186,6 +246,7 @@ mod tests {
         "metadata.noombat:groupsEnabled",
         "metadata.noombat:eventsEnabled",
         "metadata.noombat:articlesEnabled",
+        "metadata.activitypub.extensions",
         // Conditional: emitted only when the feature is configured.
         "metadata.noombat:chatmailDomain",
         "metadata.noombat:integrityProofsEnabled",

@@ -8,30 +8,33 @@
 {% block content %}
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("edit_job_title") }}</h1>
 
-        <form hx-post="/users/{{ username }}/jobs"
-              hx-swap="none"
+        <!-- A plain form post, not hx-post at the JSON API. An HTML form
+             cannot send application/json, so the previous target rejected
+             every submission on content type before it read a field. -->
+        <form method="post" action="{{ form_action }}"
               class="space-y-4 max-w-lg">
 
             <div>
                 <label for="job-title" class="block text-sm mb-1">{{ i18n.t("job_title_label") }}</label>
-                <input id="job-title" name="title" type="text" required
+                <input id="job-title" name="title" type="text" required value="{{ title }}"
                        class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div>
                 <label for="job-desc" class="block text-sm mb-1">{{ i18n.t("job_description") }}</label>
                 <textarea id="job-desc" name="description_md" rows="8" required
-                          class="w-full border border-border-default rounded p-3 font-mono text-sm bg-bg-raised text-text-primary"></textarea>
+                          class="w-full border border-border-default rounded p-3 font-mono text-sm bg-bg-raised text-text-primary">{{ description_md }}</textarea>
             </div>
 
             <div>
                 <label for="job-loc" class="block text-sm mb-1">{{ i18n.t("job_location") }}</label>
-                <input id="job-loc" name="location" type="text"
+                <input id="job-loc" name="location" type="text" value="{{ location }}"
                        class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
             </div>
 
             <div class="flex items-center gap-2">
                 <input id="job-remote" name="remote" type="checkbox" value="true"
+                       {% if remote %}checked{% endif %}
                        class="rounded border-border-default">
                 <label for="job-remote" class="text-sm">{{ i18n.t("job_remote") }}</label>
             </div>
@@ -39,20 +42,25 @@
             <div class="flex gap-4">
                 <div class="flex-1">
                     <label for="job-sal-min" class="block text-sm mb-1">{{ i18n.t("job_salary_min") }}</label>
-                    <input id="job-sal-min" name="salary_min" type="number"
+                    <input id="job-sal-min" name="salary_min" type="number" value="{{ salary_min }}"
                            class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
                 </div>
                 <div class="flex-1">
                     <label for="job-sal-max" class="block text-sm mb-1">{{ i18n.t("job_salary_max") }}</label>
-                    <input id="job-sal-max" name="salary_max" type="number"
+                    <input id="job-sal-max" name="salary_max" type="number" value="{{ salary_max }}"
                            class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
                 </div>
                 <div class="w-24">
                     <label for="job-currency" class="block text-sm mb-1">{{ i18n.t("job_currency") }}</label>
                     <input id="job-currency" name="currency" type="text" maxlength="3" placeholder="USD"
+                           value="{{ currency }}"
                            class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary font-mono">
                 </div>
             </div>
+
+            <!-- What a peer is told, said plainly. The listing stays here;
+                 what travels is an ordinary post linking back to it. -->
+            <p class="text-sm text-text-secondary">{{ i18n.t("job_federation_note") }}</p>
 
             <button type="submit"
                     class="bg-bg-brand text-text-on-brand rounded px-6 py-2 hover:opacity-90">

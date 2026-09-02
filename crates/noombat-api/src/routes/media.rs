@@ -22,7 +22,7 @@ use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
 use crate::media::{MAX_UPLOAD_BYTES, MediaError, new_object_key, process_avatar};
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 /// How long a shared cache may keep an object.
@@ -46,8 +46,8 @@ pub fn router() -> Router<AppState> {
     )
 }
 
-fn actor_uuid(principal: &Option<axum::Extension<Principal>>) -> Option<uuid::Uuid> {
-    principal.as_ref().and_then(|p| p.actor_id())
+fn actor_uuid(viewer: &Option<axum::Extension<Viewer>>) -> Option<uuid::Uuid> {
+    viewer.as_ref().map(|p| p.actor_id)
 }
 
 /// Serve an uploaded object.
@@ -126,10 +126,10 @@ async fn serve_media(
 /// is what makes that true rather than a convention.
 async fn upload_avatar(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     mut multipart: Multipart,
 ) -> Response {
-    let Some(actor_id) = actor_uuid(&principal) else {
+    let Some(actor_id) = actor_uuid(&viewer) else {
         return (StatusCode::UNAUTHORIZED, "sign in to change your avatar").into_response();
     };
 

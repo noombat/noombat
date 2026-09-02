@@ -18,7 +18,7 @@
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use noombat_api::build_router;
-use noombat_api::middleware::Principal;
+use noombat_api::middleware::Viewer;
 use noombat_api::rate_limit::FallbackRateLimiter;
 use noombat_api::state::AppState;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
@@ -117,7 +117,7 @@ async fn insert_follow(pool: &PgPool, follower: Uuid, following: Uuid) {
 /// The feed page itself, as `viewer` would be served it. `None` is an
 /// anonymous visitor.
 ///
-/// The principal goes in as a request extension because that is how the
+/// The viewer goes in as a request extension because that is how the
 /// auth middleware supplies it, and the middleware does not run here.
 async fn feed_page_body(state: AppState, viewer: Option<&str>) -> String {
     let mut request = Request::builder()
@@ -126,11 +126,11 @@ async fn feed_page_body(state: AppState, viewer: Option<&str>) -> String {
         .expect("request built");
 
     if let Some(username) = viewer {
-        request.extensions_mut().insert(Principal {
-            username: Some(username.to_owned()),
-            actor_uuid: None,
-            instance_role: None,
-            is_follower_of_target: None,
+        request.extensions_mut().insert(Viewer {
+            actor_id: uuid::Uuid::new_v4(),
+            username: username.to_owned(),
+            instance_role: noombat_core::actor::InstanceRole::User,
+            actor_status: noombat_core::actor::ActorStatus::Active,
         });
     }
 

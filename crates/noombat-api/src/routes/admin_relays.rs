@@ -13,14 +13,13 @@ use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
-use noombat_core::actor::InstanceRole;
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -35,14 +34,13 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-/// Verify that the authenticated principal holds the admin role.
-fn require_admin(principal: &Option<axum::Extension<Principal>>) -> Result<&Principal, ApiError> {
-    let principal = principal
-        .as_ref()
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-    match principal.instance_role {
-        Some(InstanceRole::Admin) => Ok(principal),
-        _ => Err(ApiError(NoombatError::Forbidden)),
+/// Verify that the authenticated viewer holds the admin role.
+fn require_admin(viewer: &Option<axum::Extension<Viewer>>) -> Result<&Viewer, ApiError> {
+    let viewer = viewer.as_ref().ok_or(ApiError(NoombatError::Forbidden))?;
+    if viewer.may_administer() {
+        Ok(viewer)
+    } else {
+        Err(ApiError(NoombatError::Forbidden))
     }
 }
 
@@ -58,9 +56,9 @@ struct RelayInfo {
 /// `GET /api/v1/admin/relays`
 async fn list_relays(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    require_admin(&principal)?;
+    require_admin(&viewer)?;
 
     let rows = sqlx::query_as::<_, (Uuid, String, String, Option<String>)>(
         "SELECT id, inbox_url, status, verification_policy \
@@ -96,10 +94,10 @@ struct SubscribeRequest {
 /// `POST /api/v1/admin/relays`
 async fn subscribe_relay(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<SubscribeRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let admin = require_admin(&principal)?;
+    let admin = require_admin(&viewer)?;
 
     // Validate the per-relay verification policy if specified.
     if let Some(ref policy) = body.verification_policy
@@ -146,10 +144,10 @@ async fn subscribe_relay(
 /// `DELETE /api/v1/admin/relays/{id}`
 async fn unsubscribe_relay(
     State(state): State<AppState>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Path(relay_id): Path<Uuid>,
 ) -> Result<StatusCode, ApiError> {
-    let admin = require_admin(&principal)?;
+    let admin = require_admin(&viewer)?;
 
     let row =
         sqlx::query_as::<_, (String,)>("SELECT inbox_url FROM relay_subscriptions WHERE id = $1")

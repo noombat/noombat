@@ -23,7 +23,7 @@ use tracing::warn;
 
 use crate::error::ApiError;
 use crate::i18n::I18n;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 use crate::theme::{Contrast, Theme};
 
@@ -42,12 +42,12 @@ async fn get_post(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
         r#"SELECT p.id, p.actor_id, p.ap_id, p.post_type, p.title,
                   p.featured_image_url, p.content_md, p.content_html,
-                  p.visibility, p.ap_object, p.created_at,
+                  p.visibility, p.relayed_unverified, p.ap_object, p.created_at,
                   a.username, a.display_name
            FROM posts p
            JOIN actors a ON a.id = p.actor_id
@@ -65,36 +65,27 @@ async fn get_post(
 
     // ---- Visibility check ----
     //
-    // Followers-only posts must not be served to unauthenticated
-    // viewers or to viewers who are neither the author nor an
-    // accepted follower. Public and unlisted posts are visible to
-    // anyone (unlisted posts are excluded from timelines/search but
-    // accessible via direct URL, per the Fediverse convention).
-    if row.visibility == "followers" {
-        let viewer_id = principal.as_ref().and_then(|p| p.actor_id());
-        let is_author = viewer_id == Some(row.actor_id);
-        let is_follower = if let Some(vid) = viewer_id {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS(\
-                   SELECT 1 FROM follows \
-                   WHERE follower_id = $1 AND following_id = $2 AND accepted = TRUE\
-                 )",
-            )
-            .bind(vid)
-            .bind(row.actor_id)
-            .fetch_one(&state.pool)
-            .await
-            .unwrap_or(false)
-        } else {
-            false
-        };
-        if !is_author && !is_follower {
-            return Err(NoombatError::NotFound {
-                entity: "post",
-                id: post_id,
-            }
-            .into());
+    // Decided by `post_visible_to`, which owns the rule, rather than
+    // re-derived here. Public and unlisted posts are visible to anyone
+    // (unlisted posts are excluded from timelines and search but reachable
+    // by direct URL, per the Fediverse convention); the restricted tiers
+    // turn on the viewer's relationship to the author, and the nesting
+    // between them is the resolver's business, not this route's.
+    let viewer_id = viewer.as_ref().map(|p| p.actor_id);
+    let relationship =
+        noombat_identity::connections::relationship(&state.pool, viewer_id, row.actor_id).await?;
+
+    if !noombat_core::authorisation::post_visible_to(
+        noombat_core::privacy::PostVisibility::from_stored(&row.visibility),
+        viewer_id,
+        row.actor_id,
+        &relationship,
+    ) {
+        return Err(NoombatError::NotFound {
+            entity: "post",
+            id: post_id,
         }
+        .into());
     }
 
     // ---- ActivityPub JSON (content negotiation) ----
@@ -233,6 +224,7 @@ async fn get_post(
         author_display,
         content_html: row.content_html,
         created_at: row.created_at.to_rfc3339(),
+        relayed_unverified: row.relayed_unverified,
     };
     Ok(page.into_response())
 }
@@ -251,6 +243,8 @@ struct PostRow {
     content_md: Option<String>,
     content_html: String,
     visibility: String,
+    /// Accepted on a relay's word alone, under `trust-relay`.
+    relayed_unverified: bool,
     ap_object: serde_json::Value,
     created_at: chrono::DateTime<chrono::Utc>,
     username: String,
@@ -270,6 +264,8 @@ struct PostPage {
     author_display: String,
     content_html: String,
     created_at: String,
+    /// Whether to tell the reader nothing verified this post.
+    relayed_unverified: bool,
 }
 
 #[derive(Template, WebTemplate)]

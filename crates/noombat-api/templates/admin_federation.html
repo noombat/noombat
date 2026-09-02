@@ -32,6 +32,55 @@
             </div>
         </div>
 
+        <!-- What `trust-relay` has admitted, and what trending therefore
+             leaves out. An exclusion nobody can see is indistinguishable
+             from there being nothing to exclude. -->
+        <div class="border border-border-default rounded p-4 mb-8 max-w-md">
+            <p class="text-sm text-text-secondary">{{ i18n.t("admin_federation_relayed_unverified") }}</p>
+            <p class="text-3xl font-bold">{{ relayed_unverified_posts }}</p>
+            <p class="text-sm text-text-secondary mt-1">{{ i18n.t("admin_federation_relayed_unverified_note") }}</p>
+        </div>
+
+        <!-- Chatmail deletions this instance owes and has not completed.
+             Shown here rather than left in a log: erasure is the one
+             operation whose failure nobody would otherwise notice, since
+             the account is gone and the mail is not. -->
+        <h2 class="text-lg font-semibold mb-3">{{ i18n.t("admin_chatmail_heading") }}</h2>
+        {% if chatmail_pending.is_empty() && chatmail_failed.is_empty() %}
+        <p class="text-sm text-text-secondary mb-8">{{ i18n.t("admin_chatmail_clear") }}</p>
+        {% else %}
+        <div class="overflow-x-auto mb-8">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-border-default text-start">
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_address") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_state") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_attempts") }}</th>
+                        <th class="py-2">{{ i18n.t("admin_chatmail_col_error") }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for op in chatmail_failed %}
+                    <tr class="border-b border-border-default">
+                        <td class="py-2 pe-4 font-mono">{{ op.address }}</td>
+                        <td class="py-2 pe-4 text-text-danger">{{ i18n.t("admin_chatmail_state_failed") }}</td>
+                        <td class="py-2 pe-4">{{ op.attempts }}</td>
+                        <td class="py-2 text-text-secondary">{% if let Some(err) = op.last_error %}{{ err }}{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                    {% for op in chatmail_pending %}
+                    <tr class="border-b border-border-default">
+                        <td class="py-2 pe-4 font-mono">{{ op.address }}</td>
+                        <td class="py-2 pe-4">{{ i18n.t("admin_chatmail_state_pending") }}</td>
+                        <td class="py-2 pe-4">{{ op.attempts }}</td>
+                        <td class="py-2 text-text-secondary">{% if let Some(err) = op.last_error %}{{ err }}{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
         <!-- Failing domains table -->
         {% if !failed_domains.is_empty() %}
         <h2 class="text-lg font-semibold mb-3">{{ i18n.t("admin_federation_failing_heading") }}</h2>

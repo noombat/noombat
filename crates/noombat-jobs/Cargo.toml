@@ -12,5 +12,7 @@ noombat-markup = { workspace = true }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+rand = { workspace = true }
+sha2 = { workspace = true }
 sqlx = { workspace = true }
 uuid = { workspace = true }

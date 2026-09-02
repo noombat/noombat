@@ -353,7 +353,10 @@ async fn a_lapsed_domain_unpublishes_existing_postings(pool: PgPool) {
     .await
     .expect("link");
 
-    assert_eq!(post_job(pool.clone(), "acme", &token).await, StatusCode::CREATED);
+    assert_eq!(
+        post_job(pool.clone(), "acme", &token).await,
+        StatusCode::CREATED
+    );
     let published: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM job_postings WHERE actor_id = $1 AND published_at IS NOT NULL",
     )
@@ -374,7 +377,9 @@ async fn a_lapsed_domain_unpublishes_existing_postings(pool: PgPool) {
         .await
         .expect("sweep ran");
 
-    assert_eq!(demoted, 1);
+    // The ids, not a count: each one has a Note running on peers that
+    // has to be withdrawn, and a count cannot address them.
+    assert_eq!(demoted.len(), 1);
     let still_published: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM job_postings WHERE actor_id = $1 AND published_at IS NOT NULL",
     )

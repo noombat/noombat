@@ -22,16 +22,15 @@ use axum::http::header::{CONTENT_DISPOSITION, CONTENT_TYPE};
 use axum::response::IntoResponse;
 use axum::routing::get;
 use noombat_core::actor::Actor;
-use noombat_core::authorisation::FollowStatus;
 use noombat_core::error::NoombatError;
-use uuid::Uuid;
 use noombat_core::privacy::SectionVisibility;
 use serde::Deserialize;
 use sqlx::PgPool;
 use tracing::warn;
+use uuid::Uuid;
 
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 /// Query parameters for `GET /users/{username}/cv`.
@@ -58,7 +57,7 @@ pub fn router() -> Router<AppState> {
     Router::new().route("/users/{username}/cv", get(download_cv))
 }
 
-/// Whether `viewer_username` may download `owner`'s CV, and if so which
+/// Whether the viewer may download `owner`'s CV, and if so which
 /// sections it may contain.
 ///
 /// The two questions are answered together because they turn on the
@@ -69,11 +68,10 @@ pub fn router() -> Router<AppState> {
 /// A denial is [`NoombatError::ActorNotFound`], the same error a missing
 /// username produces, so the two are indistinguishable to a caller.
 ///
-/// | Requester   | Sections included                  |
-/// |-------------|------------------------------------|
-/// | Owner       | `public` + `followers` + `private` |
-/// | Follower    | `public` + `followers`             |
-/// | Anyone else | `public`                           |
+/// The gate is [`noombat_core::actor::Actor::cv_downloadable_by`] and
+/// nothing else. This contributes the relationship and the tier; a
+/// second opinion here is what let the route filter sections correctly
+/// while enforcing nothing.
 pub(crate) async fn resolve_cv_access(
     pool: &PgPool,
     owner: &Actor,
@@ -89,31 +87,21 @@ pub(crate) async fn resolve_cv_access(
         return Ok(SectionVisibility::Private);
     }
 
-    let viewer: Option<Actor> = match viewer_id {
-        Some(id) => noombat_identity::repo::find_by_id(pool, id).await.ok(),
-        None => None,
-    };
+    let relationship =
+        noombat_identity::connections::relationship(pool, viewer_id, owner.id).await?;
 
-    // A viewer whose row cannot be read is a stranger: no id, no
-    // follow, and the settings below decide the rest.
-    let follow_status = match viewer.as_ref() {
-        Some(v)
-            if crate::middleware::is_accepted_follower(pool, &v.username, &owner.username)
-                .await =>
-        {
-            FollowStatus::Accepted
-        }
-        _ => FollowStatus::None,
-    };
-
-    if !owner.cv_downloadable_by(viewer.as_ref(), follow_status) {
+    if !owner.cv_downloadable_by(viewer_id, &relationship) {
         return Err(NoombatError::ActorNotFound(owner.username.clone()));
     }
 
-    Ok(match follow_status {
-        FollowStatus::Accepted => SectionVisibility::Followers,
-        FollowStatus::Pending | FollowStatus::None => SectionVisibility::Public,
-    })
+    // Which tier the viewer qualifies for, and so what the PDF may
+    // contain. The same helper the profile page uses, so the CV and the
+    // page it is generated from cannot show different sections.
+    Ok(noombat_core::authorisation::section_tier_for(
+        viewer_id,
+        owner.id,
+        &relationship,
+    ))
 }
 
 /// `GET /users/{username}/cv?template=default`
@@ -124,17 +112,17 @@ pub(crate) async fn resolve_cv_access(
 async fn download_cv(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     client: Option<axum::Extension<ConnectInfo<SocketAddr>>>,
     Query(params): Query<CvParams>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let principal_username = principal.as_ref().and_then(|p| p.username.as_deref());
+    let viewer_username = viewer.as_ref().map(|p| p.username.as_str());
 
     // Counted before anything is looked up, so that probing for
     // profiles costs the prober the same budget as downloading. Keyed
     // per account when there is one, so rotating through targets from a
     // single session does not buy extra budget.
-    let limit_key = match principal_username {
+    let limit_key = match viewer_username {
         Some(name) => format!("cv:acct:{name}"),
         None => match client.as_ref() {
             Some(info) => format!("cv:ip:{}", info.0.0.ip()),
@@ -167,7 +155,7 @@ async fn download_cv(
         )));
     }
 
-    let viewer_id = principal.as_ref().and_then(|p| p.actor_uuid);
+    let viewer_id = viewer.as_ref().map(|p| p.actor_id);
     let effective_vis = resolve_cv_access(&state.pool, &actor, viewer_id).await?;
 
     let template_dir = std::path::Path::new("templates");

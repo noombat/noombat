@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::auth::require_local_actor;
 use crate::error::ApiError;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -46,10 +46,10 @@ struct BlockRequest {
 async fn create_block(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<BlockRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // Resolve the target actor (may be remote).
     let target = noombat_federation::inbox::resolve_actor(
@@ -71,6 +71,12 @@ async fn create_block(
     .execute(&state.pool)
     .await
     .map_err(NoombatError::from)?;
+
+    // Read the outbound Follow's AP id before deleting the row, because
+    // the `Undo` below has to name the activity it undoes and the row is
+    // the only place that id is kept.
+    let outbound_follow_ap_id =
+        noombat_identity::repo::get_follow_ap_id(&state.pool, local_actor.id, target.id).await?;
 
     // Sever any follow relationships in both directions.
     noombat_identity::repo::delete_follow(&state.pool, local_actor.id, target.id).await?;
@@ -102,6 +108,39 @@ async fn create_block(
     )
     .await?;
 
+    // The Block alone does not stop delivery. Severing the follow here
+    // and not there leaves the peer believing this actor still follows
+    // theirs, so it keeps sending posts from the account that was just
+    // blocked. Mastodon expects the `Undo { Follow }` as well.
+    if let Some(follow_ap_id) = outbound_follow_ap_id {
+        let undo_follow = json!({
+            "@context": default_context(),
+            "id": format!(
+                "{}#undo-follow-{}",
+                local_actor.ap_id,
+                chrono::Utc::now().timestamp_millis()
+            ),
+            "type": "Undo",
+            "actor": local_actor.ap_id,
+            "object": {
+                // The original Follow's own id, which is what lets the
+                // peer match this to the request it accepted.
+                "id": follow_ap_id,
+                "type": "Follow",
+                "actor": local_actor.ap_id,
+                "object": target.ap_id,
+            },
+        });
+
+        noombat_federation::delivery::enqueue(
+            &state.pool,
+            local_actor.id,
+            &undo_follow,
+            &target_inbox,
+        )
+        .await?;
+    }
+
     Ok(StatusCode::CREATED)
 }
 
@@ -109,9 +148,9 @@ async fn create_block(
 async fn delete_block(
     State(state): State<AppState>,
     Path((username, target_ap_id)): Path<(String, String)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     // URL-decode the target AP ID (it appears in the path).
     let target_ap_id = urlencoding::decode(&target_ap_id)
@@ -183,10 +222,10 @@ struct MuteRequest {
 async fn create_mute(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
     Json(body): Json<MuteRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     let target = noombat_federation::inbox::resolve_actor(
         &state.pool,
@@ -220,9 +259,9 @@ async fn create_mute(
 async fn delete_mute(
     State(state): State<AppState>,
     Path((username, mute_id)): Path<(String, Uuid)>,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<StatusCode, ApiError> {
-    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
     sqlx::query("DELETE FROM mutes WHERE id = $1 AND actor_id = $2")
         .bind(mute_id)

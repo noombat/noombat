@@ -32,14 +32,23 @@ pub async fn generate_cv_pdf(
     // ..... Fetch profile data .....
     let actor = crate::repo::find_by_id(pool, actor_id).await?;
 
+    // A CV is generated from profile data, and a remote actor's profile
+    // data arrived from a peer. There is no integrity proof over an
+    // ingested profile section, so typesetting one into a document that
+    // reads as this instance's own would be presenting a peer's claims
+    // as checked. Refused outright rather than rendered with a caveat: a
+    // caveat inside a PDF does not survive the PDF being forwarded.
+    if !actor.is_local {
+        return Err(NoombatError::BadRequest(
+            "a CV is generated from profile data, and this profile came from another \
+             instance with nothing to check it against"
+                .into(),
+        ));
+    }
+
     let experiences = profile::list_work_experiences(pool, actor_id, max_vis).await?;
     let educations = profile::list_education_entries(pool, actor_id, max_vis).await?;
-    let skills = profile::list_skills(
-        pool,
-        actor_id,
-        matches!(max_vis, SectionVisibility::Private),
-    )
-    .await?;
+    let skills = profile::list_skills(pool, actor_id, max_vis).await?;
     let publications = profile::list_scholarly_articles(pool, actor_id, max_vis).await?;
     let links = crate::verification::list_links(pool, actor_id).await?;
 

@@ -47,6 +47,12 @@ impl IntoResponse for ApiError {
                 (StatusCode::UNAUTHORIZED, ApError::signature_failed())
             }
             NoombatError::Forbidden => (StatusCode::FORBIDDEN, ApError::bad_request("forbidden")),
+            // 422 rather than 400: the activity was understood and is
+            // well formed, and this instance declines to act on it.
+            NoombatError::MoveRejected(detail) => (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                ApError::move_rejected(detail),
+            ),
             NoombatError::ServiceUnavailable(detail) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ApError::internal(detail))
             }

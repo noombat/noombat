@@ -16,7 +16,7 @@ use axum::routing::get;
 use serde::Deserialize;
 
 use crate::i18n::I18n;
-use crate::middleware::Principal;
+use crate::middleware::Viewer;
 use crate::state::AppState;
 use crate::theme::{Contrast, Theme};
 
@@ -58,9 +58,9 @@ async fn feed_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
-    principal: Option<axum::Extension<Principal>>,
+    viewer: Option<axum::Extension<Viewer>>,
 ) -> impl IntoResponse {
-    let viewer = principal.as_ref().and_then(|p| p.username.clone());
+    let viewer = viewer.as_ref().map(|p| p.username.clone());
 
     FeedPage {
         feed_url: feed_url(1, viewer.as_deref()),
@@ -83,7 +83,6 @@ async fn feed_partial(
 ) -> impl IntoResponse {
     let offset = (query.page.saturating_sub(1) as i64) * PAGE_SIZE;
     let mut post_ids: Vec<uuid::Uuid> = Vec::new();
-    let mut muted_ids: Vec<uuid::Uuid> = Vec::new();
     // Resolved viewer actor ID, if a valid `user` parameter was
     // supplied. Reused for follow, mute, and silenced-actor queries.
     let mut viewer_actor_id: Option<uuid::Uuid> = None;
@@ -137,23 +136,6 @@ async fn feed_partial(
         // created_at DESC; sorting by UUID would destroy this).
         let mut seen = std::collections::HashSet::new();
         post_ids.retain(|id| seen.insert(*id));
-
-        // Mute filtering: exclude posts by actors that this user has muted.
-        let muted_actor_ids: Vec<uuid::Uuid> = sqlx::query_scalar(
-            "SELECT target_id FROM mutes WHERE actor_id = $1 \
-             AND (expires_at IS NULL OR expires_at > now())",
-        )
-        .bind(actor.id)
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
-
-        if !muted_actor_ids.is_empty() {
-            // Remove post IDs whose author is muted. The author lookup
-            // happens during the post-fetch loop below; for efficiency,
-            // store the set and filter there.
-            muted_ids = muted_actor_ids;
-        }
     }
 
     // With no viewer identified, the feed is the public timeline, and a
@@ -179,6 +161,24 @@ async fn feed_partial(
     {
         post_ids.extend(ids);
     }
+
+    // Mute filtering, resolved once for the page rather than per post.
+    // Keyed on this page's authors, so a viewer with a long mute list
+    // does not load all of it to render twenty posts.
+    let muted = match viewer_actor_id {
+        Some(viewer_id) => {
+            let authors: Vec<uuid::Uuid> =
+                sqlx::query_scalar("SELECT DISTINCT actor_id FROM posts WHERE id = ANY($1)")
+                    .bind(&post_ids)
+                    .fetch_all(&state.pool)
+                    .await
+                    .unwrap_or_default();
+            crate::interactions::Interactions::new(state.pool.clone())
+                .muted_among(&viewer_id, &authors)
+                .await
+        }
+        None => crate::interactions::MutedAuthors::default(),
+    };
 
     // Collect the IDs of actors the viewer explicitly follows.
     // Posts by silenced actors are excluded from public timelines
@@ -215,16 +215,14 @@ async fn feed_partial(
         .await
         {
             // Mute filter: skip posts by muted actors.
-            if muted_ids.contains(&row.actor_id) {
+            if !muted.restriction(&row.actor_id).appears_in_feed() {
                 continue;
             }
 
             // Silenced-actor filter: exclude posts by silenced
             // actors from public timelines unless the viewer
             // explicitly follows them.
-            if row.actor_status == noombat_core::actor::ActorStatus::Silenced
-                && !followed_actor_ids.contains(&row.actor_id)
-            {
+            if row.actor_status.is_silenced() && !followed_actor_ids.contains(&row.actor_id) {
                 continue;
             }
 

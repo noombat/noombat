@@ -484,10 +484,19 @@ async fn main() -> anyhow::Result<()> {
                         // an organisation's postings up. Refusing new ones
                         // is not enough: the published ones are what
                         // applicants answer.
-                        if let Err(e) =
-                            noombat_identity::verification::demote_lapsed_organizations(&pool).await
+                        match noombat_identity::verification::demote_lapsed_organizations(&pool)
+                            .await
                         {
-                            tracing::warn!(error = %e, "demotion sweep failed");
+                            // Demoting locally is only half of it. The
+                            // publicising Note is still running on every
+                            // peer that received it, under a badge this
+                            // instance has just withdrawn, so each
+                            // demoted posting gets a Delete.
+                            Ok(demoted) => {
+                                noombat_api::jobs_federation::announce_withdrawn(&pool, &demoted)
+                                    .await;
+                            }
+                            Err(e) => tracing::warn!(error = %e, "demotion sweep failed"),
                         }
                         // Broadcast an Update activity for each actor
                         // whose verification state changed, so that
@@ -870,6 +879,30 @@ async fn main() -> anyhow::Result<()> {
                 Duration::from_secs(3600),
             )
             .await;
+        });
+    }
+
+    // Spawn the housekeeping worker: expired email challenges and
+    // analytics rows past their retention. Both had functions and no
+    // caller, so challenges accumulated forever and the instance
+    // advertised a retention period it did not honour. Hourly, because
+    // both are measured in days.
+    {
+        let pool = state.pool.clone();
+        tokio::spawn(async move {
+            noombat_api::housekeeping::run_worker(pool, Duration::from_secs(3600)).await;
+        });
+    }
+
+    // Spawn the Chatmail operations worker, which drains the maildir
+    // deletions erasure records. Every five minutes rather than hourly:
+    // the rows carry their own backoff, so a frequent pass costs one
+    // indexed query and lets a short sidecar outage resolve quickly.
+    {
+        let pool = state.pool.clone();
+        let client = state.chatmail_admin_client.clone();
+        tokio::spawn(async move {
+            noombat_api::chatmail_ops::run_worker(pool, client, Duration::from_secs(300)).await;
         });
     }
 

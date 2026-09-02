@@ -50,7 +50,7 @@ pub fn index_profile(
     let Some(backend) = search.clone() else {
         return;
     };
-    if !actor.actor_privacy.discoverable {
+    if !actor.is_discoverable() {
         return;
     }
     // Silenced actors are excluded from search indices. They remain
@@ -103,9 +103,13 @@ pub async fn reindex_profile_from_db(
 
     let vis = &SectionVisibility::Public;
 
-    let skills = noombat_identity::profile::list_skills(pool, actor.id, false)
-        .await
-        .unwrap_or_default();
+    let skills = noombat_identity::profile::list_skills(
+        pool,
+        actor.id,
+        &noombat_core::privacy::SectionVisibility::Public,
+    )
+    .await
+    .unwrap_or_default();
     let work_experiences = noombat_identity::profile::list_work_experiences(pool, actor.id, vis)
         .await
         .unwrap_or_default();
