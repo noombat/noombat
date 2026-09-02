@@ -156,7 +156,7 @@ zeroize = { version = "1", features = ["derive"] }
 governor = { version = "0.10", features = ["dashmap", "std"] }
 
 # Password hashing (Argon2id for auth_key_hash).
-argon2 = "0.5"
+argon2 = "0.6"
 
 # HMAC-SHA256 for constant-time token comparison.
 hmac = "0.12"
