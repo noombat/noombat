@@ -87,19 +87,15 @@ jobs:
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
       # Session authentication, which the server enables only when this
-      # is set. Without it every page behind `require_auth` is reachable
-      # by no credential the suite can present: the admin bearer below
-      # resolves to a principal with no actor id, and with no username
-      # either on any path outside /users/{name} and /@{name}, so /chat,
-      # /settings/chat, /compose, /auth/upgrade and every /settings page
-      # answer 307 to /auth/login. A fixture for a throwaway instance,
-      # not a secret.
+      # is set, and which is the only thing that identifies a caller.
+      # Without it /chat, /settings/chat, /compose, /auth/upgrade and
+      # every /settings page answer 307 to /auth/login, because nothing
+      # the suite can present would satisfy `require_auth`. A fixture for
+      # a throwaway instance, not a secret.
       NOOMBAT_JWT_SECRET: ci-e2e-jwt-secret-at-least-32-bytes-long
-      # Read by the server only. No Playwright spec presents it any more:
-      # the admin bearer sets no `instance_role`, so `require_admin`
-      # redirected every admin page and the scans measured the feed. Those
-      # groups sign in as the seeded `e2e_admin` account instead.
-      NOOMBAT_ADMIN_TOKEN: ci-test-token
+      # The admin groups sign in as the seeded `e2e_admin` account:
+      # `require_admin` reads `instance_role`, and a scan run without it
+      # follows the redirect and measures the feed while reporting a pass.
       # Effectively disable per-IP rate limiting for the e2e run.
       # The values mirror the test overlay in compose.test.yml.
       NOOMBAT_RATE_LIMIT: "10000"

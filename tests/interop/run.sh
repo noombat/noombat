@@ -54,10 +54,12 @@
 #
 # Environment:
 #   CURL_OPTS             extra curl flags, e.g. --insecure for Caddy's CA
-#   NOOMBAT_ADMIN_TOKEN   bearer for Noombat's authenticated routes;
-#                         must match the value compose.yml sets
 #   CI                    when set, a skip is a failure and an
 #                         unreachable peer is fatal
+#
+# Noombat's authenticated routes act for whoever the session says they
+# are, so this suite signs in as the seeded actor and carries the access
+# token it gets back. There is no instance-wide bearer to borrow.
 #
 # Exit codes:
 #   0: all tests passed
@@ -88,7 +90,17 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 # certs in the local (Compose+Caddy) environment.
 CURL_OPTS="${CURL_OPTS:-}"
 
-ADMIN_TOKEN="${NOOMBAT_ADMIN_TOKEN:-interop-test-token}"
+# The credential seed.sh stored for the fixture actor. Sourced rather
+# than repeated, so the key here and the hash there cannot drift apart.
+# Checked like fixtures.sh above, and for the same reason.
+# shellcheck source=tests/interop/fixture-credential.sh
+. "$HERE/fixture-credential.sh" || {
+    echo "::error::cannot read $HERE/fixture-credential.sh" >&2
+    exit 1
+}
+
+# Filled in by the sign-in step, once Noombat is known to be up.
+SESSION_TOKEN=""
 
 # Seconds to wait for an activity to cross. Delivery is queued on
 # Noombat's side and processed asynchronously on GoToSocial's, so every
@@ -278,6 +290,23 @@ else
     fail "Shared inbox returned $STATUS for an unsigned delivery (expected 400 or 401)"
 fi
 
+# 8. Sign in to Noombat as the seeded actor.
+#
+#    Asserted here, among the Noombat checks, rather than beside the
+#    first request that needs it: a refusal is a fault in this instance
+#    or in the fixture, and reporting it from the middle of the
+#    federation section would read like a peer problem.
+echo "Noombat sign-in:"
+SESSION_TOKEN=$(jstr "$(curl $CURL_OPTS -s -X POST \
+    -H 'Content-Type: application/json' \
+    -d "{\"username\":\"${NOOMBAT_ACTOR}\",\"auth_key\":\"${FIXTURE_AUTH_KEY}\"}" \
+    "$NOOMBAT/api/v1/auth/login" 2>/dev/null)" access_token)
+if [ -n "$SESSION_TOKEN" ]; then
+    pass "Signed in as ${NOOMBAT_ACTOR}"
+else
+    fail "could not sign in as ${NOOMBAT_ACTOR}; did seed.sh run?"
+fi
+
 # ..... Cross-instance federation .....
 
 echo ""
@@ -287,7 +316,7 @@ echo ""
 if ! $GTS_AVAILABLE; then
     skip "GoToSocial not available; no activity can be exchanged"
 else
-    # 8. GoToSocial NodeInfo. Liveness, kept because it names the peer
+    # 9. GoToSocial NodeInfo. Liveness, kept because it names the peer
     #    in the log when something below fails.
     echo "GoToSocial NodeInfo:"
     BODY=$(curl $CURL_OPTS -sf "$GOTOSOCIAL/nodeinfo/2.0" 2>/dev/null)
@@ -297,7 +326,7 @@ else
         fail "GoToSocial NodeInfo software name incorrect"
     fi
 
-    # 9. Sign in to GoToSocial as the seeded account.
+    # 10. Sign in to GoToSocial as the seeded account.
     #
     #    Everything below reads GoToSocial's state through its own API,
     #    and that API answers nothing useful to an unauthenticated
@@ -358,7 +387,7 @@ else
         skip "Reverse Follow round trip: no GoToSocial session"
         skip "Create { Note } round trip: no GoToSocial session"
     else
-        # 10. The account is created locked, so a Follow would sit in
+        # 11. The account is created locked, so a Follow would sit in
         #     the requests queue and no Accept would ever be sent. There
         #     is no admin CLI for this, only the API, which is why it is
         #     here and not in seed.sh.
@@ -381,10 +410,10 @@ else
         # and Noombat's actor document carries `/@alice` there.
         NOOMBAT_ACTOR_URL="$NOOMBAT/@$NOOMBAT_ACTOR"
 
-        # 11. Follow, from Noombat to GoToSocial.
+        # 12. Follow, from Noombat to GoToSocial.
         echo "Follow (Noombat -> GoToSocial):"
         STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
-            -X POST -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -X POST -H "Authorization: Bearer $SESSION_TOKEN" \
             -H 'Content-Type: application/json' \
             -d "{\"target_ap_id\":\"$GTS_ACTOR_AP_ID\"}" \
             "$NOOMBAT/users/$NOOMBAT_ACTOR/following" 2>/dev/null)
@@ -423,7 +452,7 @@ else
             fail "Noombat never accepted the follow; no verified Accept arrived"
         fi
 
-        # 12. Follow, from GoToSocial to Noombat.
+        # 13. Follow, from GoToSocial to Noombat.
         #
         # Required by the Create below, twice over. Noombat picks its
         # delivery targets with `get_follower_inboxes`, which selects
@@ -496,11 +525,11 @@ else
             fail "GoToSocial never accepted the follow of ${NOOMBAT_ACTOR_URL}"
         fi
 
-        # 13. Create { Note }, delivered to the follower's inbox.
+        # 14. Create { Note }, delivered to the follower's inbox.
         echo "Create { Note } (Noombat -> GoToSocial):"
         MARKER="interop-note-$(date +%s)-$$"
         CREATE=$(curl $CURL_OPTS -s -X POST \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            -H "Authorization: Bearer $SESSION_TOKEN" \
             -H 'Content-Type: application/json' \
             -d "{\"post_type\":\"note\",\"content\":\"$MARKER\",\"visibility\":\"public\"}" \
             "$NOOMBAT/users/$NOOMBAT_ACTOR/outbox" 2>/dev/null)
@@ -530,7 +559,7 @@ else
             fail "the Note never reached ${GTS_ACTOR}'s home timeline"
         fi
 
-        # 14. Create { Note }, the other direction.
+        # 15. Create { Note }, the other direction.
         #
         # Everything above exercises Noombat's *outbound* path or its
         # handling of Follow and Accept. Without this, nothing GoToSocial

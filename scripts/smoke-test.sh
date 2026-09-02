@@ -117,19 +117,37 @@ check "GET /users/nonexistent returns 404" \
 
 echo ""
 echo "..... Outbox ....."
-TOKEN="${NOOMBAT_ADMIN_TOKEN:-dev-token-change-me}"
+# Posting to an outbox acts as that account, so it takes a session. This
+# script runs against an arbitrary deployment and holds no credential,
+# which bounds what it can assert here: the refusals, which need none.
+#
+# Set NOOMBAT_SESSION_TOKEN to an access token from
+# `POST /api/v1/auth/login` to add the authenticated case below.
+TOKEN="${NOOMBAT_SESSION_TOKEN:-}"
 
-check_post "POST outbox without token returns 403" \
+check_post "POST outbox without a session returns 403" \
     "$BASE/users/alice/outbox" "403" \
     "" '{"content":"test"}'
 
-check_post "POST outbox with wrong token returns 403" \
+check_post "POST outbox with a bad session returns 403" \
     "$BASE/users/alice/outbox" "403" \
-    "Bearer wrong-token" '{"content":"test"}'
+    "Bearer not-a-valid-token" '{"content":"test"}'
 
-check_post "POST outbox for nonexistent user returns 404" \
-    "$BASE/users/nonexistent/outbox" "404" \
-    "Bearer $TOKEN" '{"content":"test"}'
+# An anonymous caller gets the same answer for an account that exists
+# and one that does not, so this endpoint cannot be used to enumerate
+# usernames. Authentication is checked before the lookup so that it holds.
+check_post "POST outbox for a nonexistent user returns 403 unauthenticated" \
+    "$BASE/users/nonexistent/outbox" "403" \
+    "" '{"content":"test"}'
+
+if [ -n "$TOKEN" ]; then
+    # With a session the lookup runs and the distinction reappears: the
+    # caller has proved who they are, so naming a missing account tells
+    # them nothing they could not already find out.
+    check_post "POST outbox for a nonexistent user returns 404 with a session" \
+        "$BASE/users/nonexistent/outbox" "404" \
+        "Bearer $TOKEN" '{"content":"test"}'
+fi
 
 echo ""
 echo "..... Moderation ....."

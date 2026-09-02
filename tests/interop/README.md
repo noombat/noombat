@@ -67,12 +67,17 @@ Environment:
 
 | Variable                | Effect                                                                        |
 |-------------------------|-------------------------------------------------------------------------------|
-| `CURL_OPTS`             | Extra curl flags. `--insecure` for Caddy's internal CA.                       |
-| `NOOMBAT_ADMIN_TOKEN`   | Bearer for Noombat's authenticated routes. Matches `compose.yml`.             |
-| `INTEROP_CROSS_TIMEOUT` | Seconds to wait for an activity to cross. Default 60.                         |
-| `CI`                    | When set, a skipped assertion fails the run, an unreachable peer included.    |
+| `CURL_OPTS`             | Extra curl flags. `--insecure` for Caddy's internal CA.                    |
+| `INTEROP_CROSS_TIMEOUT` | Seconds to wait for an activity to cross. Default 60.                     |
+| `CI`                    | When set, a skipped assertion fails the run, an unreachable peer included. |
 
 The accounts themselves are declared once, in `fixtures.sh`, because `seed.sh` creates them and `run.sh` signs in as one of them.
+
+Noombat's authenticated routes act for whoever the session says they are, so there is no
+instance-wide bearer to configure. `seed.sh` stores an Argon2id hash of a fixture key, `run.sh`
+exchanges that key for an access token at `POST /api/v1/auth/login`, and both read the key from
+`fixture-credential.sh` so the two cannot drift apart. That file explains the choice of key and
+gives the command that regenerates the hash.
 
 ## What is asserted, and where
 

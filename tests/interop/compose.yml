@@ -77,7 +77,6 @@ services:
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
       NOOMBAT_REDIS_URL: redis://redis:6379
-      NOOMBAT_ADMIN_TOKEN: interop-test-token
       NOOMBAT_JWT_SECRET: interop-jwt-secret-32-bytes-minimum-0123456789
       NOOMBAT_KEK: 00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff
       # The delivery worker and the polling assertions in run.sh both

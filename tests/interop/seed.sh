@@ -79,6 +79,11 @@ gts() { compose exec -T gotosocial /gotosocial/gotosocial "$@"; }
 # written. It logs a warning per read saying so.
 KEY_DIR="$(mktemp -d)"
 trap 'rm -rf "$KEY_DIR"' EXIT
+
+# The credential the actor signs in with, shared with run.sh so the two
+# cannot drift apart. See that file for why a login is needed at all.
+# shellcheck source=tests/interop/fixture-credential.sh
+. "$(cd "$(dirname "$0")" && pwd)/fixture-credential.sh"
 openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
     -out "$KEY_DIR/private.pem" 2>/dev/null
 openssl rsa -in "$KEY_DIR/private.pem" -pubout -out "$KEY_DIR/public.pem" 2>/dev/null
@@ -93,29 +98,36 @@ echo "Seeding ${NOOMBAT_ACTOR} as ${AP_ID}"
 # the wrong public key.
 psql_noombat -v ON_ERROR_STOP=1 <<SQL
 INSERT INTO actors
-    (actor_type, ap_id, username, domain, public_key_pem, private_key_pem, is_local)
+    (actor_type, ap_id, username, domain, public_key_pem, private_key_pem,
+     is_local, auth_key_hash)
 VALUES
     ('individual', '${AP_ID}', '${NOOMBAT_ACTOR}', '${DOMAIN}',
-     '${PUBLIC_KEY}', '${PRIVATE_KEY}', TRUE)
+     '${PUBLIC_KEY}', '${PRIVATE_KEY}', TRUE, '${FIXTURE_AUTH_KEY_HASH}')
 ON CONFLICT (ap_id) DO UPDATE
     SET public_key_pem = EXCLUDED.public_key_pem,
-        private_key_pem = EXCLUDED.private_key_pem;
+        private_key_pem = EXCLUDED.private_key_pem,
+        auth_key_hash = EXCLUDED.auth_key_hash;
 SQL
 
 # Assert rather than trust. A silent zero-row insert leaves run.sh to
 # fail later with a WebFinger 404, which reads like an interop defect
 # rather than a missing fixture. The key columns are checked too: an
 # actor with no private key federates outbound not at all, and the
-# failure surfaces as a delivery that never arrives.
+# failure surfaces as a delivery that never arrives. `auth_key_hash` is
+# checked for the same reason: without it run.sh cannot sign in, and a
+# 403 three hundred lines into a federation suite reads like anything
+# but a missing fixture.
 count=$(psql_noombat -tA -c \
     "SELECT count(*) FROM actors
      WHERE ap_id = '${AP_ID}'
        AND private_key_pem IS NOT NULL
-       AND public_key_pem IS NOT NULL;")
+       AND public_key_pem IS NOT NULL
+       AND auth_key_hash IS NOT NULL
+       AND actor_status = 'active';")
 
 if [ "$(echo "$count" | tr -d '[:space:]')" != "1" ]; then
-    echo "error: ${NOOMBAT_ACTOR} was not seeded with a key pair;" \
-         "found $count row(s) for ${AP_ID}" >&2
+    echo "error: ${NOOMBAT_ACTOR} was not seeded with a key pair and a" \
+         "sign-in credential; found $count row(s) for ${AP_ID}" >&2
     exit 1
 fi
 

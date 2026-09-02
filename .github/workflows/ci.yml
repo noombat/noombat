@@ -314,7 +314,6 @@ jobs:
       DATABASE_URL: postgres://noombat:noombat@localhost/noombat
       NOOMBAT_DOMAIN: localhost
       NOOMBAT_PORT: "8443"
-      NOOMBAT_ADMIN_TOKEN: ci-test-token
       # Read by tests/search_index.rs. Absent, those tests skip, so this
       # is what makes them run rather than quietly pass.
       MEILI_URL: http://localhost:7700

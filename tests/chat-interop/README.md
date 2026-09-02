@@ -41,7 +41,7 @@ Its limits are worth knowing before trusting a result. Templates, migrations and
 
 ## Configuration
 
-The instance domain is `test.local`, which is not `localhost`, so the server's production guard rails run in full and abort the process on any documented default. `compose.yml` therefore has to supply five values: an admin token, a JWT secret of at least 32 bytes, a database credential that is not `noombat:noombat`, a KEK, and a Chatmail admin secret that is not the documented one. Miss any of them and the container exits before it binds a listener, which reads as a readiness timeout rather than as a configuration error. They are fixtures for a stack that lives for the length of one `docker compose up`, not secrets.
+The instance domain is `test.local`, which is not `localhost`, so the server's production guard rails run in full and abort the process on any documented default. `compose.yml` therefore has to supply four values: a JWT secret of at least 32 bytes, a database credential that is not `noombat:noombat`, a KEK, and a Chatmail admin secret that is not the documented one. Miss any of them and the container exits before it binds a listener, which reads as a readiness timeout rather than as a configuration error. They are fixtures for a stack that lives for the length of one `docker compose up`, not secrets.
 
 ## Chatmail Relay Container
 

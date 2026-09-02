@@ -69,12 +69,11 @@ services:
   # ..... NOOMBAT .....
   #
   # The domain is not `localhost`, so `validate_production_config` runs
-  # in full and aborts the process on any documented default. Four of
-  # the values below are what it demands: an admin token that is not
-  # `noombat`, a JWT secret of at least 32 bytes, a database credential
-  # that is not `noombat:noombat`, and a KEK. The Chatmail admin secret
-  # is checked against its own default too. They are fixtures for a
-  # throwaway instance, not secrets.
+  # in full and aborts the process on any documented default. Three of
+  # the values below are what it demands: a JWT secret of at least 32
+  # bytes, a database credential that is not `noombat:noombat`, and a
+  # KEK. The Chatmail admin secret is checked against its own default
+  # too. They are fixtures for a throwaway instance, not secrets.
 
   noombat:
     build:
@@ -86,7 +85,6 @@ services:
       NOOMBAT_HOST: "0.0.0.0"
       NOOMBAT_PORT: "8443"
       NOOMBAT_REDIS_URL: redis://redis:6379
-      NOOMBAT_ADMIN_TOKEN: chat-test-token
       NOOMBAT_JWT_SECRET: test-secret-at-least-32-bytes-long!!
       NOOMBAT_KEK: 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
       NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
