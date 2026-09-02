@@ -24,6 +24,7 @@ use axum::routing::get;
 use noombat_core::actor::Actor;
 use noombat_core::authorisation::FollowStatus;
 use noombat_core::error::NoombatError;
+use uuid::Uuid;
 use noombat_core::privacy::SectionVisibility;
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -76,31 +77,33 @@ pub fn router() -> Router<AppState> {
 pub(crate) async fn resolve_cv_access(
     pool: &PgPool,
     owner: &Actor,
-    viewer_username: Option<&str>,
+    viewer_id: Option<Uuid>,
 ) -> Result<SectionVisibility, NoombatError> {
-    // Owners always reach their own CV, including the `private` entries
+    // Identity is the actor's id, never the username in the path. A
+    // username is mutable, so matching on it would let a rename decide
+    // who reaches a CV.
+    //
+    // Owners always reach their own, including the `private` entries
     // that exist only for it.
-    if viewer_username == Some(owner.username.as_str()) {
+    if viewer_id == Some(owner.id) {
         return Ok(SectionVisibility::Private);
     }
 
-    let follow_status = match viewer_username {
-        Some(name)
-            if crate::middleware::is_accepted_follower(pool, name, &owner.username).await =>
+    let viewer: Option<Actor> = match viewer_id {
+        Some(id) => noombat_identity::repo::find_by_id(pool, id).await.ok(),
+        None => None,
+    };
+
+    // A viewer whose row cannot be read is a stranger: no id, no
+    // follow, and the settings below decide the rest.
+    let follow_status = match viewer.as_ref() {
+        Some(v)
+            if crate::middleware::is_accepted_follower(pool, &v.username, &owner.username)
+                .await =>
         {
             FollowStatus::Accepted
         }
         _ => FollowStatus::None,
-    };
-
-    // Resolved by username rather than by uuid because both principal
-    // shapes carry one: the JWT path sets `actor_uuid`, the
-    // development admin-token path does not.
-    let viewer: Option<Actor> = match viewer_username {
-        Some(name) => noombat_identity::repo::find_local_by_username(pool, name)
-            .await
-            .ok(),
-        None => None,
     };
 
     if !owner.cv_downloadable_by(viewer.as_ref(), follow_status) {
@@ -164,7 +167,8 @@ async fn download_cv(
         )));
     }
 
-    let effective_vis = resolve_cv_access(&state.pool, &actor, principal_username).await?;
+    let viewer_id = principal.as_ref().and_then(|p| p.actor_uuid);
+    let effective_vis = resolve_cv_access(&state.pool, &actor, viewer_id).await?;
 
     let template_dir = std::path::Path::new("templates");
     let pdf_bytes = noombat_identity::cv::generate_cv_pdf(
@@ -299,15 +303,30 @@ mod tests {
 
             let owner_id = insert_actor(&pool, OWNER, setting).await;
             let follower_id = insert_actor(&pool, FOLLOWER, CvDownload::Public).await;
-            insert_actor(&pool, STRANGER, CvDownload::Public).await;
+            let stranger_id = insert_actor(&pool, STRANGER, CvDownload::Public).await;
             insert_follow(&pool, follower_id, owner_id, true).await;
 
             let owner = noombat_identity::repo::find_local_by_username(&pool, OWNER)
                 .await
                 .expect("owner row");
 
+            // The name drives the expectation, the id drives the call:
+            // the decision is made on the id, and reading it back by
+            // name is what makes a failure legible.
+            let ids = [
+                (OWNER, owner_id),
+                (FOLLOWER, follower_id),
+                (STRANGER, stranger_id),
+            ];
+
             for viewer in [Some(OWNER), Some(FOLLOWER), Some(STRANGER), None] {
-                let got = resolve_cv_access(&pool, &owner, viewer).await;
+                let viewer_id = viewer.map(|name| {
+                    ids.iter()
+                        .find(|(n, _)| *n == name)
+                        .map(|(_, id)| *id)
+                        .expect("every named viewer was inserted")
+                });
+                let got = resolve_cv_access(&pool, &owner, viewer_id).await;
 
                 match expected(setting, viewer) {
                     Some(vis) => assert_eq!(
@@ -339,7 +358,7 @@ mod tests {
             .await
             .expect("owner row");
 
-        let got = resolve_cv_access(&pool, &owner, Some(FOLLOWER)).await;
+        let got = resolve_cv_access(&pool, &owner, Some(follower_id)).await;
         assert!(
             matches!(got, Err(NoombatError::ActorNotFound(_))),
             "a pending follower must be refused, got {got:?}"
