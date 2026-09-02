@@ -64,7 +64,7 @@ Third-party crates that use `unsafe` internally are acceptable when well-audited
 ### Workspace dependency hygiene
 
 Each crate should declare only the workspace dependencies it actually uses.
-The `subtle` crate (constant-time comparison) is consumed only by `noombat-api` (admin token verification in `auth.rs` and `middleware.rs`); it must not be added to other crates without a concrete use site.
+The `subtle` crate (constant-time comparison) is consumed only by `noombat-chatmail-admin` (bearer verification in `router.rs`); it must not be added to other crates without a concrete use site.
 
 ### Authorisation
 

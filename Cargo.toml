@@ -143,7 +143,7 @@ urlencoding = "2"
 # Temporary files (CV generation).
 tempfile = "3"
 
-# Constant-time comparison (admin token verification).
+# Constant-time comparison (Chatmail admin API bearer verification).
 subtle = "2"
 
 # Envelope encryption (AES-256-GCM) for secrets at rest.
