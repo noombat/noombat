@@ -492,6 +492,7 @@ struct SettingsAdminPage {
     registration_mode: String,
     default_job_approval: bool,
     analytics_retention_days: i32,
+    index_remote_posts: bool,
     announcements: Vec<AnnouncementEntry>,
 }
 
@@ -514,8 +515,9 @@ async fn settings_page(
     }
     let uname = nav_username(&viewer);
 
-    let settings: Option<(String, bool, i32)> = sqlx::query_as(
-        "SELECT registration_mode, default_job_approval, analytics_retention_days \
+    let settings: Option<(String, bool, i32, bool)> = sqlx::query_as(
+        "SELECT registration_mode, default_job_approval, analytics_retention_days, \
+                index_remote_posts \
          FROM instance_settings LIMIT 1",
     )
     .fetch_optional(&state.pool)
@@ -523,8 +525,8 @@ async fn settings_page(
     .ok()
     .flatten();
 
-    let (registration_mode, default_job_approval, analytics_retention_days) =
-        settings.unwrap_or(("open".into(), true, 90));
+    let (registration_mode, default_job_approval, analytics_retention_days, index_remote_posts) =
+        settings.unwrap_or(("open".into(), true, 90, false));
 
     let announcement_rows: Vec<(Uuid, String, bool, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
@@ -552,6 +554,7 @@ async fn settings_page(
         registration_mode,
         default_job_approval,
         analytics_retention_days,
+        index_remote_posts,
         announcements,
     }
     .into_response()
@@ -562,6 +565,13 @@ struct UpdateSettingsRequest {
     registration_mode: Option<String>,
     default_job_approval: Option<bool>,
     analytics_retention_days: Option<i32>,
+    /// Whether posts from other instances enter search and trending.
+    ///
+    /// `Option` and `COALESCE`, like its neighbours, so a caller
+    /// changing one setting does not clear the rest. An HTML checkbox
+    /// submits nothing when unchecked, so the form posts an explicit
+    /// value rather than relying on presence.
+    index_remote_posts: Option<bool>,
 }
 
 async fn update_settings(
@@ -576,11 +586,13 @@ async fn update_settings(
                registration_mode = COALESCE($1, registration_mode),
                default_job_approval = COALESCE($2, default_job_approval),
                analytics_retention_days = COALESCE($3, analytics_retention_days),
+               index_remote_posts = COALESCE($4, index_remote_posts),
                updated_at = now()"#,
     )
     .bind(&body.registration_mode)
     .bind(body.default_job_approval)
     .bind(body.analytics_retention_days)
+    .bind(body.index_remote_posts)
     .execute(&state.pool)
     .await
     .map_err(NoombatError::from)?;
@@ -659,6 +671,10 @@ struct FederationPage {
     /// administrator choosing `trust-relay` is owed the figure it
     /// produces.
     relayed_unverified_posts: i64,
+    /// Search documents that should have gone and have not. The figure
+    /// that says whether an erasure actually finished.
+    stuck_search_removals: i64,
+    search_failures: Vec<crate::search_ops::FailedOperation>,
 }
 
 async fn federation_page(
@@ -719,6 +735,13 @@ async fn federation_page(
             .await
             .unwrap_or(0);
 
+    let stuck_search_removals = crate::search_ops::stuck_removals(&state.pool)
+        .await
+        .unwrap_or(0);
+    let search_failures = crate::search_ops::failures(&state.pool)
+        .await
+        .unwrap_or_default();
+
     FederationPage {
         i18n,
         theme,
@@ -730,6 +753,8 @@ async fn federation_page(
         chatmail_pending,
         chatmail_failed,
         relayed_unverified_posts,
+        stuck_search_removals,
+        search_failures,
     }
     .into_response()
 }

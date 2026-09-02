@@ -32,6 +32,7 @@ fn client() -> Option<Client> {
 
 fn sample(id: Uuid, ap_id: &str) -> (String, serde_json::Value) {
     post_document(&IndexedPost {
+        is_local: true,
         id,
         ap_id,
         actor_id: "1c6e5f28-0000-4000-8000-00000000000a",

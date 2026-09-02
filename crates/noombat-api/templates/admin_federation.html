@@ -41,6 +41,41 @@
             <p class="text-sm text-text-secondary mt-1">{{ i18n.t("admin_federation_relayed_unverified_note") }}</p>
         </div>
 
+        <!-- Search removals that have not completed. This is the figure
+             that says whether an erasure actually finished: the row is
+             gone from the database, and a document carrying its full
+             text may still be in the index. -->
+        <div class="border border-border-default rounded p-4 mb-8 max-w-md">
+            <p class="text-sm text-text-secondary">{{ i18n.t("admin_search_removals_stuck") }}</p>
+            <p class="text-3xl font-bold">{{ stuck_search_removals }}</p>
+            <p class="text-sm text-text-secondary mt-1">{{ i18n.t("admin_search_removals_note") }}</p>
+        </div>
+
+        {% if !search_failures.is_empty() %}
+        <div class="overflow-x-auto mb-8">
+            <table class="w-full text-sm">
+                <thead>
+                    <tr class="border-b border-border-default text-start">
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_state") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_address") }}</th>
+                        <th class="py-2 pe-4">{{ i18n.t("admin_chatmail_col_attempts") }}</th>
+                        <th class="py-2">{{ i18n.t("admin_chatmail_col_error") }}</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for op in search_failures %}
+                    <tr class="border-b border-border-default">
+                        <td class="py-2 pe-4 {% if op.operation == "remove" %}text-text-danger{% endif %}">{{ op.operation }}</td>
+                        <td class="py-2 pe-4 font-mono">{{ op.index_name }}/{{ op.document_id }}</td>
+                        <td class="py-2 pe-4">{{ op.attempts }}</td>
+                        <td class="py-2 text-text-secondary">{% if let Some(err) = op.last_error %}{{ err }}{% endif %}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% endif %}
+
         <!-- Chatmail deletions this instance owes and has not completed.
              Shown here rather than left in a log: erasure is the one
              operation whose failure nobody would otherwise notice, since

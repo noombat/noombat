@@ -23,6 +23,12 @@ pub struct SearchParams {
     pub index: String,
     /// Optional Meilisearch filter expression.
     pub filter: Option<String>,
+    /// `local` (the default) or `fediverse`.
+    ///
+    /// Applies to the `posts` index, the only one that holds documents
+    /// from other instances. Profiles and jobs are local-only, so the
+    /// parameter is accepted and has nothing to narrow there.
+    pub scope: Option<String>,
     /// Maximum number of results (default 20, capped at 100).
     #[serde(default = "default_limit")]
     pub limit: usize,
@@ -72,11 +78,26 @@ async fn search(
 
     let limit = params.limit.min(MAX_LIMIT);
 
+    // The scope narrows; a caller's own filter is ANDed with it rather
+    // than replacing it, so `scope=local` cannot be widened by passing a
+    // filter of one's own.
+    let scope = crate::trending::Scope::from_param(params.scope.as_deref());
+    let scope_filter = match (params.index.as_str(), scope) {
+        ("posts", crate::trending::Scope::Local) => Some("is_local = true"),
+        _ => None,
+    };
+    let filter = match (scope_filter, params.filter.as_deref()) {
+        (Some(scope), Some(caller)) => Some(format!("({scope}) AND ({caller})")),
+        (Some(scope), None) => Some(scope.to_owned()),
+        (None, Some(caller)) => Some(caller.to_owned()),
+        (None, None) => None,
+    };
+
     let results = backend
         .search(
             &params.index,
             &params.q,
-            params.filter.as_deref(),
+            filter.as_deref(),
             limit,
             params.offset,
         )

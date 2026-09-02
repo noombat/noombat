@@ -40,6 +40,20 @@
                            class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("admin_settings_job_approval") }}</span>
                 </label>
+
+                <!-- An unchecked checkbox submits nothing, and the
+                     handler reads absent as "leave alone", so the hidden
+                     field carries the off value and the checkbox
+                     overrides it when ticked. Without it the setting
+                     could be turned on and never off. -->
+                <input type="hidden" name="index_remote_posts" value="false">
+                <label class="flex items-center gap-3 mt-3">
+                    <input type="checkbox" name="index_remote_posts" value="true"
+                           {% if index_remote_posts %}checked{% endif %}
+                           class="rounded border-border-default">
+                    <span class="text-sm">{{ i18n.t("admin_settings_index_remote") }}</span>
+                </label>
+                <p class="text-sm text-text-secondary mt-1 ms-8">{{ i18n.t("admin_settings_index_remote_note") }}</p>
             </fieldset>
 
             <fieldset>

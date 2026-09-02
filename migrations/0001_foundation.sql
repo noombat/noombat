@@ -921,6 +921,49 @@ CREATE INDEX idx_chatmail_operations_due
     ON chatmail_operations (next_attempt_at)
     WHERE state = 'pending';
 
+-- Search-index work this instance owes, and could not complete.
+--
+-- Removals are the case that matters, and the reason this table exists.
+-- A search document outlives the row it was built from: erasure deletes
+-- the post and the index keeps the full text, so a removal that fails
+-- silently is an erasure that leaves the writing searchable by its
+-- contents. Fire-and-forget with a log line cannot express that, because
+-- nobody reads a log line for something that already returned success.
+--
+-- Additions are queued too, but only for content this instance did not
+-- author. A local post that fails to index is missing from search and
+-- its author will notice; a remote post that fails to index is missing
+-- from search and nobody will.
+--
+-- This is also the outage record: an administrator asking "is anything
+-- stuck out of the index" reads this table, which is why a failure keeps
+-- its error text as well as its state.
+CREATE TABLE search_index_operations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    -- The Meilisearch index, and the document id within it. Deliberately
+    -- text rather than a foreign key: the whole point of a removal is
+    -- that it outlives the row, so it cannot reference one.
+    index_name      TEXT NOT NULL CHECK (index_name IN ('profiles', 'posts', 'jobs')),
+    document_id     TEXT NOT NULL,
+    operation       TEXT NOT NULL CHECK (operation IN ('upsert', 'remove')),
+    -- The document body for an upsert, NULL for a removal.
+    document        JSONB,
+    state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'succeeded', 'failed')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+    -- One outstanding operation per document. A second removal of the
+    -- same document is the same work; an upsert superseding a pending
+    -- upsert is the newer body, and the writer replaces it.
+    UNIQUE (index_name, document_id)
+);
+
+CREATE INDEX idx_search_index_operations_due
+    ON search_index_operations (next_attempt_at)
+    WHERE state = 'pending';
+
 CREATE TABLE chatmail_blocks (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     actor_id    UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
@@ -975,6 +1018,19 @@ CREATE TABLE instance_settings (
     registration_mode        TEXT NOT NULL DEFAULT 'open' CHECK (registration_mode IN ('open', 'approval', 'closed')),
     default_job_approval     BOOLEAN NOT NULL DEFAULT TRUE,
     analytics_retention_days INTEGER NOT NULL DEFAULT 90,
+    -- Whether posts from other instances enter this instance's search
+    -- index and trending counts.
+    --
+    -- Off by default, and the default is the decision. Indexing a peer's
+    -- content makes this instance a second publisher of it: the index
+    -- outlives the row, so it takes on the duty to withdraw a document
+    -- when the author's instance says to, and it gives a relay a way to
+    -- put text in front of every local reader. An operator who wants the
+    -- wider corpus can have it; nobody gets it by not choosing.
+    --
+    -- Independently of this, a remote author's own `indexable` is
+    -- honoured: turning this on does not index anybody who said no.
+    index_remote_posts       BOOLEAN NOT NULL DEFAULT FALSE,
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

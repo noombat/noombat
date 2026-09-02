@@ -496,6 +496,11 @@ fn ap_actor_to_remote(
     });
 
     Ok(repo::RemoteActor {
+        // The actor's own answer, with absent read as withheld. A server
+        // that has never heard of these properties has not consented on
+        // its users' behalf.
+        discoverable: ap_actor.consents_to_discovery(),
+        indexable: ap_actor.consents_to_indexing(),
         ap_id: ap_actor.id.clone(),
         username: ap_actor.preferred_username.clone(),
         domain,
@@ -1047,6 +1052,13 @@ async fn handle_create(
         {
             warn!(ap_id, "failed to link hashtags for remote post: {e}");
         }
+
+        // Queued, not indexed: the three conditions are checked there,
+        // and the operator's switch is only the first of them.
+        if let Err(e) = crate::remote_indexing::enqueue_if_indexable(pool, post_id).await {
+            warn!(ap_id, "failed to queue a remote post for indexing: {e}");
+        }
+
         info!(ap_id, "remote post persisted");
     } else {
         info!(ap_id, "remote post already known; skipped");
@@ -1066,6 +1078,44 @@ async fn handle_delete(pool: &PgPool, activity: &Activity) -> Result<()> {
         .ok_or_else(|| NoombatError::BadRequest("Delete: missing object id".into()))?;
 
     info!(actor = %activity.actor, object = %object_id, "received Delete");
+
+    // An actor deleting itself, which is the shape a peer sends when one
+    // of its users erases their account. Handled before the post branch
+    // because the object is an actor, not a post, and the post lookup
+    // below would find nothing and ignore it.
+    //
+    // Only self-deletion: an actor may withdraw itself and nothing else.
+    if object_id == activity.actor
+        && let Some(remote_actor) = repo::find_by_ap_id(pool, object_id).await?
+        && !remote_actor.is_local
+    {
+        // Queued before the rows go, because the queue entries are keyed
+        // on ids that are about to be deleted. This is the same duty
+        // local erasure has: a search document outlives its row, and one
+        // left behind keeps the writing findable by its text.
+        if let Err(e) =
+            crate::remote_indexing::enqueue_removals_for_actor(pool, remote_actor.id).await
+        {
+            warn!(actor = %activity.actor, "failed to record the search removals: {e}");
+        }
+
+        // The tombstone outlives the row so later fetches answer 410
+        // rather than re-fetching a deleted account.
+        sqlx::query("INSERT INTO tombstoned_actors (ap_id) VALUES ($1) ON CONFLICT DO NOTHING")
+            .bind(object_id)
+            .execute(pool)
+            .await?;
+
+        // `ON DELETE CASCADE` takes the posts, follows and the rest with
+        // it, which is what a peer asking for deletion means.
+        sqlx::query("DELETE FROM actors WHERE id = $1 AND is_local = FALSE")
+            .bind(remote_actor.id)
+            .execute(pool)
+            .await?;
+
+        info!(actor = %activity.actor, "remote actor deleted at its own request");
+        return Ok(());
+    }
 
     // Verify that the requesting actor owns the post before deleting.
     let is_authorised = sqlx::query_scalar::<_, i64>(
@@ -1089,6 +1139,23 @@ async fn handle_delete(pool: &PgPool, activity: &Activity) -> Result<()> {
             "Delete ignored: post not found or actor mismatch"
         );
         return Ok(());
+    }
+
+    // The search document is withdrawn before the row goes, because the
+    // queue entry is keyed on the post's primary key and afterwards
+    // there is nothing left to read it from. Recorded rather than sent:
+    // a peer asking this instance to delete their post is the moment its
+    // copy has to go, and a failure here must not be lost.
+    let indexed_id = sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM posts WHERE ap_id = $1")
+        .bind(object_id)
+        .fetch_optional(pool)
+        .await?;
+
+    if let Some(post_id) = indexed_id
+        && let Err(e) =
+            crate::search_queue::enqueue_removal(pool, "posts", &post_id.to_string()).await
+    {
+        warn!(object = %object_id, "failed to record the search removal: {e}");
     }
 
     sqlx::query("DELETE FROM posts WHERE ap_id = $1")
@@ -1451,9 +1518,13 @@ async fn handle_reject(
 
 /// The verification policy in force for one relay.
 ///
-/// The per-relay override wins, and the instance default fills in. An
-/// unrecognised stored value is `Verify`, the strictest: a policy this
-/// build cannot parse must not be read as the most permissive one.
+/// The per-relay override wins, and the instance default fills in. That
+/// default comes from configuration, not from a settings row: it is set
+/// once at boot like the other process-wide federation policies, and an
+/// operator changing it is restarting the server anyway.
+///
+/// An unrecognised stored value is the default rather than the most
+/// permissive reading, and the default itself falls back to `Verify`.
 async fn policy_for_relay(pool: &PgPool, actor_uri: &str) -> RelayVerificationPolicy {
     let derived_inbox = format!("{actor_uri}/inbox");
     let stored: Option<Option<String>> = sqlx::query_scalar(
@@ -1467,19 +1538,10 @@ async fn policy_for_relay(pool: &PgPool, actor_uri: &str) -> RelayVerificationPo
     .ok()
     .flatten();
 
-    let instance_default: Option<String> =
-        sqlx::query_scalar("SELECT relay_verification_policy FROM instance_settings LIMIT 1")
-            .fetch_optional(pool)
-            .await
-            .ok()
-            .flatten()
-            .flatten();
-
     stored
         .flatten()
-        .or(instance_default)
         .and_then(|s| RelayVerificationPolicy::from_str_opt(&s))
-        .unwrap_or(RelayVerificationPolicy::Verify)
+        .unwrap_or_else(crate::relay_verify::default_policy)
 }
 
 /// Ingest an activity that reached this instance through a relay.

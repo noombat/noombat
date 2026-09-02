@@ -48,6 +48,110 @@ pub struct ApActor {
     /// identities, enabling inbound Move verification.
     #[serde(rename = "alsoKnownAs", skip_serializing_if = "Option::is_none")]
     pub also_known_as: Option<Vec<String>>,
+    /// Whether this actor consents to appearing in directories and
+    /// profile search (`toot:discoverable`).
+    ///
+    /// `Option` because absent and `false` are different facts on the
+    /// wire and only the reader may collapse them. Readers here collapse
+    /// absent to *withheld*: see
+    /// [`crate::object::ApActor::consents_to_discovery`].
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub discoverable: Option<bool>,
+    /// Whether this actor consents to its posts being indexed for
+    /// full-text search (`toot:indexable`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub indexable: Option<bool>,
+}
+
+impl ApActor {
+    /// Whether this actor consents to appearing in directories.
+    ///
+    /// **An absent property is not consent.** Mastodon reads its own
+    /// equivalents the same way, and the alternative is to treat silence
+    /// from a server that has never heard of the property as agreement
+    /// to be listed by a service the actor has never seen.
+    pub fn consents_to_discovery(&self) -> bool {
+        self.discoverable.unwrap_or(false)
+    }
+
+    /// Whether this actor consents to its posts being indexed.
+    pub fn consents_to_indexing(&self) -> bool {
+        self.indexable.unwrap_or(false)
+    }
+}
+
+#[cfg(test)]
+mod consent_tests {
+    use super::*;
+
+    fn actor(json: &str) -> ApActor {
+        serde_json::from_str(json).expect("an actor document")
+    }
+
+    const MINIMAL: &str = r#"{
+        "id": "https://peer.example/users/x",
+        "type": "Person",
+        "preferredUsername": "x",
+        "inbox": "https://peer.example/users/x/inbox",
+        "outbox": "https://peer.example/users/x/outbox",
+        "publicKey": {
+            "id": "https://peer.example/users/x#main-key",
+            "owner": "https://peer.example/users/x",
+            "publicKeyPem": "KEY"
+        }
+    }"#;
+
+    #[test]
+    fn a_document_that_says_nothing_consents_to_nothing() {
+        // The whole polarity decision, in one assertion. A server that
+        // has never heard of these properties has not agreed on its
+        // users' behalf to appear in a hiring service's index.
+        let actor = actor(MINIMAL);
+        assert!(actor.discoverable.is_none());
+        assert!(actor.indexable.is_none());
+        assert!(!actor.consents_to_discovery());
+        assert!(!actor.consents_to_indexing());
+    }
+
+    #[test]
+    fn an_explicit_answer_is_taken_as_given() {
+        let yes = actor(&MINIMAL.replace(
+            "\"type\": \"Person\",",
+            "\"type\": \"Person\", \"discoverable\": true, \"indexable\": true,",
+        ));
+        assert!(yes.consents_to_discovery());
+        assert!(yes.consents_to_indexing());
+
+        let no = actor(&MINIMAL.replace(
+            "\"type\": \"Person\",",
+            "\"type\": \"Person\", \"discoverable\": false, \"indexable\": false,",
+        ));
+        assert!(!no.consents_to_discovery());
+        assert!(!no.consents_to_indexing());
+    }
+
+    #[test]
+    fn the_two_are_independent() {
+        // Agreeing to be listed in a directory is not agreeing to have
+        // one's posts indexed, and a reader must not infer either from
+        // the other.
+        let listed_only = actor(&MINIMAL.replace(
+            "\"type\": \"Person\",",
+            "\"type\": \"Person\", \"discoverable\": true, \"indexable\": false,",
+        ));
+        assert!(listed_only.consents_to_discovery());
+        assert!(!listed_only.consents_to_indexing());
+    }
+
+    #[test]
+    fn an_absent_property_is_not_serialised_back() {
+        // Round-tripping must not turn silence into an explicit `false`
+        // and republish it as though the actor had answered.
+        let actor = actor(MINIMAL);
+        let out = serde_json::to_value(&actor).expect("serialised");
+        assert!(out.get("discoverable").is_none());
+        assert!(out.get("indexable").is_none());
+    }
 }
 
 /// An Ed25519 multikey entry for `assertionMethod` (FEP-521a).

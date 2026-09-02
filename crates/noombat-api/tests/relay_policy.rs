@@ -96,9 +96,10 @@ async fn trending_leaves_out_what_only_a_relay_vouches_for(pool: PgPool) {
         insert_post(&pool, actor, "spam", true).await;
     }
 
-    let tags = noombat_api::trending::compute_trending(&pool, 24, 20)
-        .await
-        .expect("trending computed");
+    let tags =
+        noombat_api::trending::compute_trending(&pool, 24, 20, noombat_api::trending::Scope::Local)
+            .await
+            .expect("trending computed");
 
     let names: Vec<&str> = tags.iter().map(|t| t.name.as_str()).collect();
     assert!(names.contains(&"rust"), "{names:?}");

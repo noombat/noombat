@@ -444,6 +444,16 @@ async fn main() -> anyhow::Result<()> {
     // Set the process-global unsigned-fetch policy before any
     // federation activity is processed.
     noombat_federation::signed_fetch::set_allow_unsigned_fetch(config.allow_unsigned_fetch);
+
+    // The instance-wide relay verification default, from the same
+    // configuration the NodeInfo document publishes it from. An
+    // unparsable value leaves the strictest policy in place.
+    if let Some(ref policy) = config.relay_verification_policy
+        && let Some(parsed) =
+            noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(policy)
+    {
+        noombat_federation::relay_verify::set_default_policy(parsed);
+    }
     if config.allow_unsigned_fetch {
         info!("unsigned-fetch fallback enabled (not recommended for production)");
     }
@@ -891,6 +901,18 @@ async fn main() -> anyhow::Result<()> {
         let pool = state.pool.clone();
         tokio::spawn(async move {
             noombat_api::housekeeping::run_worker(pool, Duration::from_secs(3600)).await;
+        });
+    }
+
+    // Spawn the search-index worker. Removals are the reason it
+    // exists: a search document outlives the row it was built from, so
+    // an erasure whose removal failed leaves the writing findable by
+    // its text with nothing to say so.
+    {
+        let pool = state.pool.clone();
+        let search = state.search.clone();
+        tokio::spawn(async move {
+            noombat_api::search_ops::run_worker(pool, search, Duration::from_secs(120)).await;
         });
     }
 

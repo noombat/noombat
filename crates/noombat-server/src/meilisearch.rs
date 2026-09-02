@@ -93,7 +93,11 @@ impl MeilisearchBackend {
             let filterable: Vec<&str> = match name {
                 "profiles" => vec!["visibility", "actor_type"],
                 "jobs" => vec!["status", "actor_id", "remote"],
-                "posts" => vec!["actor_id", "visibility"],
+                // `is_local` is what the search scope filters on. A
+                // filter naming an attribute Meilisearch was not told
+                // about is rejected at query time, so adding the
+                // attribute to the document is only half of it.
+                "posts" => vec!["actor_id", "visibility", "is_local"],
                 "groups" => vec!["actor_id"],
                 "events" => vec!["actor_id", "group_id", "start_time"],
                 _ => vec![],

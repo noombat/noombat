@@ -127,7 +127,8 @@ pub async fn erase_actor(
 
     noombat_federation::delete::broadcast_delete(pool, &pre_tombstone, &inboxes).await;
 
-    crate::search_sync::remove_from_index(search, "profiles", &actor_id.to_string());
+    crate::search_sync::remove_from_index_durably(pool, search, "profiles", &actor_id.to_string())
+        .await;
 
     // The rows are gone from the database by now, but the search
     // documents outlive them and are full text: leaving them is an
@@ -137,12 +138,14 @@ pub async fn erase_actor(
     // post's primary key. The two must agree; changing one without the
     // other leaves erased writing searchable by its full text.
     for post_id in &indexed_posts {
-        crate::search_sync::remove_from_index(search, "posts", &post_id.to_string());
+        crate::search_sync::remove_from_index_durably(pool, search, "posts", &post_id.to_string())
+            .await;
     }
 
     // `index_job` keys on the posting's primary key, so this matches.
     for job_id in &indexed_jobs {
-        crate::search_sync::remove_from_index(search, "jobs", &job_id.to_string());
+        crate::search_sync::remove_from_index_durably(pool, search, "jobs", &job_id.to_string())
+            .await;
     }
 
     Ok(pre_tombstone)

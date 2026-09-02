@@ -20,6 +20,7 @@ pub mod media;
 pub mod middleware;
 pub mod rate_limit;
 pub mod routes;
+pub mod search_ops;
 pub mod search_sync;
 pub mod state;
 pub mod theme;

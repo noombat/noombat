@@ -12,7 +12,7 @@ use std::sync::Arc;
 use noombat_core::actor::Actor;
 use noombat_core::extension::SearchBackend;
 use serde_json::json;
-use tracing::warn;
+use tracing::{error, warn};
 
 /// Flattened profile section data for the search index.
 ///
@@ -166,6 +166,13 @@ pub struct IndexedPost<'a> {
     pub visibility: &'a str,
     pub post_type: &'a str,
     pub title: Option<&'a str>,
+    /// Whether the author is an account on this instance.
+    ///
+    /// Carried into the document as a filterable attribute so a reader
+    /// can ask for this instance's own writing or for everything the
+    /// index holds. Without it the two corpora are one and the choice
+    /// cannot be offered.
+    pub is_local: bool,
 }
 
 /// The document id and body sent to Meilisearch for a post.
@@ -185,6 +192,7 @@ pub fn post_document(post: &IndexedPost<'_>) -> (String, serde_json::Value) {
             "visibility": post.visibility,
             "post_type": post.post_type,
             "title": post.title,
+            "is_local": post.is_local,
         }),
     )
 }
@@ -239,4 +247,55 @@ pub fn remove_from_index(search: &Option<Arc<dyn SearchBackend>>, index: &str, i
             warn!(index, id, error = %e, "failed to remove from index");
         }
     });
+}
+
+/// Remove a document, and record the work so a failure is not lost.
+///
+/// The durable counterpart to [`remove_from_index`], for the removals
+/// that carry a rights consequence. A search document outlives the row
+/// it was built from, so a removal dropped on the floor leaves erased
+/// writing searchable by its full text and nothing says so.
+///
+/// The immediate attempt still happens, because the common case is that
+/// it works and a queue round trip would only delay it. What changes is
+/// the failure: the row stays pending and the worker retries it, and an
+/// exhausted removal is shown to an administrator instead of appearing
+/// once in a log nobody reads.
+pub async fn remove_from_index_durably(
+    pool: &sqlx::PgPool,
+    search: &Option<Arc<dyn SearchBackend>>,
+    index: &str,
+    id: &str,
+) {
+    if let Err(e) = crate::search_ops::enqueue_removal(pool, index, id).await {
+        // The enqueue itself failing is the one case with nowhere left
+        // to record it, so it is loud.
+        error!(index, id, error = %e, "search removal could not be recorded and may be lost");
+    }
+
+    let Some(backend) = search.as_ref() else {
+        return;
+    };
+
+    // Cleared straight away on success, so the queue holds only what is
+    // actually outstanding and the administration page means something.
+    match backend.delete(index, id).await {
+        Ok(()) => {
+            if let Err(e) = sqlx::query(
+                "UPDATE search_index_operations \
+                 SET state = 'succeeded', completed_at = now() \
+                 WHERE index_name = $1 AND document_id = $2 AND operation = 'remove'",
+            )
+            .bind(index)
+            .bind(id)
+            .execute(pool)
+            .await
+            {
+                warn!(index, id, error = %e, "removal succeeded and could not be marked");
+            }
+        }
+        // Left pending deliberately: the worker owns the retry, and
+        // recording the reason here as well would race it.
+        Err(e) => warn!(index, id, error = %e, "removal failed; queued for retry"),
+    }
 }

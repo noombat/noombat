@@ -484,14 +484,28 @@ pub struct RemoteActor {
     /// actor does not publish an Ed25519 key. Stored for future
     /// FEP-8b32 Object Integrity Proof verification.
     pub ed25519_public_key: Option<String>,
+    /// The actor's own `discoverable`, as its document states it.
+    ///
+    /// Not an `Option`: the caller has already collapsed absent to
+    /// withheld, which is the only reading that does not enrol somebody
+    /// in a directory they never agreed to.
+    pub discoverable: bool,
+    /// The actor's own `indexable`, collapsed the same way.
+    pub indexable: bool,
 }
 
 /// Insert or update a remote actor in the `actors` table.
 ///
-/// On conflict (same `ap_id`) the six remote-owned columns are refreshed
+/// On conflict (same `ap_id`) the remote-owned columns are refreshed
 /// from the remote instance: `public_key_pem`, `display_name`,
-/// `summary_html`, `inbox_url`, `shared_inbox_url` and
-/// `ed25519_public_key`.
+/// `summary_html`, `inbox_url`, `shared_inbox_url`, `ed25519_public_key`
+/// and `actor_privacy`.
+///
+/// `actor_privacy` is refreshed for one reason: it carries the actor's
+/// own `discoverable` and `indexable`, and an actor who opts out after
+/// this instance first saw them must have that reach the row. Setting it
+/// only on insert would honour the first document ever fetched and no
+/// later one.
 ///
 /// **A conflicting LOCAL row is never modified.** The `ON CONFLICT`
 /// clause is guarded by `WHERE actors.is_local = FALSE`, so a remote
@@ -503,7 +517,15 @@ pub struct RemoteActor {
 /// signal a caller gets that the write did not happen.
 pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Actor> {
     let id = Uuid::new_v4();
-    let privacy = ActorPrivacy::default();
+
+    // The two fields a remote actor actually decides. The rest of the
+    // blob governs surfaces that exist only for local accounts, so the
+    // defaults stand there and mean nothing either way.
+    let privacy = ActorPrivacy {
+        discoverable: remote.discoverable,
+        indexable: remote.indexable,
+        ..ActorPrivacy::default()
+    };
     let privacy_json = serde_json::to_value(&privacy)?;
 
     sqlx::query(
@@ -520,7 +542,8 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
                sanitiser_version = EXCLUDED.sanitiser_version,
                inbox_url = EXCLUDED.inbox_url,
                shared_inbox_url = EXCLUDED.shared_inbox_url,
-               ed25519_public_key = EXCLUDED.ed25519_public_key
+               ed25519_public_key = EXCLUDED.ed25519_public_key,
+               actor_privacy = EXCLUDED.actor_privacy
            WHERE actors.is_local = FALSE"#,
     )
     .bind(id)
@@ -1298,6 +1321,8 @@ mod tests {
 
     fn remote_claiming(ap_id: &str, key_pem: &str) -> RemoteActor {
         RemoteActor {
+            discoverable: false,
+            indexable: false,
             ap_id: ap_id.to_owned(),
             username: "admin".to_owned(),
             domain: "remote.example".to_owned(),

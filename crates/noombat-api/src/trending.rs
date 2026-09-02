@@ -24,6 +24,35 @@ pub struct TrendingHashtag {
     pub post_count: i64,
 }
 
+/// Which corpus a reader is asking about.
+///
+/// Both lists are computed and cached, because they are different
+/// questions rather than one question filtered: "what is being discussed
+/// here" and "what is being discussed on the servers this one talks to"
+/// have different answers and a reader may want either.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Scope {
+    /// Posts by accounts on this instance.
+    #[default]
+    Local,
+    /// Everything this instance holds and is allowed to count.
+    Fediverse,
+}
+
+impl Scope {
+    /// Read a query-string value.
+    ///
+    /// An unrecognised value is `Local`, the narrower of the two: a
+    /// typo should not silently widen what a reader is shown.
+    pub fn from_param(value: Option<&str>) -> Self {
+        match value {
+            Some("fediverse") | Some("all") => Self::Fediverse,
+            _ => Self::Local,
+        }
+    }
+}
+
 /// In-memory cache of the trending hashtag list.
 ///
 /// Updated by the background worker; read by the HTTP handler.
@@ -33,31 +62,36 @@ pub struct TrendingCache {
     inner: Arc<RwLock<CacheState>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 struct CacheState {
-    tags: Vec<TrendingHashtag>,
+    local: Vec<TrendingHashtag>,
+    fediverse: Vec<TrendingHashtag>,
     updated_at: Option<DateTime<Utc>>,
 }
 
 impl TrendingCache {
     pub fn new() -> Self {
         Self {
-            inner: Arc::new(RwLock::new(CacheState {
-                tags: Vec::new(),
-                updated_at: None,
-            })),
+            inner: Arc::new(RwLock::new(CacheState::default())),
         }
     }
 
-    /// Read the current trending hashtags from the cache.
-    pub async fn get(&self) -> Vec<TrendingHashtag> {
-        self.inner.read().await.tags.clone()
+    /// Read the current trending hashtags for one scope.
+    pub async fn get(&self, scope: Scope) -> Vec<TrendingHashtag> {
+        let state = self.inner.read().await;
+        match scope {
+            Scope::Local => state.local.clone(),
+            Scope::Fediverse => state.fediverse.clone(),
+        }
     }
 
-    /// Replace the cached trending hashtags with a new list.
-    async fn set(&self, tags: Vec<TrendingHashtag>) {
+    /// Replace the cached list for one scope.
+    async fn set(&self, scope: Scope, tags: Vec<TrendingHashtag>) {
         let mut state = self.inner.write().await;
-        state.tags = tags;
+        match scope {
+            Scope::Local => state.local = tags,
+            Scope::Fediverse => state.fediverse = tags,
+        }
         state.updated_at = Some(Utc::now());
     }
 }
@@ -77,13 +111,21 @@ pub async fn compute_trending(
     pool: &PgPool,
     window_hours: i32,
     limit: i64,
+    scope: Scope,
 ) -> Result<Vec<TrendingHashtag>> {
+    // Remote posts count only where the operator has turned remote
+    // indexing on. Trending was already fediverse-wide and uncontrolled:
+    // a remote post with linked hashtags counted, and nothing said so or
+    // let anybody choose otherwise.
+    let remote_allowed = scope == Scope::Fediverse && remote_indexing_enabled(pool).await;
+
     let rows = sqlx::query_as::<_, (String, i64)>(
         r#"
         SELECT h.name, COUNT(DISTINCT ph.post_id) AS post_count
         FROM post_hashtags ph
         INNER JOIN hashtags h ON h.id = ph.hashtag_id
         INNER JOIN posts p ON p.id = ph.post_id
+        INNER JOIN actors a ON a.id = p.actor_id
         WHERE p.created_at >= NOW() - make_interval(hours => $1)
           AND p.visibility = 'public'
           -- Trending is the one surface where a relay could manufacture
@@ -93,12 +135,19 @@ pub async fn compute_trending(
           -- trending list has no room for a badge, and the list is the
           -- claim.
           AND p.relayed_unverified = FALSE
+          AND (
+            a.is_local
+            -- A remote author counts only if they said their posts may
+            -- be indexed. The operator's switch does not overrule them.
+            OR ($2 AND COALESCE((a.actor_privacy->>'indexable')::boolean, FALSE))
+          )
         GROUP BY h.name
         ORDER BY post_count DESC
-        LIMIT $2
+        LIMIT $3
         "#,
     )
     .bind(window_hours)
+    .bind(remote_allowed)
     .bind(limit)
     .fetch_all(pool)
     .await?;
@@ -109,6 +158,16 @@ pub async fn compute_trending(
         .collect();
 
     Ok(tags)
+}
+
+/// Whether the operator has turned remote indexing on.
+async fn remote_indexing_enabled(pool: &PgPool) -> bool {
+    sqlx::query_scalar::<_, bool>("SELECT index_remote_posts FROM instance_settings LIMIT 1")
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(false)
 }
 
 /// Run the trending hashtags background worker.
@@ -129,13 +188,19 @@ pub async fn run_worker(
     );
 
     loop {
-        match compute_trending(&pool, window_hours, limit).await {
-            Ok(tags) => {
-                debug!(count = tags.len(), "trending hashtags recomputed");
-                cache.set(tags).await;
-            }
-            Err(e) => {
-                warn!("trending hashtags computation failed: {e}");
+        // Both scopes on every pass. The fediverse list collapses to
+        // the local one where the operator has not turned remote
+        // indexing on, which costs a second query and keeps the reader's
+        // choice meaningful rather than silently absent.
+        for scope in [Scope::Local, Scope::Fediverse] {
+            match compute_trending(&pool, window_hours, limit, scope).await {
+                Ok(tags) => {
+                    debug!(count = tags.len(), ?scope, "trending hashtags recomputed");
+                    cache.set(scope, tags).await;
+                }
+                Err(e) => {
+                    warn!(?scope, "trending hashtags computation failed: {e}");
+                }
             }
         }
         tokio::time::sleep(interval).await;
@@ -149,8 +214,38 @@ mod tests {
     #[tokio::test]
     async fn cache_starts_empty() {
         let cache = TrendingCache::new();
-        let tags = cache.get().await;
-        assert!(tags.is_empty());
+        assert!(cache.get(Scope::Local).await.is_empty());
+        assert!(cache.get(Scope::Fediverse).await.is_empty());
+    }
+
+    #[test]
+    fn an_unknown_scope_reads_as_local() {
+        // The narrower of the two. A typo must not widen what a reader
+        // is shown without their asking.
+        assert_eq!(Scope::from_param(Some("fediverse")), Scope::Fediverse);
+        assert_eq!(Scope::from_param(Some("all")), Scope::Fediverse);
+        assert_eq!(Scope::from_param(Some("everything")), Scope::Local);
+        assert_eq!(Scope::from_param(None), Scope::Local);
+        assert_eq!(Scope::default(), Scope::Local);
+    }
+
+    #[tokio::test]
+    async fn the_two_scopes_are_cached_apart() {
+        let cache = TrendingCache::new();
+        cache
+            .set(
+                Scope::Fediverse,
+                vec![TrendingHashtag {
+                    name: "elsewhere".into(),
+                    post_count: 9,
+                }],
+            )
+            .await;
+
+        // Writing one must not populate the other, or a reader asking
+        // for local content gets the wider list under the narrower name.
+        assert!(cache.get(Scope::Local).await.is_empty());
+        assert_eq!(cache.get(Scope::Fediverse).await.len(), 1);
     }
 
     #[tokio::test]
@@ -166,8 +261,8 @@ mod tests {
                 post_count: 17,
             },
         ];
-        cache.set(tags.clone()).await;
-        let retrieved = cache.get().await;
+        cache.set(Scope::Local, tags.clone()).await;
+        let retrieved = cache.get(Scope::Local).await;
         assert_eq!(retrieved.len(), 2);
         assert_eq!(retrieved[0].name, "rust");
         assert_eq!(retrieved[0].post_count, 42);

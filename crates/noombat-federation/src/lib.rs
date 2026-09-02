@@ -20,6 +20,8 @@ pub mod move_actor;
 pub mod nodeinfo;
 pub mod relay;
 pub mod relay_verify;
+pub mod remote_indexing;
+pub mod search_queue;
 pub mod signed_fetch;
 pub mod update;
 pub mod webfinger;

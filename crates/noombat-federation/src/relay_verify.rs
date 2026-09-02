@@ -60,6 +60,39 @@ pub enum RelayVerificationPolicy {
     TrustRelay,
 }
 
+/// The instance-wide default, set once at boot from configuration.
+///
+/// A process global rather than a settings column, matching
+/// `signed_fetch::set_allow_unsigned_fetch` and
+/// `http::set_allow_local_targets`: these are federation policies an
+/// operator sets in the configuration file, and giving this one a
+/// database row as well would create two sources of truth for a value
+/// the NodeInfo document already publishes from the configured one.
+static DEFAULT_POLICY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Set the instance-wide default. Called once, before the listener binds.
+pub fn set_default_policy(policy: RelayVerificationPolicy) {
+    let encoded = match policy {
+        RelayVerificationPolicy::Verify => 0,
+        RelayVerificationPolicy::VerifyOrFetch => 1,
+        RelayVerificationPolicy::TrustRelay => 2,
+    };
+    DEFAULT_POLICY.store(encoded, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// The instance-wide default.
+///
+/// `Verify` until something sets it, which is the strictest of the three:
+/// an instance that has not been configured must not be the one that
+/// trusts a relay.
+pub fn default_policy() -> RelayVerificationPolicy {
+    match DEFAULT_POLICY.load(std::sync::atomic::Ordering::Relaxed) {
+        1 => RelayVerificationPolicy::VerifyOrFetch,
+        2 => RelayVerificationPolicy::TrustRelay,
+        _ => RelayVerificationPolicy::Verify,
+    }
+}
+
 impl RelayVerificationPolicy {
     /// Parse a policy from a string (as stored in configuration).
     pub fn from_str_opt(s: &str) -> Option<Self> {

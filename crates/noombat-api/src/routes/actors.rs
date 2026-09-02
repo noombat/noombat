@@ -599,6 +599,7 @@ async fn post_outbox(
             actor_id: &actor.id.to_string(),
             content_html: &content_html,
             visibility: &visibility,
+            is_local: true,
             post_type: &body.post_type,
             title: body.title.as_deref(),
         },
