@@ -65,6 +65,11 @@ NOTE_ID="00000000-0000-4000-8000-000000000002"
 # all three have to agree.
 E2E_ADMIN_USER="e2e_admin"
 E2E_AUTH_KEY="e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f"
+# The Argon2id hash of the key above, which is what login verifies
+# against. Committed because this script cannot run Argon2; pinned by
+# `cargo test -p noombat-identity interop_fixture`, which reads it back
+# out of this file.
+E2E_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$CJK75/eF2NFDNvNV5I+DGQ$Eqae0tHj4wJ7vBCko4z+1OXz6HVocGWc8K3NAJibjL8'
 
 # Matches compose.dev.yml's published ports and ci-e2e.yml's values.
 export NOOMBAT_DATABASE_URL="postgres://noombat:noombat@localhost:5432/noombat"
@@ -74,12 +79,10 @@ export NOOMBAT_PORT="${NOOMBAT_PORT:-8443}"
 export NOOMBAT_REDIS_URL="redis://localhost:6379"
 export NOOMBAT_MEILI_URL="http://localhost:7700"
 export NOOMBAT_MEILI_KEY="${MEILI_MASTER_KEY:-noombat-dev-key}"
-export NOOMBAT_ADMIN_TOKEN="${ADMIN_TOKEN:-ci-test-token}"
 # Session authentication, which the server enables only when this is
-# set. The suite signs a fixture account in to reach the pages behind
-# `require_auth`; the admin token above cannot, because the principal it
-# resolves to carries no actor id and, outside /users/{name} and
-# /@{name}, no username either.
+# set, and which is now the only way a caller is identified at all. The
+# suite signs a fixture account in to reach the pages behind
+# `require_auth`.
 export NOOMBAT_JWT_SECRET="${NOOMBAT_JWT_SECRET:-ci-e2e-jwt-secret-at-least-32-bytes-long}"
 # Effectively disable per-IP limiting: a run makes many requests from one
 # address, and the production figures are not test figures.
@@ -274,27 +277,51 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
 # promotion `require_admin` redirects every admin page to `/`, and the
 # scans pass having measured the feed under five other pages' names.
 seed_admin() {
-  curl -sS -o /dev/null -X POST \
-    -H 'Content-Type: application/json' \
-    -d "{\"username\":\"$E2E_ADMIN_USER\",\"auth_key\":\"$E2E_AUTH_KEY\"}" \
-    "http://localhost:$NOOMBAT_PORT/api/v1/auth/register" 2>/dev/null || true
-
+  # Seeded in SQL rather than through `POST /api/v1/auth/register`,
+  # which refuses with 503 unless an SMTP relay is configured: that path
+  # mints a password and awaits the recovery challenge, so an instance
+  # that cannot send mail does not offer it. This stack configures no
+  # relay, so the register call could only ever fail, and it did so
+  # behind a `|| true` that left the fixture missing and the admin
+  # group failing for a reason two steps removed from the cause.
+  #
+  # `auth_key_hash` is the Argon2id hash of E2E_AUTH_KEY above, which is
+  # what `POST /api/v1/auth/login` verifies against. Regenerate it, and
+  # prove it still verifies, with:
+  #
+  #     cargo test -p noombat-identity interop_fixture
   "${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
-    psql -U noombat -d noombat -q -c \
-    "UPDATE actors SET instance_role = 'admin'
-       WHERE username = '$E2E_ADMIN_USER' AND is_local;" >/dev/null 2>&1
+    psql -U noombat -d noombat -q -c "
+      INSERT INTO actors
+        (actor_type, ap_id, username, domain, public_key_pem, is_local,
+         instance_role, auth_key_hash)
+      VALUES
+        ('individual', 'http://localhost:$NOOMBAT_PORT/users/$E2E_ADMIN_USER',
+         '$E2E_ADMIN_USER', '$NOOMBAT_DOMAIN',
+         '-----BEGIN PUBLIC KEY-----
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
+-----END PUBLIC KEY-----',
+         TRUE, 'admin', '$E2E_AUTH_KEY_HASH')
+      ON CONFLICT (ap_id) DO UPDATE
+        SET instance_role = 'admin',
+            auth_key_hash = EXCLUDED.auth_key_hash;" >/dev/null 2>&1
 
-  # Read back, because the UPDATE reports success against zero rows.
-  local role
-  role="$("${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
+  # Read back, because a statement reports success against zero rows.
+  # The credential is checked alongside the role: without it the account
+  # exists and is an admin and still cannot sign in, which the admin
+  # group would report as a redirect rather than as a missing fixture.
+  local seeded
+  seeded="$("${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
     psql -U noombat -d noombat -tAc \
-    "SELECT instance_role FROM actors
+    "SELECT instance_role || ':' || (auth_key_hash IS NOT NULL)
+       FROM actors
        WHERE username = '$E2E_ADMIN_USER' AND is_local;" \
     2>/dev/null | tr -d '[:space:]')"
-  if [ "$role" = "admin" ]; then
+  if [ "$seeded" = "admin:t" ]; then
     say "admin fixture seeded ($E2E_ADMIN_USER)"
   else
-    say "ADMIN FIXTURE NOT SEEDED (role '${role:-none}'): the admin group will fail"
+    say "ADMIN FIXTURE NOT SEEDED (got '${seeded:-none}', wanted 'admin:t'):" \
+        "the admin group will fail"
   fi
 }
 
