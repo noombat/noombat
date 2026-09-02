@@ -587,7 +587,7 @@ async fn main() -> anyhow::Result<()> {
         });
     if session_config.is_none() {
         info!(
-            "no NOOMBAT_JWT_SECRET configured; session-based auth disabled (dev-only bearer token active)"
+            "no NOOMBAT_JWT_SECRET configured; sessions are disabled, so every route that acts for an account is unreachable"
         );
     }
 

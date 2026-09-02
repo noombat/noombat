@@ -23,11 +23,11 @@
 //   3. Admin pages.
 //
 // Both authenticated groups sign a fixture account in and carry its
-// session cookie; see session.ts for why the admin bearer token cannot
-// stand in for one. Every page in group 2 is behind `require_auth` or
-// reads the principal's actor id, and every page in group 3 is behind
-// `require_admin`, which reads `instance_role`. The bearer token
-// satisfies none of them and each redirects instead, to a page axe scans
+// session cookie, which is the only thing that identifies a caller.
+// Every page in group 2 is behind `require_auth` or reads the
+// principal's actor id, and every page in group 3 is behind
+// `require_admin`, which reads `instance_role`. Without a session each
+// redirects instead, to a page axe scans
 // without violations.
 
 import { test, expect, expectNoViolations } from "./axe-fixture";
@@ -258,15 +258,14 @@ test.describe("Accessibility: authenticated pages", () => {
 
 // 3. ADMIN PAGES
 
-// The admin bearer token is not a credential these pages accept. It
-// derives its username from `/users/{name}` or `/@{name}` and sets no
-// `instance_role`, so on an `/admin/*` path `require_admin` answers
-// `Redirect::temporary("/")`. Playwright follows it, the feed has no axe
-// violations, and all five scans passed having measured the feed.
+// These pages need a session whose `instance_role` is admin. Anything
+// less and `require_admin` answers `Redirect::temporary("/")`, which
+// Playwright follows; the feed has no axe violations, so all five scans
+// once passed having measured the feed.
 //
 // Hence a real session, and an assertion on the path actually served:
 // without the second, the next redirect substitutes another page just as
-// quietly as this one did.
+// quietly as that one did.
 test.describe("Accessibility: admin pages", () => {
   test.beforeEach(async ({ context, request }) => {
     await authenticateBrowser(context, await requireAdminSession(request));

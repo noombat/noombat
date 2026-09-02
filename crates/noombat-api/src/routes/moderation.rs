@@ -794,7 +794,7 @@ async fn review_job_application(
     }
 
     // The moderator's own actor, so the log names a person rather than a
-    // role. An admin-token principal has none and is refused: an
+    // role. A principal carrying no actor id is refused: an
     // unattributable read is what this route exists to prevent.
     let reader_id = moderator
         .actor_uuid

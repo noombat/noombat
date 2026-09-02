@@ -35,7 +35,6 @@ services:
       NOOMBAT_KEK: "${NOOMBAT_KEK:-}"
       NOOMBAT_BOOTSTRAP_ADMIN: "${NOOMBAT_BOOTSTRAP_ADMIN:-}"
       RUST_LOG: ${RUST_LOG:-info}
-      # Admin token intentionally omitted; JWT-only auth.
 
   db:
     restart: unless-stopped

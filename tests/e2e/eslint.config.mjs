@@ -53,8 +53,8 @@ export default tseslint.config(
       // unannotated one should fail rather than warn. The dangerous
       // case, CI skipping a suite because its credential was absent, is
       // caught earlier: session.ts throws rather than returning null
-      // under CI, and accessibility.spec.ts throws when the admin token
-      // is empty there.
+      // under CI, so a missing session fails the run instead of
+      // quietly skipping the suites that need one.
       "playwright/no-skipped-test": "error",
 
       // Consistent with frontend/eslint.config.js.
