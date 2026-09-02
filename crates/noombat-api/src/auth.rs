@@ -18,8 +18,9 @@ use crate::middleware::Principal;
 /// Whether the authenticated principal may act for `subject_id`.
 ///
 /// Two ways to qualify: being that account, or holding a role in it
-/// where it is an organisation. An organisation never signs in, so it
-/// is always acted for by its members.
+/// where it is an organisation. The account's own session counts
+/// because an enrolled organisation owns its actor row; a member's
+/// counts because an organisation otherwise never signs in.
 ///
 /// `Ok(None)` means the caller is the account itself; `Ok(Some(role))`
 /// means they act for an organisation and carry that standing, which

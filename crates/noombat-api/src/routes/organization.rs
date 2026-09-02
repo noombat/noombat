@@ -21,6 +21,7 @@ use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+use crate::auth::require_acts_for;
 use crate::error::ApiError;
 use crate::middleware::Principal;
 use crate::state::AppState;
@@ -51,38 +52,6 @@ pub fn router() -> Router<AppState> {
 }
 
 // ..... Employment claims .....
-
-/// Whether the caller may act for this organisation.
-///
-/// The organisation's own session counts, because an enrolled organisation
-/// owns its actor row. Otherwise a membership row is required. The check
-/// runs before the claim is looked up, so a caller who may not act for the
-/// organisation cannot learn whether a claim exists from the error they get.
-async fn require_acts_for(
-    pool: &sqlx::PgPool,
-    organization_id: uuid::Uuid,
-    principal: &Option<axum::Extension<Principal>>,
-) -> Result<(), ApiError> {
-    let actor_id = principal
-        .as_ref()
-        .and_then(|p| p.actor_uuid)
-        .ok_or(ApiError(NoombatError::Forbidden))?;
-
-    if actor_id == organization_id {
-        return Ok(());
-    }
-
-    let role: Option<OrganizationRole> = sqlx::query_scalar(
-        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
-    )
-    .bind(organization_id)
-    .bind(actor_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
-
-    role.map(|_| ()).ok_or(ApiError(NoombatError::Forbidden))
-}
 
 /// `GET /api/v1/organizations/{id}/employment-claims`
 ///
@@ -285,7 +254,7 @@ async fn list_job_applications(
             let s = company_standing(&state.pool, job.actor_id, job_id, actor_id).await?;
             may_access_job_applications(s.role, s.access, s.is_creator, s.is_listed)
         }
-        // An admin-token principal carries no actor.
+        // An anonymous request carries no actor to have standing.
         None => false,
     };
 
