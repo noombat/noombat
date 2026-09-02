@@ -4,14 +4,15 @@
 //! publications, and verified links.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get, patch};
 use axum::{Json, Router};
 use noombat_core::privacy::SectionVisibility;
 
-use crate::auth::verify_bearer_token;
+use crate::auth::require_local_actor;
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -90,11 +91,10 @@ async fn list_work_experiences(
 async fn create_work_experience(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_identity::profile::NewWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let exp =
         noombat_identity::profile::create_work_experience(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
@@ -105,10 +105,9 @@ async fn create_work_experience(
 async fn delete_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::profile::delete_work_experience(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -118,11 +117,10 @@ async fn delete_work_experience(
 async fn update_work_experience(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_identity::profile::UpdateWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let exp = noombat_identity::profile::update_work_experience(&state.pool, actor.id, id, &params)
         .await?;
     reindex_profile(&state, &actor).await;
@@ -149,11 +147,10 @@ async fn list_education_entries(
 async fn create_education_entry(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_identity::profile::NewEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let edu =
         noombat_identity::profile::create_education_entry(&state.pool, actor.id, &params).await?;
     reindex_profile(&state, &actor).await;
@@ -164,10 +161,9 @@ async fn create_education_entry(
 async fn delete_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::profile::delete_education_entry(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -177,11 +173,10 @@ async fn delete_education_entry(
 async fn update_education_entry(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_identity::profile::UpdateEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let edu = noombat_identity::profile::update_education_entry(&state.pool, actor.id, id, &params)
         .await?;
     reindex_profile(&state, &actor).await;
@@ -209,11 +204,10 @@ struct AddSkillBody {
 async fn add_skill(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<AddSkillBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let skill = noombat_identity::profile::add_skill(
         &state.pool,
         actor.id,
@@ -232,10 +226,9 @@ async fn add_skill(
 async fn delete_skill(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::profile::delete_skill(&state.pool, actor.id, id).await?;
 
     // Re-index profile in Meilisearch (fire-and-forget).
@@ -282,11 +275,10 @@ struct CreateScholarlyArticleRequest {
 async fn create_scholarly_article(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<CreateScholarlyArticleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // When the caller supplies only a bare DOI, resolve the metadata
     // server-side so that clients need not call the DOI endpoint first.
@@ -333,10 +325,9 @@ async fn create_scholarly_article(
 async fn delete_scholarly_article(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::profile::delete_scholarly_article(&state.pool, actor.id, id).await?;
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
@@ -362,11 +353,10 @@ struct AddLinkBody {
 async fn add_verified_link(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<AddLinkBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let link = noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
 
     // Trigger immediate verification (non-blocking). If verification
@@ -397,10 +387,9 @@ async fn add_verified_link(
 async fn delete_verified_link(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::verification::delete_link(&state.pool, actor.id, id).await?;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
@@ -425,11 +414,10 @@ async fn list_custom_sections(
 async fn create_custom_section(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_identity::profile::NewCustomSection>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     let section =
         noombat_identity::profile::create_custom_section(&state.pool, actor.id, &params).await?;
     enqueue_profile_update(&state, &actor).await;
@@ -439,10 +427,9 @@ async fn create_custom_section(
 async fn delete_custom_section(
     State(state): State<AppState>,
     Path((username, id)): Path<(String, uuid::Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
     noombat_identity::profile::delete_custom_section(&state.pool, actor.id, id).await?;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)

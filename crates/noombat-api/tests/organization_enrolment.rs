@@ -28,7 +28,6 @@ fn test_state(pool: PgPool) -> AppState {
         public_port: 8443,
         http_client: reqwest::Client::new(),
         open_registrations: true,
-        admin_token: None,
         search: None,
         nodeinfo_features: NodeInfoFeatures::default(),
         redis: None,
@@ -239,19 +238,19 @@ async fn enrolled_org(pool: &PgPool, token: &str) -> Uuid {
         .expect("org")
 }
 
-async fn post_job(pool: PgPool, username: &str) -> StatusCode {
+/// Post a job as `token`'s owner, who acts for the organisation
+/// through their membership rather than as the organisation itself.
+async fn post_job(pool: PgPool, username: &str, token: &str) -> StatusCode {
     let request = Request::builder()
         .method("POST")
         .uri(format!("/users/{username}/jobs"))
         .header("content-type", "application/json")
-        .header("authorization", "Bearer admin-token")
+        .header("authorization", format!("Bearer {token}"))
         .body(Body::from(
             r#"{"title":"Engineer","description_md":"md"}"#.to_owned(),
         ))
         .expect("request");
-    let mut state = test_state(pool);
-    state.admin_token = Some("admin-token".to_owned());
-    build_router(state)
+    build_router(test_state(pool))
         .oneshot(request)
         .await
         .expect("infallible")
@@ -265,7 +264,7 @@ async fn an_organisation_cannot_publish_before_proving_domain_control(pool: PgPo
     let token = token_for(&pool, person, "alice").await;
     enrolled_org(&pool, &token).await;
 
-    assert_eq!(post_job(pool, "acme").await, StatusCode::FORBIDDEN);
+    assert_eq!(post_job(pool, "acme", &token).await, StatusCode::FORBIDDEN);
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
@@ -286,7 +285,7 @@ async fn a_verified_link_to_the_claimed_domain_opens_the_gate(pool: PgPool) {
     .await
     .expect("verified link");
 
-    assert_eq!(post_job(pool, "acme").await, StatusCode::CREATED);
+    assert_eq!(post_job(pool, "acme", &token).await, StatusCode::CREATED);
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
@@ -315,7 +314,7 @@ async fn a_verified_link_to_another_domain_does_not(pool: PgPool) {
         .expect("link");
     }
 
-    assert_eq!(post_job(pool, "acme").await, StatusCode::FORBIDDEN);
+    assert_eq!(post_job(pool, "acme", &token).await, StatusCode::FORBIDDEN);
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
@@ -336,7 +335,7 @@ async fn an_unverified_link_does_not_open_the_gate(pool: PgPool) {
     .await
     .expect("link");
 
-    assert_eq!(post_job(pool, "acme").await, StatusCode::FORBIDDEN);
+    assert_eq!(post_job(pool, "acme", &token).await, StatusCode::FORBIDDEN);
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
@@ -354,7 +353,7 @@ async fn a_lapsed_domain_unpublishes_existing_postings(pool: PgPool) {
     .await
     .expect("link");
 
-    assert_eq!(post_job(pool.clone(), "acme").await, StatusCode::CREATED);
+    assert_eq!(post_job(pool.clone(), "acme", &token).await, StatusCode::CREATED);
     let published: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM job_postings WHERE actor_id = $1 AND published_at IS NOT NULL",
     )

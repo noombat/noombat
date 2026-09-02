@@ -3,15 +3,16 @@
 //! Hashtag follow and unfollow API routes.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, get};
 use axum::{Json, Router};
 
 use noombat_identity::hashtags;
 
-use crate::auth::verify_bearer_token;
+use crate::auth::require_local_actor;
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -43,12 +44,10 @@ async fn list_followed(
 async fn follow(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<FollowRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     let tag = hashtags::follow_hashtag(&state.pool, actor.id, &body.name).await?;
     Ok((StatusCode::OK, Json(tag)))
@@ -61,11 +60,9 @@ async fn follow(
 async fn unfollow(
     State(state): State<AppState>,
     Path((username, tag)): Path<(String, String)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     hashtags::unfollow_hashtag(&state.pool, actor.id, &tag).await?;
     Ok(StatusCode::NO_CONTENT)

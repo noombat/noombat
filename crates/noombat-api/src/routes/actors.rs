@@ -93,7 +93,9 @@ fn wants_activity_json(headers: &HeaderMap) -> bool {
         .any(|v| v.contains("application/activity+json") || v.contains("application/ld+json"))
 }
 
-use crate::auth::verify_bearer_token;
+use crate::auth::{require_acts_for, require_local_actor};
+use crate::middleware::Principal;
+use noombat_core::authorisation::OrganizationRole;
 
 // ..... GET /users/{username} .....
 
@@ -382,20 +384,17 @@ fn build_create_activity(
 
 /// `POST /users/{username}/outbox`: create a Note or Article.
 ///
-/// Development-only, gated on the `NOOMBAT_ADMIN_TOKEN` bearer token until
-/// OAuth and session authentication replace it. Returns `201` with the
-/// `Create` activity, which is also enqueued for delivery to accepted
-/// followers.
+/// Authenticated as the account being posted for. Returns `201` with
+/// the `Create` activity, which is also enqueued for delivery to
+/// accepted followers.
 async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<OutboxPostBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    // Resolve the local actor.
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    // Posting to an outbox is acting as that account.
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // Validate visibility.
     if !matches!(
@@ -615,12 +614,10 @@ struct PatchActorBody {
 async fn patch_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<PatchActorBody>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // Render Markdown summary through the noombat-markup pipeline.
     let summary_html = match body.summary_md.as_deref() {
@@ -672,11 +669,20 @@ async fn patch_actor(
 async fn delete_actor_handler(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+
+    // Erasing an account is the least reversible thing a session can do,
+    // so the general "acts for" rule is not enough here: a recruiter
+    // acting for an organisation must not be able to erase it. The
+    // account itself and an organisation's owners, nobody else.
+    match require_acts_for(&state.pool, actor.id, &principal).await? {
+        None | Some(OrganizationRole::Owner) => {}
+        Some(OrganizationRole::Recruiter) => {
+            return Err(ApiError(NoombatError::Forbidden));
+        }
+    }
 
     // Shared with the grace-period worker in `crate::erasure`, which
     // is where the inbox-before-tombstone ordering is explained.

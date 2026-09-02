@@ -3,14 +3,15 @@
 //! Job posting routes: CRUD endpoints for job postings.
 
 use axum::extract::{Path, Query, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::auth::verify_bearer_token;
+use crate::auth::{require_acts_for, require_local_actor};
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -73,11 +74,12 @@ async fn get_job(
 async fn create_job(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(params): Json<noombat_jobs::NewJobPosting>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    // An organisation is posted for by its members, never by itself, so
+    // this admits both the account and anyone holding a role in it.
+    let actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // An organisation publishes only once it has proved it controls the
     // domain it claims. Domain control is not identity verification, and
@@ -103,13 +105,12 @@ async fn create_job(
 async fn delete_job(
     State(state): State<AppState>,
     Path(id): Path<uuid::Uuid>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-    // Development only: Require the admin token; proper ownership check will
-    // use the authenticated principal from the authentication middleware.
-    // Fetch the job to get the actor_id, then delete.
+    // The posting names its own actor, so ownership is settled against
+    // that rather than against anything the caller supplies.
     let job = noombat_jobs::get_job(&state.pool, id).await?;
+    require_acts_for(&state.pool, job.actor_id, &principal).await?;
     noombat_jobs::delete_job(&state.pool, job.actor_id, id).await?;
 
     // Remove from search index (fire-and-forget).

@@ -8,7 +8,7 @@
 //! - `DELETE /users/{username}/mutes/{id}`: unmute an actor.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{delete, post};
 use axum::{Json, Router};
@@ -18,8 +18,9 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::verify_bearer_token;
+use crate::auth::require_local_actor;
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -45,13 +46,10 @@ struct BlockRequest {
 async fn create_block(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<BlockRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // Resolve the target actor (may be remote).
     let target = noombat_federation::inbox::resolve_actor(
@@ -111,12 +109,9 @@ async fn create_block(
 async fn delete_block(
     State(state): State<AppState>,
     Path((username, target_ap_id)): Path<(String, String)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // URL-decode the target AP ID (it appears in the path).
     let target_ap_id = urlencoding::decode(&target_ap_id)
@@ -188,13 +183,10 @@ struct MuteRequest {
 async fn create_mute(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<MuteRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     let target = noombat_federation::inbox::resolve_actor(
         &state.pool,
@@ -228,12 +220,9 @@ async fn create_mute(
 async fn delete_mute(
     State(state): State<AppState>,
     Path((username, mute_id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<StatusCode, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     sqlx::query("DELETE FROM mutes WHERE id = $1 AND actor_id = $2")
         .bind(mute_id)

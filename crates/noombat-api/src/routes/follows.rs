@@ -8,7 +8,7 @@
 //! - `POST /users/{username}/pending_follows/{id}/reject`: reject a pending follow.
 
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, StatusCode};
+use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::{Json, Router};
@@ -18,8 +18,9 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::verify_bearer_token;
+use crate::auth::require_local_actor;
 use crate::error::ApiError;
+use crate::middleware::Principal;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -51,13 +52,10 @@ struct FollowTarget {
 async fn initiate_follow(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
     Json(body): Json<FollowTarget>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // Resolve (and cache) the remote actor.
     let remote_actor = noombat_federation::inbox::resolve_actor(
@@ -116,12 +114,9 @@ struct PendingFollow {
 async fn list_pending_follows(
     State(state): State<AppState>,
     Path(username): Path<String>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     let rows = sqlx::query_as::<_, PendingFollow>(
         r#"SELECT f.id, f.follower_id,
@@ -144,12 +139,9 @@ async fn list_pending_follows(
 async fn accept_pending_follow(
     State(state): State<AppState>,
     Path((username, follow_id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     // Fetch the follow row, verifying it targets this actor and is pending.
     let row = sqlx::query_as::<_, (Uuid, bool, Option<String>)>(
@@ -217,12 +209,9 @@ async fn accept_pending_follow(
 async fn reject_pending_follow(
     State(state): State<AppState>,
     Path((username, follow_id)): Path<(String, Uuid)>,
-    headers: HeaderMap,
+    principal: Option<axum::Extension<Principal>>,
 ) -> Result<impl IntoResponse, ApiError> {
-    verify_bearer_token(&headers, &state.admin_token)?;
-
-    let local_actor =
-        noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
+    let local_actor = require_local_actor(&state.pool, &principal, &username).await?;
 
     let row = sqlx::query_as::<_, (Uuid, Option<String>)>(
         r#"SELECT follower_id, ap_id FROM follows

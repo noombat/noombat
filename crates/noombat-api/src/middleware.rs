@@ -126,7 +126,10 @@ pub async fn is_accepted_follower(
 /// 2. `noombat_session=<jwt>` cookie (server-rendered page loads,
 ///    HTMX partial requests; cookies are sent automatically by the
 ///    browser).
-/// 3. Development-only admin bearer token (backward compatibility).
+///
+/// A request that carries neither is anonymous. There is deliberately
+/// no third way in: an instance-wide token that named its account from
+/// the request path would let one secret act as every user.
 fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Principal> {
     // 1. Try Authorisation header.
     let token_from_header = request
@@ -150,41 +153,14 @@ fn resolve_principal(state: &AppState, request: &Request<Body>) -> Option<Princi
     let token = token_from_header.or(token_from_cookie);
     let token = token?;
 
-    // Try JWT session token.
-    if let Some(ref session_config) = state.session_config
-        && let Ok(claims) = noombat_identity::session::verify_access_token(token, session_config)
-    {
-        let actor_uuid = uuid::Uuid::parse_str(&claims.sub).ok();
-        return Some(Principal {
-            username: Some(claims.username),
-            actor_uuid,
-            instance_role: None,
-            is_follower_of_target: None,
-        });
-    }
-
-    // Fallback: development-only admin bearer token.
-    let expected = state.admin_token.as_deref()?;
-    // HMAC-SHA256 comparison eliminates both timing and length oracles.
-    if !crate::auth::constant_time_token_eq(token, expected) {
-        return None;
-    }
-
-    // Extract the username from the path (e.g. /users/alice/... or /@alice).
-    let path = request.uri().path();
-    let username = path
-        .strip_prefix("/users/")
-        .and_then(|rest| rest.split('/').next())
-        .or_else(|| {
-            path.strip_prefix("/@")
-                .and_then(|rest| rest.split('/').next())
-                .filter(|u| !u.is_empty())
-        })
-        .map(String::from);
+    // A JWT session token is the only thing that identifies a caller.
+    let session_config = state.session_config.as_ref()?;
+    let claims = noombat_identity::session::verify_access_token(token, session_config).ok()?;
+    let actor_uuid = uuid::Uuid::parse_str(&claims.sub).ok();
 
     Some(Principal {
-        username,
-        actor_uuid: None,
+        username: Some(claims.username),
+        actor_uuid,
         instance_role: None,
         is_follower_of_target: None,
     })

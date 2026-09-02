@@ -151,7 +151,6 @@ Environment variables take precedence.
 | `jwt_secret`       | `NOOMBAT_JWT_SECRET`       | JWT signing secret (HS256, ≥ 32 bytes). Required for production. |
 | `access_ttl_secs`  | `NOOMBAT_ACCESS_TTL_SECS`  | Access-token lifetime in seconds (default `900`).                |
 | `refresh_ttl_secs` | `NOOMBAT_REFRESH_TTL_SECS` | Refresh-token lifetime in seconds (default `2592000`).           |
-| `admin_token`      | `NOOMBAT_ADMIN_TOKEN`      | Dev-only bearer token for C2S outbox POST. Omit in production.   |
 
 ### Registration and federation
 
@@ -363,8 +362,8 @@ podman build -t noombat .
 ```
 
 Use `compose.yml` for production deployment with PostgreSQL, Redis, Meilisearch, and the Chatmail relay.
-Set `NOOMBAT_JWT_SECRET` to a random string of at least 32 bytes.
-Remove `admin_token` from the configuration.
+Set `NOOMBAT_JWT_SECRET` to a random string of at least 32 bytes: it is what identifies a
+caller, so without it every route that acts for an account is unreachable.
 
 ### Chatmail (encrypted messaging)
 

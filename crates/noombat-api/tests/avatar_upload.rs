@@ -86,7 +86,6 @@ fn test_state(pool: PgPool) -> (AppState, std::path::PathBuf) {
         public_port: 8443,
         http_client: reqwest::Client::new(),
         open_registrations: true,
-        admin_token: None,
         search: Some(Arc::new(NoSearch) as Arc<dyn SearchBackend>),
         nodeinfo_features: NodeInfoFeatures::default(),
         redis: None,

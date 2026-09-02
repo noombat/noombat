@@ -48,7 +48,6 @@ fn test_state(domain: &str) -> AppState {
         public_port: PUBLIC_PORT,
         http_client: reqwest::Client::new(),
         open_registrations: true,
-        admin_token: None,
         search: None,
         nodeinfo_features: NodeInfoFeatures::default(),
         redis: None,

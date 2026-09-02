@@ -1,99 +1,79 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Shared authentication helpers.
+//! Authorisation helpers for routes keyed on one account.
 //!
-//! Centralises the development-only bearer-token check.
+//! Every write route under `/users/{username}` acts on exactly one
+//! account, so they all ask the same question: may this request act for
+//! that account? Asking it in one place is what keeps the answer the
+//! same at every call site.
 
-use axum::http::HeaderMap;
-use axum::http::header::AUTHORIZATION;
-use hmac::{Hmac, Mac};
+use axum::Extension;
+use noombat_core::actor::Actor;
+use noombat_core::authorisation::OrganizationRole;
 use noombat_core::error::NoombatError;
-use sha2::Sha256;
 
-type HmacSha256 = Hmac<Sha256>;
+use crate::error::ApiError;
+use crate::middleware::Principal;
 
-/// Fixed domain-separation tag used as the HMAC message. The tag
-/// itself is not secret; its purpose is to ensure the HMAC output is
-/// specific to this comparison context.
-const HMAC_TAG: &[u8] = b"noombat-bearer-token-verify";
-
-/// Constant-time token comparison that does not leak the length of
-/// the expected secret.
+/// Whether the authenticated principal may act for `subject_id`.
 ///
-/// Both values are hashed with HMAC-SHA256 (keyed by each value,
-/// message = [`HMAC_TAG`]) to produce fixed-length (32-byte) digests
-/// before comparison. This eliminates the length oracle inherent in
-/// comparing variable-length byte slices, regardless of whether the
-/// underlying constant-time primitive short-circuits on length
-/// mismatch.
-pub fn constant_time_token_eq(a: &str, b: &str) -> bool {
-    let mut mac_a =
-        HmacSha256::new_from_slice(a.as_bytes()).expect("HMAC-SHA256 accepts any key length");
-    mac_a.update(HMAC_TAG);
-    let digest_a = mac_a.finalize().into_bytes();
+/// Two ways to qualify: being that account, or holding a role in it
+/// where it is an organisation. An organisation never signs in, so it
+/// is always acted for by its members.
+///
+/// `Ok(None)` means the caller is the account itself; `Ok(Some(role))`
+/// means they act for an organisation and carry that standing, which
+/// saves the caller a second query before applying the predicates that
+/// take an `OrganizationRole`.
+///
+/// Both failures are `Forbidden` rather than `NotFound`, so somebody
+/// outside an organisation cannot learn whether it exists from the
+/// error they get back.
+pub async fn require_acts_for(
+    pool: &sqlx::PgPool,
+    subject_id: uuid::Uuid,
+    principal: &Option<Extension<Principal>>,
+) -> Result<Option<OrganizationRole>, ApiError> {
+    let actor_id = principal
+        .as_ref()
+        .and_then(|p| p.actor_uuid)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
 
-    let mut mac_b =
-        HmacSha256::new_from_slice(b.as_bytes()).expect("HMAC-SHA256 accepts any key length");
-    mac_b.update(HMAC_TAG);
-    let digest_b = mac_b.finalize().into_bytes();
+    if actor_id == subject_id {
+        return Ok(None);
+    }
 
-    use subtle::ConstantTimeEq;
-    digest_a.ct_eq(&digest_b).into()
+    let role: Option<OrganizationRole> = sqlx::query_scalar(
+        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(subject_id)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
+
+    role.map(Some).ok_or(ApiError(NoombatError::Forbidden))
 }
 
-/// Verify that the request carries an `Authorization: Bearer <token>`
-/// header matching the configured admin token.
+/// Resolve the local account named in the path and require that the
+/// request may act for it.
 ///
-/// The comparison uses [`constant_time_token_eq`] (HMAC-SHA256 digest
-/// comparison) to prevent both timing and length oracle attacks.
-///
-/// Returns `Err(Forbidden)` if no admin token is configured, if the
-/// header is absent or malformed, or if the token does not match.
-pub fn verify_bearer_token(
-    headers: &HeaderMap,
-    expected: &Option<String>,
-) -> Result<(), NoombatError> {
-    let expected = expected.as_deref().ok_or(NoombatError::Forbidden)?;
-
-    let header = headers
-        .get(AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .ok_or(NoombatError::Forbidden)?;
-
-    let token = header
-        .strip_prefix("Bearer ")
-        .ok_or(NoombatError::Forbidden)?;
-
-    if !constant_time_token_eq(token, expected) {
-        return Err(NoombatError::Forbidden);
-    }
-    Ok(())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn equal_tokens_match() {
-        assert!(constant_time_token_eq("secret-token-42", "secret-token-42"));
+/// The match is on the account's UUID and never on the username in the
+/// path. A username is mutable, and comparing on it would let a rename
+/// carry one account's session into another account's authorisation.
+pub async fn require_local_actor(
+    pool: &sqlx::PgPool,
+    principal: &Option<Extension<Principal>>,
+    username: &str,
+) -> Result<Actor, ApiError> {
+    // Authentication is checked before the lookup, so an anonymous
+    // caller cannot tell an existing account from a missing one by the
+    // difference between 403 and 404.
+    if principal.as_ref().and_then(|p| p.actor_uuid).is_none() {
+        return Err(ApiError(NoombatError::Forbidden));
     }
 
-    #[test]
-    fn unequal_tokens_do_not_match() {
-        assert!(!constant_time_token_eq("correct-token", "wrong-token"));
-    }
-
-    #[test]
-    fn different_length_tokens_do_not_match() {
-        assert!(!constant_time_token_eq(
-            "short",
-            "a-much-longer-token-value"
-        ));
-    }
-
-    #[test]
-    fn empty_tokens_match() {
-        assert!(constant_time_token_eq("", ""));
-    }
+    let actor = noombat_identity::repo::find_local_by_username(pool, username).await?;
+    require_acts_for(pool, actor.id, principal).await?;
+    Ok(actor)
 }

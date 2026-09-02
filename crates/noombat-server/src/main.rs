@@ -48,9 +48,6 @@ struct Config {
     /// Whether open registration is enabled (default `true`).
     #[serde(default = "default_true")]
     open_registrations: bool,
-    /// Development-only bearer token for C2S outbox POST!
-    /// If unset, the outbox POST endpoint is disabled.
-    admin_token: Option<Secret>,
     /// Meilisearch base URL (e.g. `http://localhost:7700`).
     /// If unset, full-text search is disabled.
     meili_url: Option<String>,
@@ -812,7 +809,6 @@ async fn main() -> anyhow::Result<()> {
         public_port: config.port,
         http_client,
         open_registrations: config.open_registrations,
-        admin_token: config.admin_token.as_ref().map(|s| s.expose().to_string()),
         search,
         nodeinfo_features: noombat_federation::nodeinfo::NodeInfoFeatures {
             chatmail_available: config.chatmail_available,
@@ -910,7 +906,6 @@ async fn main() -> anyhow::Result<()> {
 // ..... Production guard rails .....
 
 /// Known-insecure default values that must not reach production.
-const INSECURE_ADMIN_TOKEN: &str = "noombat";
 const INSECURE_DB_CRED: &str = "noombat:noombat";
 const INSECURE_MEILI_KEY: &str = "noombat-dev-key";
 const INSECURE_CHATMAIL_SECRET: &str = "noombat-chatmail-dev-secret";
@@ -934,10 +929,10 @@ fn validate_production_config(config: &Config) {
     match config.jwt_secret.as_ref().map(Secret::expose) {
         None => {
             error!(
-                "NOOMBAT_JWT_SECRET is not set. \
-                 Session-based authentication is disabled; only the \
-                 admin_token bearer is available. This is not safe \
-                 for production."
+                "NOOMBAT_JWT_SECRET is not set. Session-based \
+                 authentication is the only way to identify a caller, \
+                 so every route that acts for an account is \
+                 unreachable without it."
             );
             fatal = true;
         }
@@ -953,16 +948,6 @@ fn validate_production_config(config: &Config) {
             fatal = true;
         }
         Some(_) => {}
-    }
-
-    if config.admin_token.as_ref().map(Secret::expose) == Some(INSECURE_ADMIN_TOKEN) {
-        error!(
-            "NOOMBAT_ADMIN_TOKEN is set to the documented default \
-             (\"{token}\"). Change it to a random value or remove \
-             it entirely in production.",
-            token = INSECURE_ADMIN_TOKEN
-        );
-        fatal = true;
     }
 
     if config.database_url.expose().contains(INSECURE_DB_CRED) {

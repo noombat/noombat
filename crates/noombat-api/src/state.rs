@@ -27,9 +27,6 @@ pub struct AppState {
     pub public_port: u16,
     pub http_client: reqwest::Client,
     pub open_registrations: bool,
-    /// Development-only bearer token for C2S outbox POST!
-    /// To be replaced by full authentication!
-    pub admin_token: Option<String>,
     /// Search backend (default: Meilisearch).
     pub search: Option<Arc<dyn noombat_core::extension::SearchBackend>>,
     /// Instance-level feature flags exposed via NodeInfo.
