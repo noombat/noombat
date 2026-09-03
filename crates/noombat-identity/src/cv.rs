@@ -473,13 +473,29 @@ mod tests {
         // integration job and the build image, neither of which has
         // typst. Skipping is the only alternative to failing there, so
         // it is skipped loudly and the `typst-injection` CI job installs
-        // the binary and runs it for real. If that job is ever dropped,
-        // this test stops running anywhere and nothing will say so.
+        // the binary and runs it for real.
+        //
+        // Where the binary is supposed to be present, a skip is a failure
+        // instead, which is what stops this becoming an assertion that runs
+        // nowhere. The install step could start putting the binary
+        // somewhere off PATH, or the job could be dropped, and either way
+        // every run would stay green while nothing measured the timeout.
+        //
+        // Keyed on NOOMBAT_REQUIRE_TYPST rather than on CI, because CI is
+        // set in the integration job too, and that job legitimately has no
+        // typst. Only the job that installs the binary asks to be held to
+        // it. The interop suites apply the same rule to their own skips.
         if std::process::Command::new("typst")
             .arg("--version")
             .output()
             .is_err()
         {
+            assert!(
+                std::env::var_os("NOOMBAT_REQUIRE_TYPST").is_none(),
+                "no typst on PATH, but NOOMBAT_REQUIRE_TYPST is set: this assertion did not \
+                 run. The typst-injection job installs the binary before running it; if that \
+                 step moved or was dropped, the timeout is unmeasured rather than measured."
+            );
             eprintln!(
                 "SKIPPED a_slow_compile_is_killed_not_merely_abandoned: no typst on PATH. \
                  The typst-injection CI job is where this runs."

@@ -198,7 +198,15 @@ jobs:
           docker cp "$cid:/bin/typst" /usr/local/bin/typst
           docker rm "$cid"
           typst --version
+      # The test skips itself when typst is absent, because
+      # `--include-ignored` also runs it in the integration job and in the
+      # build image, neither of which has the binary. This is the one job
+      # that installs it, so this is the one job that refuses the skip:
+      # without the variable, a broken install step above would leave the
+      # timeout unmeasured and the job green.
       - name: "Assert a slow compilation is killed, not abandoned"
+        env:
+          NOOMBAT_REQUIRE_TYPST: "1"
         run: cargo test -p noombat-identity --lib -- --include-ignored a_slow_compile
 
   deny:
@@ -269,14 +277,25 @@ jobs:
       - run: cargo test --workspace
 
   msrv:
-    name: MSRV (1.94.0)
+    name: MSRV (from Cargo.toml)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Install MSRV toolchain
+      # Read, not repeated. The floor was written here as well as in
+      # Cargo.toml, so raising `rust-version` would leave this job proving
+      # the old one while its name advertised the new one.
+      - name: Read the declared MSRV
+        id: msrv
         run: |
-          rustup install 1.94.0
-          rustup default 1.94.0
+          version=$(sed -n 's/^rust-version *= *"\([0-9][0-9.]*\)".*/\1/p' Cargo.toml | head -1)
+          if [ -z "$version" ]; then
+            echo "::error::Cargo.toml declares no rust-version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "declared MSRV: $version"
+      - name: Install MSRV toolchain
+        run: rustup install "${{ steps.msrv.outputs.version }}" --profile minimal
       - name: Cache Cargo artefacts
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
@@ -286,9 +305,26 @@ jobs:
             ~/.cargo/git/db
             ~/.rustup/toolchains
             target
-          key: cargo-msrv-1.94.0-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-msrv-1.94.0-
-      - run: cargo check --workspace
+          key: cargo-msrv-${{ steps.msrv.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: cargo-msrv-${{ steps.msrv.outputs.version }}-
+      # RUSTUP_TOOLCHAIN rather than `rustup default`: rust-toolchain.toml
+      # outranks the default, so the job that set the default compiled on
+      # whatever that file names and never once exercised the floor.
+      #
+      # The version is then read back, because that failure is silent: a
+      # job checking the wrong toolchain passes for the same reason the
+      # right one would, and reports the floor as held either way.
+      - name: Check the workspace against the floor
+        env:
+          RUSTUP_TOOLCHAIN: ${{ steps.msrv.outputs.version }}
+        run: |
+          declared="${{ steps.msrv.outputs.version }}"
+          actual=$(rustc --version | cut -d' ' -f2)
+          if [ "$actual" != "$declared" ]; then
+            echo "::error::expected rustc $declared, got $actual; the floor was not exercised" >&2
+            exit 1
+          fi
+          cargo check --workspace
 
   # The services come from the compose files rather than a `services:`
   # block, and that is deliberate.
