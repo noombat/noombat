@@ -18,7 +18,13 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["src/**/*.spec.ts"],
+    // Both spellings, though the suites here are named `.spec.ts`. The
+    // pattern is what decides whether a file is a test, so admitting only
+    // one spelling means a file named with the other is not reported as
+    // unmatched: it is silently not a test, and the job stays green having
+    // run one suite fewer. `vitest run` fails on no files at all, which
+    // catches nothing once at least one suite matches.
+    include: ["src/**/*.{spec,test}.ts"],
     // Key generation and signature verification dominate the runtime
     // of crypto.spec.ts; the default five-second timeout is tight on
     // a loaded CI runner.
