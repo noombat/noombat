@@ -96,9 +96,8 @@ async fn save_visibility_columns(
     state: &AppState,
     actor_id: uuid::Uuid,
     form: &PrivacySettingsForm,
-) -> Result<(), Response> {
-    let bad_request =
-        |message: String| (axum::http::StatusCode::BAD_REQUEST, message).into_response();
+) -> Result<(), (axum::http::StatusCode, String)> {
+    let bad_request = |message: String| (axum::http::StatusCode::BAD_REQUEST, message);
 
     if let Some(ref value) = form.default_visibility {
         if !matches!(
@@ -119,9 +118,8 @@ async fn save_visibility_columns(
             tracing::error!(%actor_id, "failed to save the default post visibility: {e}");
             return Err((
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                "could not save privacy settings",
-            )
-                .into_response());
+                "could not save privacy settings".to_owned(),
+            ));
         }
     }
 
@@ -154,9 +152,8 @@ async fn save_visibility_columns(
         tracing::error!(%actor_id, "failed to save the list visibility settings: {e}");
         return Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            "could not save privacy settings",
-        )
-            .into_response());
+            "could not save privacy settings".to_owned(),
+        ));
     }
 
     Ok(())
@@ -201,8 +198,8 @@ async fn save_privacy_settings(
             .into_response();
     }
 
-    if let Err(response) = save_visibility_columns(&state, actor_id, &form).await {
-        return response;
+    if let Err(refusal) = save_visibility_columns(&state, actor_id, &form).await {
+        return refusal.into_response();
     }
 
     // Bring the search index into line with the setting that was just
