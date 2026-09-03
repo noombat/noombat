@@ -279,7 +279,7 @@ fn handle_kick(
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = validate_address(address) {
-        warn!(address = %address, error = %e, "kick rejected: invalid address");
+        warn!(address = ?address, error = %e, "kick rejected: invalid address");
         request.respond(json_response(
             StatusCode(400),
             &json!({"error": "invalid address"}),
@@ -372,7 +372,7 @@ fn handle_block_recipient(
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = validate_address(address) {
-        warn!(address = %address, error = %e, "block-recipient rejected: invalid address");
+        warn!(address = ?address, error = %e, "block-recipient rejected: invalid address");
         request.respond(json_response(
             StatusCode(400),
             &json!({"error": "invalid address"}),
@@ -404,7 +404,7 @@ fn handle_unblock_recipient(
     address: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = validate_address(address) {
-        warn!(address = %address, error = %e, "unblock-recipient rejected: invalid address");
+        warn!(address = ?address, error = %e, "unblock-recipient rejected: invalid address");
         request.respond(json_response(
             StatusCode(400),
             &json!({"error": "invalid address"}),
@@ -437,7 +437,12 @@ fn handle_block_sender_pair(
     recipient: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
-        warn!(sender = %sender, recipient = %recipient, error = %e, "block-sender-pair rejected: invalid address");
+        warn!(
+            sender = ?sender,
+            recipient = ?recipient,
+            error = %e,
+            "block-sender-pair rejected: invalid address"
+        );
         request.respond(json_response(
             StatusCode(400),
             &json!({"error": "invalid address"}),
@@ -473,7 +478,12 @@ fn handle_unblock_sender_pair(
     recipient: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
     if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
-        warn!(sender = %sender, recipient = %recipient, error = %e, "unblock-sender-pair rejected: invalid address");
+        warn!(
+            sender = ?sender,
+            recipient = ?recipient,
+            error = %e,
+            "unblock-sender-pair rejected: invalid address"
+        );
         request.respond(json_response(
             StatusCode(400),
             &json!({"error": "invalid address"}),
