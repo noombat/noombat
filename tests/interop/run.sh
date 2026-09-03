@@ -50,7 +50,10 @@
 # the followed account, plus two against Noombat's own collections:
 # `following` lists accepted follows only and is therefore the evidence
 # that the Accept arrived and verified, and `followers` is the same
-# evidence for the inbound Follow.
+# evidence for the inbound Follow. Both are read with the session token,
+# because both collections are private by default: fetched anonymously
+# they answer 404, and a privacy setting would be reported here as a
+# federation failure.
 #
 # Environment:
 #   CURL_OPTS             extra curl flags, e.g. --insecure for Caddy's CA
@@ -442,8 +445,12 @@ else
         # only, so this is Noombat having received GoToSocial's Accept
         # and verified its signature.
         echo "Accept (GoToSocial -> Noombat):"
+        # Read as the owner. The follower and following collections are
+        # private by default, so an anonymous fetch is answered 404 and
+        # this would report a federation failure for a privacy setting.
         noombat_follows_bob() {
-            curl $CURL_OPTS -s "$NOOMBAT/users/$NOOMBAT_ACTOR/following" \
+            curl $CURL_OPTS -s -H "Authorization: Bearer $SESSION_TOKEN" \
+                "$NOOMBAT/users/$NOOMBAT_ACTOR/following" \
                 2>/dev/null | grep -qF "$GTS_ACTOR_AP_ID"
         }
         if poll "$CROSS_TIMEOUT" noombat_follows_bob; then
@@ -498,8 +505,10 @@ else
         # follows only, so an entry there is Noombat having verified an
         # inbound signed Follow against a key it fetched from
         # GoToSocial, and having auto-accepted it.
+        # As the owner, for the reason given at the following poll above.
         noombat_has_follower() {
-            curl $CURL_OPTS -s "$NOOMBAT/users/$NOOMBAT_ACTOR/followers" \
+            curl $CURL_OPTS -s -H "Authorization: Bearer $SESSION_TOKEN" \
+                "$NOOMBAT/users/$NOOMBAT_ACTOR/followers" \
                 2>/dev/null | grep -qF "$GTS_ACTOR_AP_ID"
         }
         if poll "$CROSS_TIMEOUT" noombat_has_follower; then
