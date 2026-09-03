@@ -290,42 +290,50 @@ seed_admin() {
   # prove it still verifies, with:
   #
   #     cargo test -p noombat-identity interop_fixture
+  # The session accounts come with it, and for the same reason: the suite
+  # signs in to them rather than registering them, so they have to exist
+  # first. Four, matching `SESSION_ACCOUNTS` in tests/e2e/session.ts, which
+  # is also what playwright.config.ts caps the worker count to.
   "${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
     psql -U noombat -d noombat -q -c "
       INSERT INTO actors
         (actor_type, ap_id, username, domain, public_key_pem, is_local,
          instance_role, auth_key_hash)
-      VALUES
-        ('individual', 'http://localhost:$NOOMBAT_PORT/users/$E2E_ADMIN_USER',
-         '$E2E_ADMIN_USER', '$NOOMBAT_DOMAIN',
-         '-----BEGIN PUBLIC KEY-----
+      SELECT 'individual',
+             'http://localhost:$NOOMBAT_PORT/users/' || u.name,
+             u.name, '$NOOMBAT_DOMAIN',
+             '-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
 -----END PUBLIC KEY-----',
-         TRUE, 'admin', '$E2E_AUTH_KEY_HASH')
+             TRUE, u.role, '$E2E_AUTH_KEY_HASH'
+        FROM (VALUES ('$E2E_ADMIN_USER', 'admin'),
+                     ('e2e_session_w0', 'user'),
+                     ('e2e_session_w1', 'user'),
+                     ('e2e_session_w2', 'user'),
+                     ('e2e_session_w3', 'user')) AS u(name, role)
       ON CONFLICT (ap_id) DO UPDATE
-        SET instance_role = 'admin',
+        SET instance_role = EXCLUDED.instance_role,
             auth_key_hash = EXCLUDED.auth_key_hash;" >/dev/null 2>&1
 
   # Read back, because a statement reports success against zero rows.
-  # The credential is checked alongside the role: without it the account
+  # The credential is counted alongside the role: without it an account
   # exists and is an admin and still cannot sign in, which the admin
   # group would report as a redirect rather than as a missing fixture.
   local seeded
   seeded="$("${COMPOSE[@]}" exec -T -e PGPASSWORD=noombat db \
     psql -U noombat -d noombat -tAc \
-    "SELECT instance_role || ':' || (auth_key_hash IS NOT NULL)
+    "SELECT count(*) FILTER (WHERE auth_key_hash IS NOT NULL) || ':' ||
+            count(*) FILTER (WHERE username = '$E2E_ADMIN_USER'
+                               AND instance_role = 'admin')
        FROM actors
-       WHERE username = '$E2E_ADMIN_USER' AND is_local;" \
+       WHERE is_local
+         AND (username = '$E2E_ADMIN_USER' OR username LIKE 'e2e_session_w%');" \
     2>/dev/null | tr -d '[:space:]')"
-  # `admin:true`, not `admin:t`: `t` is how psql renders a boolean
-  # column, and this is a boolean concatenated into text, which Postgres
-  # renders as `true`. Comparing against `t` reported every seeded run as
-  # a failed one.
-  if [ "$seeded" = "admin:true" ]; then
-    say "admin fixture seeded ($E2E_ADMIN_USER)"
+  if [ "$seeded" = "5:1" ]; then
+    say "admin and session fixtures seeded ($E2E_ADMIN_USER plus 4)"
   else
-    say "ADMIN FIXTURE NOT SEEDED (got '${seeded:-none}', wanted 'admin:true'):" \
-        "the admin group will fail"
+    say "FIXTURES NOT SEEDED (got '${seeded:-none}', wanted '5:1'):" \
+        "the authenticated groups will fail"
   fi
 }
 

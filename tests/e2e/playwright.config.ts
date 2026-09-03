@@ -8,6 +8,8 @@
 
 import { defineConfig, devices } from "@playwright/test";
 
+import { SESSION_ACCOUNTS } from "./session";
+
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
 
 export default defineConfig({
@@ -15,6 +17,11 @@ export default defineConfig({
   testMatch: "**/*.spec.ts",
   timeout: 30_000,
   retries: process.env.CI ? 1 : 0,
+  // Capped at the number of session accounts the stack seeds, so that
+  // concurrent workers never outnumber the pool they sign in to. Left to
+  // the default, this is half the machine's cores, which on a large
+  // developer machine would put several workers on one account at once.
+  workers: SESSION_ACCOUNTS,
   reporter: process.env.CI ? [["html", { open: "never" }], ["list"]] : "list",
 
   use: {

@@ -256,23 +256,25 @@ jobs:
           cat /tmp/noombat.log
           exit 1
 
-      # Seeded in SQL rather than through `POST /api/v1/auth/register`,
-      # which refuses with 503 unless an SMTP relay is configured: that
-      # path mints a password and awaits a recovery challenge, so an
-      # instance that cannot send mail does not offer it. This job
-      # configures no relay, so the register call could only ever fail,
-      # and it did so behind a `|| true` that left the fixture missing and
-      # the admin group failing two steps from the cause.
+      # Every account the suite signs in as, seeded in SQL rather than
+      # registered: `POST /api/v1/auth/register` refuses with 503 unless an
+      # SMTP relay is configured, and this job configures none.
       #
-      # `instance_role` is settable through no API the suite can reach,
-      # and without it `require_admin` redirects every admin page to `/`,
-      # so the five admin scans measure the feed under other pages' names.
+      # `instance_role` is settable through no API the suite can reach, and
+      # without it `require_admin` redirects every admin page to `/`, so the
+      # five admin scans measure the feed under other pages' names.
       #
-      # The username and key are duplicated in tests/e2e/session.ts and
+      # Four session accounts, matching `SESSION_ACCOUNTS` in
+      # tests/e2e/session.ts and the worker cap in playwright.config.ts. A
+      # worker index is not bounded by the worker count, because a retry
+      # starts a fresh worker, so the suite wraps its index around this pool
+      # rather than expecting one name per index.
+      #
+      # The usernames and key are duplicated in tests/e2e/session.ts and
       # scripts/e2e-stack.sh; all three have to agree. The hash is the
       # Argon2id hash of that key, which `cargo test -p noombat-identity
       # interop_fixture` proves still verifies.
-      - name: Seed the administrator the admin accessibility group uses
+      - name: Seed the accounts the suite signs in as
         run: |
           AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$CJK75/eF2NFDNvNV5I+DGQ$Eqae0tHj4wJ7vBCko4z+1OXz6HVocGWc8K3NAJibjL8'
 
@@ -281,28 +283,37 @@ jobs:
             INSERT INTO actors
                 (actor_type, ap_id, username, domain, public_key_pem,
                  is_local, instance_role, auth_key_hash)
-            VALUES
-                ('individual', 'http://localhost:8443/users/e2e_admin',
-                 'e2e_admin', 'localhost',
-                 E'-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
-                 TRUE, 'admin', '$AUTH_KEY_HASH')
+            SELECT 'individual',
+                   'http://localhost:8443/users/' || u.name,
+                   u.name, 'localhost',
+                   E'-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
+                   TRUE, u.role, '$AUTH_KEY_HASH'
+              FROM (VALUES ('e2e_admin', 'admin'),
+                           ('e2e_session_w0', 'user'),
+                           ('e2e_session_w1', 'user'),
+                           ('e2e_session_w2', 'user'),
+                           ('e2e_session_w3', 'user')) AS u(name, role)
             ON CONFLICT (ap_id) DO UPDATE
-                SET instance_role = 'admin',
+                SET instance_role = EXCLUDED.instance_role,
                     auth_key_hash = EXCLUDED.auth_key_hash;"
 
           # Read back: the statement reports success against zero rows.
-          # The credential is checked alongside the role, because without
-          # it the account exists, is an administrator, and still cannot
+          # The credential is counted alongside the role, because without
+          # it an account exists, is an administrator, and still cannot
           # sign in, which the admin group reports as a redirect rather
           # than as a missing fixture.
           seeded=$(PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -tAc \
-            "SELECT instance_role || ':' || (auth_key_hash IS NOT NULL)
-               FROM actors WHERE username = 'e2e_admin' AND is_local;")
-          if [ "$(echo "$seeded" | tr -d '[:space:]')" != "admin:true" ]; then
-            echo "::error::e2e_admin was not seeded (got '${seeded:-none}'); the admin group would scan the feed"
+            "SELECT count(*) FILTER (WHERE auth_key_hash IS NOT NULL) || ':' ||
+                    count(*) FILTER (WHERE username = 'e2e_admin'
+                                       AND instance_role = 'admin')
+               FROM actors
+              WHERE is_local
+                AND (username = 'e2e_admin' OR username LIKE 'e2e_session_w%');")
+          if [ "$(echo "$seeded" | tr -d '[:space:]')" != "5:1" ]; then
+            echo "::error::expected 5 accounts with a credential and 1 administrator, got '${seeded:-none}'"
             exit 1
           fi
-          echo "administrator seeded and promoted"
+          echo "administrator and session accounts seeded"
 
       - name: Install Playwright test dependencies
         working-directory: tests/e2e

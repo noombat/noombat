@@ -40,14 +40,27 @@ const COOKIE_NAME = "noombat_session";
 const AUTH_KEY = "e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f";
 
 /**
- * The fixture account belonging to one Playwright worker.
+ * How many session accounts the stack seeds.
  *
- * One account per worker rather than one shared account, so that
- * parallel workers cannot race to create the same row and read each
- * other's registration failure as a broken instance.
+ * The suite no longer creates accounts, so this is a fixed pool rather
+ * than one per worker: the seed has to know every name in advance, and a
+ * worker index is not bounded by the worker count. A retried test runs in
+ * a fresh worker with the next index, so one run of a single-worker job
+ * reached `w17`, and any fixed list of per-index names would have run out.
+ */
+export const SESSION_ACCOUNTS = 4;
+
+/**
+ * The fixture account a Playwright worker signs in as.
+ *
+ * Indices wrap around the seeded pool. Two workers sharing an account is
+ * harmless where it can happen at all: the pool is as large as the worker
+ * count this suite is configured for, and the accounts are only ever read
+ * from. The per-worker split existed to keep parallel workers from racing
+ * to create the same row, which seeding removes.
  */
 export function sessionUsername(workerIndex: number): string {
-  return `e2e_session_w${workerIndex}`;
+  return `e2e_session_w${workerIndex % SESSION_ACCOUNTS}`;
 }
 
 /**
@@ -96,7 +109,11 @@ export async function requireAdminSession(request: APIRequestContext): Promise<s
 }
 
 /**
- * Sign the fixture account in, creating it on first use.
+ * Sign a seeded fixture account in.
+ *
+ * It only signs in. The account is seeded in SQL by the stack, because
+ * `POST /api/v1/auth/register` refuses with 503 unless the instance has an
+ * SMTP relay, and this stack configures none.
  *
  * Returns null when the instance issues no sessions, which is a
  * convenience for a local run against a server started without a JWT
@@ -110,30 +127,18 @@ export async function sessionToken(
 ): Promise<string | null> {
   const credentials = { username: sessionUsername(workerIndex), auth_key: AUTH_KEY };
 
-  // Registration also needs an address now: the server keeps only a hash of
-  // the auth key, so a password account without one cannot be recovered and
-  // the route refuses to create it. Login takes the credentials alone.
-  const signUp = { ...credentials, email: `${credentials.username}@e2e.invalid` };
-
-  // 201 on the first run of a worker against a fresh instance, 409
-  // afterwards, at which point the account is there to be signed in to.
-  const registered = await request.post("/api/v1/auth/register", { data: signUp });
-  if (registered.status() === 201) {
-    return accessToken(await registered.text());
-  }
-
   const signedIn = await request.post("/api/v1/auth/login", { data: credentials });
   if (signedIn.status() === 200) {
     return accessToken(await signedIn.text());
   }
 
-  const detail = `register returned ${registered.status()}, login returned ${signedIn.status()}`;
   if (process.env.CI) {
     throw new Error(
-      `no session could be obtained for ${credentials.username} (${detail}). The ` +
-        "authenticated groups would skip silently. The instance needs " +
-        "NOOMBAT_JWT_SECRET set, which is what enables session authentication, and " +
-        "open registration left on.",
+      `no session could be obtained for ${credentials.username} (login returned ` +
+        `${signedIn.status()}). The authenticated groups would skip silently. The ` +
+        "instance needs NOOMBAT_JWT_SECRET set, which is what enables session " +
+        `authentication, and the stack has to have seeded ${SESSION_ACCOUNTS} ` +
+        "session accounts.",
     );
   }
   return null;
