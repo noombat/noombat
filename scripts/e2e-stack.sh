@@ -317,10 +317,14 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
        FROM actors
        WHERE username = '$E2E_ADMIN_USER' AND is_local;" \
     2>/dev/null | tr -d '[:space:]')"
-  if [ "$seeded" = "admin:t" ]; then
+  # `admin:true`, not `admin:t`: `t` is how psql renders a boolean
+  # column, and this is a boolean concatenated into text, which Postgres
+  # renders as `true`. Comparing against `t` reported every seeded run as
+  # a failed one.
+  if [ "$seeded" = "admin:true" ]; then
     say "admin fixture seeded ($E2E_ADMIN_USER)"
   else
-    say "ADMIN FIXTURE NOT SEEDED (got '${seeded:-none}', wanted 'admin:t'):" \
+    say "ADMIN FIXTURE NOT SEEDED (got '${seeded:-none}', wanted 'admin:true'):" \
         "the admin group will fail"
   fi
 }
