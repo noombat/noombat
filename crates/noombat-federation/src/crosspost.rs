@@ -109,16 +109,6 @@ pub async fn set_canonical_uri(pool: &PgPool, post_id: Uuid, canonical_uri: &str
     Ok(())
 }
 
-/// Count the number of cross-posts (distinct instances sharing the
-/// same canonical content) for a given canonical URI.
-pub async fn count_crossposts(pool: &PgPool, canonical_uri: &str) -> Result<i64> {
-    let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM posts WHERE canonical_uri = $1")
-        .bind(canonical_uri)
-        .fetch_one(pool)
-        .await?;
-    Ok(count)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
