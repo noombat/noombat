@@ -1,3 +1,19 @@
+# An exact version, not `stable`.
+#
+# With `stable`, a Rust release changes what CI runs without anybody
+# committing anything: 1.98.0 arrived on 2026-08-18 with a new
+# `clippy::result_large_err` default, and the next push failed a Clippy job
+# on code that had not been touched. A pin moves that to a commit somebody
+# chose, and makes the failure legible when it happens.
+#
+# The pin's own failure mode is silence, so `scripts/check-toolchain-freshness.sh`
+# runs on a schedule and reports when this has fallen behind the current
+# stable. Raise this line to take a new release; that commit is where any
+# new lint gets dealt with.
+#
+# This is the toolchain for building and linting. The floor the crates
+# promise is `rust-version` in Cargo.toml, which the MSRV job reads.
+
 [toolchain]
-channel = "stable"
+channel = "1.98.0"
 components = ["rustfmt", "clippy"]

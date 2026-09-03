@@ -1,0 +1,46 @@
+# Report a pinned toolchain, or a declared MSRV, that has fallen behind.
+#
+# rust-toolchain.toml names an exact version, so a Rust release can no
+# longer redden CI without a commit. The cost is the opposite failure, and
+# it is silent: a pin nobody revisits ages quietly, and the eventual
+# upgrade arrives carrying every lint added in between.
+#
+# Scheduled rather than triggered by push, because the answer changes with
+# the calendar rather than with the tree. A push-triggered version would
+# report the same thing on every commit for weeks and nothing on the day it
+# started being true.
+#
+# It also runs on pull requests that touch the two files it reads, so that
+# a bump to either is checked as it lands rather than up to a week later.
+#
+# Related workflows:
+#   ci.yml             holds the MSRV job, which reads the same floor.
+#   startup-watch.yml  the other scheduled report.
+
+name: Toolchain freshness
+
+on:
+  schedule:
+    # Weekly. Rust releases every six weeks, so a week of latency is small
+    # against the grace window the script allows.
+    - cron: "23 7 * * 1"
+  pull_request:
+    paths:
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "scripts/check-toolchain-freshness.sh"
+      - ".github/workflows/toolchain-freshness.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  freshness:
+    name: Pinned toolchain and declared MSRV
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # Reads the published stable manifest, which needs no credentials.
+      - name: "Report a toolchain or floor that has fallen behind"
+        run: scripts/check-toolchain-freshness.sh
