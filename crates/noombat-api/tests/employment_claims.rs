@@ -60,6 +60,7 @@ fn edit() -> UpdateWorkExperience {
     }
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_claim_starts_unconfirmed(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -73,6 +74,7 @@ async fn a_claim_starts_unconfirmed(pool: PgPool) {
     assert_eq!(row.organization_id, Some(acme));
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_organisation_confirms_and_can_withdraw(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -111,6 +113,7 @@ async fn the_organisation_confirms_and_can_withdraw(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn another_organisation_cannot_confirm_the_claim(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -124,6 +127,7 @@ async fn another_organisation_cannot_confirm_the_claim(pool: PgPool) {
     assert!(refused.is_err(), "Globex confirmed a claim naming Acme");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn rewriting_the_employer_name_drops_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -153,6 +157,7 @@ async fn rewriting_the_employer_name_drops_the_confirmation(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn repointing_the_reference_drops_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -184,6 +189,7 @@ async fn repointing_the_reference_drops_the_confirmation(pool: PgPool) {
     assert_eq!(edited.organization_id, Some(globex));
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_unrelated_edit_keeps_the_confirmation(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;
@@ -213,6 +219,7 @@ async fn an_unrelated_edit_keeps_the_confirmation(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_schema_refuses_a_confirmation_with_nothing_to_point_at(pool: PgPool) {
     let person = actor(&pool, "individual", "alice").await;

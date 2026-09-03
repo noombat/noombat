@@ -44,6 +44,7 @@ fn posting(salary_min: i64, salary_max: i64, currency: &str) -> NewJobPosting {
     }
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_vietnamese_senior_salary_round_trips(pool: PgPool) {
     let actor = employer(&pool).await;
@@ -62,6 +63,7 @@ async fn a_vietnamese_senior_salary_round_trips(pool: PgPool) {
     assert_eq!(job.salary_max, Some(2_600_000_000));
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_indonesian_senior_salary_round_trips(pool: PgPool) {
     let actor = employer(&pool).await;
@@ -78,6 +80,7 @@ async fn an_indonesian_senior_salary_round_trips(pool: PgPool) {
     assert_eq!(job.salary_max, Some(3_500_000_000));
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_value_one_above_the_old_ceiling_survives(pool: PgPool) {
     let actor = employer(&pool).await;

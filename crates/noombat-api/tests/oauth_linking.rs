@@ -34,6 +34,7 @@ async fn account(pool: &PgPool, label: &str) -> Uuid {
     .expect("insert account")
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_account_can_hold_both_providers(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -54,6 +55,7 @@ async fn an_account_can_hold_both_providers(pool: PgPool) {
     assert_eq!(linked, 2);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn one_external_identity_belongs_to_one_account(pool: PgPool) {
     let alice = account(&pool, "alice").await;
@@ -81,12 +83,14 @@ async fn one_external_identity_belongs_to_one_account(pool: PgPool) {
     assert_eq!(owner, alice);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn linking_to_an_account_that_does_not_exist_is_refused(pool: PgPool) {
     let refused = link_identity(&pool, Uuid::new_v4(), "orcid", "0000-0002-1825-0097").await;
     assert!(refused.is_err());
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_link_flow_records_whose_account_it_is(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -110,6 +114,7 @@ async fn a_link_flow_records_whose_account_it_is(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_sign_in_flow_records_no_account(pool: PgPool) {
     let config = OrcidConfig::default();
@@ -130,6 +135,7 @@ async fn a_sign_in_flow_records_no_account(pool: PgPool) {
     assert_eq!(recorded, None);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn deleting_an_account_takes_its_pending_link_flows(pool: PgPool) {
     let who = account(&pool, "alice").await;

@@ -29,6 +29,7 @@ async fn account(pool: &PgPool, label: &str) -> Uuid {
     .expect("insert account")
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn redeeming_a_token_proves_the_address(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -52,6 +53,7 @@ async fn redeeming_a_token_proves_the_address(pool: PgPool) {
     assert_eq!(stored.as_deref(), Some("alice@example.com"));
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn nothing_is_written_to_the_actor_before_the_proof(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -71,6 +73,7 @@ async fn nothing_is_written_to_the_actor_before_the_proof(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_token_works_once(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -84,6 +87,7 @@ async fn a_token_works_once(pool: PgPool) {
     assert!(second.is_err(), "a spent token was accepted again");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_expired_token_is_refused(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -100,11 +104,13 @@ async fn an_expired_token_is_refused(pool: PgPool) {
     assert!(!has_verified_email(&pool, who).await.unwrap());
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_unknown_token_is_refused(pool: PgPool) {
     assert!(verify(&pool, "not-a-token").await.is_err());
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_token_is_not_stored_in_the_clear(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -123,6 +129,7 @@ async fn the_token_is_not_stored_in_the_clear(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_address_proved_by_someone_else_is_refused(pool: PgPool) {
     let alice = account(&pool, "alice").await;
@@ -141,6 +148,7 @@ async fn an_address_proved_by_someone_else_is_refused(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_same_account_may_re_verify_its_own_address(pool: PgPool) {
     let alice = account(&pool, "alice").await;
@@ -156,6 +164,7 @@ async fn the_same_account_may_re_verify_its_own_address(pool: PgPool) {
         .expect("an account was refused its own address");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn challenges_are_rate_limited(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -173,6 +182,7 @@ async fn challenges_are_rate_limited(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn text_that_is_not_an_address_is_refused(pool: PgPool) {
     let who = account(&pool, "alice").await;
@@ -184,6 +194,7 @@ async fn text_that_is_not_an_address_is_refused(pool: PgPool) {
     }
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_purge_removes_only_unredeemable_challenges(pool: PgPool) {
     let alice = account(&pool, "alice").await;

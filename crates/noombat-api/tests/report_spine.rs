@@ -41,6 +41,7 @@ fn request(addr: &str, message: Option<String>) -> ChatReportRequest {
     }
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_chat_report_is_a_row_in_reports(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -60,6 +61,7 @@ async fn a_chat_report_is_a_row_in_reports(pool: PgPool) {
     assert_eq!(status, "open");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn one_query_returns_both_kinds_of_report(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -85,6 +87,7 @@ async fn one_query_returns_both_kinds_of_report(pool: PgPool) {
     assert_eq!(open, 2, "the queue needs two reads to see both kinds");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_oversized_quoted_message_is_refused(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -98,6 +101,7 @@ async fn an_oversized_quoted_message_is_refused(pool: PgPool) {
     );
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn text_that_is_not_an_address_is_refused(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -116,6 +120,7 @@ async fn text_that_is_not_an_address_is_refused(pool: PgPool) {
     }
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_plausible_address_is_accepted(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -127,6 +132,7 @@ async fn a_plausible_address_is_accepted(pool: PgPool) {
         .expect("a well-formed address was refused");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_schema_refuses_a_report_about_nothing(pool: PgPool) {
     let who = reporter(&pool).await;
@@ -139,6 +145,7 @@ async fn the_schema_refuses_a_report_about_nothing(pool: PgPool) {
     assert!(refused.is_err(), "a report naming no target was accepted");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_schema_keeps_quoted_evidence_with_the_chat_case(pool: PgPool) {
     let who = reporter(&pool).await;
