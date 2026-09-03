@@ -17,9 +17,8 @@
 //! To regenerate after an intentional change, run this with `--nocapture`
 //! and copy the printed hash into `fixture-credential.sh`.
 
-use argon2::password_hash::SaltString;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::{Argon2, PasswordHash, PasswordHasher, PasswordVerifier};
+use argon2::password_hash::phc::PasswordHash;
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 
 /// Read a `NAME="value"` or `NAME='value'` assignment from the shell file.
 fn shell_const(source: &str, name: &str) -> String {
@@ -95,9 +94,8 @@ fn fixtures() -> Vec<(&'static str, String, String)> {
 fn every_committed_hash_verifies_against_its_committed_key() {
     for (label, key, hash) in fixtures() {
         // Printed so that a regeneration needs no second command.
-        let salt = SaltString::generate(&mut OsRng);
         let fresh = Argon2::default()
-            .hash_password(key.as_bytes(), &salt)
+            .hash_password(key.as_bytes())
             .expect("hashing the fixture key");
         println!("{label}: {fresh}");
 

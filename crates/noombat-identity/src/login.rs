@@ -4,7 +4,8 @@
 //! Argon2id hash.
 
 use argon2::Argon2;
-use argon2::password_hash::{PasswordHash, PasswordVerifier};
+use argon2::password_hash::PasswordVerifier;
+use argon2::password_hash::phc::PasswordHash;
 use noombat_core::actor::InstanceRole;
 use noombat_core::error::{NoombatError, Result};
 use serde::Deserialize;

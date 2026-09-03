@@ -9,8 +9,7 @@
 //! never leaves the browser.
 
 use argon2::Argon2;
-use argon2::password_hash::rand_core::OsRng;
-use argon2::password_hash::{PasswordHasher, SaltString};
+use argon2::password_hash::PasswordHasher;
 use noombat_core::actor::{Actor, ActorStatus, ActorType, NewActor};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
@@ -152,10 +151,12 @@ fn validate_auth_key(auth_key: &str) -> Result<()> {
 ///
 /// Returns the PHC-formatted hash string.
 pub fn hash_auth_key(auth_key: &str) -> Result<String> {
-    let salt = SaltString::generate(&mut OsRng);
+    // The salt is no longer passed in. `hash_password` generates a large
+    // random one itself, from the operating system, and writes it into the
+    // PHC string it returns, which is what `verify_password` reads back.
     let argon2 = Argon2::default();
     let hash = argon2
-        .hash_password(auth_key.as_bytes(), &salt)
+        .hash_password(auth_key.as_bytes())
         .map_err(|e| NoombatError::Internal(format!("Argon2id hashing failed: {e}")))?;
     Ok(hash.to_string())
 }
@@ -417,7 +418,7 @@ mod tests {
         use argon2::password_hash::PasswordVerifier;
         let auth_key = "ab".repeat(32);
         let hash = hash_auth_key(&auth_key).unwrap();
-        let parsed = argon2::password_hash::PasswordHash::new(&hash).unwrap();
+        let parsed = argon2::password_hash::phc::PasswordHash::new(&hash).unwrap();
         assert!(
             Argon2::default()
                 .verify_password(auth_key.as_bytes(), &parsed)
