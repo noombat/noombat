@@ -112,6 +112,12 @@ export default function Editor(props: EditorProps): JSX.Element {
   let inFlight: AbortController | undefined;
 
   createEffect(() => {
+    // The capture is the debounce, not a stale read. This effect re-runs
+    // on every `source` change, so each run clears the pending timer and
+    // schedules a new one holding that run's text. Reading the signal
+    // inside the timeout would instead send whatever the editor holds
+    // 500 ms later, which is the behaviour this pattern exists to avoid.
+    // eslint-disable-next-line solid/reactivity
     const text = source();
     clearTimeout(timer);
 
