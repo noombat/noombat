@@ -9,6 +9,34 @@ use noombat_core::error::{NoombatError, Result};
 use serde::Deserialize;
 use tracing::{info, warn};
 
+/// Refuse an address that would change the path of the request it goes in.
+///
+/// Every method below interpolates its arguments into a URL, and one of
+/// them reaches this client straight from a route parameter. A `/` there
+/// moves a privileged request to a different endpoint on the sidecar,
+/// which can delete a mailbox: the host is fixed by configuration, so the
+/// exposure is the path rather than the destination.
+///
+/// Refusing rather than percent-encoding, because the sidecar slices its
+/// own path with `strip_prefix` and never decodes. An encoded separator
+/// would arrive as a literal `%2F` and match no mailbox, which turns a
+/// blocked attack into a broken feature. This mirrors the sidecar's own
+/// `validate_address`, one hop earlier, so the two agree about what an
+/// address may contain.
+fn check_segment(value: &str) -> Result<()> {
+    let unsafe_byte = |b: u8| {
+        matches!(b, b'/' | b'\\' | b'?' | b'#' | b'%' | b';')
+            || b.is_ascii_whitespace()
+            || b.is_ascii_control()
+    };
+    if value.is_empty() || value.bytes().any(unsafe_byte) || value.contains("..") {
+        return Err(NoombatError::BadRequest(
+            "chatmail address contains a character that cannot appear in a request path".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Client for the Chatmail admin sidecar.
 #[derive(Debug, Clone)]
 pub struct ChatmailAdminClient {
@@ -54,6 +82,7 @@ impl ChatmailAdminClient {
     /// Rotates the Chatmail password for the given address. Returns
     /// the new password.
     pub async fn rotate_password(&self, address: &str) -> Result<RotatePasswordResponse> {
+        check_segment(address)?;
         let url = format!(
             "{}/admin/v1/accounts/{}/rotate-password",
             self.base_url, address
@@ -83,6 +112,7 @@ impl ChatmailAdminClient {
     ///
     /// Terminates all active IMAP sessions for the address.
     pub async fn kick_sessions(&self, address: &str) -> Result<()> {
+        check_segment(address)?;
         let url = format!("{}/admin/v1/accounts/{}/kick", self.base_url, address);
         let resp = self
             .http
@@ -107,6 +137,7 @@ impl ChatmailAdminClient {
     /// Deletes the account's maildir and password file. Blocks the
     /// address in the recipient access map.
     pub async fn delete_account(&self, address: &str) -> Result<()> {
+        check_segment(address)?;
         let url = format!("{}/admin/v1/accounts/{}", self.base_url, address);
         let resp = self
             .http
@@ -130,6 +161,7 @@ impl ChatmailAdminClient {
 
     /// `POST /admin/v1/access-maps/recipients/{address}/block`
     pub async fn block_recipient(&self, address: &str) -> Result<()> {
+        check_segment(address)?;
         let url = format!(
             "{}/admin/v1/access-maps/recipients/{}/block",
             self.base_url, address
@@ -152,6 +184,7 @@ impl ChatmailAdminClient {
 
     /// `DELETE /admin/v1/access-maps/recipients/{address}/block`
     pub async fn unblock_recipient(&self, address: &str) -> Result<()> {
+        check_segment(address)?;
         let url = format!(
             "{}/admin/v1/access-maps/recipients/{}/block",
             self.base_url, address
@@ -174,6 +207,8 @@ impl ChatmailAdminClient {
 
     /// `POST /admin/v1/access-maps/senders/{sender}/block-to/{recipient}`
     pub async fn block_sender_pair(&self, sender: &str, recipient: &str) -> Result<()> {
+        check_segment(sender)?;
+        check_segment(recipient)?;
         let url = format!(
             "{}/admin/v1/access-maps/senders/{}/block-to/{}",
             self.base_url, sender, recipient
@@ -196,6 +231,8 @@ impl ChatmailAdminClient {
 
     /// `DELETE /admin/v1/access-maps/senders/{sender}/block-to/{recipient}`
     pub async fn unblock_sender_pair(&self, sender: &str, recipient: &str) -> Result<()> {
+        check_segment(sender)?;
+        check_segment(recipient)?;
         let url = format!(
             "{}/admin/v1/access-maps/senders/{}/block-to/{}",
             self.base_url, sender, recipient
@@ -218,6 +255,7 @@ impl ChatmailAdminClient {
 
     /// `GET /admin/v1/accounts/{address}/exists`
     pub async fn account_exists(&self, address: &str) -> Result<bool> {
+        check_segment(address)?;
         let url = format!("{}/admin/v1/accounts/{}/exists", self.base_url, address);
         let resp = self
             .http

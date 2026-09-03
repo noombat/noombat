@@ -43,6 +43,11 @@ async fn unblock_chat_sender(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = crate::auth::require_local_actor(&state.pool, &viewer, &username).await?;
 
+    // The path guards the username and says nothing about the address, and
+    // the delete below matches no row rather than failing, so without this
+    // an arbitrary path segment reaches the Chatmail admin client.
+    noombat_core::email_address::qualify(&address, "address")?;
+
     noombat_chat::relay::unblock_sender(&state.pool, actor.id, &address).await?;
 
     // The pair block is keyed on this actor's own address, so there is

@@ -344,6 +344,9 @@ async fn resolve_chat_report(
                     .ok_or(ApiError(NoombatError::BadRequest(
                         "recipient_addr required for block_sender_pair".into(),
                     )))?;
+            // Present is not the same as well formed, and this one is a
+            // free-text body field that becomes a path segment.
+            noombat_core::email_address::qualify(recipient, "recipient_addr")?;
             if let Some(client) = state.chatmail_admin_client.as_ref() {
                 client.block_sender_pair(&target_addr, recipient).await?;
                 info!(
