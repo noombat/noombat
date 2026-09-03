@@ -256,34 +256,50 @@ jobs:
           cat /tmp/noombat.log
           exit 1
 
-      # After the server, not with the seed above: the account is
-      # registered through the API so its auth key is hashed the way the
-      # login route expects, and the API needs the server running.
+      # Seeded in SQL rather than through `POST /api/v1/auth/register`,
+      # which refuses with 503 unless an SMTP relay is configured: that
+      # path mints a password and awaits a recovery challenge, so an
+      # instance that cannot send mail does not offer it. This job
+      # configures no relay, so the register call could only ever fail,
+      # and it did so behind a `|| true` that left the fixture missing and
+      # the admin group failing two steps from the cause.
       #
-      # It is then promoted by UPDATE, because `instance_role` is settable
-      # through no API the suite can reach. Without the promotion
-      # `require_admin` redirects every admin page to `/` and the five
-      # admin scans measure the feed under other pages' names.
+      # `instance_role` is settable through no API the suite can reach,
+      # and without it `require_admin` redirects every admin page to `/`,
+      # so the five admin scans measure the feed under other pages' names.
       #
-      # The username and auth key are duplicated in tests/e2e/session.ts
-      # and scripts/e2e-stack.sh; all three have to agree.
+      # The username and key are duplicated in tests/e2e/session.ts and
+      # scripts/e2e-stack.sh; all three have to agree. The hash is the
+      # Argon2id hash of that key, which `cargo test -p noombat-identity
+      # interop_fixture` proves still verifies.
       - name: Seed the administrator the admin accessibility group uses
         run: |
-          curl -sS -o /dev/null -X POST \
-            -H 'Content-Type: application/json' \
-            -d '{"username":"e2e_admin","auth_key":"e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f"}' \
-            http://localhost:8443/api/v1/auth/register || true
+          AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$CJK75/eF2NFDNvNV5I+DGQ$Eqae0tHj4wJ7vBCko4z+1OXz6HVocGWc8K3NAJibjL8'
 
-          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -c \
-            "UPDATE actors SET instance_role = 'admin'
-               WHERE username = 'e2e_admin' AND is_local;"
+          PGPASSWORD=noombat psql -h postgres -U noombat -d noombat \
+            -v ON_ERROR_STOP=1 -q -c "
+            INSERT INTO actors
+                (actor_type, ap_id, username, domain, public_key_pem,
+                 is_local, instance_role, auth_key_hash)
+            VALUES
+                ('individual', 'http://localhost:8443/users/e2e_admin',
+                 'e2e_admin', 'localhost',
+                 E'-----BEGIN PUBLIC KEY-----\nplaceholder\n-----END PUBLIC KEY-----',
+                 TRUE, 'admin', '$AUTH_KEY_HASH')
+            ON CONFLICT (ap_id) DO UPDATE
+                SET instance_role = 'admin',
+                    auth_key_hash = EXCLUDED.auth_key_hash;"
 
-          # Read back: the UPDATE reports success against zero rows.
-          role=$(PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -tAc \
-            "SELECT instance_role FROM actors
-               WHERE username = 'e2e_admin' AND is_local;")
-          if [ "$role" != "admin" ]; then
-            echo "::error::e2e_admin was not promoted (role '${role:-none}'); the admin group would scan the feed"
+          # Read back: the statement reports success against zero rows.
+          # The credential is checked alongside the role, because without
+          # it the account exists, is an administrator, and still cannot
+          # sign in, which the admin group reports as a redirect rather
+          # than as a missing fixture.
+          seeded=$(PGPASSWORD=noombat psql -h postgres -U noombat -d noombat -tAc \
+            "SELECT instance_role || ':' || (auth_key_hash IS NOT NULL)
+               FROM actors WHERE username = 'e2e_admin' AND is_local;")
+          if [ "$(echo "$seeded" | tr -d '[:space:]')" != "admin:true" ]; then
+            echo "::error::e2e_admin was not seeded (got '${seeded:-none}'); the admin group would scan the feed"
             exit 1
           fi
           echo "administrator seeded and promoted"
@@ -526,6 +542,15 @@ jobs:
           docker compose -p chat-interop -f tests/chat-interop/compose.yml \
             logs --no-color
           exit 1
+
+      # In SQL, because `POST /api/v1/auth/register` refuses with 503
+      # without an instance mailer, and the Chatmail relay in this stack
+      # is not one: it carries end-to-end encrypted mail between people,
+      # while instance mail is a plaintext the server composed, and the
+      # two are kept apart. run.sh asserts that refusal and signs in to
+      # the accounts seeded here.
+      - name: Seed the two accounts the suite signs in as
+        run: tests/chat-interop/seed.sh tests/chat-interop/compose.yml
 
       # GitHub sets CI, and run.sh treats a skip as a failure when it is
       # set. Its skips are all "no token", i.e. assertions that never ran.

@@ -36,10 +36,10 @@ fn shell_const(source: &str, name: &str) -> String {
 
 /// Every committed (key, hash) pair, with the file it came from.
 ///
-/// Two harnesses seed a sign-in credential in SQL, for the same reason:
-/// neither can run Argon2, and `POST /api/v1/auth/register` refuses
-/// without an SMTP relay. Both are pinned here so that one of them
-/// cannot rot unnoticed while the other is exercised.
+/// Three harnesses seed a sign-in credential in SQL, for the same reason:
+/// none can run Argon2, and `POST /api/v1/auth/register` refuses without
+/// an SMTP relay. All of them are pinned here so that one cannot rot
+/// unnoticed while the others are exercised.
 fn fixtures() -> Vec<(&'static str, String, String)> {
     let files = [
         (
@@ -56,6 +56,24 @@ fn fixtures() -> Vec<(&'static str, String, String)> {
             concat!(env!("CARGO_MANIFEST_DIR"), "/../../scripts/e2e-stack.sh"),
             "E2E_AUTH_KEY",
             "E2E_AUTH_KEY_HASH",
+        ),
+        (
+            "tests/chat-interop/fixture-credential.sh (alice)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_ALICE_AUTH_KEY",
+            "CHAT_ALICE_AUTH_KEY_HASH",
+        ),
+        (
+            "tests/chat-interop/fixture-credential.sh (bob)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_BOB_AUTH_KEY",
+            "CHAT_BOB_AUTH_KEY_HASH",
         ),
     ];
 
@@ -117,10 +135,15 @@ fn another_key_does_not_verify() {
 }
 
 #[test]
-fn the_two_fixtures_do_not_share_a_key() {
-    // They authenticate different accounts on different stacks. Sharing
-    // one would make a change to either silently rebind the other.
+fn no_two_fixtures_share_a_key() {
+    // They authenticate different accounts, two of them on the same
+    // stack. Sharing a key would make a change to one silently rebind
+    // another, and on one stack it would also make two accounts the same
+    // account for the purpose of signing in.
     let all = fixtures();
-    let (a, b) = (&all[0], &all[1]);
-    assert_ne!(a.1, b.1, "{} and {} share a key", a.0, b.0);
+    for (i, a) in all.iter().enumerate() {
+        for b in all.iter().skip(i + 1) {
+            assert_ne!(a.1, b.1, "{} and {} share a key", a.0, b.0);
+        }
+    }
 }

@@ -6,16 +6,22 @@
 #
 # Tests:
 #         00. The Chatmail admin sidecar is serving.
-#   01 - 03. Account registration (alice, bob, duplicate rejection).
-#   04 - 05. Login (correct credentials, wrong credentials).
-#   06 - 07. Chat WebSocket route existence, chat report endpoint.
-#   08 - 09. Auth page rendering (login, register).
-#   10 - 11. Closed federation checks (allowlisted domain, config).
+#         01. Password sign-up is refused, this instance having no mailer.
+#   02 - 04. Login (alice, bob, wrong credentials).
+#   05 - 06. Chat WebSocket route existence, chat report endpoint.
+#   07 - 08. Auth page rendering (login, register).
+#   09 - 10. Closed federation checks (allowlisted domain, config).
+#   11 - 12. Chatmail provisioning and sending.
 #
 # Usage:
+#   tests/chat-interop/seed.sh tests/chat-interop/compose.yml
 #   tests/chat-interop/run.sh [noombat_url]
 #
 # Defaults to http://localhost:8443 when no argument is given.
+#
+# seed.sh first: the accounts are seeded in SQL rather than registered,
+# because password sign-up needs an instance mailer and this stack has
+# none. Test 01 asserts that refusal.
 #
 # A skip exits non-zero when CI is set. Locally a skip is a convenience;
 # under CI it is coverage that silently did not run.
@@ -24,6 +30,18 @@ set -u
 
 NOOMBAT="${1:-http://localhost:8443}"
 CURL_OPTS="${CURL_OPTS:-}"
+
+HERE="$(cd "$(dirname "$0")" && pwd)"
+# The keys seed.sh stored hashes of. Sourced rather than repeated, so the
+# key here and the hash there cannot drift apart. Checked explicitly:
+# this script runs under `set -u` without `set -e`, so an unreadable
+# source would otherwise carry on and fail every assertion below for a
+# reason that looks nothing like a missing file.
+# shellcheck source=tests/chat-interop/fixture-credential.sh
+. "$HERE/fixture-credential.sh" || {
+    echo "::error::cannot read $HERE/fixture-credential.sh" >&2
+    exit 1
+}
 
 PASS=0
 FAIL=0
@@ -87,59 +105,36 @@ else
     fail "Chatmail admin sidecar unreachable at $CHATMAIL_ADMIN (got '$ADMIN_CODE', expected 401)"
 fi
 
-# ..... Account Registration .....
+# ..... Sign-up .....
 
 echo ""
-echo "--- Account Registration ---"
+echo "--- Sign-up ---"
 echo ""
 
-AUTH_KEY_ALICE=$(mock_auth_key a)
-CREDS_ALICE="{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\"}"
-# Registration also needs an address: the server keeps only a hash of the
-# auth key, so a password account without one cannot be recovered.
-SIGNUP_ALICE="{\"username\":\"alice\",\"auth_key\":\"$AUTH_KEY_ALICE\",\
-\"email\":\"alice@interop.invalid\"}"
+CREDS_ALICE="{\"username\":\"alice\",\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}"
+CREDS_BOB="{\"username\":\"bob\",\"auth_key\":\"$CHAT_BOB_AUTH_KEY\"}"
 
-# 1. Register alice.
-BODY=$(curl $CURL_OPTS -sf -X POST \
+# 1. Password sign-up is refused, because this instance has no mailer.
+#
+# alice and bob are seeded by seed.sh instead. The refusal is asserted
+# rather than stepped around: that path mints a credential the server can
+# never reset, so it is offered only where a recovery challenge can be
+# sent, and the Chatmail relay here is not the instance's mailer. If one
+# is ever added to this stack, this assertion is what says so, and the
+# accounts can go back to being registered.
+#
+# That a taken username is refused is asserted against a database in
+# noombat-identity's registration tests, which is where it can run.
+STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d "$SIGNUP_ALICE" \
+    -d "{\"username\":\"carol\",\"auth_key\":\"$(mock_auth_key c)\",\
+\"email\":\"carol@interop.invalid\"}" \
     "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
 
-if echo "$BODY" | grep -q '"access_token"'; then
-    pass "Register alice: received session tokens"
-    ALICE_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+if [ "$STATUS" = "503" ]; then
+    pass "Password sign-up refused without an instance mailer (HTTP 503)"
 else
-    fail "Register alice failed: $BODY"
-    ALICE_TOKEN=""
-fi
-
-# 2. Register bob.
-AUTH_KEY_BOB=$(mock_auth_key b)
-SIGNUP_BOB="{\"username\":\"bob\",\"auth_key\":\"$AUTH_KEY_BOB\",\"email\":\"bob@interop.invalid\"}"
-BODY=$(curl $CURL_OPTS -sf -X POST \
-    -H "Content-Type: application/json" \
-    -d "$SIGNUP_BOB" \
-    "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
-
-if echo "$BODY" | grep -q '"access_token"'; then
-    pass "Register bob: received session tokens"
-    BOB_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
-else
-    fail "Register bob failed: $BODY"
-    BOB_TOKEN=""
-fi
-
-# 3. Duplicate registration rejected.
-BODY=$(curl $CURL_OPTS -s -X POST \
-    -H "Content-Type: application/json" \
-    -d "$SIGNUP_ALICE" \
-    "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
-
-if echo "$BODY" | grep -qi "already"; then
-    pass "Duplicate registration rejected"
-else
-    fail "Duplicate registration not rejected: $BODY"
+    fail "Registration returned $STATUS (expected 503 without an instance mailer)"
 fi
 
 # ..... Login .....
@@ -148,7 +143,7 @@ echo ""
 echo "--- Login ---"
 echo ""
 
-# 4. Login with correct credentials.
+# 2. Sign in as alice, whose credential seed.sh stored.
 BODY=$(curl $CURL_OPTS -sf -X POST \
     -H "Content-Type: application/json" \
     -d "$CREDS_ALICE" \
@@ -156,11 +151,27 @@ BODY=$(curl $CURL_OPTS -sf -X POST \
 
 if echo "$BODY" | grep -q '"access_token"'; then
     pass "Login alice: received session tokens"
+    ALICE_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
 else
-    fail "Login alice failed: $BODY"
+    fail "Login alice failed (did seed.sh run?): $BODY"
+    ALICE_TOKEN=""
 fi
 
-# 5. Login with wrong credentials.
+# 3. Sign in as bob, who receives the message alice sends below.
+BODY=$(curl $CURL_OPTS -sf -X POST \
+    -H "Content-Type: application/json" \
+    -d "$CREDS_BOB" \
+    "$NOOMBAT/api/v1/auth/login" 2>/dev/null)
+
+if echo "$BODY" | grep -q '"access_token"'; then
+    pass "Login bob: received session tokens"
+    BOB_TOKEN=$(echo "$BODY" | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4)
+else
+    fail "Login bob failed (did seed.sh run?): $BODY"
+    BOB_TOKEN=""
+fi
+
+# 4. Login with wrong credentials.
 AUTH_KEY_WRONG=$(mock_auth_key f)
 STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
     -X POST \
@@ -180,7 +191,7 @@ echo ""
 echo "--- Chat WebSocket ---"
 echo ""
 
-# 6. WebSocket endpoint exists (upgrade request, expect 400 or 101).
+# 5. WebSocket endpoint exists (upgrade request, expect 400 or 101).
 if [ -n "$ALICE_TOKEN" ]; then
     STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
         -H "Authorization: Bearer $ALICE_TOKEN" \
@@ -197,10 +208,10 @@ if [ -n "$ALICE_TOKEN" ]; then
         fail "Chat WebSocket route returned $STATUS (expected non-404)"
     fi
 else
-    skip "Chat WebSocket test: no token (registration failed)"
+    skip "Chat WebSocket test: no token (sign-in failed)"
 fi
 
-# 7. Chat report endpoint exists.
+# 6. Chat report endpoint exists.
 if [ -n "$ALICE_TOKEN" ]; then
     STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
         -X POST \
@@ -225,7 +236,7 @@ echo ""
 echo "--- Auth Pages ---"
 echo ""
 
-# 8. Login page renders.
+# 7. Login page renders.
 STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
     "$NOOMBAT/auth/login" 2>/dev/null)
 if [ "$STATUS" = "200" ]; then
@@ -234,7 +245,7 @@ else
     fail "Login page returned $STATUS"
 fi
 
-# 9. Register page renders.
+# 8. Register page renders.
 STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" \
     "$NOOMBAT/auth/register" 2>/dev/null)
 if [ "$STATUS" = "200" ]; then
@@ -249,7 +260,7 @@ echo ""
 echo "--- Closed Federation ---"
 echo ""
 
-# 10. Allowlisted domain: chat page loads for an authenticated user.
+# 9. Allowlisted domain: chat page loads for an authenticated user.
 if [ -n "$ALICE_TOKEN" ]; then
     HTTP_CODE=$(curl $CURL_OPTS -sf -o /dev/null -w '%{http_code}' "$NOOMBAT/chat" \
       -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || HTTP_CODE="000"
@@ -262,7 +273,7 @@ else
     skip "Closed federation allowlist test: no token"
 fi
 
-# 11. Chatmail configuration, read from NodeInfo.
+# 10. Chatmail configuration, read from NodeInfo.
 #
 # NodeInfo carries it whatever the viewer's state. The credential page
 # does not: `chat_credentials.html` names the domain only in the branch
@@ -284,7 +295,7 @@ else
     fail "NodeInfo does not name $CHATMAIL_DOMAIN as the Chatmail domain"
 fi
 
-# 12. Provisioning against the relay, which is the integration this suite
+# 11. Provisioning against the relay, which is the integration this suite
 # is named for.
 #
 # It reaches the relay over IMAP with implicit TLS, so it passes only if
@@ -318,7 +329,7 @@ else
     skip "Chat provisioning: no token"
 fi
 
-# 13. Sending, which is the only assertion that leaves over SMTP.
+# 12. Sending, which is the only assertion that leaves over SMTP.
 #
 # SMTP resolves its TLS roots through lettre and IMAP through the chat
 # connector, so the two can disagree: provisioning and fetching succeed
