@@ -5,13 +5,16 @@
 # it is silent: a pin nobody revisits ages quietly, and the eventual
 # upgrade arrives carrying every lint added in between.
 #
-# Scheduled rather than triggered by push, because the answer changes with
-# the calendar rather than with the tree. A push-triggered version would
-# report the same thing on every commit for weeks and nothing on the day it
-# started being true.
+# Scheduled, because the answer changes with the calendar rather than with
+# the tree: on every commit it would report the same thing for weeks, and
+# nothing on the day it started being true. The weekly run is the one that
+# catches a pin nobody revisited.
 #
-# It also runs on pull requests that touch the two files it reads, so that
-# a bump to either is checked as it lands rather than up to a week later.
+# It also runs on a push or a pull request that touches the files it reads,
+# so a bump to either is checked as it lands rather than up to a week
+# later. Push as well as pull request, because work reaches main here by
+# both routes, and the pull-request trigger alone never fired for a commit
+# pushed straight to the branch.
 #
 # Related workflows:
 #   ci.yml             holds the MSRV job, which reads the same floor.
@@ -24,6 +27,13 @@ on:
     # Weekly. Rust releases every six weeks, so a week of latency is small
     # against the grace window the script allows.
     - cron: "23 7 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - "rust-toolchain.toml"
+      - "Cargo.toml"
+      - "scripts/check-toolchain-freshness.sh"
+      - ".github/workflows/toolchain-freshness.yml"
   pull_request:
     paths:
       - "rust-toolchain.toml"
