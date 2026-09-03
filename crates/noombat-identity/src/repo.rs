@@ -120,13 +120,31 @@ pub async fn find_instance_actor(pool: &PgPool) -> Result<Option<Uuid>> {
     .await?)
 }
 
+/// The instance actor's username: the configured host, without any port.
+///
+/// Separate from [`ensure_instance_actor`] so that a test can state the rule
+/// without minting a key pair, and so the one place that decides it is
+/// nameable.
+pub fn instance_actor_username(domain: &str) -> String {
+    domain.split(':').next().unwrap_or(domain).to_owned()
+}
+
 /// Create the instance actor if it is missing, and return its id.
 ///
 /// Server-to-server fetches are signed as this actor, so that a peer being
 /// asked for a document learns that the server asked rather than which
-/// administrator did. Its username is the domain, which no person can take:
+/// administrator did. Its username is the host, which no person can take:
 /// usernames admit only lowercase letters, digits and underscores, so a dot
 /// cannot collide with one.
+///
+/// The port is dropped, and that is load-bearing rather than cosmetic. The
+/// username becomes a path segment of the key id every signed fetch
+/// advertises, and a receiving instance parses the username back out of that
+/// path: GoToSocial matches it against `[a-z0-9_.-]+`, which admits a dot and
+/// not a colon. With the port left in, the peer reads a different actor than
+/// the one that signed, fails to verify, and refuses the fetch. A host
+/// carries a port only in development and test stacks, which is precisely
+/// where the interop suites run.
 ///
 /// Idempotent, and safe to race. Two boots arriving together resolve
 /// against the unique index on the type, and the loser re-reads rather than
@@ -136,10 +154,11 @@ pub async fn ensure_instance_actor(pool: &PgPool, domain: &str) -> Result<Uuid> 
         return Ok(id);
     }
 
+    let username = instance_actor_username(domain);
     let keypair = crate::keys::generate_keypair_async().await?;
     let params = NewActor {
         actor_type: ActorType::Application,
-        username: domain.to_owned(),
+        username,
         display_name: Some(domain.to_owned()),
         domain: domain.to_owned(),
         public_key_pem: keypair.rsa.public_pem,

@@ -33,6 +33,7 @@ async fn local_actor(pool: &PgPool, username: &str, role: &str) -> Uuid {
     .expect("insert actor")
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn fetches_are_signed_as_the_instance_even_when_an_admin_exists(pool: PgPool) {
     let admin = local_actor(&pool, "root", "admin").await;
@@ -49,6 +50,7 @@ async fn fetches_are_signed_as_the_instance_even_when_an_admin_exists(pool: PgPo
     assert_ne!(signer, admin);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_instance_actor_is_minted_once(pool: PgPool) {
     let first = ensure_instance_actor(&pool, DOMAIN).await.expect("mint");
@@ -65,6 +67,7 @@ async fn the_instance_actor_is_minted_once(pool: PgPool) {
     assert_eq!(count, 1);
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_schema_refuses_a_second_instance_actor(pool: PgPool) {
     ensure_instance_actor(&pool, DOMAIN).await.expect("mint");
@@ -83,6 +86,7 @@ async fn the_schema_refuses_a_second_instance_actor(pool: PgPool) {
     assert!(refused.is_err(), "a second instance actor was accepted");
 }
 
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn the_instance_actor_is_named_for_the_domain(pool: PgPool) {
     let id = ensure_instance_actor(&pool, DOMAIN).await.expect("mint");
@@ -101,6 +105,80 @@ async fn the_instance_actor_is_named_for_the_domain(pool: PgPool) {
     assert_eq!(find_instance_actor(&pool).await.unwrap(), Some(id));
 }
 
+/// The characters a receiving instance admits in an actor's path segment.
+///
+/// GoToSocial parses the username back out of `/users/{username}` with
+/// `[a-z0-9_.-]+`. Mastodon and Mitra are no more permissive. A key id
+/// carrying anything else names a different actor to the peer than the one
+/// that signed, so the signature cannot verify.
+fn is_parseable_by_a_peer(username: &str) -> bool {
+    !username.is_empty()
+        && username
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-'))
+}
+
+#[test]
+fn the_instance_actor_username_drops_the_port() {
+    // The domain carries a port in every development and test stack, which
+    // is where the interop suites run, so this is the configuration the
+    // suites actually exercise rather than an exotic one.
+    assert_eq!(
+        noombat_identity::repo::instance_actor_username("noombat.localhost:8443"),
+        "noombat.localhost"
+    );
+    assert_eq!(
+        noombat_identity::repo::instance_actor_username("noombat.example"),
+        "noombat.example"
+    );
+}
+
+#[test]
+fn a_ported_domain_still_yields_a_username_a_peer_can_parse() {
+    // Guards the guard: a colon is what broke this, so assert against the
+    // character rule rather than against one known-bad string.
+    for domain in [
+        "noombat.localhost:8443",
+        "noombat.example",
+        "127.0.0.1:8443",
+    ] {
+        let username = noombat_identity::repo::instance_actor_username(domain);
+        assert!(
+            is_parseable_by_a_peer(&username),
+            "{domain} minted the unparseable username {username:?}"
+        );
+    }
+    assert!(
+        !is_parseable_by_a_peer("noombat.localhost:8443"),
+        "the character rule accepts a colon, so it would not have caught this"
+    );
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_ported_domain_mints_a_resolvable_key_id(pool: PgPool) {
+    // The end of the chain the fix is about: what a peer dereferences is
+    // the last segment of the key id, and it has to name this actor.
+    let ported = "noombat.localhost:8443";
+    let id = ensure_instance_actor(&pool, ported).await.expect("mint");
+
+    let (username, ap_id): (String, String) =
+        sqlx::query_as("SELECT username, ap_id FROM actors WHERE id = $1")
+            .bind(id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+
+    let segment = ap_id.rsplit('/').next().expect("a path segment");
+    assert_eq!(segment, username, "the key id names a different actor");
+    assert!(
+        is_parseable_by_a_peer(segment),
+        "a peer cannot parse {segment:?} out of {ap_id}"
+    );
+    assert_eq!(ap_id, format!("https://{ported}/users/noombat.localhost"));
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn an_instance_without_one_still_federates(pool: PgPool) {
     // The fallback exists so that an instance mid-setup can still fetch.
