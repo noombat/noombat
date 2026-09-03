@@ -917,7 +917,11 @@ async fn create_alias(
         r##"<li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-text-secondary hover:text-text-danger text-xs">✕</button></li>"##,
         id = id,
         alias = html_escape(&req.alias),
-        username = username,
+        // Escaped like the alias beside it. A registered username cannot
+        // hold a markup character today, so this changes no output; the
+        // asymmetry was the risk, because it put the safety of a rendered
+        // fragment on a charset rule enforced three crates away.
+        username = html_escape(&username),
     );
     Ok((StatusCode::CREATED, axum::response::Html(html)))
 }
