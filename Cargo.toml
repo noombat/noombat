@@ -17,7 +17,14 @@ members = [
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.94.0"
+# Raised from 1.94.0 by math-core 0.8, whose every release declares 1.96:
+# there is no 0.8 that builds on anything older, so taking that update and
+# holding the floor were not both available. Two releases behind stable,
+# where scripts/check-toolchain-freshness.sh allows six.
+#
+# The MSRV job reads this line, so it is the only place the floor is
+# written.
+rust-version = "1.96.0"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/noombat/noombat"
 

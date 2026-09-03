@@ -4,7 +4,7 @@
 # Initialise the Noombat development environment.
 #
 # Prerequisites:
-#   - Rust >= 1.94.0
+#   - Rust >= 1.96.0
 #   - Node.js >= 20
 #   - pnpm >= 9
 #   - Podman with `podman-compose` or Docker with Docker Compose

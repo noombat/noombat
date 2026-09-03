@@ -49,7 +49,7 @@ These are the versions CI exercises and the Compose stack pins. Older ones may w
 and are not tested; the three service floors moved together and cannot be mixed with
 their predecessors' data directories.
 
-- Rust ≥ 1.94.0
+- Rust ≥ 1.96.0
 - PostgreSQL ≥ 18
 - Redis ≥ 8
 - Meilisearch ≥ 1.52
