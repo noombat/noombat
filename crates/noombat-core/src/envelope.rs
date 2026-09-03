@@ -217,11 +217,6 @@ pub fn open_auto_field(field: Option<String>) -> Result<Option<String>> {
     open_opt_field(get_key(), field)
 }
 
-/// Encrypt an `Option<&str>` field using the process-global key.
-pub fn seal_auto_field(field: Option<&str>) -> Result<Option<String>> {
-    field.map(seal_auto).transpose()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
