@@ -388,9 +388,12 @@ async fn refetch_and_verify(
         )));
     }
 
-    let origin_object: Value = response.json().await.map_err(|e| {
-        NoombatError::Federation(format!("invalid JSON from origin for {object_id}: {e}"))
-    })?;
+    // Through the limit, like every other federated fetch. `object_id` is
+    // chosen by whoever relayed the activity, so this request goes to a
+    // host an attacker names, and `Response::json` would buffer whatever
+    // that host streams.
+    let origin_object: Value =
+        crate::http::json_within_limit(response, &format!("origin object for {object_id}")).await?;
 
     let origin_id = origin_object.get("id").and_then(|v| v.as_str());
     Ok(origin_id == Some(object_id))
