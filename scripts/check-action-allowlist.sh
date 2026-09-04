@@ -28,6 +28,9 @@ set -eu
 DIR="${1:-.github/workflows}"
 
 ALLOWED_OWNERS="noombat"
+# A subdirectory action is matched whole, so `github/codeql-action` on
+# its own would not permit `github/codeql-action/init`. Both paths the
+# CodeQL workflow uses are listed.
 ALLOWED_REPOS="actions/cache
 actions/checkout
 actions/setup-node
@@ -35,6 +38,8 @@ actions/upload-artifact
 docker/build-push-action
 docker/login-action
 docker/setup-buildx-action
+github/codeql-action/analyze
+github/codeql-action/init
 sigstore/cosign-installer"
 
 if [ ! -d "$DIR" ]; then

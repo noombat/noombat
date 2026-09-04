@@ -1,0 +1,26 @@
+# CodeQL analysis configuration, read by .github/workflows/codeql.yml.
+#
+# Every exclusion below suppresses security findings, so each carries the
+# reason it is safe to stop looking there. That is what this file is for:
+# in default setup the same narrowing is a checkbox nobody can review.
+
+name: Noombat CodeQL configuration
+
+# No `queries:` key means the default security suite, which is what
+# default setup was running. The wider `security-extended` and
+# `security-and-quality` raise the count with lower-confidence queries,
+# and this repository is draining its backlog by fixing rather than
+# dismissing. Widen the net in its own commit, once that is done.
+
+paths-ignore:
+  # A path built from a fixture is a fixture. Seven of the alerts open on
+  # 2026-09-04 were this, and excluding the directory also covers the
+  # next one, which dismissing them one at a time would not.
+  - "crates/*/tests/**"
+  - "tests/**"
+  # Maintenance scripts run from a developer's shell over files already
+  # in the working tree, so "uncontrolled data" is an argument they typed.
+  - "scripts/**"
+  # Generated and vendored, so nobody edits or reviews them anyway.
+  - "frontend/dist/**"
+  - "**/node_modules/**"

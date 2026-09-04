@@ -1,0 +1,83 @@
+# GitHub Actions CodeQL analysis, replacing the repository's default setup.
+#
+# Default setup runs a fixed query suite from a synthesised workflow that
+# is not in this tree, so what CodeQL analyses cannot be reviewed in a
+# pull request and cannot be changed except through the web UI. Moving it
+# here buys three things: the analysed paths become a reviewable file, the
+# action is SHA-pinned like every other action here and tracked by
+# Dependabot, and the CodeQL version stops moving without a commit.
+#
+# ENABLING THIS REQUIRES TWO THINGS OUTSIDE THIS FILE.
+#   1. `github/codeql-action/init` and `github/codeql-action/analyze` must
+#      be added to the repository's Actions policy. Without them the whole
+#      workflow reports startup_failure, which creates no check runs, so
+#      the commit still reads green while nothing is analysed.
+#   2. Default setup must be turned off first, in Settings, Code security.
+#      GitHub refuses to run both, and the failure is silent in the same
+#      way.
+#
+# Related workflows:
+#   ci.yml                  Rust build, lint, test and the schema gates.
+#   ci-reuse.yml            REUSE licence compliance.
+
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    # Weekly, so a query-pack update is noticed on a quiet day rather
+    # than in the middle of a release.
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeql-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyse:
+    name: Analyse ${{ matrix.language }}
+    runs-on: ubuntu-latest
+    permissions:
+      # The three the action actually needs. `security-events: write` is
+      # what uploads the SARIF; the analysis is unreachable without it.
+      security-events: write
+      packages: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # `none` matches how default setup analyses this workspace: the
+          # extractor reads the sources without a cargo build. Switching
+          # to a built mode changes which alerts appear, so it is a
+          # deliberate change rather than a tidy-up.
+          - language: rust
+            build-mode: none
+          - language: python
+            build-mode: none
+          - language: javascript-typescript
+            build-mode: none
+          - language: actions
+            build-mode: none
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Initialise CodeQL
+        uses: github/codeql-action/init@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      - name: Analyse
+        uses: github/codeql-action/analyze@cdf488f595d80d6e07e03d4674febd5ab45fa938 # v4
+        with:
+          category: "/language:${{ matrix.language }}"
