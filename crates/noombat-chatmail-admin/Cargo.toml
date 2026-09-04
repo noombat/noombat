@@ -27,3 +27,6 @@ subtle = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 mailparse = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

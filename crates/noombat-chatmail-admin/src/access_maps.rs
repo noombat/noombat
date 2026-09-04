@@ -32,16 +32,22 @@ pub struct AccessMaps {
 /// canonicalises to a location within the expected directory tree.
 ///
 /// Returns the validated `PathBuf` on success.
+///
+/// The rejected path is quoted with `Debug` wherever it appears below, in
+/// these messages and at the `tracing` call sites that report them: a
+/// path holding a newline would otherwise forge a line in the log it
+/// reaches. Unlike a peer's URL it is not truncated, because this value
+/// comes from the operator's own environment and its length is theirs.
 fn validated_path(path: &str) -> Result<PathBuf, String> {
     if path.contains('\0') {
         return Err("path contains null byte".into());
     }
     let p = Path::new(path);
     if !p.is_absolute() {
-        return Err(format!("path is not absolute: {path}"));
+        return Err(format!("path is not absolute: {path:?}"));
     }
     if path.contains("..") {
-        return Err(format!("path contains '..' traversal: {path}"));
+        return Err(format!("path contains '..' traversal: {path:?}"));
     }
 
     // If the file itself exists, canonicalise it directly; otherwise
@@ -69,10 +75,7 @@ fn validated_path(path: &str) -> Result<PathBuf, String> {
     };
 
     if canonical.to_string_lossy().contains("..") {
-        return Err(format!(
-            "canonical path still contains '..': {}",
-            canonical.display()
-        ));
+        return Err(format!("canonical path still contains '..': {canonical:?}"));
     }
     Ok(canonical)
 }
@@ -84,7 +87,11 @@ impl AccessMaps {
         let p = match validated_path(path) {
             Ok(p) => p,
             Err(e) => {
-                warn!(path = %path, error = %e, "access maps path failed validation; using empty maps");
+                warn!(
+                    path = ?path,
+                    error = %e,
+                    "access maps path failed validation; using empty maps"
+                );
                 return Self::default();
             }
         };
@@ -92,15 +99,23 @@ impl AccessMaps {
             match fs::read_to_string(&p) {
                 Ok(json) => match serde_json::from_str(&json) {
                     Ok(maps) => {
-                        info!(path = %path, "loaded access maps from disk");
+                        info!(path = ?path, "loaded access maps from disk");
                         return maps;
                     }
                     Err(e) => {
-                        warn!(path = %path, error = %e, "malformed access maps file; reinitialising")
+                        warn!(
+                            path = ?path,
+                            error = %e,
+                            "malformed access maps file; reinitialising"
+                        )
                     }
                 },
                 Err(e) => {
-                    warn!(path = %path, error = %e, "failed to read access maps file; reinitialising")
+                    warn!(
+                        path = ?path,
+                        error = %e,
+                        "failed to read access maps file; reinitialising"
+                    )
                 }
             }
         }
@@ -115,7 +130,7 @@ impl AccessMaps {
         }
         let json = serde_json::to_string_pretty(self).map_err(std::io::Error::other)?;
         fs::write(p, json)?;
-        info!(path = %path, "access maps persisted to disk");
+        info!(path = ?path, "access maps persisted to disk");
         Ok(())
     }
 
@@ -147,7 +162,7 @@ impl AccessMaps {
         for addr in &self.blocked_recipients {
             writeln!(f, "{addr} REJECT account suspended or deleted")?;
         }
-        info!(path = %path, entries = self.blocked_recipients.len(), "wrote recipient access map");
+        info!(path = ?path, entries = self.blocked_recipients.len(), "wrote recipient access map");
         Ok(())
     }
 
@@ -173,7 +188,97 @@ impl AccessMaps {
                 count += 1;
             }
         }
-        info!(path = %path, entries = count, "wrote sender access map");
+        info!(path = ?path, entries = count, "wrote sender access map");
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BLOCKED: &str = r#"{"blocked_recipients":["blocked@example.test"],"sender_blocks":{}}"#;
+
+    #[test]
+    fn a_relative_path_is_refused() {
+        assert!(validated_path("etc/passwd").is_err());
+    }
+
+    #[test]
+    fn a_traversal_is_refused() {
+        assert!(validated_path("/var/lib/../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn a_null_byte_is_refused() {
+        assert!(validated_path("/var/lib/maps.json\0.png").is_err());
+    }
+
+    #[test]
+    fn an_ordinary_absolute_path_is_accepted() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("maps.json");
+        assert!(validated_path(path.to_str().expect("utf-8 path")).is_ok());
+    }
+
+    // The rejection message reaches a log, and the value in it is the one
+    // that was rejected. `Debug` is what stops a newline in it opening a
+    // line of its own.
+    #[test]
+    fn a_rejected_path_cannot_forge_a_log_line() {
+        let message = validated_path("etc/\n2026-01-01 ERROR forged").expect_err("refused");
+        assert!(
+            !message.contains('\n'),
+            "a raw newline survived into the message: {message}"
+        );
+        assert!(
+            message.contains("\\n"),
+            "the newline should be escaped: {message}"
+        );
+    }
+
+    // ..... Both entry points reach the validator .....
+    //
+    // Each test first proves the file is readable or writable by its
+    // direct path, so the traversal half failing cannot be passing
+    // because nothing was there to find.
+
+    #[test]
+    fn load_or_init_refuses_a_traversal_that_would_otherwise_resolve() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let real = dir.path().join("maps.json");
+        fs::write(&real, BLOCKED).expect("fixture written");
+        fs::create_dir(dir.path().join("sub")).expect("subdirectory");
+
+        let direct = AccessMaps::load_or_init(real.to_str().expect("utf-8 path"));
+        assert!(
+            direct.blocked_recipients.contains("blocked@example.test"),
+            "the fixture must load by its direct path or this test proves nothing"
+        );
+
+        let traversal = dir.path().join("sub/../maps.json");
+        let loaded = AccessMaps::load_or_init(traversal.to_str().expect("utf-8 path"));
+        assert!(
+            loaded.blocked_recipients.is_empty(),
+            "a path with '..' reached the same file"
+        );
+    }
+
+    #[test]
+    fn save_refuses_a_traversal_it_could_otherwise_write() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        fs::create_dir(dir.path().join("sub")).expect("subdirectory");
+        let maps = AccessMaps::default();
+
+        let direct = dir.path().join("maps.json");
+        maps.save(direct.to_str().expect("utf-8 path"))
+            .expect("a direct path must save or this test proves nothing");
+
+        let traversal = dir.path().join("sub/../other.json");
+        assert!(
+            maps.save(traversal.to_str().expect("utf-8 path")).is_err(),
+            "a path with '..' was written"
+        );
+        assert!(!dir.path().join("other.json").exists());
     }
 }
