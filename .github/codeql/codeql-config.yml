@@ -12,15 +12,18 @@ name: Noombat CodeQL configuration
 # and this repository is draining its backlog by fixing rather than
 # dismissing. Widen the net in its own commit, once that is done.
 
+# Excluding every file of a configured language does not skip that
+# language, it fails the job: `database finalize` exits 32 with "detected
+# code written in Python but could not process any of it". An earlier
+# version of this file listed `scripts/**`, which is where all of this
+# repository's Python lives, and the python job failed on the first run
+# for that reason. Before adding a pattern, check what it leaves.
 paths-ignore:
-  # A path built from a fixture is a fixture. Seven of the alerts open on
+  # A path built from a fixture is a fixture. Five of the alerts open on
   # 2026-09-04 were this, and excluding the directory also covers the
   # next one, which dismissing them one at a time would not.
   - "crates/*/tests/**"
   - "tests/**"
-  # Maintenance scripts run from a developer's shell over files already
-  # in the working tree, so "uncontrolled data" is an argument they typed.
-  - "scripts/**"
   # Generated and vendored, so nobody edits or reviews them anyway.
   - "frontend/dist/**"
   - "**/node_modules/**"
