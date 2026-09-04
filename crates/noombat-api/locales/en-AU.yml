@@ -131,6 +131,7 @@ edit_avatar_help: "JPEG or PNG, up to 4 MB. The image is re-encoded on upload, w
 edit_avatar_upload: "Upload"
 edit_avatar_alt: "Describe the picture (optional)"
 edit_avatar_alt_help: "Read aloud in place of the picture. Leave it empty to mark it decorative."
+edit_avatar_remove: "Remove the picture"
 edit_avatar_too_large: "That image is larger than 4 MB."
 edit_avatar_unsupported: "That file is not a JPEG or PNG."
 edit_avatar_failed: "The image could not be processed. Try another file."

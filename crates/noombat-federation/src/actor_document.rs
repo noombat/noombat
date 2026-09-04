@@ -65,6 +65,20 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
         }
     };
 
+    // The avatar's description lives with the upload, not on the actor
+    // row, so it is read here rather than carried on `Actor`. A failure
+    // omits the property instead of failing the document: a peer would
+    // rather have the picture undescribed than not have the actor.
+    let avatar_alt: Option<String> = sqlx::query_scalar(
+        "SELECT alt_text FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
+    )
+    .bind(actor.id)
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
     downgrade::build_federated_actor(
         actor,
         domain,
@@ -73,6 +87,7 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
         &link_refs,
         None,
         connections.as_deref(),
+        avatar_alt.as_deref(),
     )
 }
 

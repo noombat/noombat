@@ -383,3 +383,110 @@ async fn object_keys(pool: &PgPool, ids: &[Uuid]) -> Vec<String> {
         .await
         .expect("object keys")
 }
+
+/// Deleting a post takes its images off the disk, not just out of the
+/// database. `media_attachments.post_id` cascades, so the rows that name
+/// the objects go with the post: reading the keys first is the only
+/// chance to free the bytes.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn deleting_a_post_frees_its_images(pool: PgPool) {
+    let root = tempfile::tempdir().expect("temp dir");
+    let media = MediaStore::local(root.path()).expect("store");
+
+    let author = actor(&pool, "author").await;
+    let image = upload(&pool, author, Some("A bridge")).await;
+    let id = post(&pool, author, false).await;
+    sqlx::query("UPDATE media_attachments SET post_id = $1 WHERE id = $2")
+        .bind(id)
+        .bind(image)
+        .execute(&pool)
+        .await
+        .expect("claim");
+
+    let keys = object_keys(&pool, &[image]).await;
+    for key in &keys {
+        media.put(key, b"bytes").await.expect("write object");
+    }
+
+    // The order the deletion path uses: keys, then the post, then the
+    // objects. Reading them afterwards would find nothing.
+    let collected = noombat_api::media::post_object_keys(&pool, id).await;
+    assert_eq!(collected, keys, "the keys must be read before the delete");
+
+    sqlx::query("DELETE FROM posts WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("delete post");
+    noombat_api::media::purge_objects(&media, &collected).await;
+
+    for key in &keys {
+        assert!(
+            media.get(key).await.is_err(),
+            "a deleted post's image must not survive on disk"
+        );
+    }
+}
+
+/// An avatar can be taken down, not only replaced. The row, the object
+/// and the actor's own pointer all have to go, or the picture keeps
+/// being served from somewhere.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_avatar_can_be_removed(pool: PgPool) {
+    let root = tempfile::tempdir().expect("temp dir");
+    let media = MediaStore::local(root.path()).expect("store");
+
+    let owner = actor(&pool, "owner").await;
+    let key = Uuid::new_v4().simple().to_string();
+    media.put(&key, b"bytes").await.expect("write object");
+    sqlx::query(
+        "INSERT INTO media_attachments \
+         (actor_id, media_type, object_key, backend, purpose, url) \
+         VALUES ($1, 'image/png', $2, 'local', 'avatar', $3)",
+    )
+    .bind(owner)
+    .bind(&key)
+    .bind(format!("https://{DOMAIN}/media/{key}"))
+    .execute(&pool)
+    .await
+    .expect("insert avatar");
+    sqlx::query("UPDATE actors SET avatar_url = $1 WHERE id = $2")
+        .bind(format!("https://{DOMAIN}/media/{key}"))
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .expect("point the actor at it");
+
+    // What the route does, in its order: clear the pointer, drop the
+    // row, then remove the object.
+    sqlx::query("UPDATE actors SET avatar_url = NULL WHERE id = $1")
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .expect("clear");
+    sqlx::query("DELETE FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'")
+        .bind(owner)
+        .execute(&pool)
+        .await
+        .expect("drop row");
+    media.delete(&key).await.expect("remove object");
+
+    let url: Option<String> = sqlx::query_scalar("SELECT avatar_url FROM actors WHERE id = $1")
+        .bind(owner)
+        .fetch_one(&pool)
+        .await
+        .expect("read back");
+    assert_eq!(url, None);
+
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
+    )
+    .bind(owner)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(rows, 0);
+    assert!(media.get(&key).await.is_err(), "the object must be gone");
+}

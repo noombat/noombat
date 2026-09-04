@@ -210,6 +210,7 @@ pub struct VerifiedLinkRef<'a> {
 /// every actor. When `federate_profile` is `false` the document stops
 /// there. When `true` it also carries the `attachment` array and the
 /// sections whose visibility is [`SectionVisibility::Public`].
+#[allow(clippy::too_many_arguments)]
 pub fn build_federated_actor(
     actor: &Actor,
     domain: &str,
@@ -218,6 +219,7 @@ pub fn build_federated_actor(
     verified_links: &[VerifiedLinkRef<'_>],
     ttl_secs: Option<u64>,
     connections: Option<&str>,
+    avatar_alt: Option<&str>,
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
 
@@ -307,10 +309,18 @@ pub fn build_federated_actor(
 
     // Include icon (avatar) if present.
     if let Some(ref url) = actor.avatar_url {
-        obj["icon"] = json!({
+        let mut icon = json!({
             "type": "Image",
             "url": url,
         });
+        // The description the owner wrote, under the property
+        // GoToSocial both emits and reads for exactly this. Absent
+        // rather than empty when there is none: an empty `name` claims
+        // a description exists and then announces nothing.
+        if let Some(alt) = avatar_alt {
+            icon["name"] = json!(alt);
+        }
+        obj["icon"] = icon;
     }
 
     // Include image (header) if present.
@@ -493,7 +503,16 @@ mod tests {
             data: json!({"title": "Engineer"}),
         }];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &sections,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
         assert!(obj.get("noombat:experience").is_none());
         assert!(obj.get(vocab::TTL).is_some());
     }
@@ -515,7 +534,8 @@ mod tests {
             url: "https://example.org/alice",
         }];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None);
+        let obj =
+            build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None, None);
 
         let rendered = obj.to_string();
         assert!(
@@ -559,7 +579,16 @@ mod tests {
             },
         ];
 
-        let obj = build_federated_actor(&actor, "noombat.social", &sections, &[], &[], None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &sections,
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
 
         // Only the public experience section should be present.
         let exp = obj["noombat:experience"].as_array().unwrap();
@@ -573,7 +602,16 @@ mod tests {
     #[test]
     fn federated_actor_includes_ttl() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], Some(3600), None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            Some(3600),
+            None,
+            None,
+        );
         assert_eq!(obj[vocab::TTL], 3600);
     }
 
@@ -581,15 +619,64 @@ mod tests {
     fn federated_actor_includes_moved_to() {
         let mut actor = test_actor();
         actor.moved_to = Some("https://new.example/users/alice".into());
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
         assert_eq!(obj["movedTo"], "https://new.example/users/alice");
+    }
+
+    /// The description travels as `icon.name`. GoToSocial emits that
+    /// property and reads it back through `ExtractIconDescription`, so a
+    /// description that stopped here would be one their followers never
+    /// hear.
+    #[test]
+    fn federated_actor_describes_its_avatar() {
+        let mut actor = test_actor();
+        actor.avatar_url = Some("https://noombat.social/media/abc".to_owned());
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            Some("Standing by a river"),
+        );
+
+        assert_eq!(obj["icon"]["type"], "Image");
+        assert_eq!(obj["icon"]["url"], "https://noombat.social/media/abc");
+        assert_eq!(obj["icon"]["name"], "Standing by a river");
+    }
+
+    /// No description means no property. An empty `name` would tell a
+    /// screen reader on the receiving instance that the picture is
+    /// described and then announce nothing.
+    #[test]
+    fn an_undescribed_avatar_carries_no_name() {
+        let mut actor = test_actor();
+        actor.avatar_url = Some("https://noombat.social/media/abc".to_owned());
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+
+        assert_eq!(obj["icon"]["url"], "https://noombat.social/media/abc");
+        assert!(
+            obj["icon"].get("name").is_none(),
+            "an undescribed avatar must not claim a description"
+        );
     }
 
     #[test]
     fn federated_actor_includes_also_known_as() {
         let actor = test_actor();
         let aliases = vec!["https://old.example/users/alice".to_owned()];
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &aliases, &[], None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &aliases,
+            &[],
+            None,
+            None,
+            None,
+        );
         let aka = obj["alsoKnownAs"].as_array().unwrap();
         assert_eq!(aka.len(), 1);
         assert_eq!(aka[0], "https://old.example/users/alice");
@@ -598,7 +685,7 @@ mod tests {
     #[test]
     fn federated_actor_publishes_the_ed25519_key() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
 
         let methods = obj["assertionMethod"].as_array().unwrap();
         assert_eq!(methods.len(), 1);
@@ -626,7 +713,7 @@ mod tests {
         let mut actor = test_actor();
         actor.actor_privacy.federate_profile = false;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
         assert!(obj.get("assertionMethod").is_some());
         assert!(obj.get("publicKey").is_some());
     }
@@ -727,7 +814,8 @@ mod tests {
         let links = [VerifiedLinkRef {
             url: "https://alice.example",
         }];
-        let doc = build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None);
+        let doc =
+            build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None, None);
 
         let mut used = BTreeSet::new();
         used_terms(&doc, &mut used);
@@ -769,7 +857,7 @@ mod tests {
         let mut keyless = test_actor();
         keyless.ed25519_public_key = None;
         let without_key =
-            build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None, None);
+            build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None, None, None);
         let declared_urls: Vec<&str> = without_key["@context"]
             .as_array()
             .unwrap()
@@ -785,12 +873,20 @@ mod tests {
         actor.display_name = None;
         actor.summary_html = None;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
+        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
         assert!(obj.get("name").is_none(), "name sent as {}", obj["name"]);
         assert!(obj.get("summary").is_none());
 
-        let present =
-            build_federated_actor(&test_actor(), "noombat.social", &[], &[], &[], None, None);
+        let present = build_federated_actor(
+            &test_actor(),
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+        );
         assert_eq!(present["name"], "Alice");
         assert_eq!(present["summary"], "<p>Hello</p>");
     }
@@ -806,7 +902,8 @@ mod tests {
         ] {
             let mut actor = test_actor();
             actor.actor_type = actor_type;
-            let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None);
+            let obj =
+                build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
             assert_eq!(obj["type"], expected);
         }
     }

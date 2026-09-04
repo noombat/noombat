@@ -94,8 +94,10 @@
 
             <div>
                 <label for="avatar-alt" class="block text-sm mb-1">{{ i18n.t("edit_avatar_alt") }}</label>
-                {# Optional. Shown wherever this instance renders the
-                   picture. #}
+                {# Optional, and it travels: the actor document carries it as
+                   `icon.name`, which is the property GoToSocial both emits
+                   and reads, so a follower there hears this description
+                   rather than nothing. #}
                 <input id="avatar-alt" name="avatar_alt" type="text"
                        value="{{ avatar_alt }}"
                        aria-describedby="avatar-alt-help"
@@ -108,6 +110,18 @@
                 {{ i18n.t("edit_avatar_upload") }}
             </button>
         </form>
+
+        {# Its own form, because the upload form requires a file: putting a
+           second button inside it would refuse to submit while the picker
+           is empty, which is exactly when somebody wants to remove one. #}
+        {% if !avatar_url.is_empty() %}
+        <form action="/settings/avatar/remove" method="post" class="max-w-lg">
+            <button type="submit"
+                    class="text-sm text-text-secondary underline">
+                {{ i18n.t("edit_avatar_remove") }}
+            </button>
+        </form>
+        {% endif %}
 
         <script type="module" src="/assets/editor.js"></script>
 {% endblock %}

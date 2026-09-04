@@ -707,11 +707,20 @@ async fn resolve_report(
         }
         ApReportAction::RemoveContent => {
             if let Some(post_id) = target_post_id {
+                // Before the delete, because the rows that name these
+                // objects cascade with the post.
+                let keys = crate::media::post_object_keys(&state.pool, post_id).await;
+
                 sqlx::query("DELETE FROM posts WHERE id = $1")
                     .bind(post_id)
                     .execute(&state.pool)
                     .await
                     .map_err(NoombatError::from)?;
+
+                // Removing the post and keeping its images would leave
+                // the reported content on disk and reachable by anyone
+                // who had already seen a URL.
+                crate::media::purge_objects(&state.media, &keys).await;
                 info!(report_id = %report_id, post_id = %post_id, "reported post removed");
             }
         }

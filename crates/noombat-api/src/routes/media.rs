@@ -74,6 +74,7 @@ pub fn router() -> Router<AppState> {
             "/api/v1/media/{id}",
             axum::routing::patch(describe_attachment),
         )
+        .route("/settings/avatar/remove", post(remove_avatar))
 }
 
 fn actor_uuid(viewer: &Option<axum::Extension<Viewer>>) -> Option<uuid::Uuid> {
@@ -346,6 +347,82 @@ async fn describe_attachment(
             StatusCode::INTERNAL_SERVER_ERROR.into_response()
         }
     }
+}
+
+/// Take the signed-in actor's profile picture down.
+///
+/// A `POST` rather than a `DELETE` because it is reached from a form on
+/// the settings page, and a form can only issue `GET` or `POST`. The
+/// route is still authenticated by session alone, so like the upload it
+/// can only ever act on the caller's own account.
+///
+/// Idempotent: an actor with no picture gets the same redirect as one
+/// who just removed theirs. There is nothing to report in the difference
+/// and nothing for them to do about it.
+async fn remove_avatar(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&viewer) else {
+        return (StatusCode::UNAUTHORIZED, "sign in to change your avatar").into_response();
+    };
+
+    // The key first: deleting the row loses the only record of which
+    // object belonged to this actor's avatar.
+    let object_key: Option<String> = sqlx::query_scalar(
+        "SELECT object_key FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
+    )
+    .bind(actor_id)
+    .fetch_optional(&state.pool)
+    .await
+    .unwrap_or(None);
+
+    // The actor stops pointing at it before the row goes, so no page can
+    // render a URL whose bytes are already on their way out.
+    if let Err(error) = sqlx::query("UPDATE actors SET avatar_url = NULL WHERE id = $1")
+        .bind(actor_id)
+        .execute(&state.pool)
+        .await
+    {
+        tracing::error!(%error, %actor_id, "could not clear the avatar");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not remove the image",
+        )
+            .into_response();
+    }
+
+    if let Err(error) =
+        sqlx::query("DELETE FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'")
+            .bind(actor_id)
+            .execute(&state.pool)
+            .await
+    {
+        tracing::error!(%error, %actor_id, "could not remove the avatar row");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not remove the image",
+        )
+            .into_response();
+    }
+
+    if let Some(key) = object_key
+        && let Err(error) = state.media.delete(&key).await
+    {
+        tracing::warn!(
+            %error,
+            object_key = %key,
+            "removed an avatar but could not delete the object"
+        );
+    }
+
+    // Peers cache the actor document, so a picture removed here and
+    // never pushed is one they keep showing.
+    if let Ok(actor) = noombat_identity::repo::find_by_id(&state.pool, actor_id).await {
+        noombat_federation::update::enqueue_actor_update(&state.pool, &actor, &state.domain).await;
+    }
+
+    Redirect::to("/settings/profile").into_response()
 }
 
 /// The refusal an uploader sees, in terms they can act on.

@@ -258,6 +258,37 @@ pub fn new_object_key() -> String {
     Uuid::new_v4().simple().to_string()
 }
 
+/// The object keys a post's attachments occupy.
+///
+/// Read before the post is deleted, because `media_attachments.post_id`
+/// cascades: once the post is gone the rows are gone, and the only
+/// record of which objects belonged to it has gone with them.
+pub async fn post_object_keys(pool: &sqlx::PgPool, post_id: Uuid) -> Vec<String> {
+    sqlx::query_scalar("SELECT object_key FROM media_attachments WHERE post_id = $1")
+        .bind(post_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default()
+}
+
+/// Remove the objects behind keys collected by [`post_object_keys`].
+///
+/// Called after the post is deleted, so nothing can serve an object
+/// whose bytes have already gone. A failure is reported rather than
+/// swallowed: it is the state where the database says the post is gone
+/// and the disk disagrees.
+pub async fn purge_objects(media: &MediaStore, keys: &[String]) {
+    for key in keys {
+        if let Err(error) = media.delete(key).await {
+            tracing::error!(
+                %error,
+                object_key = %key,
+                "a deleted post's image could not be removed"
+            );
+        }
+    }
+}
+
 /// Where uploaded media rests.
 ///
 /// Every row records which backend wrote it, so turning object storage
