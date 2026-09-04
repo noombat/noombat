@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Structured JSON-LD error bodies for federation-facing endpoints.
+//!
+//! Every body here is built from a `NoombatError` variant, so one with no
+//! variant behind it can never be sent. There is no `410` or `429` body
+//! for that reason: a withdrawn actor answers with a `Tombstone`, which is
+//! what a peer needs in order to drop its cached copy, and the inbox maps
+//! its rate limit to `503`.
 
 use serde::Serialize;
 use serde_json::Value;
@@ -58,26 +64,6 @@ impl ApError {
             summary: "internal_error",
             content: detail.into(),
             error_code: "INTERNAL_ERROR",
-        }
-    }
-
-    pub fn gone(detail: impl Into<String>) -> Self {
-        Self {
-            context: error_context(),
-            error_type: "Error",
-            summary: "gone",
-            content: detail.into(),
-            error_code: "GONE",
-        }
-    }
-
-    pub fn rate_limited() -> Self {
-        Self {
-            context: error_context(),
-            error_type: "Error",
-            summary: "rate_limited",
-            content: "Rate limit exceeded. Please retry later.".to_owned(),
-            error_code: "RATE_LIMITED",
         }
     }
 
