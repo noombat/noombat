@@ -35,6 +35,24 @@ use crate::state::AppState;
 /// giving up caching.
 const MEDIA_MAX_AGE_SECS: u32 = 300;
 
+/// The longest description stored for an image.
+///
+/// Alt text is read aloud in full, so an unbounded one is a denial of
+/// service against the reader it exists to serve before it is a storage
+/// problem. Generous for a sentence, and far short of a payload.
+const MAX_ALT_BYTES: usize = 2000;
+
+/// Cut `text` to at most `max` bytes without splitting a character.
+///
+/// Slicing on a byte index panics mid-character, and alt text is where
+/// non-ASCII is most likely: it is prose, in the author's own language.
+fn truncate_alt(text: &str, max: usize) -> &str {
+    if text.len() <= max {
+        return text;
+    }
+    &text[..text.floor_char_boundary(max)]
+}
+
 pub fn router() -> Router<AppState> {
     Router::new().route("/media/{key}", get(serve_media)).route(
         "/settings/avatar",
@@ -133,23 +151,34 @@ async fn upload_avatar(
         return (StatusCode::UNAUTHORIZED, "sign in to change your avatar").into_response();
     };
 
-    // Read the one field this route expects. The field name is checked;
+    // Read the two fields this route expects. The field name is checked;
     // the filename and the declared content type are read by nothing,
     // because neither is evidence of anything.
     let mut raw: Option<Vec<u8>> = None;
+    let mut alt_text: Option<String> = None;
     loop {
         match multipart.next_field().await {
-            Ok(Some(field)) => {
-                if field.name() == Some("avatar") {
-                    match field.bytes().await {
-                        Ok(bytes) => raw = Some(bytes.to_vec()),
-                        Err(_) => {
-                            return (StatusCode::PAYLOAD_TOO_LARGE, "that image is too large")
-                                .into_response();
-                        }
+            Ok(Some(field)) => match field.name() {
+                Some("avatar") => match field.bytes().await {
+                    Ok(bytes) => raw = Some(bytes.to_vec()),
+                    Err(_) => {
+                        return (StatusCode::PAYLOAD_TOO_LARGE, "that image is too large")
+                            .into_response();
+                    }
+                },
+                Some("avatar_alt") => {
+                    // Blank and whitespace both mean no description. A
+                    // non-empty `alt` that says nothing tells a screen
+                    // reader the image matters and then announces
+                    // nothing, which is worse than marking it decorative.
+                    if let Ok(text) = field.text().await {
+                        let text = text.trim();
+                        alt_text = (!text.is_empty())
+                            .then(|| truncate_alt(text, MAX_ALT_BYTES).to_owned());
                     }
                 }
-            }
+                _ => {}
+            },
             Ok(None) => break,
             Err(_) => return (StatusCode::BAD_REQUEST, "malformed upload").into_response(),
         }
@@ -209,14 +238,19 @@ async fn upload_avatar(
 
     let written = sqlx::query(
         "INSERT INTO media_attachments
-             (actor_id, media_type, object_key, backend, purpose, url, byte_size)
-         VALUES ($1, $2, $3, $4, 'avatar', $5, $6)
+             (actor_id, media_type, object_key, backend, purpose, url, byte_size, alt_text)
+         VALUES ($1, $2, $3, $4, 'avatar', $5, $6, $7)
          ON CONFLICT (actor_id, purpose) WHERE purpose IN ('avatar', 'header')
          DO UPDATE SET media_type = EXCLUDED.media_type,
                        object_key = EXCLUDED.object_key,
                        backend    = EXCLUDED.backend,
                        url        = EXCLUDED.url,
                        byte_size  = EXCLUDED.byte_size,
+                       -- Overwritten, not merged: the row now describes
+                       -- a different picture, so keeping the previous
+                       -- description would caption the new one with the
+                       -- old one's text.
+                       alt_text   = EXCLUDED.alt_text,
                        created_at = now()",
     )
     .bind(actor_id)
@@ -225,6 +259,7 @@ async fn upload_avatar(
     .bind(state.media.backend())
     .bind(&url)
     .bind(processed.bytes.len() as i64)
+    .bind(&alt_text)
     .execute(&state.pool)
     .await;
 

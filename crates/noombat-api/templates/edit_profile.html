@@ -74,7 +74,11 @@
             {% if avatar_url.is_empty() %}
             <p class="text-sm text-text-secondary">{{ i18n.t("edit_avatar_none") }}</p>
             {% else %}
-            <img src="{{ avatar_url }}" alt="{{ i18n.t("edit_avatar_current") }}"
+            {# The owner's description when they gave one. The generic label
+               is the fallback, not the default: on this page the reader is
+               the person in the picture, and their own words are better. #}
+            <img src="{{ avatar_url }}"
+                 alt="{% if avatar_alt.is_empty() %}{{ i18n.t("edit_avatar_current") }}{% else %}{{ avatar_alt }}{% endif %}"
                  width="96" height="96"
                  class="rounded-full border border-border-default">
             {% endif %}
@@ -86,6 +90,17 @@
                        aria-describedby="avatar-help"
                        class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
                 <p id="avatar-help" class="text-sm text-text-secondary mt-1">{{ i18n.t("edit_avatar_help") }}</p>
+            </div>
+
+            <div>
+                <label for="avatar-alt" class="block text-sm mb-1">{{ i18n.t("edit_avatar_alt") }}</label>
+                {# Optional. Shown wherever this instance renders the
+                   picture. #}
+                <input id="avatar-alt" name="avatar_alt" type="text"
+                       value="{{ avatar_alt }}"
+                       aria-describedby="avatar-alt-help"
+                       class="w-full border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary">
+                <p id="avatar-alt-help" class="text-sm text-text-secondary mt-1">{{ i18n.t("edit_avatar_alt_help") }}</p>
             </div>
 
             <button type="submit"

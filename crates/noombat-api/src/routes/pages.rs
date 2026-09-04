@@ -315,6 +315,10 @@ struct EditProfilePage {
     location: String,
     summary_md: String,
     avatar_url: String,
+    /// The owner's description of their own avatar, from the
+    /// `media_attachments` row rather than the actor: the actor carries
+    /// only the URL, and the description belongs to the upload.
+    avatar_alt: String,
 }
 
 #[derive(Template, WebTemplate)]
@@ -903,6 +907,19 @@ async fn edit_profile_page(
     .fetch_one(&state.pool)
     .await
     .unwrap_or_default();
+
+    // Absent until the actor has uploaded an avatar, and empty until
+    // they have described one, which the form renders as a blank field.
+    let avatar_alt: Option<String> = sqlx::query_scalar(
+        "SELECT alt_text FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
+    )
+    .bind(actor_id)
+    .fetch_optional(&state.pool)
+    .await
+    .ok()
+    .flatten()
+    .flatten();
+
     EditProfilePage {
         i18n,
         theme,
@@ -914,6 +931,7 @@ async fn edit_profile_page(
         location: row.2.unwrap_or_default(),
         summary_md: row.3.unwrap_or_default(),
         avatar_url: row.4.unwrap_or_default(),
+        avatar_alt: avatar_alt.unwrap_or_default(),
     }
     .into_response()
 }
