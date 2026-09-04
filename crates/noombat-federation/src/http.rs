@@ -232,16 +232,65 @@ pub fn client(user_agent: String, timeout: Duration) -> reqwest::Result<reqwest:
 /// 410) and because the final URL after redirects is load-bearing for the
 /// document-origin check in `ap_actor_to_remote`.
 pub async fn guarded_get(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
+    guarded_get_accepting(client, url, "application/activity+json").await
+}
+
+/// The same guarded GET, for image bytes rather than a document.
+///
+/// A separate entry point only so that `Accept` describes what is
+/// actually wanted: a media server that honours the header would answer
+/// a document request with something that is not the picture. The URL
+/// goes through [`check_url`] exactly as a document's does, which is the
+/// point that matters, because this URL came from a peer's document and
+/// is the most attacker-controlled input the fetcher takes.
+pub async fn guarded_get_image(client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
+    guarded_get_accepting(client, url, "image/*").await
+}
+
+async fn guarded_get_accepting(
+    client: &reqwest::Client,
+    url: &str,
+    accept: &str,
+) -> Result<reqwest::Response> {
     let parsed = Url::parse(url)
         .map_err(|e| NoombatError::BadRequest(format!("unusable URI {url}: {e}")))?;
     check_url(&parsed)?;
 
     client
         .get(parsed)
-        .header("Accept", "application/activity+json")
+        .header("Accept", accept)
         .send()
         .await
         .map_err(|e| NoombatError::Federation(format!("fetch of {url} failed: {e}")))
+}
+
+/// Read a body as bytes, refusing to buffer more than `limit`.
+///
+/// The same reasoning as [`json_within_limit`], and the same danger: a
+/// peer that streams without end exhausts memory on a request it did not
+/// have to authenticate. The limit is the caller's because an image and
+/// a document do not share a sensible one.
+pub async fn bytes_within_limit(
+    mut response: reqwest::Response,
+    limit: usize,
+    what: &str,
+) -> Result<Vec<u8>> {
+    let mut body: Vec<u8> = Vec::new();
+
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|e| NoombatError::Federation(format!("reading {what} failed: {e}")))?
+    {
+        if body.len() + chunk.len() > limit {
+            return Err(NoombatError::Federation(format!(
+                "{what} exceeds the {limit} byte limit; refusing to buffer it"
+            )));
+        }
+        body.extend_from_slice(&chunk);
+    }
+
+    Ok(body)
 }
 
 /// Read a JSON body, refusing to buffer more than [`MAX_FETCH_BYTES`].

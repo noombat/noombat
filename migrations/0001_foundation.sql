@@ -590,6 +590,13 @@ CREATE TABLE media_attachments (
     alt_text   TEXT,
     blurhash   TEXT,
     byte_size  BIGINT,
+    -- Where this image sits among a post's images.
+    --
+    -- Insertion order is not the author's arrangement: the local claim
+    -- updates rows by a set of ids, and a remote post's images are
+    -- fetched concurrently and land in whatever order the peer's server
+    -- answers. Both know the position they meant, so both write it.
+    ordinal    SMALLINT NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- An avatar or header belongs to the actor and never to a post. A
     -- post attachment may be either: NULL while it is uploaded and not yet
@@ -936,6 +943,48 @@ CREATE TABLE reports (
 CREATE INDEX idx_reports_open ON reports (created_at) WHERE status = 'open';
 
 -- ..... CHATMAIL BLOCKS .....
+
+-- Images a remote post declared, which this instance owes a fetch.
+--
+-- Fetched rather than hot-linked, which is the same rule the upload path
+-- follows: a reader's browser must never be made to connect to another
+-- instance's storage, because that hands the other instance a record of
+-- who read what, and it cannot be recalled afterwards.
+--
+-- Queued rather than fetched during delivery. A peer's media server can
+-- be slow or down, and an inbox handler that waits on it turns somebody
+-- else's outage into failed delivery of an activity that was otherwise
+-- fine.
+--
+-- This is also the outage record: an administrator asking why a post
+-- shows no pictures reads this table, which is why a failure keeps its
+-- error text as well as its state.
+CREATE TABLE media_fetch_operations (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    post_id         UUID NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+    -- The post's author, copied so the fetched row can be attributed
+    -- without joining back to a post that may since have been deleted.
+    actor_id        UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    remote_url      TEXT NOT NULL,
+    -- The peer's own description, taken from the document rather than
+    -- re-derived later: the document is what was delivered, and it is
+    -- not fetched again.
+    alt_text        TEXT,
+    ordinal         SMALLINT NOT NULL DEFAULT 0,
+    state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN ('pending', 'succeeded', 'failed')),
+    attempts        INTEGER NOT NULL DEFAULT 0,
+    last_error      TEXT,
+    next_attempt_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at    TIMESTAMPTZ,
+    -- One fetch per image per post. A redelivery of the same document is
+    -- the same work, not more of it.
+    UNIQUE (post_id, remote_url)
+);
+
+CREATE INDEX idx_media_fetch_operations_due
+    ON media_fetch_operations (next_attempt_at)
+    WHERE state = 'pending';
 
 -- Chatmail address block list (application-level, enforced by the
 -- noombat-chat proxy before relaying messages to the browser).

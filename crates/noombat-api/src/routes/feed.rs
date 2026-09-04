@@ -354,16 +354,17 @@ pub struct Attachment {
     pub placeholder: String,
 }
 
-/// The images a post carries, in the order they were attached.
+/// The images a post carries, in the order the author arranged them.
 ///
-/// Ordered by `created_at`, which is upload order: the claim that
-/// attaches them preserves nothing else, and a gallery whose order
-/// changed between two page loads would be worse than one that is
-/// merely not the author's arrangement.
+/// `ordinal` is written by both write paths: the local claim takes it
+/// from the author's list, and a fetched remote image from its position
+/// in the peer's `attachment` array. `created_at` breaks a tie, so rows
+/// written before the column existed still come out in a stable order
+/// rather than an arbitrary one.
 pub async fn attachments_for(pool: &sqlx::PgPool, post_id: uuid::Uuid) -> Vec<Attachment> {
     sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
         "SELECT url, alt_text, blurhash FROM media_attachments \
-         WHERE post_id = $1 AND purpose = 'post' ORDER BY created_at",
+         WHERE post_id = $1 AND purpose = 'post' ORDER BY ordinal, created_at",
     )
     .bind(post_id)
     .fetch_all(pool)

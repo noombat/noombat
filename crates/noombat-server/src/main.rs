@@ -917,6 +917,31 @@ async fn main() -> anyhow::Result<()> {
         });
     }
 
+    // Spawn the remote-image worker, which fetches the pictures a peer's
+    // post declared so that readers are served them from here rather
+    // than being sent to the peer's storage to be counted.
+    //
+    // Every minute: the rows carry their own backoff, so a frequent pass
+    // costs one query when there is nothing due, and a post whose images
+    // appear a minute late is better than one whose delivery waited on
+    // somebody else's media server.
+    {
+        let pool = state.pool.clone();
+        let media = state.media.clone();
+        let client = state.http_client.clone();
+        let domain = state.domain.clone();
+        tokio::spawn(async move {
+            noombat_api::media_ops::run_worker(
+                pool,
+                media,
+                client,
+                domain,
+                Duration::from_secs(60),
+            )
+            .await;
+        });
+    }
+
     // Spawn the Chatmail operations worker, which drains the maildir
     // deletions erasure records. Every five minutes rather than hourly:
     // the rows carry their own backoff, so a frequent pass costs one

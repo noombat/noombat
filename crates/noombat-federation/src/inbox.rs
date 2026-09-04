@@ -1070,6 +1070,14 @@ async fn handle_create(
             warn!(ap_id, "failed to queue a remote post for indexing: {e}");
         }
 
+        // Queued rather than fetched here, so a peer's slow media server
+        // cannot hold up delivery of an activity that already arrived
+        // intact.
+        let images = extract_remote_images(object);
+        if !images.is_empty() {
+            enqueue_remote_images(pool, post_id, remote_actor.id, &images).await;
+        }
+
         info!(ap_id, "remote post persisted");
     } else {
         info!(ap_id, "remote post already known; skipped");
@@ -2129,6 +2137,130 @@ fn image_description(image: &serde_json::Value) -> Option<String> {
     Some(truncate_on_char_boundary(name, MAX_IMAGE_ALT_BYTES).to_owned())
 }
 
+// ..... REMOTE POST IMAGES .....
+
+/// The most images taken from one post.
+///
+/// A document can declare an unbounded `attachment` array, and each
+/// entry is a fetch this instance would then owe. Mastodon caps a status
+/// at four; this is looser because an Article may reasonably illustrate
+/// more, and still bounded because the array is a peer's input.
+const MAX_POST_IMAGES: usize = 20;
+
+/// An image a remote post declared, ready to be queued for fetching.
+pub struct RemoteImage {
+    pub url: String,
+    /// The peer's description, already trimmed and bounded.
+    pub alt_text: Option<String>,
+    /// Its position in the post's `attachment` array, which is the
+    /// author's arrangement and the order a reader should see.
+    pub ordinal: i16,
+}
+
+/// The images in an object's `attachment` array.
+///
+/// Only entries that declare an image are taken. A peer may attach a
+/// video, a document or a link, and this instance stores neither the
+/// bytes nor a placeholder for them: an attachment it cannot render is
+/// better absent than shown as a broken picture.
+///
+/// The `image` property is deliberately not read here. That one is the
+/// post's featured image, which `extract_image_url` already handles and
+/// which is stored on the post rather than as an attachment row.
+pub fn extract_remote_images(object: &serde_json::Value) -> Vec<RemoteImage> {
+    let Some(attachments) = object.get("attachment").and_then(|v| v.as_array()) else {
+        return Vec::new();
+    };
+
+    attachments
+        .iter()
+        .filter(|att| declares_an_image(att))
+        .filter_map(|att| {
+            let url = att.get("url").and_then(url_of_attachment)?;
+            Some(RemoteImage {
+                url,
+                alt_text: image_description(att),
+                ordinal: 0,
+            })
+        })
+        .take(MAX_POST_IMAGES)
+        .enumerate()
+        .map(|(index, image)| RemoteImage {
+            // Assigned after filtering, so a skipped video does not
+            // leave a gap that reorders what follows it.
+            ordinal: i16::try_from(index).unwrap_or(i16::MAX),
+            ..image
+        })
+        .collect()
+}
+
+/// Whether an attachment says it is an image.
+///
+/// `type` is the first answer, and `mediaType` the second: Mastodon
+/// sends `Document` with `mediaType: image/jpeg`, so trusting `type`
+/// alone would drop most of the images on the network.
+fn declares_an_image(attachment: &serde_json::Value) -> bool {
+    let declared_type = attachment
+        .get("type")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default();
+    if declared_type == "Image" {
+        return true;
+    }
+
+    attachment
+        .get("mediaType")
+        .and_then(|v| v.as_str())
+        .is_some_and(|media_type| media_type.starts_with("image/"))
+}
+
+/// The href of an attachment's `url`, which may be a string or a `Link`.
+///
+/// AS2 allows either, and a `Link` object is what Mastodon and Pixelfed
+/// send. Reading only the string form drops those posts' pictures.
+fn url_of_attachment(url: &serde_json::Value) -> Option<String> {
+    if let Some(href) = url.as_str() {
+        return Some(href.to_owned());
+    }
+    if let Some(href) = url.get("href").and_then(|v| v.as_str()) {
+        return Some(href.to_owned());
+    }
+    // An array of links: take the first that names an href.
+    url.as_array()?.iter().find_map(url_of_attachment)
+}
+
+/// Record the fetches a newly ingested post owes.
+///
+/// Failure is logged and not propagated: the post is already stored, and
+/// losing its pictures is a smaller harm than refusing an activity that
+/// was otherwise delivered correctly.
+async fn enqueue_remote_images(
+    pool: &PgPool,
+    post_id: uuid::Uuid,
+    actor_id: uuid::Uuid,
+    images: &[RemoteImage],
+) {
+    for image in images {
+        let queued = sqlx::query(
+            "INSERT INTO media_fetch_operations \
+                 (post_id, actor_id, remote_url, alt_text, ordinal) \
+             VALUES ($1, $2, $3, $4, $5) \
+             ON CONFLICT (post_id, remote_url) DO NOTHING",
+        )
+        .bind(post_id)
+        .bind(actor_id)
+        .bind(&image.url)
+        .bind(&image.alt_text)
+        .bind(image.ordinal)
+        .execute(pool)
+        .await;
+
+        if let Err(error) = queued {
+            warn!(%error, %post_id, url = %image.url, "an image could not be queued for fetching");
+        }
+    }
+}
+
 // ..... HASHTAG EXTRACTION FROM TAG ARRAY .....
 
 /// Extract hashtag names from the `tag` array of an inbound object, as
@@ -2301,6 +2433,125 @@ mod tests {
         assert_eq!(extract_string_array(&obj, "to"), None);
     }
 
+    // ..... extract_remote_images .....
+
+    /// Mastodon sends `Document` with an image `mediaType`, not `Image`.
+    /// Reading `type` alone would drop most of the pictures on the
+    /// network, so both are consulted.
+    #[test]
+    fn an_image_is_recognised_by_type_or_by_media_type() {
+        let obj = serde_json::json!({
+            "attachment": [
+                { "type": "Image", "url": "https://peer.example/a.png" },
+                { "type": "Document", "mediaType": "image/jpeg",
+                  "url": "https://peer.example/b.jpg" },
+            ]
+        });
+
+        let images = extract_remote_images(&obj);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].url, "https://peer.example/a.png");
+        assert_eq!(images[1].url, "https://peer.example/b.jpg");
+    }
+
+    /// AS2 lets `url` be a `Link` object, which is what Mastodon and
+    /// Pixelfed send. Reading only the string form loses those.
+    #[test]
+    fn a_link_wrapped_url_is_read() {
+        let obj = serde_json::json!({
+            "attachment": [{
+                "type": "Document",
+                "mediaType": "image/png",
+                "url": { "type": "Link", "href": "https://peer.example/c.png" }
+            }]
+        });
+
+        let images = extract_remote_images(&obj);
+        assert_eq!(images.len(), 1);
+        assert_eq!(images[0].url, "https://peer.example/c.png");
+    }
+
+    /// What is not an image is not queued. An attachment this instance
+    /// cannot render is better absent than shown as a broken picture,
+    /// and the position of what follows must not shift because of it.
+    #[test]
+    fn a_video_is_skipped_and_leaves_no_gap() {
+        let obj = serde_json::json!({
+            "attachment": [
+                { "type": "Video", "mediaType": "video/mp4",
+                  "url": "https://peer.example/v.mp4" },
+                { "type": "Image", "url": "https://peer.example/a.png" },
+                { "type": "Image", "url": "https://peer.example/b.png" },
+            ]
+        });
+
+        let images = extract_remote_images(&obj);
+        assert_eq!(images.len(), 2);
+        assert_eq!(images[0].ordinal, 0);
+        assert_eq!(images[1].ordinal, 1);
+    }
+
+    /// The description travels under either spelling: Mastodon writes
+    /// `summary` and GoToSocial writes `name`, and both are read.
+    #[test]
+    fn the_peers_description_is_taken() {
+        let obj = serde_json::json!({
+            "attachment": [{
+                "type": "Image",
+                "url": "https://peer.example/a.png",
+                "name": "A cat asleep on a keyboard"
+            }]
+        });
+
+        let images = extract_remote_images(&obj);
+        assert_eq!(
+            images[0].alt_text.as_deref(),
+            Some("A cat asleep on a keyboard")
+        );
+    }
+
+    /// Whitespace is not a description. A non-empty `alt` tells a screen
+    /// reader the picture matters and then announces nothing.
+    #[test]
+    fn a_blank_description_is_dropped() {
+        let obj = serde_json::json!({
+            "attachment": [{
+                "type": "Image",
+                "url": "https://peer.example/a.png",
+                "name": "   "
+            }]
+        });
+
+        assert_eq!(extract_remote_images(&obj)[0].alt_text, None);
+    }
+
+    /// The array is a peer's input, so it is bounded: each entry is a
+    /// fetch this instance would otherwise owe.
+    #[test]
+    fn the_number_of_images_is_bounded() {
+        let attachments: Vec<serde_json::Value> = (0..MAX_POST_IMAGES + 25)
+            .map(|i| {
+                serde_json::json!({
+                    "type": "Image",
+                    "url": format!("https://peer.example/{i}.png")
+                })
+            })
+            .collect();
+        let obj = serde_json::json!({ "attachment": attachments });
+
+        assert_eq!(extract_remote_images(&obj).len(), MAX_POST_IMAGES);
+    }
+
+    /// The post's featured image is stored on the post, so reading it
+    /// here as well would fetch and show the same picture twice.
+    #[test]
+    fn the_featured_image_is_not_an_attachment() {
+        let obj = serde_json::json!({
+            "image": { "type": "Image", "url": "https://peer.example/featured.png" }
+        });
+
+        assert!(extract_remote_images(&obj).is_empty());
+    }
     // ..... extract_image_url .....
 
     #[test]

@@ -9,8 +9,15 @@
 //! upload-then-claim sequence, which is where an image can go missing or
 //! be claimed by the wrong post.
 
+use axum::body::Body;
+use axum::http::Request;
+use noombat_api::build_router;
 use noombat_api::media::{MediaStore, blurhash_placeholder, process_attachment, process_avatar};
+use noombat_api::rate_limit::FallbackRateLimiter;
+use noombat_api::state::AppState;
+use noombat_federation::nodeinfo::NodeInfoFeatures;
 use sqlx::PgPool;
+use tower::ServiceExt;
 use uuid::Uuid;
 
 const DOMAIN: &str = "noombat.example";
@@ -489,4 +496,131 @@ async fn an_avatar_can_be_removed(pool: PgPool) {
     .expect("count");
     assert_eq!(rows, 0);
     assert!(media.get(&key).await.is_err(), "the object must be gone");
+}
+
+const JWT_SECRET: &str = "test-secret-that-is-at-least-32-bytes-long";
+
+fn test_state(pool: PgPool, media: MediaStore) -> AppState {
+    AppState {
+        pool,
+        domain: DOMAIN.to_owned(),
+        public_port: 8443,
+        http_client: reqwest::Client::new(),
+        open_registrations: true,
+        search: None,
+        nodeinfo_features: NodeInfoFeatures::default(),
+        redis: None,
+        session_config: Some(noombat_identity::session::SessionConfig {
+            jwt_secret: JWT_SECRET.to_owned(),
+            domain: DOMAIN.to_owned(),
+            access_ttl_secs: 900,
+            refresh_ttl_secs: 2_592_000,
+        }),
+        orcid_config: None,
+        mailer: None,
+        chatmail_domain: None,
+        chatmail_admin_url: None,
+        chatmail_admin_secret: None,
+        chatmail_admin_client: None,
+        contact_email: format!("admin@{DOMAIN}"),
+        trending_cache: None,
+        analytics: None,
+        relay_verification_policy: None,
+        envelope_key: None,
+        fallback_rate_limiter: FallbackRateLimiter::new(),
+        rate_limit: 100_000,
+        rate_limit_window_secs: 60,
+        fed_rate_limit: 100_000,
+        fed_rate_limit_window_secs: 60,
+        cv_download_limit: 100_000,
+        cv_download_window_secs: 60,
+        media,
+        deletion_grace_days: 30,
+        allow_unsigned_fetch: false,
+    }
+}
+
+/// Publishing keeps the order the author put the images in.
+///
+/// Through the outbox route, because the ordering is decided by the
+/// claim inside it: a test that wrote the positions itself would pass
+/// even if publishing recorded none, which is what it did before.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn publishing_keeps_the_images_in_the_authors_order(pool: PgPool) {
+    let root = tempfile::tempdir().expect("temp dir");
+    let media = MediaStore::local(root.path()).expect("store");
+
+    let username = "alice";
+    let author = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO actors (actor_type, ap_id, username, domain, public_key_pem, is_local) \
+         VALUES ('individual', $1, $2, $3, 'KEY', TRUE) RETURNING id",
+    )
+    .bind(format!("https://{DOMAIN}/users/{username}"))
+    .bind(username)
+    .bind(DOMAIN)
+    .fetch_one(&pool)
+    .await
+    .expect("author");
+
+    let token = noombat_identity::session::create_session(
+        &pool,
+        &noombat_identity::session::SessionConfig {
+            jwt_secret: JWT_SECRET.to_owned(),
+            domain: DOMAIN.to_owned(),
+            access_ttl_secs: 900,
+            refresh_ttl_secs: 2_592_000,
+        },
+        author,
+        username,
+        noombat_core::actor::InstanceRole::User,
+        noombat_identity::session::SessionContext::sign_in(),
+    )
+    .await
+    .expect("session")
+    .access_token;
+
+    // Uploaded in one order and attached in another, so insertion order
+    // and the author's arrangement disagree.
+    let first_uploaded = upload(&pool, author, Some("uploaded first")).await;
+    let second_uploaded = upload(&pool, author, Some("uploaded second")).await;
+
+    let body = serde_json::json!({
+        "content": "Look at these",
+        "attachment_ids": [second_uploaded, first_uploaded],
+    });
+
+    let app = build_router(test_state(pool.clone(), media));
+    let response = app
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/users/{username}/outbox"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .expect("publish");
+
+    assert_eq!(response.status(), axum::http::StatusCode::CREATED);
+
+    let post_id: Uuid = sqlx::query_scalar("SELECT id FROM posts WHERE actor_id = $1")
+        .bind(author)
+        .fetch_one(&pool)
+        .await
+        .expect("the post");
+
+    let descriptions: Vec<String> = noombat_api::routes::feed::attachments_for(&pool, post_id)
+        .await
+        .into_iter()
+        .map(|attachment| attachment.alt)
+        .collect();
+
+    assert_eq!(
+        descriptions,
+        vec!["uploaded second".to_owned(), "uploaded first".to_owned()],
+        "the gallery must read in the order the author attached them"
+    );
 }

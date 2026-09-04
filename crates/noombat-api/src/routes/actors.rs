@@ -872,8 +872,12 @@ async fn claim_attachments(
     post_id: Uuid,
     ids: &[Uuid],
 ) -> Result<u64, NoombatError> {
+    // `ordinal` comes from the id's position in the author's list, which
+    // is the order they arranged the images in. `array_position` reads
+    // it from the same array the filter uses, so the two cannot disagree.
     let result = sqlx::query(
-        "UPDATE media_attachments SET post_id = $1
+        "UPDATE media_attachments
+         SET post_id = $1, ordinal = COALESCE(array_position($2, id), 1) - 1
          WHERE id = ANY($2) AND actor_id = $3 AND purpose = 'post' AND post_id IS NULL",
     )
     .bind(post_id)

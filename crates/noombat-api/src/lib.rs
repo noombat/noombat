@@ -17,6 +17,7 @@ pub mod i18n;
 pub mod interactions;
 pub mod jobs_federation;
 pub mod media;
+pub mod media_ops;
 pub mod middleware;
 pub mod rate_limit;
 pub mod routes;
