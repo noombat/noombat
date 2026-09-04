@@ -38,6 +38,24 @@ fn allow_unsigned_fallback() -> bool {
     ALLOW_UNSIGNED_FETCH.get().copied().unwrap_or(false)
 }
 
+/// The most of a peer's URL worth repeating back in an error message.
+const URL_IN_MESSAGE: usize = 200;
+
+/// Render a peer-supplied URL for an error message.
+///
+/// Two reasons not to interpolate it directly. `Debug` escapes a control
+/// character that `Display` would write raw, and these messages are built
+/// before anything has decided where they will be read: an error string
+/// carrying a newline forges a line in whatever log receives it. The
+/// length is the peer's choice too, and the failing URL is recognisable
+/// long before its two-hundredth character.
+fn in_message(url: &str) -> String {
+    match url.char_indices().nth(URL_IN_MESSAGE) {
+        Some((cut, _)) => format!("{:?}...", &url[..cut]),
+        None => format!("{url:?}"),
+    }
+}
+
 /// Find the actor whose key signs server-to-server fetches.
 ///
 /// The instance actor, where one exists: a signed fetch tells the peer who
@@ -105,10 +123,9 @@ pub async fn signed_get(
 ) -> Result<reqwest::Response> {
     // Checked here as well as in `unsigned_get`, because the signed path
     // below does not go through it and is the one the inbox uses.
-    crate::http::check_url(
-        &reqwest::Url::parse(url)
-            .map_err(|e| NoombatError::BadRequest(format!("unusable URI {url}: {e}")))?,
-    )?;
+    crate::http::check_url(&reqwest::Url::parse(url).map_err(|e| {
+        NoombatError::BadRequest(format!("unusable URI {}: {e}", in_message(url)))
+    })?)?;
 
     let fallback = allow_unsigned_fallback();
     // Look up the signing actor's AP ID and private key.
@@ -124,8 +141,10 @@ pub async fn signed_get(
         Some((ap_id, Some(pem))) => (ap_id, pem),
         _ => {
             if fallback {
+                // `?url` rather than the bare field: Debug escapes, and a
+                // peer chooses this string.
                 warn!(
-                    url,
+                    url = ?url,
                     "signed_get: no private key available; falling back to unsigned fetch"
                 );
                 return unsigned_get(http_client, url).await;
@@ -161,7 +180,7 @@ pub async fn signed_get(
         Err(e) => {
             if fallback {
                 warn!(
-                    url,
+                    url = ?url,
                     "signed_get: signing failed ({e}); falling back to unsigned fetch"
                 );
                 return unsigned_get(http_client, url).await;
@@ -172,10 +191,9 @@ pub async fn signed_get(
         }
     };
 
-    http_client
-        .execute(signed_request)
-        .await
-        .map_err(|e| NoombatError::Federation(format!("signed fetch of {url} failed: {e}")))
+    http_client.execute(signed_request).await.map_err(|e| {
+        NoombatError::Federation(format!("signed fetch of {} failed: {e}", in_message(url)))
+    })
 }
 
 /// Unsigned GET with the ActivityPub Accept header.
@@ -184,4 +202,72 @@ pub async fn signed_get(
 /// HTTP status. The caller is responsible for status checking.
 async fn unsigned_get(http_client: &reqwest::Client, url: &str) -> Result<reqwest::Response> {
     crate::http::guarded_get(http_client, url).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_newline_cannot_forge_a_log_line() {
+        let forged = in_message("https://a.test/x\nERROR peer is trusted");
+        assert!(
+            !forged.contains('\n'),
+            "a raw newline survived into the message: {forged}"
+        );
+        assert!(
+            forged.contains("\\n"),
+            "the newline should be escaped, not dropped: {forged}"
+        );
+    }
+
+    #[test]
+    fn a_carriage_return_and_a_quote_are_escaped_too() {
+        let shown = in_message("https://a.test/\r\"");
+        assert!(
+            !shown.contains('\r'),
+            "a raw carriage return survived: {shown}"
+        );
+        assert!(shown.contains("\\r") && shown.contains("\\\""), "{shown}");
+    }
+
+    #[test]
+    fn a_long_url_is_cut_to_a_bounded_length() {
+        let long = format!("https://a.test/{}", "x".repeat(5_000));
+        let shown = in_message(&long);
+        assert!(
+            shown.len() < long.len() / 2,
+            "the message grew with the peer's URL: {} chars",
+            shown.len()
+        );
+        assert!(
+            shown.ends_with("\"..."),
+            "a cut value should say so: {shown}"
+        );
+    }
+
+    #[test]
+    fn an_ordinary_url_is_shown_whole() {
+        let shown = in_message("https://a.test/users/bob");
+        assert_eq!(shown, "\"https://a.test/users/bob\"");
+    }
+
+    // A cut must count characters, not bytes. Counting bytes keeps the
+    // wrong amount and, where the offset falls inside a character,
+    // panics instead of truncating. Asserting only "it did not panic"
+    // passes whenever the byte offset happens to land on a boundary,
+    // which is half the time, so count what was kept.
+    #[test]
+    fn a_multibyte_url_is_cut_on_a_character_boundary() {
+        let wide = format!("https://a.test/{}", "é".repeat(5_000));
+        let shown = in_message(&wide);
+        assert!(shown.ends_with("\"..."), "{shown}");
+
+        let kept = shown.trim_end_matches("...").trim_matches('"');
+        assert_eq!(
+            kept.chars().count(),
+            URL_IN_MESSAGE,
+            "the cut kept the wrong number of characters: {shown}"
+        );
+    }
 }
