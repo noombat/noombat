@@ -156,8 +156,7 @@ function buildRow(
   const alt = document.createElement("input");
   alt.type = "text";
   alt.id = altId;
-  alt.className =
-    "w-full border border-border-default rounded p-2 bg-bg-primary text-text-primary";
+  alt.className = "w-full border border-border-default rounded p-2 bg-bg-primary text-text-primary";
   // Sent on its own rather than with the post, because the row exists
   // already and the document the post federates is built from it.
   alt.addEventListener("change", () => {
