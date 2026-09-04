@@ -264,6 +264,9 @@ compose_type_article: "Article"
 compose_article_title: "Title"
 compose_article_title_placeholder: "Article title"
 compose_article_image: "Featured image URL (optional)"
+compose_article_image_alt: "Describe the image (optional)"
+compose_article_image_alt_placeholder: "A bridge at dusk, seen from the river"
+compose_article_image_alt_help: "Read aloud in place of the image. Leave it empty if the image is decorative."
 
 # Feed (article entries).
 feed_read_more: "Read more"

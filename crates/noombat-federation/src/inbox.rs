@@ -962,7 +962,10 @@ async fn handle_create(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let featured_image_url = extract_image_url(object);
+    let (featured_image_url, featured_image_alt) = match extract_image_url(object) {
+        Some((url, alt)) => (Some(url), alt),
+        None => (None, None),
+    };
 
     // Resolve the remote author.
     let remote_actor = resolve_actor(pool, http_client, &activity.actor).await?;
@@ -1007,6 +1010,7 @@ async fn handle_create(
         post_type: post_type.to_owned(),
         title,
         featured_image_url,
+        featured_image_alt,
         content_md: content.content_md,
         content_html: content.content_html,
         sanitiser_version: content.sanitiser_version,
@@ -1349,7 +1353,10 @@ async fn handle_update_post(
 
     let title = object.get("name").and_then(|v| v.as_str());
 
-    let featured_image_url = extract_image_url(object);
+    let (featured_image_url, featured_image_alt) = match extract_image_url(object) {
+        Some((url, alt)) => (Some(url), alt),
+        None => (None, None),
+    };
 
     // Derive updated visibility from the object's to/cc addressing.
     let to = extract_string_array(object, "to");
@@ -1366,12 +1373,13 @@ async fn handle_update_post(
                sanitiser_version = $4,
                title = $5,
                featured_image_url = $6,
-               visibility = $7,
-               in_reply_to = $8,
-               ap_object = $9,
-               integrity_proof_verified = $10
+               featured_image_alt = $7,
+               visibility = $8,
+               in_reply_to = $9,
+               ap_object = $10,
+               integrity_proof_verified = $11
            WHERE ap_id = $1
-             AND actor_id = (SELECT id FROM actors WHERE ap_id = $11)"#,
+             AND actor_id = (SELECT id FROM actors WHERE ap_id = $12)"#,
     )
     .bind(ap_id)
     .bind(&content.content_md)
@@ -1379,6 +1387,9 @@ async fn handle_update_post(
     .bind(content.sanitiser_version)
     .bind(title)
     .bind(&featured_image_url)
+    // An edit that removes the description must clear the column, so
+    // this is bound unconditionally rather than only when present.
+    .bind(&featured_image_alt)
     .bind(&visibility)
     .bind(&in_reply_to)
     .bind(object)
@@ -1760,7 +1771,10 @@ async fn fetch_and_persist_remote_post(
         .and_then(|v| v.as_str())
         .map(String::from);
 
-    let featured_image_url = extract_image_url(&object);
+    let (featured_image_url, featured_image_alt) = match extract_image_url(&object) {
+        Some((url, alt)) => (Some(url), alt),
+        None => (None, None),
+    };
 
     // Derive visibility from the object's own to/cc addressing.
     let to = extract_string_array(&object, "to");
@@ -1796,6 +1810,7 @@ async fn fetch_and_persist_remote_post(
         post_type: post_type.to_owned(),
         title,
         featured_image_url,
+        featured_image_alt,
         content_md: content.content_md,
         content_html: content.content_html,
         sanitiser_version: content.sanitiser_version,
@@ -2050,14 +2065,16 @@ fn extract_in_reply_to(object: &serde_json::Value) -> Option<String> {
 /// Checks `image` first (Ghost and CMS publishers; a bare URL or an
 /// object with `url`), then the first `attachment` of type `"Image"`
 /// (WordPress, Mastodon).
-fn extract_image_url(object: &serde_json::Value) -> Option<String> {
+fn extract_image_url(object: &serde_json::Value) -> Option<(String, Option<String>)> {
     // 1. `image` property (string or object).
     if let Some(image) = object.get("image") {
         if let Some(url) = image.as_str() {
-            return Some(url.to_owned());
+            // A bare string carries a URL and nothing else, so there is
+            // no description to take.
+            return Some((url.to_owned(), None));
         }
         if let Some(url) = image.get("url").and_then(|v| v.as_str()) {
-            return Some(url.to_owned());
+            return Some((url.to_owned(), image_description(image)));
         }
     }
 
@@ -2068,12 +2085,34 @@ fn extract_image_url(object: &serde_json::Value) -> Option<String> {
             if att_type == "Image"
                 && let Some(url) = att.get("url").and_then(|v| v.as_str())
             {
-                return Some(url.to_owned());
+                return Some((url.to_owned(), image_description(att)));
             }
         }
     }
 
     None
+}
+
+/// The longest description accepted from a peer.
+///
+/// Generous for a sentence and far short of a payload. Alt text is read
+/// aloud in full, so an unbounded one is a denial of service against a
+/// screen-reader user before it is a storage problem.
+const MAX_IMAGE_ALT_BYTES: usize = 2000;
+
+/// The peer's own description of an image, from the `name` property
+/// ActivityStreams gives an attachment. This is what Mastodon writes
+/// alt text into.
+///
+/// Whitespace-only text is dropped rather than stored. It would render
+/// as a non-empty `alt`, which tells a screen reader the image is
+/// meaningful and then announces nothing.
+fn image_description(image: &serde_json::Value) -> Option<String> {
+    let name = image.get("name").and_then(|v| v.as_str())?.trim();
+    if name.is_empty() {
+        return None;
+    }
+    Some(truncate_on_char_boundary(name, MAX_IMAGE_ALT_BYTES).to_owned())
 }
 
 // ..... HASHTAG EXTRACTION FROM TAG ARRAY .....
@@ -2258,7 +2297,7 @@ mod tests {
         });
         assert_eq!(
             extract_image_url(&obj),
-            Some("https://example.com/photo.jpg".to_owned())
+            Some(("https://example.com/photo.jpg".to_owned(), None))
         );
     }
 
@@ -2270,7 +2309,7 @@ mod tests {
         });
         assert_eq!(
             extract_image_url(&obj),
-            Some("https://example.com/photo.jpg".to_owned())
+            Some(("https://example.com/photo.jpg".to_owned(), None))
         );
     }
 
@@ -2285,7 +2324,7 @@ mod tests {
         });
         assert_eq!(
             extract_image_url(&obj),
-            Some("https://example.com/photo.jpg".to_owned())
+            Some(("https://example.com/photo.jpg".to_owned(), None))
         );
     }
 
@@ -2300,7 +2339,7 @@ mod tests {
         });
         assert_eq!(
             extract_image_url(&obj),
-            Some("https://example.com/featured.jpg".to_owned())
+            Some(("https://example.com/featured.jpg".to_owned(), None))
         );
     }
 

@@ -497,6 +497,17 @@ CREATE TABLE posts (
     post_type                TEXT NOT NULL DEFAULT 'note' CHECK (post_type IN ('note', 'article')),
     title                    TEXT,
     featured_image_url       TEXT,
+    -- What a screen reader announces in place of the featured image.
+    --
+    -- Nullable, and the null is meaningful: it says the author was asked
+    -- and declined, which renders as alt="" and marks the image
+    -- decorative. A required field produces "image" and "photo", which
+    -- is worse for a reader than announcing nothing at all.
+    --
+    -- Carried on the post rather than in media_attachments because the
+    -- featured image is a URL the author supplies, which may point at
+    -- another instance and so has no row of its own here.
+    featured_image_alt       TEXT,
     content_md               TEXT, -- NULL for a remote post whose author sent no `source`; a local post always has one
     content_html             TEXT NOT NULL,
     sanitiser_version        SMALLINT NOT NULL DEFAULT 0, -- policy that produced content_html; 0 = not the ingestion sanitiser
@@ -517,7 +528,14 @@ CREATE TABLE posts (
     -- trending, search, and the badge on the post itself.
     relayed_unverified       BOOLEAN NOT NULL DEFAULT FALSE,
     ap_object                JSONB NOT NULL,
-    created_at               TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- A featured image is what alt text describes, so text without one
+    -- is a description of nothing: either the write path dropped the
+    -- URL, or the column was set on a post that never had an image.
+    CONSTRAINT featured_alt_needs_an_image CHECK (
+        featured_image_alt IS NULL
+        OR featured_image_url IS NOT NULL
+    )
 );
 
 CREATE INDEX idx_posts_actor ON posts (actor_id, created_at DESC);

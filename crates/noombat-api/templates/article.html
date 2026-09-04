@@ -24,12 +24,13 @@
 
             {% if featured_image_url.is_some() %}
             <figure class="mb-6">
-                <!-- alt="" marks the image as decorative because
-                     Noombat does not collect alt text for featured
-                     images yet. A future enhancement should add an
-                     alt-text field to the article composer. -->
+                <!-- Empty when the author left the field blank, which
+                     marks the image decorative. That is the honest
+                     reading of "no description given": inventing one
+                     from the title would describe the article, not the
+                     picture. -->
                 <img src="{{ featured_image_url.as_deref().unwrap_or_default() }}"
-                     alt=""
+                     alt="{{ featured_image_alt.as_deref().unwrap_or_default() }}"
                      class="w-full rounded"
                      loading="lazy">
             </figure>

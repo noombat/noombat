@@ -294,6 +294,10 @@ struct OutboxPostBody {
     title: Option<String>,
     /// Featured image URL (optional, primarily for Articles).
     featured_image_url: Option<String>,
+    /// What a screen reader announces in place of that image. Optional:
+    /// a required field produces "image" and "photo", which is worse for
+    /// a reader than the empty `alt` that marks it decorative.
+    featured_image_alt: Option<String>,
     /// The AP URI of the post this is a reply to. `None` for
     /// top-level posts.
     in_reply_to: Option<String>,
@@ -312,6 +316,7 @@ struct LocalPost<'a> {
     source_markdown: &'a str,
     title: Option<&'a str>,
     featured_image_url: Option<&'a str>,
+    featured_image_alt: Option<&'a str>,
     in_reply_to: Option<&'a str>,
     to: &'a [String],
     cc: &'a [String],
@@ -370,10 +375,18 @@ fn build_create_activity(
         ap_object["name"] = json!(title);
     }
     if let Some(image_url) = post.featured_image_url {
-        ap_object["image"] = json!({
+        let mut image = json!({
             "type": "Image",
             "url": image_url
         });
+        // `name` is where ActivityStreams puts an attachment's
+        // description, and is what Mastodon reads as alt text. Emitted
+        // only when the author wrote one: an empty `name` would claim a
+        // description exists and then announce nothing.
+        if let Some(alt) = post.featured_image_alt {
+            image["name"] = json!(alt);
+        }
+        ap_object["image"] = image;
     }
     if let Some(reply_to) = post.in_reply_to {
         ap_object["inReplyTo"] = json!(reply_to);
@@ -545,6 +558,19 @@ async fn post_outbox(
         })
         .collect();
 
+    // Alt text only where there is an image to describe, and only when
+    // it says something. Whitespace would render as a non-empty `alt`,
+    // telling a screen reader the image is meaningful and then
+    // announcing nothing, and text with no image is what the
+    // `featured_alt_needs_an_image` constraint refuses.
+    let featured_image_alt = body.featured_image_url.as_ref().and_then(|_| {
+        body.featured_image_alt
+            .as_deref()
+            .map(str::trim)
+            .filter(|alt| !alt.is_empty())
+            .map(str::to_owned)
+    });
+
     // ActivityStreams type: Note or Article.
     let ap_type = if is_article { "Article" } else { "Note" };
 
@@ -557,6 +583,7 @@ async fn post_outbox(
             source_markdown: &body.content,
             title: body.title.as_deref(),
             featured_image_url: body.featured_image_url.as_deref(),
+            featured_image_alt: featured_image_alt.as_deref(),
             in_reply_to: body.in_reply_to.as_deref(),
             to: &to,
             cc: &cc,
@@ -574,6 +601,7 @@ async fn post_outbox(
         post_type: body.post_type.clone(),
         title: body.title.clone(),
         featured_image_url: body.featured_image_url.clone(),
+        featured_image_alt: featured_image_alt.clone(),
         content_md: body.content.clone(),
         content_html: content_html.clone(),
         in_reply_to: body.in_reply_to.clone(),
@@ -1001,6 +1029,7 @@ mod tests {
             source_markdown: "hello",
             title: None,
             featured_image_url: None,
+            featured_image_alt: None,
             in_reply_to: None,
             to,
             cc,

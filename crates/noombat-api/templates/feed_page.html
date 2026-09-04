@@ -38,8 +38,11 @@
         </a>
     </h2>
     {% if post.featured_image_url.is_some() %}
+    {# Empty where the author gave no description, which marks the image
+       decorative. The preview text below is about the article, not the
+       picture, so it is not a substitute. #}
     <img src="{{ post.featured_image_url.as_deref().unwrap_or_default() }}"
-         alt=""
+         alt="{{ post.featured_image_alt.as_deref().unwrap_or_default() }}"
          class="w-full max-h-48 object-cover rounded mb-2"
          loading="lazy">
     {% endif %}
@@ -66,6 +69,7 @@
         </a>
     </footer>
     {% endif %}
+
 </article>
 {% endfor %}
 {% if has_next %}

@@ -265,6 +265,9 @@ compose_type_article: "Artigo"
 compose_article_title: "Título"
 compose_article_title_placeholder: "Título do artigo"
 compose_article_image: "URL da imagem de destaque (opcional)"
+compose_article_image_alt: "Descreva a imagem (opcional)"
+compose_article_image_alt_placeholder: "Uma ponte ao anoitecer, vista do rio"
+compose_article_image_alt_help: "Lido em voz alta no lugar da imagem. Deixe em branco se a imagem for decorativa."
 
 # Feed (entradas de artigo).
 feed_read_more: "Ler mais"

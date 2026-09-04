@@ -375,6 +375,10 @@ pub struct NewPost {
     pub title: Option<String>,
     /// Featured image URL. Primarily relevant for Articles.
     pub featured_image_url: Option<String>,
+    /// What a screen reader announces in place of the featured image.
+    /// `None` where the author left the field empty, which renders as
+    /// `alt=""` and marks the image decorative.
+    pub featured_image_alt: Option<String>,
     pub content_md: String,
     pub content_html: String,
     /// The AP URI of the post this is a reply to (`inReplyTo`).
@@ -398,8 +402,9 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     let row = sqlx::query_as::<_, PostSummary>(
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, title, featured_image_url,
+                featured_image_alt,
                 content_md, content_html, in_reply_to, visibility, ap_object)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
            RETURNING id, ap_id, ap_object"#,
     )
     .bind(id)
@@ -408,6 +413,7 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
     .bind(&post.post_type)
     .bind(&post.title)
     .bind(&post.featured_image_url)
+    .bind(&post.featured_image_alt)
     .bind(&post.content_md)
     .bind(&post.content_html)
     .bind(&post.in_reply_to)
@@ -715,6 +721,11 @@ pub struct RemotePost {
     /// Featured image URL (first `Image` attachment or `image` property).
     /// Primarily relevant for Articles.
     pub featured_image_url: Option<String>,
+    /// The peer's own description of that image, from the `name`
+    /// property ActivityStreams gives an attachment. `None` where the
+    /// peer sent none, which is not the same as an author declining:
+    /// both render as `alt=""`, and neither invents a description.
+    pub featured_image_alt: Option<String>,
     /// Original Markdown source from the Mastodon-convention `source`
     /// property. `None` when the peer sent none, and never a copy of
     /// `content_html`: that is HTML in a column named for Markdown.
@@ -778,9 +789,10 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
     let row = sqlx::query_scalar::<_, Uuid>(
         r#"INSERT INTO posts
                (id, actor_id, ap_id, post_type, title, featured_image_url,
+                featured_image_alt,
                 content_md, content_html, sanitiser_version,
                 in_reply_to, visibility, ap_object, integrity_proof_verified)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
            ON CONFLICT (ap_id) DO NOTHING
            RETURNING id"#,
     )
@@ -790,6 +802,7 @@ pub async fn create_remote_post(pool: &PgPool, post: &RemotePost) -> Result<Opti
     .bind(&post.post_type)
     .bind(&post.title)
     .bind(&post.featured_image_url)
+    .bind(&post.featured_image_alt)
     .bind(&post.content_md)
     .bind(&post.content_html)
     .bind(post.sanitiser_version)
@@ -1494,6 +1507,7 @@ mod tests {
             post_type: "note".to_owned(),
             title: None,
             featured_image_url: None,
+            featured_image_alt: None,
             content_md: md.map(str::to_owned),
             content_html: "<p>safe</p>".to_owned(),
             sanitiser_version: noombat_markup::sanitise::STRICT_VERSION,

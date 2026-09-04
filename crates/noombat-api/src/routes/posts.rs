@@ -46,7 +46,8 @@ async fn get_post(
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
         r#"SELECT p.id, p.actor_id, p.ap_id, p.post_type, p.title,
-                  p.featured_image_url, p.content_md, p.content_html,
+                  p.featured_image_url, p.featured_image_alt,
+                  p.content_md, p.content_html,
                   p.visibility, p.relayed_unverified, p.ap_object, p.created_at,
                   a.username, a.display_name
            FROM posts p
@@ -202,6 +203,7 @@ async fn get_post(
             author: row.username.clone(),
             author_display,
             featured_image_url: row.featured_image_url,
+            featured_image_alt: row.featured_image_alt,
             headings,
             content_html,
             created_at: row.created_at.to_rfc3339(),
@@ -237,6 +239,7 @@ struct PostRow {
     post_type: String,
     title: Option<String>,
     featured_image_url: Option<String>,
+    featured_image_alt: Option<String>,
     /// `None` for remote posts whose author sent no Markdown source.
     /// Nullable rather than holding a copy of `content_html` in that
     /// case, which would put HTML in a column named for Markdown.
@@ -280,6 +283,9 @@ struct ArticlePage {
     author: String,
     author_display: String,
     featured_image_url: Option<String>,
+    /// The author's description of that image. `None` renders as
+    /// `alt=""`, which marks the image decorative.
+    featured_image_alt: Option<String>,
     headings: Vec<Heading>,
     content_html: String,
     created_at: String,

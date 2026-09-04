@@ -204,7 +204,8 @@ async fn feed_partial(
     for id in &post_ids {
         if let Ok(Some(row)) = sqlx::query_as::<_, PostRow>(
             r#"SELECT p.id, p.actor_id, p.post_type, p.title,
-                      p.featured_image_url, p.content_html, p.created_at,
+                      p.featured_image_url, p.featured_image_alt,
+                      p.content_html, p.created_at,
                       p.ap_id, a.username, a.display_name, a.actor_status
                FROM posts p
                INNER JOIN actors a ON a.id = p.actor_id
@@ -273,6 +274,7 @@ async fn feed_partial(
                 is_article,
                 title,
                 featured_image_url: row.featured_image_url,
+                featured_image_alt: row.featured_image_alt,
                 preview_text,
                 aria_label,
             });
@@ -309,6 +311,7 @@ struct PostRow {
     post_type: String,
     title: Option<String>,
     featured_image_url: Option<String>,
+    featured_image_alt: Option<String>,
     content_html: String,
     created_at: chrono::DateTime<chrono::Utc>,
     ap_id: String,
@@ -343,6 +346,9 @@ pub struct FeedPost {
     pub title: Option<String>,
     /// Featured image URL (optional, primarily for articles).
     pub featured_image_url: Option<String>,
+    /// The author's description of that image. `None` renders as
+    /// `alt=""`, which marks the image decorative.
+    pub featured_image_alt: Option<String>,
     /// Plain-text preview for articles (HTML-stripped, truncated).
     /// Empty for Notes (which render their full HTML inline).
     pub preview_text: String,

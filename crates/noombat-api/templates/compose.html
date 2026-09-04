@@ -52,6 +52,22 @@
                                   bg-bg-primary text-text-primary"
                            placeholder="https://example.com/image.jpg">
                 </div>
+                <div>
+                    <label for="featured_image_alt" class="block text-sm font-medium mb-1">
+                        {{ i18n.t("compose_article_image_alt") }}
+                    </label>
+                    {# Optional by decision. A required field produces "image"
+                       and "photo", which is worse for a screen reader than the
+                       empty alt that marks a picture decorative. #}
+                    <input type="text" id="featured_image_alt" name="featured_image_alt"
+                           aria-describedby="featured-image-alt-help"
+                           class="w-full border border-border-default rounded p-2
+                                  bg-bg-primary text-text-primary"
+                           placeholder="{{ i18n.t("compose_article_image_alt_placeholder") }}">
+                    <p id="featured-image-alt-help" class="text-sm text-text-secondary mt-1">
+                        {{ i18n.t("compose_article_image_alt_help") }}
+                    </p>
+                </div>
             </div>
 
             <div id="editor-mount"
