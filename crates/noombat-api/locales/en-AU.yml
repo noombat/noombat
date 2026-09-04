@@ -196,6 +196,12 @@ search_index_label: "Search category"
 search_submit: "Search"
 search_no_results: "No results found."
 
+# Who posted a job: the employer itself, or an agency recruiting for a client.
+job_kind_filter_label: "Posted by"
+job_kind_any: "Anyone"
+job_kind_employer: "Employer"
+job_kind_agency: "Agency"
+
 # Follow requests.
 follow_requests_title: "Follow requests"
 follow_requests_heading: "Follow requests"

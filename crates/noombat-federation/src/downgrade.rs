@@ -819,6 +819,7 @@ mod tests {
         Actor {
             id: uuid::Uuid::new_v4(),
             actor_type: ActorType::Individual,
+            org_kind: None,
             ap_id: "https://noombat.social/users/alice".into(),
             username: "alice".into(),
             display_name: Some("Alice".into()),

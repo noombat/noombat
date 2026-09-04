@@ -450,6 +450,9 @@ struct SearchResultEntry {
     url: String,
     title: String,
     subtitle: String,
+    /// The i18n key for the poster's declaration, on a job result.
+    /// Empty on every other index, and on a posting an individual wrote.
+    org_kind_key: String,
 }
 
 #[derive(Template, WebTemplate)]
@@ -460,6 +463,9 @@ struct SearchPage {
     contrast: Contrast,
     query: String,
     index: String,
+    /// The declaration the seeker filtered on, so the control comes back
+    /// showing what it is doing rather than reset to "any".
+    org_kind: String,
     results: Vec<SearchResultEntry>,
 }
 
@@ -1160,6 +1166,18 @@ async fn create_job_from_form(
             .into_response();
     }
 
+    // Likewise on both paths: a seeker filtering for direct employers
+    // reads a declaration, and a posting written through the form with
+    // none would be missing from both filtered lists.
+    if actor.actor_type == noombat_core::actor::ActorType::Organization && actor.org_kind.is_none()
+    {
+        return (
+            axum::http::StatusCode::BAD_REQUEST,
+            "declare whether this organisation is an employer or an agency before posting",
+        )
+            .into_response();
+    }
+
     let params = noombat_jobs::NewJobPosting {
         title: form.title.clone(),
         description_md: form.description_md.clone(),
@@ -1756,9 +1774,27 @@ async fn search_html_page(
     let index = params.index.clone().unwrap_or_else(|| "profiles".into());
     let mut results = Vec::new();
 
+    // Parsed rather than interpolated. The value reaches a Meilisearch
+    // filter expression, so anything but the two declarations it can
+    // name is dropped, and the control comes back showing "any".
+    let org_kind = params
+        .org_kind
+        .as_deref()
+        .and_then(noombat_core::actor::OrgKind::parse);
+
+    // Only the jobs index carries the attribute. Meilisearch rejects a
+    // filter naming an attribute an index was not told about, so sending
+    // it while searching profiles would fail the whole search.
+    let filter = match (index.as_str(), org_kind) {
+        ("jobs", Some(kind)) => Some(format!("org_kind = \"{}\"", kind.as_str())),
+        _ => None,
+    };
+
     if !query.is_empty()
         && let Some(ref backend) = state.search
-        && let Ok(hits) = backend.search(&index, &query, None, 20, 0).await
+        && let Ok(hits) = backend
+            .search(&index, &query, filter.as_deref(), 20, 0)
+            .await
     {
         for hit in hits {
             let title = hit
@@ -1791,10 +1827,24 @@ async fn search_html_page(
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();
+            // Read back from the hit, not from the filter: an unfiltered
+            // list mixes employers and agencies, and the badge is what
+            // tells them apart.
+            let org_kind_key = hit
+                .get("org_kind")
+                .and_then(|v| v.as_str())
+                .and_then(noombat_core::actor::OrgKind::parse)
+                .map(|kind| match kind {
+                    noombat_core::actor::OrgKind::Employer => "job_kind_employer",
+                    noombat_core::actor::OrgKind::Agency => "job_kind_agency",
+                })
+                .unwrap_or_default()
+                .to_owned();
             results.push(SearchResultEntry {
                 url,
                 title,
                 subtitle,
+                org_kind_key,
             });
         }
     }
@@ -1805,6 +1855,7 @@ async fn search_html_page(
         contrast,
         query,
         index,
+        org_kind: org_kind.map(|k| k.as_str()).unwrap_or_default().to_owned(),
         results,
     }
 }
@@ -1813,6 +1864,9 @@ async fn search_html_page(
 struct SearchQueryParams {
     q: Option<String>,
     index: Option<String>,
+    /// Free-form here and parsed at use, so a value the enum does not
+    /// name is an unfiltered search rather than a rejected request.
+    org_kind: Option<String>,
 }
 
 // ..... Tests .....

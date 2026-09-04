@@ -8,6 +8,7 @@
 pub mod applications;
 
 use chrono::{DateTime, Utc};
+use noombat_core::actor::OrgKind;
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -31,6 +32,13 @@ pub struct JobPosting {
     pub published_at: Option<DateTime<Utc>>,
     pub expires_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
+    /// The poster's declaration, read from the actor rather than stored
+    /// on the posting: an agency that re-labels itself must not leave
+    /// last year's postings claiming to be a direct employer.
+    ///
+    /// `None` only where an individual posted, since an organisation
+    /// cannot publish without declaring.
+    pub org_kind: Option<OrgKind>,
 }
 
 /// Parameters for creating a new job posting.
@@ -94,7 +102,8 @@ pub async fn create_job(
            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
            RETURNING id, actor_id, ap_id, title, description_md, description_html,
                      location, remote, salary_min, salary_max, currency,
-                     requirements, published_at, expires_at, created_at"#,
+                     requirements, published_at, expires_at, created_at,
+                     (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind"#,
     )
     .bind(id)
     .bind(actor_id)
@@ -124,7 +133,8 @@ pub async fn get_job(pool: &PgPool, id: Uuid) -> Result<JobPosting> {
     let row = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
-                  requirements, published_at, expires_at, created_at
+                  requirements, published_at, expires_at, created_at,
+                  (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind
            FROM job_postings
            WHERE id = $1"#,
     )
@@ -149,7 +159,8 @@ pub async fn list_jobs_by_actor(
     let rows = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
-                  requirements, published_at, expires_at, created_at
+                  requirements, published_at, expires_at, created_at,
+                  (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind
            FROM job_postings
            WHERE actor_id = $1 AND published_at IS NOT NULL
            ORDER BY published_at DESC
@@ -165,21 +176,30 @@ pub async fn list_jobs_by_actor(
 }
 
 /// List all published, non-expired job postings (for the public jobs page).
+///
+/// `org_kind` filters to postings from direct employers or from
+/// agencies. `None` is every posting, including those from individuals,
+/// rather than a third category the caller has to know to ask for.
 pub async fn list_published_jobs(
     pool: &PgPool,
+    org_kind: Option<OrgKind>,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<JobPosting>> {
     let rows = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
-                  requirements, published_at, expires_at, created_at
+                  requirements, published_at, expires_at, created_at,
+                  (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind
            FROM job_postings
            WHERE published_at IS NOT NULL
              AND (expires_at IS NULL OR expires_at > now())
+             AND ($1::text IS NULL
+                  OR (SELECT org_kind FROM actors WHERE actors.id = actor_id) = $1)
            ORDER BY published_at DESC
-           LIMIT $1 OFFSET $2"#,
+           LIMIT $2 OFFSET $3"#,
     )
+    .bind(org_kind.map(|k| k.as_str()))
     .bind(limit)
     .bind(offset)
     .fetch_all(pool)
@@ -230,7 +250,8 @@ pub async fn update_job(
     let existing = sqlx::query_as::<_, JobPosting>(
         r#"SELECT id, actor_id, ap_id, title, description_md, description_html,
                   location, remote, salary_min, salary_max, currency,
-                  requirements, published_at, expires_at, created_at
+                  requirements, published_at, expires_at, created_at,
+                  (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind
            FROM job_postings
            WHERE id = $1 AND actor_id = $2"#,
     )
@@ -275,7 +296,8 @@ pub async fn update_job(
            WHERE id = $1 AND actor_id = $2
            RETURNING id, actor_id, ap_id, title, description_md, description_html,
                      location, remote, salary_min, salary_max, currency,
-                     requirements, published_at, expires_at, created_at"#,
+                     requirements, published_at, expires_at, created_at,
+                     (SELECT org_kind FROM actors WHERE actors.id = actor_id) AS org_kind"#,
     )
     .bind(id)
     .bind(actor_id)

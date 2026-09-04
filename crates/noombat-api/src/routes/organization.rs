@@ -35,6 +35,10 @@ pub fn router() -> Router<AppState> {
             axum::routing::post(enrol_organization),
         )
         .route(
+            "/api/v1/organizations/{id}",
+            axum::routing::patch(declare_org_kind),
+        )
+        .route(
             "/api/v1/organizations/{id}/employment-claims",
             get(list_employment_claims),
         )
@@ -254,6 +258,10 @@ struct EnrolRequest {
     /// The corporate domain claimed. Publishing is gated on proving
     /// control of it; without one the organisation can never publish.
     claimed_domain: Option<String>,
+    /// Whether it hires for itself or recruits for a client. Optional
+    /// here and required to publish a job posting, so an organisation
+    /// enrolled only to hold a profile is never asked.
+    org_kind: Option<noombat_core::actor::OrgKind>,
 }
 
 /// `POST /api/v1/organizations`
@@ -281,6 +289,7 @@ async fn enrol_organization(
         body.username.trim(),
         body.display_name.clone(),
         body.claimed_domain.as_deref(),
+        body.org_kind,
     )
     .await?;
 
@@ -291,6 +300,78 @@ async fn enrol_organization(
             "ap_id": actor.ap_id,
             "username": actor.username,
             "actor_type": actor.actor_type.as_str(),
+            "org_kind": actor.org_kind.map(|k| k.as_str()),
+        })),
+    ))
+}
+
+/// Refuse anyone but an owner of `organization_id`.
+///
+/// The organisation acting as itself counts as an owner, which is the
+/// same reading [`company_standing`] takes. That one cannot serve here
+/// because it settles standing on a posting, and this question is about
+/// the organisation with no posting in hand.
+async fn require_owner(
+    pool: &sqlx::PgPool,
+    organization_id: uuid::Uuid,
+    actor_id: uuid::Uuid,
+) -> Result<(), ApiError> {
+    if actor_id == organization_id {
+        return Ok(());
+    }
+
+    let role: Option<OrganizationRole> = sqlx::query_scalar(
+        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(organization_id)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| ApiError(NoombatError::Internal(e.to_string())))?;
+
+    match role {
+        Some(OrganizationRole::Owner) => Ok(()),
+        _ => Err(ApiError(NoombatError::Forbidden)),
+    }
+}
+
+/// Request body for `PATCH /api/v1/organizations/{id}`.
+#[derive(Debug, Deserialize)]
+struct DeclareKindRequest {
+    org_kind: noombat_core::actor::OrgKind,
+}
+
+/// `PATCH /api/v1/organizations/{id}`
+///
+/// Declare, or correct, whether the organisation hires for itself or
+/// recruits for a client. Separate from enrolment because the answer can
+/// change: an employer that starts recruiting on behalf of others is the
+/// same organisation, and re-enrolling to say so would strand its
+/// postings and its members.
+///
+/// Owners only, by the same rule that governs the organisation's other
+/// settings. A recruiter who could re-label the organisation could make
+/// every one of its postings claim a direct employer.
+async fn declare_org_kind(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Json(body): Json<DeclareKindRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let member_id = viewer
+        .as_ref()
+        .map(|p| p.actor_id)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    require_owner(&state.pool, id, member_id).await?;
+
+    let actor = noombat_identity::repo::set_org_kind(&state.pool, id, body.org_kind).await?;
+
+    Ok((
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "id": actor.id,
+            "org_kind": actor.org_kind.map(|k| k.as_str()),
         })),
     ))
 }

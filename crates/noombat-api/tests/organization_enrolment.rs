@@ -225,11 +225,15 @@ async fn the_owner_can_read_applications_to_a_posting_it_publishes(pool: PgPool)
 // ..... The rel="me" publish gate .....
 
 /// Enrol `acme` claiming `acme.example`, returning its actor id.
+///
+/// Declares itself an employer, which publishing requires: these tests
+/// are about the domain gate, and an organisation that never said which
+/// kind it is would be refused by the other gate first.
 async fn enrolled_org(pool: &PgPool, token: &str) -> Uuid {
     enrol(
         pool.clone(),
         Some(token),
-        r#"{"username":"acme","claimed_domain":"acme.example"}"#,
+        r#"{"username":"acme","claimed_domain":"acme.example","org_kind":"employer"}"#,
     )
     .await;
     sqlx::query_scalar("SELECT id FROM actors WHERE username = 'acme'")
@@ -285,6 +289,51 @@ async fn a_verified_link_to_the_claimed_domain_opens_the_gate(pool: PgPool) {
     .await
     .expect("verified link");
 
+    assert_eq!(post_job(pool, "acme", &token).await, StatusCode::CREATED);
+}
+
+/// The second publish gate: an organisation that has proved its domain
+/// but never said whether it is the employer or an agency is still
+/// refused. Without this, a seeker filtering for direct employers would
+/// simply not see the posting, which reads as absence rather than as the
+/// undeclared state it is.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_undeclared_organisation_cannot_publish(pool: PgPool) {
+    let person = insert_person(&pool, "alice").await;
+    let token = token_for(&pool, person, "alice").await;
+
+    // Enrolled without a declaration, unlike `enrolled_org`.
+    enrol(
+        pool.clone(),
+        Some(&token),
+        r#"{"username":"acme","claimed_domain":"acme.example"}"#,
+    )
+    .await;
+    let org: Uuid = sqlx::query_scalar("SELECT id FROM actors WHERE username = 'acme'")
+        .fetch_one(&pool)
+        .await
+        .expect("org");
+
+    sqlx::query(
+        "INSERT INTO verified_links (actor_id, url, verified_at) \
+         VALUES ($1, 'https://acme.example/about', now())",
+    )
+    .bind(org)
+    .execute(&pool)
+    .await
+    .expect("verified link");
+
+    // The domain gate is open, so this is the declaration gate alone.
+    assert_eq!(
+        post_job(pool.clone(), "acme", &token).await,
+        StatusCode::BAD_REQUEST
+    );
+
+    // And it opens once the organisation says which it is.
+    noombat_identity::repo::set_org_kind(&pool, org, noombat_core::actor::OrgKind::Agency)
+        .await
+        .expect("declare");
     assert_eq!(post_job(pool, "acme", &token).await, StatusCode::CREATED);
 }
 

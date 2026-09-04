@@ -205,6 +205,7 @@ mod tests {
         Actor {
             id: uuid::Uuid::new_v4(),
             actor_type: noombat_core::actor::ActorType::Organization,
+            org_kind: Some(noombat_core::actor::OrgKind::Employer),
             ap_id: "https://noombat.example/users/acme".to_owned(),
             username: "acme".to_owned(),
             display_name: Some("Acme".to_owned()),
@@ -251,6 +252,7 @@ mod tests {
             published_at: Some(chrono::Utc::now()),
             expires_at: None,
             created_at: chrono::Utc::now(),
+            org_kind: Some(noombat_core::actor::OrgKind::Employer),
         }
     }
 

@@ -500,6 +500,7 @@ mod tests {
         Actor {
             id,
             actor_type: crate::actor::ActorType::Individual,
+            org_kind: None,
             ap_id: String::new(),
             username: String::new(),
             display_name: None,

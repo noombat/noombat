@@ -41,11 +41,28 @@ fn default_limit() -> i64 {
     20
 }
 
+/// Query for the public list, which adds the seeker's filter.
+///
+/// Separate from [`PaginationQuery`] because the filter belongs only
+/// here: a seeker narrowing to direct employers is browsing the
+/// instance, whereas one organisation's own list is already narrowed to
+/// a single declaration.
+#[derive(Deserialize)]
+struct ListingQuery {
+    #[serde(default = "default_limit")]
+    limit: i64,
+    #[serde(default)]
+    offset: i64,
+    org_kind: Option<noombat_core::actor::OrgKind>,
+}
+
 async fn list_jobs(
     State(state): State<AppState>,
-    Query(query): Query<PaginationQuery>,
+    Query(query): Query<ListingQuery>,
 ) -> Result<impl IntoResponse, ApiError> {
-    let jobs = noombat_jobs::list_published_jobs(&state.pool, query.limit, query.offset).await?;
+    let jobs =
+        noombat_jobs::list_published_jobs(&state.pool, query.org_kind, query.limit, query.offset)
+            .await?;
     Ok((StatusCode::OK, Json(jobs)))
 }
 
@@ -93,6 +110,19 @@ async fn create_job(
         && !noombat_identity::verification::controls_claimed_domain(&state.pool, actor.id).await?
     {
         return Err(ApiError(noombat_core::error::NoombatError::Forbidden));
+    }
+
+    // The declaration is required here rather than at enrolment, because
+    // here is where it decides something: a seeker reads the badge to
+    // know whether the organisation named is the one they would work
+    // for. An undeclared posting would be indistinguishable from a
+    // declared employer, which is the reading that favours the agency.
+    if actor.actor_type == noombat_core::actor::ActorType::Organization && actor.org_kind.is_none()
+    {
+        return Err(ApiError(noombat_core::error::NoombatError::BadRequest(
+            "declare whether this organisation is an employer or an agency before posting"
+                .to_owned(),
+        )));
     }
 
     let job = noombat_jobs::create_job(

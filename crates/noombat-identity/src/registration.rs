@@ -10,7 +10,7 @@
 
 use argon2::Argon2;
 use argon2::password_hash::PasswordHasher;
-use noombat_core::actor::{Actor, ActorStatus, ActorType, NewActor};
+use noombat_core::actor::{Actor, ActorStatus, ActorType, NewActor, OrgKind};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -308,6 +308,7 @@ pub async fn enrol_organization(
     username: &str,
     display_name: Option<String>,
     claimed_domain: Option<&str>,
+    org_kind: Option<OrgKind>,
 ) -> Result<Actor> {
     validate_username(username)?;
 
@@ -350,6 +351,18 @@ pub async fn enrol_organization(
             .await?;
     }
 
+    // Optional here and required at the point it decides something,
+    // which is publishing a job posting. An organisation enrolled to
+    // hold a profile has nothing to declare yet, and refusing enrolment
+    // over it would ask the question before it means anything.
+    if let Some(kind) = org_kind {
+        sqlx::query("UPDATE actors SET org_kind = $1 WHERE id = $2")
+            .bind(kind.as_str())
+            .bind(actor.id)
+            .execute(&mut *tx)
+            .await?;
+    }
+
     // In the same transaction as the actor. An organisation nobody can
     // act for is unreachable: there is no login to fall back on, so a
     // failure here has to take the actor with it.
@@ -371,7 +384,10 @@ pub async fn enrol_organization(
         owner = %owner_id,
         "organisation enrolled"
     );
-    Ok(actor)
+    // The struct was built before the update above, so returning it
+    // unchanged would answer `None` for an organisation that just
+    // declared itself.
+    Ok(Actor { org_kind, ..actor })
 }
 
 #[cfg(test)]

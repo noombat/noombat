@@ -82,6 +82,49 @@ pub enum InstanceRole {
     Admin,
 }
 
+/// Whether an organisation hires for itself or recruits for a client.
+///
+/// The distinction a job seeker acts on: an agency posting names a role
+/// at an employer it does not name, so "who would I be working for" has
+/// a different answer from "who posted this". Only an organisation
+/// carries one, which the `org_kind_is_for_organisations` constraint
+/// enforces.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, sqlx::Type)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
+pub enum OrgKind {
+    Employer,
+    Agency,
+}
+
+impl OrgKind {
+    /// The stored form, as the `org_kind` check constraint spells it.
+    ///
+    /// Derived by `sqlx::Type` for reads. This exists because the write
+    /// paths and the search filter spell the same strings by hand, and a
+    /// variant renamed in one place and not the other is a row the check
+    /// constraint rejects at runtime rather than a compile error.
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Employer => "employer",
+            Self::Agency => "agency",
+        }
+    }
+
+    /// The declaration a form field carries, or `None` for anything else.
+    ///
+    /// Unrecognised text is refused rather than defaulted: a seeker
+    /// filtering for direct employers must not be shown a posting that
+    /// ended up an employer because a typo fell through to a default.
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw {
+            "employer" => Some(Self::Employer),
+            "agency" => Some(Self::Agency),
+            _ => None,
+        }
+    }
+}
+
 /// Lifecycle state of an actor.
 ///
 /// Three of these are moderation outcomes. [`ActorStatus::Pending`] is not:
@@ -141,6 +184,10 @@ impl ActorStatus {
 pub struct Actor {
     pub id: Uuid,
     pub actor_type: ActorType,
+    /// Employer or agency, for an organisation that has declared which
+    /// it is. `None` means nobody was asked, which is true of every
+    /// individual, every group and every remote actor.
+    pub org_kind: Option<OrgKind>,
     /// Fully-qualified ActivityPub identifier, e.g. `https://noombat.social/users/alice`.
     pub ap_id: String,
     pub username: String,

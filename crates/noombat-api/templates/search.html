@@ -9,7 +9,7 @@
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("search_heading") }}</h1>
 
         <form method="get" action="/search/html"
-              class="flex gap-2 mb-6 max-w-lg">
+              class="flex flex-wrap gap-2 mb-6 max-w-lg">
             <input name="q" type="search" required
                    value="{{ query }}"
                    placeholder="{{ i18n.t("search_placeholder") }}"
@@ -25,6 +25,17 @@
                     class="bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90">
                 {{ i18n.t("search_submit") }}
             </button>
+            {# Only on the jobs index: the attribute exists on no other, and a
+               filter naming it elsewhere fails the search. #}
+            {% if index == "jobs" %}
+            <select name="org_kind"
+                    aria-label="{{ i18n.t("job_kind_filter_label") }}"
+                    class="border border-border-default rounded px-3 py-2 bg-bg-raised text-text-primary text-sm">
+                <option value="" {% if org_kind.is_empty() %}selected{% endif %}>{{ i18n.t("job_kind_any") }}</option>
+                <option value="employer" {% if org_kind == "employer" %}selected{% endif %}>{{ i18n.t("job_kind_employer") }}</option>
+                <option value="agency" {% if org_kind == "agency" %}selected{% endif %}>{{ i18n.t("job_kind_agency") }}</option>
+            </select>
+            {% endif %}
         </form>
 
         {% if !results.is_empty() %}
@@ -34,6 +45,11 @@
                 <a href="{{ result.url }}" class="text-text-brand no-underline hover:underline font-semibold">
                     {{ result.title }}
                 </a>
+                {% if !result.org_kind_key.is_empty() %}
+                <span class="ms-2 align-middle inline-block rounded border border-border-default px-2 py-0.5 text-xs text-text-secondary">
+                    {{ i18n.t(result.org_kind_key.as_str()) }}
+                </span>
+                {% endif %}
                 {% if !result.subtitle.is_empty() %}
                 <p class="text-text-secondary text-sm">{{ result.subtitle }}</p>
                 {% endif %}

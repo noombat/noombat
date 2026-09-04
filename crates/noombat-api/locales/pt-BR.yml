@@ -196,6 +196,13 @@ search_index_label: "Categoria de busca"
 search_submit: "Buscar"
 search_no_results: "Nenhum resultado encontrado."
 
+# Quem publicou a vaga: a própria empresa contratante ou uma agência de
+# recrutamento que atua para um cliente.
+job_kind_filter_label: "Publicado por"
+job_kind_any: "Qualquer um"
+job_kind_employer: "Empresa contratante"
+job_kind_agency: "Agência de recrutamento"
+
 # Solicitações de seguimento.
 follow_requests_title: "Solicitações de seguimento"
 follow_requests_heading: "Solicitações de seguimento"

@@ -62,7 +62,7 @@ async fn export_data(
         // Actor profile (sensitive columns excluded).
         let actor: serde_json::Value = sqlx::query_scalar(
             r#"SELECT row_to_json(t) FROM (
-                SELECT id, actor_type, ap_id, username, display_name,
+                SELECT id, actor_type, org_kind, ap_id, username, display_name,
                        avatar_url, header_url, summary_md, summary_html,
                        domain, is_local, instance_role, actor_status,
                        chatmail_addr, orcid, moved_to, headline,

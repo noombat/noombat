@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Actor repository: CRUD operations against the `actors` table.
 
-use noombat_core::actor::{Actor, ActorStatus, ActorType, InstanceRole, NewActor};
+use noombat_core::actor::{Actor, ActorStatus, ActorType, InstanceRole, NewActor, OrgKind};
 use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::privacy::ActorPrivacy;
@@ -27,6 +27,7 @@ struct InsertedActorRow {
 struct ActorRow {
     id: Uuid,
     actor_type: ActorType,
+    org_kind: Option<OrgKind>,
     ap_id: String,
     username: String,
     display_name: Option<String>,
@@ -71,6 +72,7 @@ impl ActorRow {
         Ok(Actor {
             id: self.id,
             actor_type: self.actor_type,
+            org_kind: self.org_kind,
             ap_id: self.ap_id,
             username: self.username,
             display_name: self.display_name,
@@ -222,6 +224,10 @@ where
     Ok(Actor {
         id: row.id,
         actor_type: params.actor_type,
+        // Never set at creation, including for an organisation: the
+        // declaration is a separate answer, and enrolment writes it
+        // afterwards in the same transaction.
+        org_kind: None,
         ap_id: row.ap_id,
         username: row.username,
         display_name: row.display_name,
@@ -260,7 +266,7 @@ where
 pub async fn find_by_public_key_id(pool: &PgPool, public_key_id: &str) -> Result<Option<Actor>> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
-               id, actor_type, ap_id, username, display_name,
+               id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
@@ -281,7 +287,7 @@ pub async fn find_by_public_key_id(pool: &PgPool, public_key_id: &str) -> Result
 pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Actor> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
-               id, actor_type, ap_id, username, display_name,
+               id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
@@ -341,7 +347,7 @@ pub async fn count_admins(pool: &PgPool) -> Result<i64> {
 pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
-               id, actor_type, ap_id, username, display_name,
+               id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
@@ -887,7 +893,7 @@ pub async fn update_actor(pool: &PgPool, actor_id: Uuid, params: &UpdateActor) -
 pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
     let row = sqlx::query_as::<_, ActorRow>(
         r#"SELECT
-               id, actor_type, ap_id, username, display_name,
+               id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
                public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
@@ -936,6 +942,33 @@ pub async fn set_actor_status(pool: &PgPool, actor_id: Uuid, status: ActorStatus
     if result.rows_affected() == 0 {
         return Err(NoombatError::NotFound {
             entity: "actor",
+            id: actor_id,
+        });
+    }
+
+    find_by_id(pool, actor_id).await
+}
+
+/// Declare whether an organisation hires for itself or recruits for a
+/// client.
+///
+/// Restricted to organisations here as well as by the
+/// `org_kind_is_for_organisations` constraint. The constraint refuses
+/// the row; this refuses the request, which is the difference between a
+/// caller seeing "not found" and seeing a database error.
+pub async fn set_org_kind(pool: &PgPool, actor_id: Uuid, kind: OrgKind) -> Result<Actor> {
+    let result = sqlx::query(
+        "UPDATE actors SET org_kind = $1, updated_at = now() \
+         WHERE id = $2 AND is_local = TRUE AND actor_type = 'organization'",
+    )
+    .bind(kind.as_str())
+    .bind(actor_id)
+    .execute(pool)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(NoombatError::NotFound {
+            entity: "organization",
             id: actor_id,
         });
     }

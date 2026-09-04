@@ -224,6 +224,11 @@ pub fn index_job(search: &Option<Arc<dyn SearchBackend>>, job: &noombat_jobs::Jo
         "actor_id": job.actor_id.to_string(),
         "location": job.location,
         "remote": job.remote,
+        // Filterable, so a seeker can narrow to direct employers. Null
+        // where an individual posted, which Meilisearch matches against
+        // neither value: such a posting is in no filtered result set,
+        // and appears only in the unfiltered list.
+        "org_kind": job.org_kind.map(|k| k.as_str()),
         "status": if job.published_at.is_some() { "published" } else { "draft" },
         "created_at": job.created_at.to_rfc3339(),
     });

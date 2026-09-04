@@ -92,7 +92,7 @@ impl MeilisearchBackend {
             // jobs, visibility-scoped profiles, date-range events).
             let filterable: Vec<&str> = match name {
                 "profiles" => vec!["visibility", "actor_type"],
-                "jobs" => vec!["status", "actor_id", "remote"],
+                "jobs" => vec!["status", "actor_id", "remote", "org_kind"],
                 // `is_local` is what the search scope filters on. A
                 // filter naming an attribute Meilisearch was not told
                 // about is rejected at query time, so adding the
