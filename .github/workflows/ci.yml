@@ -30,6 +30,8 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
+      - "scripts/check-codeql-config.py"
+      - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
@@ -52,6 +54,8 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
+      - "scripts/check-codeql-config.py"
+      - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-migrations.sh"
@@ -143,6 +147,11 @@ jobs:
       # reports it before a push.
       - name: "Reject actions the repository policy will not run"
         run: scripts/check-action-allowlist.sh
+      # A pattern that excludes every file of a language fails the CodeQL
+      # job outright; one that reaches further than intended shrinks what
+      # is scanned and reports nothing at all.
+      - name: "Reject a CodeQL exclusion that empties or narrows a language"
+        run: python3 scripts/check-codeql-config.py
 
   migration-shape:
     name: Migration shape

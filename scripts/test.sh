@@ -121,6 +121,12 @@ run ./scripts/check-migrations.sh
 step "Checking the GitHub Actions allowlist"
 run ./scripts/check-action-allowlist.sh
 
+# A `paths-ignore` pattern that empties a language fails the CodeQL job,
+# and one that quietly reaches further shrinks what is scanned with
+# nothing to show for it. Neither is visible until a push.
+step "Checking what CodeQL is configured to analyse"
+run python3 ./scripts/check-codeql-config.py
+
 # The symptom of the same fault, and only answerable for a commit the
 # remote has. Announced when skipped rather than passed over, because a
 # check that quietly did not run is the thing this suite exists to catch.
