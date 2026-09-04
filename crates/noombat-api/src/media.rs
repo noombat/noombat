@@ -41,6 +41,30 @@ pub const MAX_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
 /// pixel buffer, not the file, is what a decode bomb inflates.
 pub const AVATAR_MAX_EDGE: u32 = 512;
 
+/// The longest edge a post attachment is stored at.
+///
+/// Larger than an avatar because an attachment is looked at rather than
+/// glanced at: a photograph in a post is the content, where an avatar is
+/// a 96-pixel circle beside a name. Still bounded, for the same reason
+/// the avatar is.
+pub const ATTACHMENT_MAX_EDGE: u32 = 1600;
+
+/// Components the BlurHash carries on each axis.
+///
+/// Four by three is what Mastodon uses, and the hash is a wire format
+/// other implementations decode, so matching it means a peer renders the
+/// same placeholder this instance does. More components means a sharper
+/// blur and a longer string, which defeats the point: this is meant to
+/// be small enough to sit inside the document.
+const BLURHASH_COMPONENTS: (u32, u32) = (4, 3);
+
+/// The size the hash is computed from.
+///
+/// The output is a handful of frequency components, so computing it from
+/// the full image costs time and changes nothing. Downscaling first is
+/// what keeps a 1600-pixel attachment from being read pixel by pixel.
+const BLURHASH_SAMPLE_EDGE: u32 = 64;
+
 /// The largest decoded pixel count accepted.
 ///
 /// A few hundred kilobytes of PNG can declare dimensions that decode to
@@ -78,6 +102,10 @@ pub struct ProcessedImage {
     /// One of [`ACCEPTED`], decided by decoding rather than by any claim
     /// the uploader made.
     pub media_type: &'static str,
+    /// The BlurHash of the stored image, for an attachment. `None` for
+    /// an avatar, which is never shown blurred: a profile picture is not
+    /// sensitive media, and Mastodon computes none for one either.
+    pub blurhash: Option<String>,
 }
 
 /// Decide the format from the content, bound it, and re-encode it.
@@ -86,6 +114,27 @@ pub struct ProcessedImage {
 /// carry transparency that JPEG cannot represent, and a JPEG stays a
 /// JPEG because re-encoding it as PNG would multiply its size.
 pub fn process_avatar(raw: &[u8]) -> Result<ProcessedImage, MediaError> {
+    process(raw, AVATAR_MAX_EDGE, false)
+}
+
+/// The same pipeline for an image attached to a post.
+///
+/// Two differences from an avatar, and both are about what the image is
+/// for. It is bounded larger, because it is the content rather than a
+/// thumbnail beside a name. And it carries a BlurHash, because a post
+/// can be marked sensitive and an avatar cannot.
+pub fn process_attachment(raw: &[u8]) -> Result<ProcessedImage, MediaError> {
+    process(raw, ATTACHMENT_MAX_EDGE, true)
+}
+
+/// Validate, bound and re-encode, optionally computing a BlurHash.
+///
+/// Shared so that an attachment cannot drift from an avatar on the parts
+/// that are about safety rather than presentation: the format is decided
+/// by decoding, the pixel count is bounded before allocation, and the
+/// bytes are re-encoded rather than passed through, which is what strips
+/// the EXIF that carries where a photograph was taken.
+fn process(raw: &[u8], max_edge: u32, want_blurhash: bool) -> Result<ProcessedImage, MediaError> {
     if raw.len() > MAX_UPLOAD_BYTES {
         return Err(MediaError::TooLarge);
     }
@@ -119,18 +168,84 @@ pub fn process_avatar(raw: &[u8]) -> Result<ProcessedImage, MediaError> {
     // avatar would come back 512 by 512: upscaled, blurry, and larger
     // than what was uploaded. Measured, not assumed; the test below
     // failed on the first version of this line.
-    let bounded = if decoded.width() > AVATAR_MAX_EDGE || decoded.height() > AVATAR_MAX_EDGE {
-        decoded.thumbnail(AVATAR_MAX_EDGE, AVATAR_MAX_EDGE)
+    let bounded = if decoded.width() > max_edge || decoded.height() > max_edge {
+        decoded.thumbnail(max_edge, max_edge)
     } else {
         decoded
     };
+
+    // From the bounded image, so the hash describes what readers are
+    // actually served rather than what was uploaded.
+    let blurhash = want_blurhash.then(|| encode_blurhash(&bounded));
 
     let mut bytes = Vec::new();
     bounded
         .write_to(&mut std::io::Cursor::new(&mut bytes), format)
         .map_err(|_| MediaError::Undecodable)?;
 
-    Ok(ProcessedImage { bytes, media_type })
+    Ok(ProcessedImage {
+        bytes,
+        media_type,
+        blurhash,
+    })
+}
+
+/// The BlurHash of an image, as the string peers exchange.
+///
+/// Downscaled first, and to RGBA8 because that is the buffer layout the
+/// encoder reads. A failure returns an empty string rather than an
+/// error: the hash is a nicety, and refusing an upload because a
+/// placeholder could not be computed would trade the image for the blur.
+fn encode_blurhash(image: &image::DynamicImage) -> String {
+    let sample = image.thumbnail(BLURHASH_SAMPLE_EDGE, BLURHASH_SAMPLE_EDGE);
+    let rgba = sample.to_rgba8();
+    let (components_x, components_y) = BLURHASH_COMPONENTS;
+    blurhash::encode(
+        components_x,
+        components_y,
+        rgba.width(),
+        rgba.height(),
+        rgba.as_raw(),
+    )
+    .unwrap_or_default()
+}
+
+/// The edge length the placeholder is decoded at.
+///
+/// The hash carries a handful of frequency components, so decoding it
+/// larger produces the same picture in more bytes. Thirty-two pixels
+/// stretched over the image's box is what the format is for, and it
+/// keeps the data URI small enough to sit inline in the page.
+const PLACEHOLDER_EDGE: u32 = 32;
+
+/// A BlurHash rendered as an inline PNG, ready for `img src`.
+///
+/// Inline rather than a URL, for the reason the blur exists: a
+/// placeholder served from `/media/{key}` would be a second request that
+/// says which sensitive image the reader is about to be shown, and the
+/// real image is not fetched until they ask for it.
+///
+/// `None` for a hash that is absent or does not decode, which the caller
+/// renders as a plain panel. A stored hash can predate this code or come
+/// from a peer, so failing to decode one is an ordinary case rather than
+/// an error.
+pub fn blurhash_placeholder(hash: &str) -> Option<String> {
+    if hash.is_empty() {
+        return None;
+    }
+
+    let pixels = blurhash::decode(hash, PLACEHOLDER_EDGE, PLACEHOLDER_EDGE, 1.0).ok()?;
+    let buffer: image::RgbaImage =
+        image::ImageBuffer::from_raw(PLACEHOLDER_EDGE, PLACEHOLDER_EDGE, pixels)?;
+
+    let mut png = Vec::new();
+    buffer
+        .write_to(&mut std::io::Cursor::new(&mut png), ImageFormat::Png)
+        .ok()?;
+
+    use base64::Engine as _;
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&png);
+    Some(format!("data:image/png;base64,{encoded}"))
 }
 
 /// A fresh object key.

@@ -899,8 +899,9 @@ async fn main() -> anyhow::Result<()> {
     // both are measured in days.
     {
         let pool = state.pool.clone();
+        let media = state.media.clone();
         tokio::spawn(async move {
-            noombat_api::housekeeping::run_worker(pool, Duration::from_secs(3600)).await;
+            noombat_api::housekeeping::run_worker(pool, media, Duration::from_secs(3600)).await;
         });
     }
 

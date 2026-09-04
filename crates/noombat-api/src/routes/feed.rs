@@ -199,13 +199,17 @@ async fn feed_partial(
             std::collections::HashSet::new()
         };
 
+    // Once for the page. Reading it per post would be one query per row
+    // for a value that cannot change mid-render.
+    let blur_preference = blur_preference(&state.pool, viewer_actor_id).await;
+
     // Fetch the actual post data for the collected IDs.
     let mut posts: Vec<FeedPost> = Vec::new();
     for id in &post_ids {
         if let Ok(Some(row)) = sqlx::query_as::<_, PostRow>(
             r#"SELECT p.id, p.actor_id, p.post_type, p.title,
                       p.featured_image_url, p.featured_image_alt,
-                      p.content_html, p.created_at,
+                      p.sensitive, p.content_html, p.created_at,
                       p.ap_id, a.username, a.display_name, a.actor_status
                FROM posts p
                INNER JOIN actors a ON a.id = p.actor_id
@@ -275,6 +279,8 @@ async fn feed_partial(
                 title,
                 featured_image_url: row.featured_image_url,
                 featured_image_alt: row.featured_image_alt,
+                attachments: attachments_for(&state.pool, row.id).await,
+                blur_attachments: row.sensitive && blur_preference,
                 preview_text,
                 aria_label,
             });
@@ -296,6 +302,8 @@ async fn feed_partial(
         permalink_label: i18n.t("feed_permalink"),
         loading_more_label: i18n.t("feed_loading_more"),
         read_more_label: i18n.t("feed_read_more"),
+        sensitive_label: i18n.t("post_sensitive_label"),
+        sensitive_reveal_label: i18n.t("post_sensitive_reveal"),
         status_announcement,
         posts,
         has_next,
@@ -312,6 +320,7 @@ struct PostRow {
     title: Option<String>,
     featured_image_url: Option<String>,
     featured_image_alt: Option<String>,
+    sensitive: bool,
     content_html: String,
     created_at: chrono::DateTime<chrono::Utc>,
     ap_id: String,
@@ -329,6 +338,68 @@ struct FeedPage {
     theme: Theme,
     contrast: Contrast,
     feed_url: String,
+}
+
+/// One image attached to a post.
+///
+/// `placeholder` is the stored BlurHash already decoded to an inline
+/// PNG, which is what a sensitive image is shown behind. Empty where
+/// there is no hash, or where it did not decode, and the template falls
+/// back to a plain panel rather than a broken image.
+pub struct Attachment {
+    pub url: String,
+    /// The author's description. Empty renders as `alt=""`, which marks
+    /// the image decorative.
+    pub alt: String,
+    pub placeholder: String,
+}
+
+/// The images a post carries, in the order they were attached.
+///
+/// Ordered by `created_at`, which is upload order: the claim that
+/// attaches them preserves nothing else, and a gallery whose order
+/// changed between two page loads would be worse than one that is
+/// merely not the author's arrangement.
+pub async fn attachments_for(pool: &sqlx::PgPool, post_id: uuid::Uuid) -> Vec<Attachment> {
+    sqlx::query_as::<_, (String, Option<String>, Option<String>)>(
+        "SELECT url, alt_text, blurhash FROM media_attachments \
+         WHERE post_id = $1 AND purpose = 'post' ORDER BY created_at",
+    )
+    .bind(post_id)
+    .fetch_all(pool)
+    .await
+    .unwrap_or_default()
+    .into_iter()
+    .map(|(url, alt, blurhash)| Attachment {
+        url,
+        alt: alt.unwrap_or_default(),
+        // Decoded here rather than in the template, which cannot call a
+        // fallible function and would have to render whatever came back.
+        placeholder: blurhash
+            .as_deref()
+            .and_then(crate::media::blurhash_placeholder)
+            .unwrap_or_default(),
+    })
+    .collect()
+}
+
+/// Whether this reader wants sensitive images blurred rather than shown
+/// behind a plain panel.
+///
+/// A signed-out reader gets the column's default. They have nowhere to
+/// record a preference, and the default that shows less is the one to
+/// take when nobody has said.
+pub async fn blur_preference(pool: &sqlx::PgPool, viewer: Option<uuid::Uuid>) -> bool {
+    let Some(viewer) = viewer else {
+        return true;
+    };
+    sqlx::query_scalar::<_, bool>("SELECT blur_sensitive_media FROM actors WHERE id = $1")
+        .bind(viewer)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or(true)
 }
 
 /// A single post in the feed, passed to the template.
@@ -349,6 +420,13 @@ pub struct FeedPost {
     /// The author's description of that image. `None` renders as
     /// `alt=""`, which marks the image decorative.
     pub featured_image_alt: Option<String>,
+    /// Images attached to the post, in the author's order.
+    pub attachments: Vec<Attachment>,
+    /// Whether those images are hidden behind a blur until the reader
+    /// asks. The author's flag and the reader's preference both have to
+    /// be true, and this is the two already resolved: a template that
+    /// had to combine them would get it wrong on one of the two pages.
+    pub blur_attachments: bool,
     /// Plain-text preview for articles (HTML-stripped, truncated).
     /// Empty for Notes (which render their full HTML inline).
     pub preview_text: String,
@@ -373,4 +451,8 @@ struct FeedPartial {
     permalink_label: String,
     loading_more_label: String,
     read_more_label: String,
+    /// Why the image is hidden, and the control that shows it. Built
+    /// once per page rather than per attachment: they do not vary.
+    sensitive_label: String,
+    sensitive_reveal_label: String,
 }

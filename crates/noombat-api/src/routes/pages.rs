@@ -65,6 +65,12 @@ pub struct PrivacySettingsForm {
     show_followers_count: bool,
     #[serde(default)]
     chatmail_visible: bool,
+    /// Whether a sensitive image is shown as a blur or as a plain
+    /// placeholder. A reader's own display choice, kept apart from the
+    /// author's `sensitive` flag: this decides what hiding looks like,
+    /// not whether it happens.
+    #[serde(default)]
+    blur_sensitive_media: bool,
     #[serde(default)]
     cv_download: noombat_core::privacy::CvDownload,
     /// Stored on `actors.default_post_visibility`, not inside
@@ -121,6 +127,22 @@ async fn save_visibility_columns(
                 "could not save privacy settings".to_owned(),
             ));
         }
+    }
+
+    // Written unconditionally, because an unchecked box submits nothing
+    // and a reader turning the blur off has to be able to make it stay
+    // off.
+    if let Err(e) = sqlx::query("UPDATE actors SET blur_sensitive_media = $2 WHERE id = $1")
+        .bind(actor_id)
+        .bind(form.blur_sensitive_media)
+        .execute(&state.pool)
+        .await
+    {
+        tracing::error!(%actor_id, "failed to save the sensitive-media blur setting: {e}");
+        return Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "could not save privacy settings".to_owned(),
+        ));
     }
 
     let current = noombat_identity::connections::list_settings(&state.pool, actor_id)
@@ -543,6 +565,10 @@ struct PrivacyPage {
     require_follow_approval: bool,
     show_followers_count: bool,
     chatmail_visible: bool,
+    /// The reader's own choice, read from the column rather than
+    /// defaulted: a checkbox that always renders checked reports a
+    /// setting back to somebody who turned it off.
+    blur_sensitive_media: bool,
     cv_download: String,
     default_visibility: String,
     connections_visibility: String,
@@ -1345,16 +1371,16 @@ async fn privacy_page(
     // The four columns the form's selects reflect. Read rather than
     // assumed: a select that always renders its first option reports
     // "public" to an owner who chose otherwise.
-    let (default_visibility, list_settings_str) =
-        sqlx::query_as::<_, (String, String, String, String)>(
+    let (default_visibility, list_settings_str, blur_sensitive_media) =
+        sqlx::query_as::<_, (String, String, String, String, bool)>(
             "SELECT default_post_visibility, connections_visibility, \
-                following_visibility, followers_visibility \
+                following_visibility, followers_visibility, blur_sensitive_media \
          FROM actors WHERE id = $1",
         )
         .bind(actor_id)
         .fetch_one(&state.pool)
         .await
-        .map(|row| (row.0, (row.1, row.2, row.3)))
+        .map(|row| (row.0, (row.1, row.2, row.3), row.4))
         .unwrap_or_else(|_| {
             (
                 "public".to_owned(),
@@ -1363,6 +1389,10 @@ async fn privacy_page(
                     "private".to_owned(),
                     "private".to_owned(),
                 ),
+                // The column's own default. Falling back to "no blur"
+                // would show sensitive images plainly to a reader whose
+                // settings simply failed to load.
+                true,
             )
         });
 
@@ -1460,6 +1490,7 @@ async fn privacy_page(
             .unwrap_or(false),
         show_followers_count: privacy["show_followers_count"].as_bool().unwrap_or(true),
         chatmail_visible: privacy["chatmail_visible"].as_bool().unwrap_or(true),
+        blur_sensitive_media,
         cv_download: privacy["cv_download"]
             .as_str()
             .unwrap_or("public")

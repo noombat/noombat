@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Expired email challenges, and analytics rows past their retention.
+//! Expired email challenges, analytics rows past their retention, and
+//! uploads no post ever claimed.
 //!
-//! One worker rather than two: both run on the same cadence, and a
+//! One worker rather than three: they run on the same cadence, and a
 //! second `tokio::spawn` for one `DELETE` is more machinery than the
 //! work justifies.
 
@@ -10,6 +11,58 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 use tracing::{info, warn};
+
+use crate::media::MediaStore;
+
+/// How long an uploaded image may wait for a post to claim it.
+///
+/// Long enough to write an article around the picture and come back to
+/// it, and short enough that an abandoned compose page does not keep
+/// bytes for ever. The window is generous on purpose: deleting an image
+/// somebody is still writing around loses their work, where keeping one
+/// an extra day costs a few hundred kilobytes.
+const UNATTACHED_UPLOAD_HOURS: i64 = 48;
+
+/// Delete uploads that were never attached to a post.
+///
+/// The object is removed before the row, because the row is what names
+/// the object: dropping it first would leave bytes nothing can find.
+/// A storage failure leaves the row in place, so the next pass tries
+/// again rather than orphaning the object silently.
+async fn purge_unattached_uploads(pool: &PgPool, media: &MediaStore) -> u64 {
+    let stale: Vec<(uuid::Uuid, String)> = match sqlx::query_as(
+        "SELECT id, object_key FROM media_attachments \
+         WHERE purpose = 'post' AND post_id IS NULL \
+           AND created_at < now() - make_interval(hours => $1)",
+    )
+    .bind(UNATTACHED_UPLOAD_HOURS as i32)
+    .fetch_all(pool)
+    .await
+    {
+        Ok(rows) => rows,
+        Err(e) => {
+            warn!(error = %e, "unattached uploads could not be listed");
+            return 0;
+        }
+    };
+
+    let mut removed = 0;
+    for (id, object_key) in stale {
+        if let Err(e) = media.delete(&object_key).await {
+            warn!(error = %e, %object_key, "an unattached upload's object could not be removed");
+            continue;
+        }
+        match sqlx::query("DELETE FROM media_attachments WHERE id = $1 AND post_id IS NULL")
+            .bind(id)
+            .execute(pool)
+            .await
+        {
+            Ok(result) => removed += result.rows_affected(),
+            Err(e) => warn!(error = %e, %id, "an unattached upload's row could not be removed"),
+        }
+    }
+    removed
+}
 
 /// The retention period the instance advertises.
 ///
@@ -26,12 +79,12 @@ async fn analytics_retention_days(pool: &PgPool) -> i32 {
         .unwrap_or(90)
 }
 
-/// Run both sweeps once. Returns `(challenges, analytics rows)`.
+/// Run every sweep once. Returns `(challenges, analytics rows, uploads)`.
 ///
 /// The analytics half builds its own backend from the pool: retention is
 /// a property of the store, so `purge_expired` is inherent to the
 /// Postgres backend rather than part of the trait every consumer sees.
-pub async fn sweep(pool: &PgPool) -> (u64, u64) {
+pub async fn sweep(pool: &PgPool, media: &MediaStore) -> (u64, u64, u64) {
     let challenges = match noombat_identity::email::purge_expired(pool).await {
         Ok(n) => n,
         Err(e) => {
@@ -52,22 +105,25 @@ pub async fn sweep(pool: &PgPool) -> (u64, u64) {
         }
     };
 
-    (challenges, rows)
+    let uploads = purge_unattached_uploads(pool, media).await;
+
+    (challenges, rows, uploads)
 }
 
 /// Sweep on a fixed interval.
-pub async fn run_worker(pool: PgPool, interval: Duration) {
+pub async fn run_worker(pool: PgPool, media: MediaStore, interval: Duration) {
     info!(
         interval_secs = interval.as_secs(),
         "housekeeping worker started"
     );
 
     loop {
-        let (challenges, rows) = sweep(&pool).await;
-        if challenges > 0 || rows > 0 {
+        let (challenges, rows, uploads) = sweep(&pool, &media).await;
+        if challenges > 0 || rows > 0 || uploads > 0 {
             info!(
                 challenges,
                 analytics_rows = rows,
+                unattached_uploads = uploads,
                 "housekeeping sweep complete"
             );
         }

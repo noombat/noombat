@@ -70,6 +70,46 @@
     </footer>
     {% endif %}
 
+    {% if !post.attachments.is_empty() %}
+    {# A `details` element, so the reveal works with no JavaScript and the
+       reader's own control decides it. The blur is CSS on the image rather
+       than a separate placeholder file, so what is behind it is the real
+       image once revealed, never a second download. #}
+    <div class="mt-3 grid gap-2 {% if post.attachments.len() > 1 %}grid-cols-2{% endif %}">
+        {% for attachment in post.attachments %}
+        {% if post.blur_attachments %}
+        {# The real image lives inside the `details`, so a closed one is
+           never fetched: the reader asks before the request that would tell
+           this server which sensitive image they looked at. #}
+        <details>
+            <summary class="relative block cursor-pointer list-none rounded overflow-hidden
+                            bg-bg-raised min-h-32">
+                {% if !attachment.placeholder.is_empty() %}
+                <img src="{{ attachment.placeholder }}"
+                     alt=""
+                     class="w-full max-h-80 object-cover">
+                {% endif %}
+                <span class="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                    <span class="text-xs text-text-secondary">{{ sensitive_label }}</span>
+                    <span class="rounded bg-bg-raised/90 px-3 py-1.5 text-sm text-text-primary">
+                        {{ sensitive_reveal_label }}
+                    </span>
+                </span>
+            </summary>
+            <img src="{{ attachment.url }}"
+                 alt="{{ attachment.alt }}"
+                 class="w-full max-h-80 object-cover rounded"
+                 loading="lazy">
+        </details>
+        {% else %}
+        <img src="{{ attachment.url }}"
+             alt="{{ attachment.alt }}"
+             class="w-full max-h-80 object-cover rounded"
+             loading="lazy">
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% endif %}
 </article>
 {% endfor %}
 {% if has_next %}

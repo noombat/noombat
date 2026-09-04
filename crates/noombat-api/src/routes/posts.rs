@@ -46,7 +46,7 @@ async fn get_post(
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
         r#"SELECT p.id, p.actor_id, p.ap_id, p.post_type, p.title,
-                  p.featured_image_url, p.featured_image_alt,
+                  p.featured_image_url, p.featured_image_alt, p.sensitive,
                   p.content_md, p.content_html,
                   p.visibility, p.relayed_unverified, p.ap_object, p.created_at,
                   a.username, a.display_name
@@ -212,6 +212,9 @@ async fn get_post(
     }
 
     // ---- Note rendering ----
+    // Taken before `i18n` is moved into the page struct below.
+    let i18n_sensitive_label = i18n.t("post_sensitive_label");
+    let i18n_sensitive_reveal = i18n.t("post_sensitive_reveal");
     let page_title = i18n.tf("post_title_pattern", &[("name", &author_display)]);
     let aria_post_label = i18n.tf("aria_post_by", &[("name", &author_display)]);
 
@@ -227,6 +230,15 @@ async fn get_post(
         content_html: row.content_html,
         created_at: row.created_at.to_rfc3339(),
         relayed_unverified: row.relayed_unverified,
+        attachments: crate::routes::feed::attachments_for(&state.pool, row.id).await,
+        blur_attachments: row.sensitive
+            && crate::routes::feed::blur_preference(
+                &state.pool,
+                viewer.as_ref().map(|v| v.actor_id),
+            )
+            .await,
+        sensitive_label: i18n_sensitive_label,
+        sensitive_reveal_label: i18n_sensitive_reveal,
     };
     Ok(page.into_response())
 }
@@ -240,6 +252,7 @@ struct PostRow {
     title: Option<String>,
     featured_image_url: Option<String>,
     featured_image_alt: Option<String>,
+    sensitive: bool,
     /// `None` for remote posts whose author sent no Markdown source.
     /// Nullable rather than holding a copy of `content_html` in that
     /// case, which would put HTML in a column named for Markdown.
@@ -269,6 +282,13 @@ struct PostPage {
     created_at: String,
     /// Whether to tell the reader nothing verified this post.
     relayed_unverified: bool,
+    /// The images this post carries, in the order they were attached.
+    attachments: Vec<crate::routes::feed::Attachment>,
+    /// The author's flag and the reader's preference, already resolved,
+    /// so this page and the feed cannot combine them differently.
+    blur_attachments: bool,
+    sensitive_label: String,
+    sensitive_reveal_label: String,
 }
 
 #[derive(Template, WebTemplate)]

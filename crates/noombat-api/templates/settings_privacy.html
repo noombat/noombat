@@ -57,6 +57,21 @@
                            class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_chatmail_visible") }}</span>
                 </label>
+
+                {# Whether hiding looks like a blur or a plain panel. It does not
+                   decide whether sensitive media is hidden, which is the author's
+                   flag: somebody who wants such images hidden may still not want
+                   to see a blurred version of them. #}
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="blur_sensitive_media" value="true"
+                           {% if blur_sensitive_media %}checked{% endif %}
+                           aria-describedby="blur-sensitive-help"
+                           class="rounded border-border-default">
+                    <span class="text-sm">{{ i18n.t("privacy_blur_sensitive") }}</span>
+                </label>
+                <p id="blur-sensitive-help" class="text-sm text-text-secondary -mt-2 ms-7">
+                    {{ i18n.t("privacy_blur_sensitive_help") }}
+                </p>
             </fieldset>
 
             <!-- CV download restriction.

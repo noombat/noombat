@@ -32,6 +32,44 @@
             </p>
             {% endif %}
             <div class="leading-relaxed">{{ content_html|safe }}</div>
+
+            {% if !attachments.is_empty() %}
+            {# The same rule as the feed. When blurred, the real image sits
+               inside the `details` and is not fetched until the reader opens
+               it, so declining to look leaves no request behind. #}
+            <div class="mt-3 grid gap-2 {% if attachments.len() > 1 %}grid-cols-2{% endif %}">
+                {% for attachment in attachments %}
+                {% if blur_attachments %}
+                <details>
+                    <summary class="relative block cursor-pointer list-none rounded overflow-hidden
+                                    bg-bg-raised min-h-32">
+                        {% if !attachment.placeholder.is_empty() %}
+                        <img src="{{ attachment.placeholder }}"
+                             alt=""
+                             class="w-full max-h-96 object-cover">
+                        {% endif %}
+                        <span class="absolute inset-0 flex flex-col items-center justify-center gap-1">
+                            <span class="text-xs text-text-secondary">{{ sensitive_label }}</span>
+                            <span class="rounded bg-bg-raised/90 px-3 py-1.5 text-sm text-text-primary">
+                                {{ sensitive_reveal_label }}
+                            </span>
+                        </span>
+                    </summary>
+                    <img src="{{ attachment.url }}"
+                         alt="{{ attachment.alt }}"
+                         class="w-full max-h-96 object-contain rounded"
+                         loading="lazy">
+                </details>
+                {% else %}
+                <img src="{{ attachment.url }}"
+                     alt="{{ attachment.alt }}"
+                     class="w-full max-h-96 object-contain rounded"
+                     loading="lazy">
+                {% endif %}
+                {% endfor %}
+            </div>
+            {% endif %}
+
             <footer class="mt-3 flex gap-3 text-xs text-text-secondary">
                 <button type="button"
                         class="hover:text-text-primary"

@@ -21,7 +21,9 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
-use crate::media::{MAX_UPLOAD_BYTES, MediaError, new_object_key, process_avatar};
+use crate::media::{
+    MAX_UPLOAD_BYTES, MediaError, new_object_key, process_attachment, process_avatar,
+};
 use crate::middleware::Viewer;
 use crate::state::AppState;
 
@@ -54,14 +56,24 @@ fn truncate_alt(text: &str, max: usize) -> &str {
 }
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/media/{key}", get(serve_media)).route(
-        "/settings/avatar",
-        post(upload_avatar)
-            // Refuse an oversized body without reading it. The field
-            // is bounded again after extraction, because one limit
-            // covers the whole multipart body rather than each part.
-            .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
-    )
+    Router::new()
+        .route("/media/{key}", get(serve_media))
+        .route(
+            "/settings/avatar",
+            post(upload_avatar)
+                // Refuse an oversized body without reading it. The field
+                // is bounded again after extraction, because one limit
+                // covers the whole multipart body rather than each part.
+                .layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/v1/media",
+            post(upload_attachment).layer(DefaultBodyLimit::max(MAX_UPLOAD_BYTES)),
+        )
+        .route(
+            "/api/v1/media/{id}",
+            axum::routing::patch(describe_attachment),
+        )
 }
 
 fn actor_uuid(viewer: &Option<axum::Extension<Viewer>>) -> Option<uuid::Uuid> {
@@ -190,27 +202,7 @@ async fn upload_avatar(
 
     let processed = match process_avatar(&raw) {
         Ok(processed) => processed,
-        Err(MediaError::TooLarge) => {
-            return (
-                StatusCode::PAYLOAD_TOO_LARGE,
-                "that image is larger than 4 MB",
-            )
-                .into_response();
-        }
-        Err(MediaError::UnsupportedFormat) => {
-            return (
-                StatusCode::UNSUPPORTED_MEDIA_TYPE,
-                "that file is not a JPEG or PNG",
-            )
-                .into_response();
-        }
-        Err(MediaError::TooManyPixels | MediaError::Undecodable) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                "the image could not be processed; try another file",
-            )
-                .into_response();
-        }
+        Err(error) => return refusal(error),
     };
 
     let object_key = new_object_key();
@@ -304,4 +296,185 @@ async fn upload_avatar(
     }
 
     Redirect::to("/settings/profile").into_response()
+}
+
+/// What the compose page sends when the author describes an image.
+#[derive(serde::Deserialize)]
+struct DescribeRequest {
+    alt: String,
+}
+
+/// Set the description of an image that is uploaded but not yet posted.
+///
+/// Separate from the upload because the description is typed after the
+/// file is chosen: the author picks an image, sees it, and then says
+/// what it shows. Sending the two together would mean describing a file
+/// before looking at it.
+///
+/// Restricted to the uploader's own unattached images. Once a post
+/// claims one, its description travelled in that post's document and is
+/// what peers stored, so changing it here would leave this instance
+/// disagreeing with every other about the same image.
+async fn describe_attachment(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Path(id): Path<uuid::Uuid>,
+    axum::Json(body): axum::Json<DescribeRequest>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&viewer) else {
+        return (StatusCode::UNAUTHORIZED, "sign in to describe an image").into_response();
+    };
+
+    let alt = body.alt.trim();
+    let alt_text = (!alt.is_empty()).then(|| truncate_alt(alt, MAX_ALT_BYTES).to_owned());
+
+    let updated = sqlx::query(
+        "UPDATE media_attachments SET alt_text = $1
+         WHERE id = $2 AND actor_id = $3 AND purpose = 'post' AND post_id IS NULL",
+    )
+    .bind(&alt_text)
+    .bind(id)
+    .bind(actor_id)
+    .execute(&state.pool)
+    .await;
+
+    match updated {
+        Ok(result) if result.rows_affected() == 1 => StatusCode::NO_CONTENT.into_response(),
+        Ok(_) => StatusCode::NOT_FOUND.into_response(),
+        Err(error) => {
+            tracing::error!(%error, %actor_id, "could not describe the attachment");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// The refusal an uploader sees, in terms they can act on.
+///
+/// Shared by both upload routes so the two cannot answer differently for
+/// the same file, which is the shape a reader reports as "it worked on
+/// my profile but not in a post".
+fn refusal(error: MediaError) -> Response {
+    match error {
+        MediaError::TooLarge => (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "that image is larger than 4 MB",
+        ),
+        MediaError::UnsupportedFormat => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "that file is not a JPEG or PNG",
+        ),
+        MediaError::TooManyPixels | MediaError::Undecodable => (
+            StatusCode::BAD_REQUEST,
+            "the image could not be processed; try another file",
+        ),
+    }
+    .into_response()
+}
+
+/// Accept an image for a post the author has not written yet.
+///
+/// Two steps rather than one, which is how Mastodon does it and what
+/// lets the compose page show the image before the post exists. The row
+/// is written with no `post_id`; publishing claims it. An upload that is
+/// never claimed leaves a row nothing references, which
+/// `idx_media_unattached` exists to find.
+async fn upload_attachment(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    mut multipart: Multipart,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&viewer) else {
+        return (StatusCode::UNAUTHORIZED, "sign in to attach an image").into_response();
+    };
+
+    let mut raw: Option<Vec<u8>> = None;
+    let mut alt_text: Option<String> = None;
+    loop {
+        match multipart.next_field().await {
+            Ok(Some(field)) => match field.name() {
+                Some("file") => match field.bytes().await {
+                    Ok(bytes) => raw = Some(bytes.to_vec()),
+                    Err(_) => {
+                        return (StatusCode::PAYLOAD_TOO_LARGE, "that image is too large")
+                            .into_response();
+                    }
+                },
+                Some("alt") => {
+                    if let Ok(text) = field.text().await {
+                        let text = text.trim();
+                        alt_text = (!text.is_empty())
+                            .then(|| truncate_alt(text, MAX_ALT_BYTES).to_owned());
+                    }
+                }
+                _ => {}
+            },
+            Ok(None) => break,
+            Err(_) => return (StatusCode::BAD_REQUEST, "malformed upload").into_response(),
+        }
+    }
+
+    let Some(raw) = raw else {
+        return (StatusCode::BAD_REQUEST, "no image was attached").into_response();
+    };
+
+    let processed = match process_attachment(&raw) {
+        Ok(processed) => processed,
+        Err(error) => return refusal(error),
+    };
+
+    let object_key = new_object_key();
+    if let Err(error) = state.media.put(&object_key, &processed.bytes).await {
+        tracing::error!(%error, %actor_id, "could not write the attachment object");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "could not store the image",
+        )
+            .into_response();
+    }
+
+    let url = format!("https://{}/media/{}", state.domain, object_key);
+
+    let written = sqlx::query_scalar::<_, uuid::Uuid>(
+        "INSERT INTO media_attachments
+             (actor_id, media_type, object_key, backend, purpose, url, byte_size,
+              alt_text, blurhash)
+         VALUES ($1, $2, $3, $4, 'post', $5, $6, $7, $8)
+         RETURNING id",
+    )
+    .bind(actor_id)
+    .bind(processed.media_type)
+    .bind(&object_key)
+    .bind(state.media.backend())
+    .bind(&url)
+    .bind(processed.bytes.len() as i64)
+    .bind(&alt_text)
+    .bind(&processed.blurhash)
+    .fetch_one(&state.pool)
+    .await;
+
+    let id = match written {
+        Ok(id) => id,
+        Err(error) => {
+            tracing::error!(%error, %actor_id, "could not record the attachment");
+            // Do not leave the object behind: nothing references it.
+            let _ = state.media.delete(&object_key).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "could not save the image",
+            )
+                .into_response();
+        }
+    };
+
+    (
+        StatusCode::CREATED,
+        axum::Json(serde_json::json!({
+            "id": id,
+            "url": url,
+            "media_type": processed.media_type,
+            "alt": alt_text,
+            "blurhash": processed.blurhash,
+        })),
+    )
+        .into_response()
 }

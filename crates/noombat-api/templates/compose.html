@@ -85,6 +85,40 @@
                 </noscript>
             </div>
 
+            <!-- Attached images.
+
+                 Uploaded before the post exists, so the page can show what
+                 was chosen and collect a description for each one. Hidden
+                 without JavaScript: the upload is a second request, and a
+                 control that cannot work should not be offered. -->
+            {# The two labels the script needs travel as data attributes: the
+               page knows the reader's locale and the module does not. #}
+            <div id="attachments" hidden
+                 data-alt-label="{{ i18n.t("compose_attach_alt") }}"
+                 data-remove-label="{{ i18n.t("compose_attach_remove") }}">
+                <label for="attachment-file" class="block text-sm font-medium mb-1">
+                    {{ i18n.t("compose_attach") }}
+                </label>
+                <input id="attachment-file" type="file" multiple
+                       accept="image/jpeg,image/png"
+                       class="w-full border border-border-default rounded p-2
+                              bg-bg-primary text-text-primary">
+                <ul id="attachment-list" class="mt-2 space-y-2"></ul>
+                {# One field, comma-separated, because a form cannot send a
+                   list: repeated keys deserialise as a single value. #}
+                <input type="hidden" id="attachment-ids" name="attachment_ids" value="">
+
+                <label class="flex items-center gap-3 mt-3">
+                    <input type="checkbox" name="sensitive" value="true"
+                           aria-describedby="sensitive-help"
+                           class="rounded border-border-default">
+                    <span class="text-sm">{{ i18n.t("compose_sensitive") }}</span>
+                </label>
+                <p id="sensitive-help" class="text-sm text-text-secondary mt-1">
+                    {{ i18n.t("compose_sensitive_help") }}
+                </p>
+            </div>
+
             <!-- Visibility selector -->
             <div>
                 <label for="visibility" class="block text-sm font-medium mb-1">

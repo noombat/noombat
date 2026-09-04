@@ -1011,6 +1011,13 @@ async fn handle_create(
         title,
         featured_image_url,
         featured_image_alt,
+        // Absent means false. A peer that omits the property is not
+        // saying "not sensitive"; it is saying nothing, and the two are
+        // the same for a reader deciding whether to blur.
+        sensitive: object
+            .get("sensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         content_md: content.content_md,
         content_html: content.content_html,
         sanitiser_version: content.sanitiser_version,
@@ -1811,6 +1818,13 @@ async fn fetch_and_persist_remote_post(
         title,
         featured_image_url,
         featured_image_alt,
+        // Absent means false. A peer that omits the property is not
+        // saying "not sensitive"; it is saying nothing, and the two are
+        // the same for a reader deciding whether to blur.
+        sensitive: object
+            .get("sensitive")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false),
         content_md: content.content_md,
         content_html: content.content_html,
         sanitiser_version: content.sanitiser_version,

@@ -217,6 +217,18 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 # switch.
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 
+# BlurHash, the placeholder a sensitive image is displayed behind until
+# the reader asks to see it. Taken as a dependency rather than written
+# here: it is a wire format other implementations already produce and
+# consume, so a hand-rolled encoder that is subtly wrong produces hashes
+# that decode to the wrong colours everywhere but this instance.
+#
+# `default-features = false` drops `fast-linear-to-srgb`, a lookup table
+# traded against accuracy, and the `image` and `gdk-pixbuf` integrations:
+# the pixel buffer is already decoded by then, so the bridge would only
+# add a second path to the same bytes.
+blurhash = { version = "0.2.3", default-features = false }
+
 # MIME parsing (Autocrypt header extraction from IMAP messages).
 mailparse = "0.16"
 

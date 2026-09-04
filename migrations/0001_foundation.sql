@@ -112,6 +112,17 @@ CREATE TABLE actors (
     -- agency that never declared itself has to stay distinguishable from one
     -- that declared itself a direct employer.
     org_kind                     TEXT CHECK (org_kind IN ('employer', 'agency')),
+    -- Whether a sensitive image is shown as a blur or as a plain
+    -- placeholder. The reader's choice, not the author's.
+    --
+    -- Deliberately separate from whether sensitive media is hidden at all:
+    -- Mastodon carries the two as `display_media` and `use_blurhash`, and
+    -- keeping them apart is what lets somebody who wants such media hidden
+    -- still refuse the blur, which can itself be unpleasant to look at.
+    --
+    -- Defaults to TRUE, matching Mastodon: a blur says something is there
+    -- and roughly what it looks like, which is more use than a grey box.
+    blur_sensitive_media         BOOLEAN NOT NULL DEFAULT TRUE,
     -- The default a new post takes when the request states no visibility.
     -- Deliberately not inside actor_privacy: that blob holds access-control
     -- predicates, each with a read-enforcement site, and this has none. It is a
@@ -527,6 +538,17 @@ CREATE TABLE posts (
     -- Read by the surfaces where that difference decides something:
     -- trending, search, and the badge on the post itself.
     relayed_unverified       BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Whether the images on this post are shown blurred until the reader
+    -- asks to see them.
+    --
+    -- On the post, not on the attachment, which is where Mastodon puts it
+    -- and what peers therefore send: a post is sensitive as a whole, and a
+    -- reader deciding whether to look is deciding about the post.
+    --
+    -- Defaults to FALSE. A default that hid everything would train readers
+    -- to click through without reading the warning, which is the failure
+    -- mode the flag exists to avoid.
+    sensitive                BOOLEAN NOT NULL DEFAULT FALSE,
     ap_object                JSONB NOT NULL,
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
     -- A featured image is what alt text describes, so text without one
@@ -568,8 +590,22 @@ CREATE TABLE media_attachments (
     alt_text   TEXT,
     blurhash   TEXT,
     byte_size  BIGINT,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    -- An avatar or header belongs to the actor and never to a post. A
+    -- post attachment may be either: NULL while it is uploaded and not yet
+    -- attached, and set once the post that claims it exists.
+    CONSTRAINT media_purpose_matches_owner CHECK (
+        purpose = 'post'
+        OR post_id IS NULL
+    )
 );
+
+-- The upload-and-then-attach window. An attachment uploaded and never
+-- used leaves a row with no post, and this is what the sweep that
+-- removes them reads.
+CREATE INDEX idx_media_unattached
+    ON media_attachments (created_at)
+    WHERE purpose = 'post' AND post_id IS NULL;
 
 -- One current avatar and one current header per actor. The upload path
 -- replaces rather than accumulates, and this is what makes "replaces"

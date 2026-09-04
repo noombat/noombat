@@ -301,6 +301,17 @@ struct OutboxPostBody {
     /// The AP URI of the post this is a reply to. `None` for
     /// top-level posts.
     in_reply_to: Option<String>,
+    /// Images already uploaded through `POST /api/v1/media`, in the
+    /// order they should appear. Claimed by this post at publish, and
+    /// only where the uploader is the author: an id belonging to
+    /// somebody else attaches nothing.
+    #[serde(default, deserialize_with = "ids_from_array_or_list")]
+    attachment_ids: Vec<Uuid>,
+    /// Whether those images are shown blurred until the reader asks.
+    /// The author's judgement about their own post; whether the blur is
+    /// what hides them is the reader's, held on the reader's account.
+    #[serde(default)]
+    sensitive: bool,
 }
 
 fn default_post_type() -> String {
@@ -318,6 +329,11 @@ struct LocalPost<'a> {
     featured_image_url: Option<&'a str>,
     featured_image_alt: Option<&'a str>,
     in_reply_to: Option<&'a str>,
+    /// The images this post carries, already built as AS2 `Image`
+    /// objects. Empty for a post with none, which emits no `attachment`
+    /// property at all rather than an empty array.
+    attachments: &'a [serde_json::Value],
+    sensitive: bool,
     to: &'a [String],
     cc: &'a [String],
     tags: &'a [serde_json::Value],
@@ -390,6 +406,20 @@ fn build_create_activity(
     }
     if let Some(reply_to) = post.in_reply_to {
         ap_object["inReplyTo"] = json!(reply_to);
+    }
+
+    // Only when there are some. An empty `attachment` array is a claim
+    // that the post carries media, and some implementations render an
+    // empty gallery for it.
+    if !post.attachments.is_empty() {
+        ap_object["attachment"] = json!(post.attachments);
+    }
+
+    // Emitted only when true, which is what Mastodon sends and what a
+    // receiver's absent-means-false reading expects. A `false` on every
+    // post would be noise in a document that is hashed and signed.
+    if post.sensitive {
+        ap_object["sensitive"] = json!(true);
     }
 
     if let Some(key) = ed25519_private_base64 {
@@ -574,6 +604,12 @@ async fn post_outbox(
     // ActivityStreams type: Note or Article.
     let ap_type = if is_article { "Article" } else { "Note" };
 
+    // Read before the post exists, because the document has to carry
+    // them and the document is what gets signed. Restricted to this
+    // author's own unclaimed uploads, so an id guessed or copied from
+    // somebody else's post attaches nothing.
+    let attachments = attachment_objects(&state.pool, actor.id, &body.attachment_ids).await?;
+
     let published = chrono::Utc::now().to_rfc3339();
     let create_activity = build_create_activity(
         &LocalPost {
@@ -589,6 +625,8 @@ async fn post_outbox(
             cc: &cc,
             tags: &tag_objects,
             published: &published,
+            attachments: &attachments,
+            sensitive: body.sensitive,
         },
         &actor.ap_id,
         actor.ed25519_private_key.as_deref(),
@@ -602,6 +640,7 @@ async fn post_outbox(
         title: body.title.clone(),
         featured_image_url: body.featured_image_url.clone(),
         featured_image_alt: featured_image_alt.clone(),
+        sensitive: body.sensitive,
         content_md: body.content.clone(),
         content_html: content_html.clone(),
         in_reply_to: body.in_reply_to.clone(),
@@ -609,6 +648,24 @@ async fn post_outbox(
         ap_object: create_activity.clone(),
     };
     let created = noombat_identity::repo::create_local_post(&state.pool, &new_post).await?;
+
+    // Now that there is a post to point at. The document already names
+    // these images, so a claim that comes up short means a row was taken
+    // between the read above and here, and the post would carry a
+    // reference to media it does not own.
+    if !body.attachment_ids.is_empty() {
+        let claimed = claim_attachments(&state.pool, actor.id, created.id, &body.attachment_ids)
+            .await
+            .unwrap_or(0);
+        if claimed != body.attachment_ids.len() as u64 {
+            tracing::warn!(
+                post = %created.id,
+                claimed,
+                requested = body.attachment_ids.len(),
+                "some attachments were not claimed by the post that names them"
+            );
+        }
+    }
 
     // Link extracted hashtags to the newly created post.
     //
@@ -694,6 +751,139 @@ async fn post_outbox(
         Json(create_activity),
     )
         .into_response())
+}
+
+// ..... POST ATTACHMENTS .....
+/// Read attachment ids from a JSON array or from a single form field.
+///
+/// The compose page is an ordinary HTML form, and a form cannot express
+/// a list: `serde_urlencoded` reads repeated keys as one value, not as a
+/// sequence, so `attachment_ids=a&attachment_ids=b` silently becomes one
+/// id. A comma-separated field is what a form can send and what this
+/// reads, while an API client keeps the array its contract describes.
+///
+/// An entry that is not a UUID is dropped rather than failing the
+/// request. The alternative is a compose page that refuses to publish
+/// because of one malformed id, which loses the writing to save an
+/// image.
+fn ids_from_array_or_list<'de, D>(deserializer: D) -> Result<Vec<Uuid>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum IdList {
+        Array(Vec<Uuid>),
+        Separated(String),
+    }
+
+    Ok(match IdList::deserialize(deserializer)? {
+        IdList::Array(ids) => ids,
+        IdList::Separated(raw) => raw
+            .split(',')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .filter_map(|part| Uuid::parse_str(part).ok())
+            .collect(),
+    })
+}
+
+/// The AS2 `Image` objects for images this author uploaded and has not
+/// yet attached to anything.
+///
+/// Ordered by the caller's list rather than by upload time, because the
+/// order is the author's arrangement of their own post.
+///
+/// An id that names somebody else's upload, or one already claimed, is
+/// silently absent from the result. It is not an error: the alternative
+/// is a compose page that refuses to publish because of a stale id in a
+/// tab left open, and losing the writing is worse than losing the image.
+async fn attachment_objects(
+    pool: &sqlx::PgPool,
+    actor_id: Uuid,
+    ids: &[Uuid],
+) -> Result<Vec<serde_json::Value>, ApiError> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let rows: Vec<AttachmentRow> = sqlx::query_as(
+        "SELECT id, url, media_type, alt_text, blurhash
+         FROM media_attachments
+         WHERE id = ANY($1) AND actor_id = $2 AND purpose = 'post' AND post_id IS NULL",
+    )
+    .bind(ids)
+    .bind(actor_id)
+    .fetch_all(pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    Ok(ids
+        .iter()
+        .filter_map(|wanted| rows.iter().find(|row| &row.id == wanted))
+        .map(|row| {
+            let mut image = json!({
+                "type": "Image",
+                "url": row.url,
+                "mediaType": row.media_type,
+            });
+            // `name` is where ActivityStreams puts a description, and
+            // what Mastodon reads as alt text. Absent rather than empty
+            // when there is none: an empty `name` claims a description
+            // exists and then says nothing.
+            if let Some(ref alt) = row.alt_text {
+                image["name"] = json!(alt);
+            }
+            // Spelled as Mastodon spells it, on the attachment itself.
+            // A peer that does not know the property ignores it, and a
+            // peer that does renders the same placeholder this instance
+            // does without fetching the image.
+            if let Some(ref hash) = row.blurhash {
+                image["blurhash"] = json!(hash);
+            }
+            image
+        })
+        .collect())
+}
+
+/// One row behind [`attachment_objects`].
+///
+/// Named rather than a tuple so the five columns cannot be read in the
+/// wrong order, which a tuple of three `String`-shaped fields makes easy
+/// and silent.
+#[derive(sqlx::FromRow)]
+struct AttachmentRow {
+    id: Uuid,
+    url: String,
+    media_type: String,
+    alt_text: Option<String>,
+    blurhash: Option<String>,
+}
+
+/// Point this author's unclaimed uploads at the post that names them.
+///
+/// Returns how many rows were claimed, which the caller compares against
+/// how many it asked for. The `post_id IS NULL` guard is what makes a
+/// second call a no-op rather than a way to move an image from one post
+/// to another after the fact.
+async fn claim_attachments(
+    pool: &sqlx::PgPool,
+    actor_id: Uuid,
+    post_id: Uuid,
+    ids: &[Uuid],
+) -> Result<u64, NoombatError> {
+    let result = sqlx::query(
+        "UPDATE media_attachments SET post_id = $1
+         WHERE id = ANY($2) AND actor_id = $3 AND purpose = 'post' AND post_id IS NULL",
+    )
+    .bind(post_id)
+    .bind(ids)
+    .bind(actor_id)
+    .execute(pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    Ok(result.rows_affected())
 }
 
 // ..... PATCH /users/{username} .....
@@ -1031,6 +1221,8 @@ mod tests {
             featured_image_url: None,
             featured_image_alt: None,
             in_reply_to: None,
+            attachments: &[],
+            sensitive: false,
             to,
             cc,
             tags,
