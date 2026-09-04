@@ -275,3 +275,135 @@ impl ChatmailAdminClient {
         Ok(body.exists)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An address whose only fault is the separator, so a test failing
+    /// here names the rule that lapsed rather than the whole validator.
+    const PATH_CHANGING: &str = "victim@example.test/x";
+    const SAFE: &str = "someone@example.test";
+
+    /// Port 1 refuses immediately, which is what makes the assertions
+    /// below meaningful: with the check gone the call reaches the
+    /// network and fails as `Internal`, never as `BadRequest`.
+    fn client() -> ChatmailAdminClient {
+        ChatmailAdminClient::new(Some("http://127.0.0.1:1"), Some("test-secret"))
+            .expect("a base URL and a secret produce a client")
+    }
+
+    /// Assert the call was refused *for the right reason*.
+    ///
+    /// Asserting only that it failed would pass with no validator at
+    /// all, because the sidecar address is unroutable either way.
+    fn assert_refused<T: std::fmt::Debug>(result: Result<T>, what: &str) {
+        match result {
+            Err(NoombatError::BadRequest(message)) => assert!(
+                message.contains("cannot appear in a request path"),
+                "{what} refused for the wrong reason: {message}"
+            ),
+            other => panic!("{what} accepted an address that changes the path: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn an_ordinary_address_is_accepted() {
+        assert!(check_segment(SAFE).is_ok());
+    }
+
+    #[test]
+    fn a_separator_or_an_escape_is_refused() {
+        for value in [
+            "a/b", "a\\b", "a?b", "a#b", "a%2Fb", "a;b", "a b", "a\nb", "a\tb",
+        ] {
+            assert!(
+                check_segment(value).is_err(),
+                "{value:?} should not be allowed in a path segment"
+            );
+        }
+    }
+
+    #[test]
+    fn an_empty_or_traversing_segment_is_refused() {
+        assert!(check_segment("").is_err());
+        assert!(check_segment("..").is_err());
+        assert!(check_segment("a..b").is_err());
+    }
+
+    // ..... Every method reaches the validator .....
+    //
+    // The validator existing is not the same as it being called, and a
+    // dropped `check_segment(...)?` is a bare statement whose removal
+    // compiles clean. One test per argument, so losing either half of a
+    // pair is caught too.
+
+    #[tokio::test]
+    async fn rotate_password_refuses_a_path_changing_address() {
+        assert_refused(
+            client().rotate_password(PATH_CHANGING).await,
+            "rotate_password",
+        );
+    }
+
+    #[tokio::test]
+    async fn kick_sessions_refuses_a_path_changing_address() {
+        assert_refused(client().kick_sessions(PATH_CHANGING).await, "kick_sessions");
+    }
+
+    #[tokio::test]
+    async fn delete_account_refuses_a_path_changing_address() {
+        assert_refused(
+            client().delete_account(PATH_CHANGING).await,
+            "delete_account",
+        );
+    }
+
+    #[tokio::test]
+    async fn block_recipient_refuses_a_path_changing_address() {
+        assert_refused(
+            client().block_recipient(PATH_CHANGING).await,
+            "block_recipient",
+        );
+    }
+
+    #[tokio::test]
+    async fn unblock_recipient_refuses_a_path_changing_address() {
+        assert_refused(
+            client().unblock_recipient(PATH_CHANGING).await,
+            "unblock_recipient",
+        );
+    }
+
+    #[tokio::test]
+    async fn block_sender_pair_refuses_either_side() {
+        assert_refused(
+            client().block_sender_pair(PATH_CHANGING, SAFE).await,
+            "block_sender_pair sender",
+        );
+        assert_refused(
+            client().block_sender_pair(SAFE, PATH_CHANGING).await,
+            "block_sender_pair recipient",
+        );
+    }
+
+    #[tokio::test]
+    async fn unblock_sender_pair_refuses_either_side() {
+        assert_refused(
+            client().unblock_sender_pair(PATH_CHANGING, SAFE).await,
+            "unblock_sender_pair sender",
+        );
+        assert_refused(
+            client().unblock_sender_pair(SAFE, PATH_CHANGING).await,
+            "unblock_sender_pair recipient",
+        );
+    }
+
+    #[tokio::test]
+    async fn account_exists_refuses_a_path_changing_address() {
+        assert_refused(
+            client().account_exists(PATH_CHANGING).await,
+            "account_exists",
+        );
+    }
+}
