@@ -208,6 +208,32 @@ async fn unsigned_get(http_client: &reqwest::Client, url: &str) -> Result<reqwes
 mod tests {
     use super::*;
 
+    // The guard is the first statement in `signed_get`, before the pool
+    // is touched, so a lazy pool never opens a socket. Asserting only
+    // that the call failed would pass with no guard at all, because the
+    // address is unroutable either way: the reason is the assertion.
+    #[tokio::test]
+    async fn signed_get_refuses_a_private_address_before_touching_the_database() {
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://noombat:noombat@127.0.0.1:1/absent")
+            .expect("a lazy pool needs no server");
+
+        let error = super::signed_get(
+            &pool,
+            &reqwest::Client::new(),
+            "https://169.254.169.254/latest/meta-data/",
+            uuid::Uuid::nil(),
+        )
+        .await
+        .expect_err("a link-local address must be refused");
+
+        let reason = error.to_string();
+        assert!(
+            reason.contains("private or reserved address"),
+            "refused for the wrong reason, so the guard may not have run: {reason}"
+        );
+    }
+
     #[test]
     fn a_newline_cannot_forge_a_log_line() {
         let forged = in_message("https://a.test/x\nERROR peer is trusted");
