@@ -8,6 +8,7 @@ pub mod admin;
 pub mod admin_relays;
 pub mod applications;
 pub mod auth;
+pub mod body;
 pub mod chat;
 pub mod connections;
 pub mod cv;

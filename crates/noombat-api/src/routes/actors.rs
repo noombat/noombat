@@ -7,7 +7,7 @@ use askama_web::WebTemplate;
 use axum::extract::{Path, State};
 use axum::http::header::CONTENT_TYPE;
 use axum::http::{HeaderMap, StatusCode};
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Redirect};
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -404,8 +404,12 @@ async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(body): Json<OutboxPostBody>,
-) -> Result<impl IntoResponse, ApiError> {
+    body: crate::routes::body::JsonOrForm<OutboxPostBody>,
+) -> Result<axum::response::Response, ApiError> {
+    // The compose page posts here as an ordinary HTML form, so this
+    // route is reached both ways and answers each in its own terms.
+    let from_form = body.from_form;
+    let body = body.value;
     // Posting to an outbox is acting as that account.
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
@@ -647,11 +651,21 @@ async fn post_outbox(
         .await;
     }
 
+    // A browser that submitted the compose form gets the post it just
+    // wrote. Answering it with the activity document would render raw
+    // JSON, which reads as a failure even though the post was created.
+    if from_form {
+        return Ok(
+            Redirect::to(&format!("/users/{username}/posts/{}", created.id)).into_response(),
+        );
+    }
+
     Ok((
         StatusCode::CREATED,
         [(CONTENT_TYPE, "application/activity+json; charset=utf-8")],
         Json(create_activity),
-    ))
+    )
+        .into_response())
 }
 
 // ..... PATCH /users/{username} .....
