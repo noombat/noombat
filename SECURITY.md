@@ -120,6 +120,30 @@ enforcement mechanisms in category 2 above rely on the CSP to constrain what enr
 - Dependabot proposes review-gated updates across Cargo, npm, Docker, Docker Compose, and GitHub Actions.
 - All first-party crates declare `#![forbid(unsafe_code)]`, verified in CI.
 
+## Static analysis
+
+CodeQL runs on every push and pull request to `main`, and weekly, over Rust, Python, TypeScript, and the workflow definitions themselves.
+The configuration lives in the repository rather than in a repository setting, so what is analysed and what is excluded are both reviewable in a diff:
+see [`.github/workflows/codeql.yml`](.github/workflows/codeql.yml) and [`.github/codeql/codeql-config.yml`](.github/codeql/codeql-config.yml).
+The `security-extended` suite is used rather than the default one, which omits the path-injection and log-injection queries.
+`scripts/check-codeql-config.py` fails the build when an exclusion pattern empties a language, which CodeQL treats as a fatal error rather than as nothing to do, or when it reaches a directory not already recorded in `.github/codeql/excluded-dirs.txt`.
+Narrowing what is scanned is therefore a reviewed change rather than a silent one.
+
+**The alerts themselves are not public.**
+The Security tab returns 404 to a visitor who is not signed in with access to this repository, so neither the finding set nor its triage can be audited from outside.
+What can be audited is the code:
+the analyser is a public tool over public sources, and anyone may run it against a clone and compare.
+
+**A dismissal has to be enforced by something other than itself.**
+A meaningful share of alerts here are dismissed as false positives, and the reason is structural rather than convenient.
+CodeQL's taint tracking follows values, and several defences in this codebase validate a value without replacing it:
+the check refuses the input and returns early, the value reaching the sink is unchanged, and the analysis reports the flow as though nothing had intervened.
+The rule applied is that a dismissal on those grounds names a test that fails if the validator stops being called, so that the claim behind the dismissal keeps being checked after the alert has been closed and forgotten.
+Where no such test is practical, that is recorded as an absence rather than left implicit.
+
+This is still a judgement, made by the maintainers and not visible to you.
+A reader who wants to check it should run the analysis against the source rather than take the dismissals on trust.
+
 ## What leaves the instance
 
 An operator should be able to answer "what does this box report, and to whom" without reading the
