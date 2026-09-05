@@ -44,6 +44,18 @@ pub struct Config {
     /// `transport_maps` closes the outbound direction; this closes the
     /// inbound one. Both are generated from the same allowlist.
     pub sender_domains_path: String,
+    /// PEM chain served to the Noombat application server
+    /// (default `/etc/ssl/certs/chatmail.pem`).
+    ///
+    /// The relay's own certificate, not a second one. It is already
+    /// issued for the mail domain, already renewed by `cert-watch`, and
+    /// already trusted by the application container through
+    /// `NOOMBAT_EXTRA_CA_FILE`, so a separate certificate here would be
+    /// one more thing to renew and one more way to be silently expired.
+    pub tls_cert_path: String,
+    /// Private key for [`Config::tls_cert_path`]
+    /// (default `/etc/ssl/private/chatmail.key`).
+    pub tls_key_path: String,
 }
 
 impl Config {
@@ -92,6 +104,10 @@ impl Config {
                 .unwrap_or_else(|_| "/etc/postfix/noombat_transport_maps".into()),
             sender_domains_path: env::var("CHATMAIL_SENDER_DOMAINS_PATH")
                 .unwrap_or_else(|_| "/etc/postfix/noombat_sender_domains".into()),
+            tls_cert_path: env::var("CHATMAIL_ADMIN_TLS_CERT")
+                .unwrap_or_else(|_| "/etc/ssl/certs/chatmail.pem".into()),
+            tls_key_path: env::var("CHATMAIL_ADMIN_TLS_KEY")
+                .unwrap_or_else(|_| "/etc/ssl/private/chatmail.key".into()),
         };
         config.validate();
         config
@@ -111,6 +127,8 @@ impl Config {
             ("CHATMAIL_SENDER_ACCESS_PATH", &self.sender_access_path),
             ("CHATMAIL_TRANSPORT_MAPS_PATH", &self.transport_maps_path),
             ("CHATMAIL_SENDER_DOMAINS_PATH", &self.sender_domains_path),
+            ("CHATMAIL_ADMIN_TLS_CERT", &self.tls_cert_path),
+            ("CHATMAIL_ADMIN_TLS_KEY", &self.tls_key_path),
         ] {
             assert!(
                 std::path::Path::new(path).is_absolute(),

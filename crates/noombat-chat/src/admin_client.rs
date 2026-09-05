@@ -7,7 +7,7 @@
 
 use noombat_core::error::{NoombatError, Result};
 use serde::Deserialize;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Refuse an address that would change the path of the request it goes in.
 ///
@@ -37,10 +37,47 @@ fn check_segment(value: &str) -> Result<()> {
     Ok(())
 }
 
+/// An HTTP client trusting the relay's authority as well as the
+/// platform's.
+///
+/// The sidecar serves the relay's own certificate, which on a default
+/// deployment is issued by a CA generated inside the relay container and
+/// trusted nowhere else. [`crate::session::EXTRA_CA_ENV`] is the same
+/// variable the IMAP and SMTP sessions read, so one file covers every
+/// connection this crate makes to the relay.
+///
+/// Reports rather than fails, matching the transports: an unusable CA
+/// file surfaces as a handshake failure naming an untrusted issuer,
+/// which is a better diagnosis than a client that could not be built.
+fn client_trusting_the_relay() -> reqwest::Client {
+    let mut builder = reqwest::Client::builder();
+
+    if let Some(path) = std::env::var_os(crate::session::EXTRA_CA_ENV) {
+        match std::fs::read(&path) {
+            Ok(pem) => match reqwest::Certificate::from_pem_bundle(&pem) {
+                Ok(certificates) => {
+                    for certificate in certificates {
+                        builder = builder.add_root_certificate(certificate);
+                    }
+                }
+                Err(error) => {
+                    error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE holds no usable certificate")
+                }
+            },
+            Err(error) => error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE could not be read"),
+        }
+    }
+
+    builder.build().unwrap_or_else(|error| {
+        error!(%error, "falling back to a client trusting only the platform roots");
+        reqwest::Client::new()
+    })
+}
+
 /// Client for the Chatmail admin sidecar.
 #[derive(Debug, Clone)]
 pub struct ChatmailAdminClient {
-    /// Base URL of the sidecar (e.g. `http://chatmail:9100`).
+    /// Base URL of the sidecar (e.g. `https://chat.example.com:9100`).
     base_url: String,
     /// Shared secret for the `Authorization: Bearer` header.
     secret: String,
@@ -73,7 +110,7 @@ impl ChatmailAdminClient {
         Some(Self {
             base_url,
             secret,
-            http: reqwest::Client::new(),
+            http: client_trusting_the_relay(),
         })
     }
 

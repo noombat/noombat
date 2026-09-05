@@ -168,12 +168,12 @@ Environment variables take precedence.
 
 ### Encrypted chat (Chatmail)
 
-| Key                     | Env Var                         | Description                                                              |
-|-------------------------|---------------------------------|--------------------------------------------------------------------------|
-| `chatmail_domain`       | `NOOMBAT_CHATMAIL_DOMAIN`       | Co-deployed Chatmail relay domain (e.g. `chat.noombat.social`).          |
-| `chatmail_available`    | `NOOMBAT_CHATMAIL_AVAILABLE`    | Enable Chatmail integration (default `false`).                           |
-| `chatmail_admin_url`    | `NOOMBAT_CHATMAIL_ADMIN_URL`    | Admin sidecar REST API URL (internal-only, e.g. `http://chatmail:9100`). |
-| `chatmail_admin_secret` | `NOOMBAT_CHATMAIL_ADMIN_SECRET` | Shared secret for admin sidecar authentication.                          |
+| Key                     | Env Var                         | Description                                                                            |
+|-------------------------|---------------------------------|----------------------------------------------------------------------------------------|
+| `chatmail_domain`       | `NOOMBAT_CHATMAIL_DOMAIN`       | Co-deployed Chatmail relay domain (e.g. `chat.noombat.social`).                        |
+| `chatmail_available`    | `NOOMBAT_CHATMAIL_AVAILABLE`    | Enable Chatmail integration (default `false`).                                         |
+| `chatmail_admin_url`    | `NOOMBAT_CHATMAIL_ADMIN_URL`    | Admin sidecar REST API URL (internal-only, TLS, e.g. `https://chat.example.com:9100`). |
+| `chatmail_admin_secret` | `NOOMBAT_CHATMAIL_ADMIN_SECRET` | Shared secret for admin sidecar authentication.                                        |
 
 The `CHATMAIL_ALLOWLIST_URL` variable is configured on the Chatmail relay container (not the Noombat application server).
 
@@ -384,7 +384,7 @@ The admin sidecar exposes a private REST API for account lifecycle operations (p
 2. Provision DNS records: A/AAAA for `chat.{DOMAIN}`, MX for `chat.{DOMAIN}` pointing to itself, and a DKIM TXT record under the `chat.{DOMAIN}` zone.
 3. Verify that the hosting provider permits outbound connections on port 25 and that the DNS records resolve correctly.
 4. Register the Chatmail domain in the project allowlist for inter-instance messaging.
-5. Set the following environment variables on the Noombat application server: `NOOMBAT_CHATMAIL_DOMAIN=chat.{DOMAIN}`, `NOOMBAT_CHATMAIL_AVAILABLE=true`, `NOOMBAT_CHATMAIL_ADMIN_URL=http://chatmail:9100`, and `NOOMBAT_CHATMAIL_ADMIN_SECRET` (matching the value from step 1).
+5. Set the following environment variables on the Noombat application server: `NOOMBAT_CHATMAIL_DOMAIN=chat.{DOMAIN}`, `NOOMBAT_CHATMAIL_AVAILABLE=true`, `NOOMBAT_CHATMAIL_ADMIN_URL=https://chat.{DOMAIN}:9100`, and `NOOMBAT_CHATMAIL_ADMIN_SECRET` (matching the value from step 1).
 6. Mount a valid TLS certificate and key at `/etc/ssl/certs/chatmail.pem` and `/etc/ssl/private/chatmail.key` in the chatmail container. If no certificate is mounted, the entrypoint generates a self-signed certificate suitable only for development.
 
 ## Changelog

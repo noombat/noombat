@@ -252,7 +252,6 @@ serde_json_canonicalizer = "0.3"
 scraper = "0.27"
 
 # Synchronous HTTP server (noombat-chatmail-admin sidecar).
-tiny_http = "0.12"
 
 # Synchronous HTTP client (noombat-chatmail-admin allowlist sync).
 ureq = "3"

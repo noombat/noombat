@@ -16,7 +16,11 @@ services:
       NOOMBAT_MEILI_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
       NOOMBAT_CHATMAIL_AVAILABLE: "true"
       NOOMBAT_CHATMAIL_DOMAIN: chat.${NOOMBAT_DOMAIN:-localhost}
-      NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
+      # `https`, and addressed by the mail domain rather than by the
+      # service name: the relay's certificate carries that one name as
+      # its only subject alternative name, and the alias on the chatmail
+      # service below is what makes it resolve inside this network.
+      NOOMBAT_CHATMAIL_ADMIN_URL: https://chat.${NOOMBAT_DOMAIN:-localhost}:9100
       NOOMBAT_CHATMAIL_ADMIN_SECRET: ${CHATMAIL_ADMIN_SECRET:-noombat-chatmail-dev-secret}
       # The instance's administrative contact. Caddy passes the same
       # variable to Let's Encrypt as the ACME account address, so the
@@ -167,6 +171,14 @@ services:
       # one needs to sign, and a private key reachable from the web
       # process is a key with a much larger attack surface.
       - chatmail-dkim:/etc/opendkim
+    # The name on the relay's certificate, so the application container
+    # can complete a handshake with the admin sidecar. Without it the
+    # only resolvable name is `chatmail`, which the certificate does
+    # not cover.
+    networks:
+      default:
+        aliases:
+          - chat.${NOOMBAT_DOMAIN:-localhost}
     healthcheck:
       test: ["CMD", "doveadm", "service", "status", "imap"]
       interval: 30s

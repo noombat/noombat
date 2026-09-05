@@ -7,8 +7,12 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use axum::Json;
+use axum::extract::{Path as UrlPath, State};
+use axum::http::StatusCode;
+use axum::routing::{delete, get, post};
+use axum::{Router, middleware};
 use serde_json::json;
-use tiny_http::{Header, Method, Request, Response, StatusCode};
 use tracing::{info, warn};
 
 use crate::password::generate_password;
@@ -84,33 +88,68 @@ fn safe_child_path(base_dir: &str, address: &str) -> Option<PathBuf> {
 }
 
 /// Dispatch an incoming HTTP request.
-pub fn handle_request(request: Request, state: &Arc<AppState>) {
-    // Authenticate via shared secret.
-    if !authenticate(&request, &state.config.admin_secret) {
-        let _ = request.respond(json_response(
-            StatusCode(401),
-            &json!({"error": "unauthorised"}),
-        ));
-        return;
-    }
+/// A JSON reply: the status and the body every handler returns.
+type Reply = (StatusCode, Json<serde_json::Value>);
 
-    let method = request.method().clone();
-    let url = request.url().to_owned();
-
-    match route(&method, &url, request, state) {
-        Ok(()) => {}
-        Err(e) => {
-            warn!(url = %url, error = %e, "handler error");
-        }
-    }
+fn reply(status: StatusCode, body: serde_json::Value) -> Reply {
+    (status, Json(body))
 }
 
-/// Verify the `Authorization: Bearer <secret>` header.
+fn invalid_address() -> Reply {
+    reply(StatusCode::BAD_REQUEST, json!({"error": "invalid address"}))
+}
+
+/// The admin API.
+///
+/// Each address is a single path segment, so a value containing `/` no
+/// longer reaches a handler at all: it matches no route and answers 404
+/// where the hand-rolled prefix matching used to hand the whole
+/// remainder to `validate_address`. That validator still runs, because
+/// axum percent-decodes a segment before handing it over and `%2F`
+/// would otherwise arrive as a separator after the routing decision.
+pub fn router(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route(
+            "/admin/v1/accounts/{address}/rotate-password",
+            post(rotate_password),
+        )
+        .route("/admin/v1/accounts/{address}/kick", post(kick))
+        .route("/admin/v1/accounts/{address}", delete(delete_account))
+        .route("/admin/v1/accounts/{address}/exists", get(account_exists))
+        .route(
+            "/admin/v1/access-maps/recipients/{address}/block",
+            post(block_recipient).delete(unblock_recipient),
+        )
+        .route(
+            "/admin/v1/access-maps/senders/{sender}/block-to/{recipient}",
+            post(block_sender_pair).delete(unblock_sender_pair),
+        )
+        .fallback(not_found)
+        .layer(middleware::from_fn_with_state(
+            Arc::clone(&state),
+            require_admin_secret,
+        ))
+        .with_state(state)
+}
+
+async fn not_found() -> Reply {
+    reply(StatusCode::NOT_FOUND, json!({"error": "not found"}))
+}
+
+/// Reject anything without `Authorization: Bearer <secret>`.
 ///
 /// Comparison uses HMAC-SHA256 digests to produce fixed-length
 /// (32-byte) outputs before the constant-time comparison, eliminating
 /// both timing and length oracle attacks.
-fn authenticate(request: &Request, expected: &str) -> bool {
+///
+/// Applied as a layer over every route including the fallback, so an
+/// unauthenticated request cannot learn which paths exist.
+async fn require_admin_secret(
+    State(state): State<Arc<AppState>>,
+    request: axum::extract::Request,
+    next: middleware::Next,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
     use hmac::{Hmac, Mac};
     use sha2::Sha256;
     use subtle::ConstantTimeEq;
@@ -120,202 +159,106 @@ fn authenticate(request: &Request, expected: &str) -> bool {
     /// Fixed domain-separation tag (not secret).
     const HMAC_TAG: &[u8] = b"noombat-chatmail-admin-verify";
 
-    for header in request.headers() {
-        if header.field.equiv("Authorization")
-            && let Some(token) = header.value.as_str().strip_prefix("Bearer ")
-        {
-            let mut mac_a = HmacSha256::new_from_slice(token.as_bytes())
-                .expect("HMAC-SHA256 accepts any key length");
-            mac_a.update(HMAC_TAG);
-            let digest_a = mac_a.finalize().into_bytes();
+    let digest = |secret: &[u8]| {
+        let mut mac =
+            HmacSha256::new_from_slice(secret).expect("HMAC-SHA256 accepts any key length");
+        mac.update(HMAC_TAG);
+        mac.finalize().into_bytes()
+    };
 
-            let mut mac_b = HmacSha256::new_from_slice(expected.as_bytes())
-                .expect("HMAC-SHA256 accepts any key length");
-            mac_b.update(HMAC_TAG);
-            let digest_b = mac_b.finalize().into_bytes();
+    let offered = request
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .map(|token| digest(token.as_bytes()));
 
-            return digest_a.ct_eq(&digest_b).into();
-        }
-    }
-    false
-}
+    let expected = digest(state.config.admin_secret.as_bytes());
 
-/// Match the URL path to a handler.
-fn route(
-    method: &Method,
-    url: &str,
-    request: Request,
-    state: &Arc<AppState>,
-) -> Result<(), Box<dyn std::error::Error>> {
-    // Strip query string if present.
-    let path = url.split('?').next().unwrap_or(url);
-
-    // POST /admin/v1/accounts/{address}/rotate-password
-    if method == &Method::Post {
-        if let Some(addr) = path
-            .strip_prefix("/admin/v1/accounts/")
-            .and_then(|rest| rest.strip_suffix("/rotate-password"))
-        {
-            return handle_rotate_password(request, state, addr);
-        }
-        // POST /admin/v1/accounts/{address}/kick
-        if let Some(addr) = path
-            .strip_prefix("/admin/v1/accounts/")
-            .and_then(|rest| rest.strip_suffix("/kick"))
-        {
-            return handle_kick(request, state, addr);
-        }
-        // POST /admin/v1/access-maps/recipients/{address}/block
-        if let Some(addr) = path
-            .strip_prefix("/admin/v1/access-maps/recipients/")
-            .and_then(|rest| rest.strip_suffix("/block"))
-        {
-            return handle_block_recipient(request, state, addr);
-        }
-        // POST /admin/v1/access-maps/senders/{sender}/block-to/{recipient}
-        if let Some(rest) = path.strip_prefix("/admin/v1/access-maps/senders/")
-            && let Some((sender, recipient)) = parse_sender_block_pair(rest)
-        {
-            return handle_block_sender_pair(request, state, &sender, &recipient);
-        }
-    }
-
-    // DELETE /admin/v1/accounts/{address}
-    if method == &Method::Delete {
-        if let Some(addr) = path.strip_prefix("/admin/v1/accounts/")
-            && !addr.contains('/')
-            && !addr.is_empty()
-        {
-            return handle_delete_account(request, state, addr);
-        }
-        // DELETE /admin/v1/access-maps/recipients/{address}/block
-        if let Some(addr) = path
-            .strip_prefix("/admin/v1/access-maps/recipients/")
-            .and_then(|rest| rest.strip_suffix("/block"))
-        {
-            return handle_unblock_recipient(request, state, addr);
-        }
-        // DELETE /admin/v1/access-maps/senders/{sender}/block-to/{recipient}
-        if let Some(rest) = path.strip_prefix("/admin/v1/access-maps/senders/")
-            && let Some((sender, recipient)) = parse_sender_block_pair(rest)
-        {
-            return handle_unblock_sender_pair(request, state, &sender, &recipient);
-        }
-    }
-
-    // GET /admin/v1/accounts/{address}/exists
-    if method == &Method::Get
-        && let Some(addr) = path
-            .strip_prefix("/admin/v1/accounts/")
-            .and_then(|rest| rest.strip_suffix("/exists"))
-    {
-        return handle_account_exists(request, state, addr);
-    }
-
-    // Fallback: 404.
-    request.respond(json_response(
-        StatusCode(404),
-        &json!({"error": "not found"}),
-    ))?;
-    Ok(())
-}
-
-/// Parse `{sender}/block-to/{recipient}` from a path suffix.
-fn parse_sender_block_pair(rest: &str) -> Option<(String, String)> {
-    let parts: Vec<&str> = rest.splitn(3, '/').collect();
-    if parts.len() == 3 && parts[1] == "block-to" && !parts[0].is_empty() && !parts[2].is_empty() {
-        Some((parts[0].to_owned(), parts[2].to_owned()))
-    } else {
-        None
+    match offered {
+        Some(token) if bool::from(token.ct_eq(&expected)) => next.run(request).await,
+        _ => reply(StatusCode::UNAUTHORIZED, json!({"error": "unauthorised"})).into_response(),
     }
 }
 
 // ..... ENDPOINT HANDLERS .....
+//
+// Each does a little blocking work: a file write, a `doveadm` or
+// `postfix` invocation, a lock on the shared maps. The sole client is
+// the co-located Noombat application server, issuing requests only on
+// moderator-initiated actions (suspension, unsuspension, account
+// deletion, per-pair sender blocks), so the rate is at most a few
+// requests per hour and holding a worker for the duration costs
+// nothing worth reclaiming.
 
 /// `POST /admin/v1/accounts/{address}/rotate-password`
 ///
 /// Overwrites the user's password file with a new randomly generated
 /// password. Returns the new password.
-fn handle_rotate_password(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let password_file = match password_file_path(&state.config.vmail_home, address) {
-        Some(p) => p,
-        None => {
-            request.respond(json_response(
-                StatusCode(400),
-                &json!({"error": "invalid address"}),
-            ))?;
-            return Ok(());
-        }
+async fn rotate_password(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    let Some(password_file) = password_file_path(&state.config.vmail_home, &address) else {
+        return invalid_address();
     };
     if !password_file.exists() {
-        request.respond(json_response(
-            StatusCode(404),
-            &json!({"error": "account not found"}),
-        ))?;
-        return Ok(());
+        return reply(StatusCode::NOT_FOUND, json!({"error": "account not found"}));
     }
 
     let new_password = generate_password();
-    std::fs::write(&password_file, &new_password)?;
+    if let Err(e) = std::fs::write(&password_file, &new_password) {
+        warn!(address = %address, error = %e, "password file could not be written");
+        return reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "password rotation failed"}),
+        );
+    }
     info!(address = %address, "password rotated");
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"address": address, "password": new_password}),
-    ))?;
-    Ok(())
+    reply(
+        StatusCode::OK,
+        json!({"address": address, "password": new_password}),
+    )
 }
 
 /// `POST /admin/v1/accounts/{address}/kick`
 ///
 /// Invokes `doveadm kick` to terminate all active IMAP sessions.
-fn handle_kick(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = validate_address(address) {
+async fn kick(UrlPath(address): UrlPath<String>) -> Reply {
+    if let Err(e) = validate_address(&address) {
         warn!(address = ?address, error = %e, "kick rejected: invalid address");
-        request.respond(json_response(
-            StatusCode(400),
-            &json!({"error": "invalid address"}),
-        ))?;
-        return Ok(());
+        return invalid_address();
     }
-    let _ = state; // config not needed for this handler.
     let status = std::process::Command::new("doveadm")
-        .args(["kick", address])
+        .args(["kick", &address])
         .status();
 
     match status {
         Ok(s) if s.success() => {
             info!(address = %address, "IMAP sessions terminated");
-            request.respond(json_response(
-                StatusCode(200),
-                &json!({"address": address, "kicked": true}),
-            ))?;
+            reply(StatusCode::OK, json!({"address": address, "kicked": true}))
         }
         Ok(s) => {
             warn!(address = %address, status = %s, "doveadm kick non-zero exit");
             // Non-zero exit may mean no active sessions, not an error.
-            request.respond(json_response(
-                StatusCode(200),
-                &json!({"address": address, "kicked": true, "note": "doveadm exited non-zero (may indicate no active sessions)"}),
-            ))?;
+            reply(
+                StatusCode::OK,
+                json!({
+                    "address": address,
+                    "kicked": true,
+                    "note": "doveadm exited non-zero (may indicate no active sessions)"
+                }),
+            )
         }
         Err(e) => {
             warn!(address = %address, error = %e, "doveadm kick failed");
-            request.respond(json_response(
-                StatusCode(500),
-                &json!({"error": format!("doveadm kick failed: {e}")}),
-            ))?;
+            reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": format!("doveadm kick failed: {e}")}),
+            )
         }
     }
-    Ok(())
 }
 
 /// `DELETE /admin/v1/accounts/{address}`
@@ -323,26 +266,24 @@ fn handle_kick(
 /// Removes the user's entire maildir and password file. Adds the
 /// address to the recipient access map to prevent ghost account
 /// creation.
-fn handle_delete_account(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let account_dir = match maildir_path(&state.config.vmail_home, address) {
-        Some(p) => p,
-        None => {
-            request.respond(json_response(
-                StatusCode(400),
-                &json!({"error": "invalid address"}),
-            ))?;
-            return Ok(());
-        }
+async fn delete_account(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    let Some(account_dir) = maildir_path(&state.config.vmail_home, &address) else {
+        return invalid_address();
     };
 
     if account_dir.exists() {
         // remove_dir_all deletes the entire account directory,
         // including the password file and all maildir contents.
-        std::fs::remove_dir_all(&account_dir)?;
+        if let Err(e) = std::fs::remove_dir_all(&account_dir) {
+            warn!(address = %address, error = %e, "account directory could not be removed");
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account deletion failed"}),
+            );
+        }
         info!(address = %address, "account directory deleted (maildir + password)");
     }
 
@@ -350,152 +291,120 @@ fn handle_delete_account(
     // doveauth create-on-login.
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.blocked_recipients.insert(address.to_owned());
+        maps.blocked_recipients.insert(address.clone());
         if let Err(e) = maps.save(&state.config.access_maps_path) {
             warn!(error = %e, "failed to persist access maps");
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(state);
+    trigger_postfix_reload_debounced(&state);
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"address": address, "deleted": true}),
-    ))?;
-    Ok(())
+    reply(StatusCode::OK, json!({"address": address, "deleted": true}))
 }
 
 /// `POST /admin/v1/access-maps/recipients/{address}/block`
-fn handle_block_recipient(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = validate_address(address) {
+async fn block_recipient(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    if let Err(e) = validate_address(&address) {
         warn!(address = ?address, error = %e, "block-recipient rejected: invalid address");
-        request.respond(json_response(
-            StatusCode(400),
-            &json!({"error": "invalid address"}),
-        ))?;
-        return Ok(());
+        return invalid_address();
     }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.blocked_recipients.insert(address.to_owned());
+        maps.blocked_recipients.insert(address.clone());
         if let Err(e) = maps.save(&state.config.access_maps_path) {
             warn!(error = %e, "failed to persist access maps");
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(state);
+    trigger_postfix_reload_debounced(&state);
     info!(address = %address, "recipient blocked");
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"address": address, "blocked": true}),
-    ))?;
-    Ok(())
+    reply(StatusCode::OK, json!({"address": address, "blocked": true}))
 }
 
 /// `DELETE /admin/v1/access-maps/recipients/{address}/block`
-fn handle_unblock_recipient(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = validate_address(address) {
+async fn unblock_recipient(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    if let Err(e) = validate_address(&address) {
         warn!(address = ?address, error = %e, "unblock-recipient rejected: invalid address");
-        request.respond(json_response(
-            StatusCode(400),
-            &json!({"error": "invalid address"}),
-        ))?;
-        return Ok(());
+        return invalid_address();
     }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
-        maps.blocked_recipients.remove(address);
+        maps.blocked_recipients.remove(&address);
         if let Err(e) = maps.save(&state.config.access_maps_path) {
             warn!(error = %e, "failed to persist access maps");
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(state);
+    trigger_postfix_reload_debounced(&state);
     info!(address = %address, "recipient unblocked");
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"address": address, "unblocked": true}),
-    ))?;
-    Ok(())
+    reply(
+        StatusCode::OK,
+        json!({"address": address, "unblocked": true}),
+    )
 }
 
 /// `POST /admin/v1/access-maps/senders/{sender}/block-to/{recipient}`
-fn handle_block_sender_pair(
-    request: Request,
-    state: &Arc<AppState>,
-    sender: &str,
-    recipient: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
+async fn block_sender_pair(
+    State(state): State<Arc<AppState>>,
+    UrlPath((sender, recipient)): UrlPath<(String, String)>,
+) -> Reply {
+    if let Err(e) = validate_address(&sender).and_then(|()| validate_address(&recipient)) {
         warn!(
             sender = ?sender,
             recipient = ?recipient,
             error = %e,
             "block-sender-pair rejected: invalid address"
         );
-        request.respond(json_response(
-            StatusCode(400),
-            &json!({"error": "invalid address"}),
-        ))?;
-        return Ok(());
+        return invalid_address();
     }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.sender_blocks
-            .entry(sender.to_owned())
+            .entry(sender.clone())
             .or_default()
-            .insert(recipient.to_owned());
+            .insert(recipient.clone());
         if let Err(e) = maps.save(&state.config.access_maps_path) {
             warn!(error = %e, "failed to persist access maps");
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(state);
+    trigger_postfix_reload_debounced(&state);
     info!(sender = %sender, recipient = %recipient, "sender pair blocked");
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"sender": sender, "recipient": recipient, "blocked": true}),
-    ))?;
-    Ok(())
+    reply(
+        StatusCode::OK,
+        json!({"sender": sender, "recipient": recipient, "blocked": true}),
+    )
 }
 
 /// `DELETE /admin/v1/access-maps/senders/{sender}/block-to/{recipient}`
-fn handle_unblock_sender_pair(
-    request: Request,
-    state: &Arc<AppState>,
-    sender: &str,
-    recipient: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    if let Err(e) = validate_address(sender).and_then(|()| validate_address(recipient)) {
+async fn unblock_sender_pair(
+    State(state): State<Arc<AppState>>,
+    UrlPath((sender, recipient)): UrlPath<(String, String)>,
+) -> Reply {
+    if let Err(e) = validate_address(&sender).and_then(|()| validate_address(&recipient)) {
         warn!(
             sender = ?sender,
             recipient = ?recipient,
             error = %e,
             "unblock-sender-pair rejected: invalid address"
         );
-        request.respond(json_response(
-            StatusCode(400),
-            &json!({"error": "invalid address"}),
-        ))?;
-        return Ok(());
+        return invalid_address();
     }
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(set) = maps.sender_blocks.get_mut(sender) {
-            set.remove(recipient);
+        if let Some(set) = maps.sender_blocks.get_mut(&sender) {
+            set.remove(&recipient);
             if set.is_empty() {
-                maps.sender_blocks.remove(sender);
+                maps.sender_blocks.remove(&sender);
             }
         }
         if let Err(e) = maps.save(&state.config.access_maps_path) {
@@ -503,37 +412,27 @@ fn handle_unblock_sender_pair(
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(state);
+    trigger_postfix_reload_debounced(&state);
     info!(sender = %sender, recipient = %recipient, "sender pair unblocked");
 
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"sender": sender, "recipient": recipient, "unblocked": true}),
-    ))?;
-    Ok(())
+    reply(
+        StatusCode::OK,
+        json!({"sender": sender, "recipient": recipient, "unblocked": true}),
+    )
 }
 
 /// `GET /admin/v1/accounts/{address}/exists`
-fn handle_account_exists(
-    request: Request,
-    state: &Arc<AppState>,
-    address: &str,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let exists = match password_file_path(&state.config.vmail_home, address) {
-        Some(p) => p.exists(),
-        None => {
-            request.respond(json_response(
-                StatusCode(400),
-                &json!({"error": "invalid address"}),
-            ))?;
-            return Ok(());
-        }
+async fn account_exists(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    let Some(password_file) = password_file_path(&state.config.vmail_home, &address) else {
+        return invalid_address();
     };
-    request.respond(json_response(
-        StatusCode(200),
-        &json!({"address": address, "exists": exists}),
-    ))?;
-    Ok(())
+    reply(
+        StatusCode::OK,
+        json!({"address": address, "exists": password_file.exists()}),
+    )
 }
 
 // ..... HELPERS .....
@@ -555,46 +454,9 @@ fn maildir_path(vmail_home: &str, address: &str) -> Option<PathBuf> {
     safe_child_path(vmail_home, address)
 }
 
-/// Build a `tiny_http::Response` with a JSON body and `Content-Type`
-/// header.
-fn json_response(
-    status: StatusCode,
-    body: &serde_json::Value,
-) -> Response<std::io::Cursor<Vec<u8>>> {
-    let bytes = serde_json::to_vec(body).unwrap_or_default();
-    let len = bytes.len();
-    let header = Header::from_bytes("Content-Type", "application/json").unwrap();
-    Response::new(
-        status,
-        vec![header],
-        std::io::Cursor::new(bytes),
-        Some(len),
-        None,
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_sender_pair_valid() {
-        let (s, r) =
-            parse_sender_block_pair("alice@chat.example.com/block-to/bob@chat.example.com")
-                .unwrap();
-        assert_eq!(s, "alice@chat.example.com");
-        assert_eq!(r, "bob@chat.example.com");
-    }
-
-    #[test]
-    fn parse_sender_pair_missing_recipient() {
-        assert!(parse_sender_block_pair("alice@chat.example.com/block-to/").is_none());
-    }
-
-    #[test]
-    fn parse_sender_pair_no_block_to() {
-        assert!(parse_sender_block_pair("alice@chat.example.com/something/bob").is_none());
-    }
 
     #[test]
     fn validate_address_accepts_valid() {
@@ -660,5 +522,135 @@ mod tests {
             p.unwrap(),
             PathBuf::from("/home/vmail/alice@chat.example.com")
         );
+    }
+
+    // ..... The authentication layer .....
+    //
+    // Reachable only through a socket before this rewrite, so none of it
+    // was covered. `oneshot` drives the router directly.
+
+    const SECRET: &str = "a-shared-secret";
+
+    fn test_state(home: &std::path::Path) -> Arc<AppState> {
+        let at = |name: &str| home.join(name).to_string_lossy().into_owned();
+        let config = crate::config::Config {
+            listen_host: "127.0.0.1".to_owned(),
+            listen_port: 0,
+            admin_secret: SECRET.to_owned(),
+            vmail_home: home.to_string_lossy().into_owned(),
+            access_maps_path: at("access-maps.json"),
+            recipient_access_path: at("recipient_access"),
+            sender_access_path: at("sender_access"),
+            reload_debounce_secs: 2,
+            allowlist_url: String::new(),
+            allowlist_poll_interval_secs: 21_600,
+            transport_maps_path: at("transport_maps"),
+            sender_domains_path: at("sender_domains"),
+            tls_cert_path: at("chatmail.pem"),
+            tls_key_path: at("chatmail.key"),
+        };
+        Arc::new(AppState {
+            config,
+            maps: std::sync::Mutex::new(crate::access_maps::AccessMaps::default()),
+            last_reload: std::sync::Mutex::new(std::time::Instant::now()),
+        })
+    }
+
+    async fn status_of(authorisation: Option<&str>, method: &str, path: &str) -> StatusCode {
+        use tower::ServiceExt;
+
+        let mut request = axum::http::Request::builder().method(method).uri(path);
+        if let Some(value) = authorisation {
+            request = request.header(axum::http::header::AUTHORIZATION, value);
+        }
+        let home = tempfile::tempdir().expect("a temporary directory");
+        router(test_state(home.path()))
+            .oneshot(request.body(axum::body::Body::empty()).expect("a request"))
+            .await
+            .expect("the router answers")
+            .status()
+    }
+
+    #[tokio::test]
+    async fn a_request_without_a_token_is_refused() {
+        let status = status_of(None, "GET", "/admin/v1/accounts/a@b.test/exists").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_wrong_token_is_refused() {
+        let status = status_of(
+            Some("Bearer not-the-secret"),
+            "GET",
+            "/admin/v1/accounts/a@b.test/exists",
+        )
+        .await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn a_token_without_the_bearer_prefix_is_refused() {
+        let status = status_of(Some(SECRET), "GET", "/admin/v1/accounts/a@b.test/exists").await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn the_right_token_reaches_the_handler() {
+        let status = status_of(
+            Some(&format!("Bearer {SECRET}")),
+            "GET",
+            "/admin/v1/accounts/a@b.test/exists",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+    }
+
+    // An unknown path must answer 401 without a token, not 404: the
+    // layer sits over the fallback so an unauthenticated caller cannot
+    // map which routes exist.
+    #[tokio::test]
+    async fn an_unknown_path_does_not_leak_its_absence() {
+        assert_eq!(
+            status_of(None, "GET", "/admin/v1/nothing-here").await,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            status_of(
+                Some(&format!("Bearer {SECRET}")),
+                "GET",
+                "/admin/v1/nothing-here"
+            )
+            .await,
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    // A separator in the address matched a route under the old prefix
+    // matching and was caught by `validate_address`. Now it matches no
+    // route at all, which is the stronger answer.
+    #[tokio::test]
+    async fn an_address_with_a_separator_matches_no_route() {
+        let status = status_of(
+            Some(&format!("Bearer {SECRET}")),
+            "POST",
+            "/admin/v1/accounts/a@b.test/../other/kick",
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    // Percent-encoded, so routing sees one segment and the decoded value
+    // reaches the validator. This is the case the client's own
+    // `check_segment` refuses before sending, and the reason it must:
+    // the two ends have to agree about what a segment may contain.
+    #[tokio::test]
+    async fn a_percent_encoded_separator_is_refused_by_the_validator() {
+        let status = status_of(
+            Some(&format!("Bearer {SECRET}")),
+            "POST",
+            "/admin/v1/accounts/a%2Fb/kick",
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
     }
 }

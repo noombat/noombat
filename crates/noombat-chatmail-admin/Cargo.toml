@@ -21,7 +21,10 @@ rand = { workspace = true }
 base64 = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
-tiny_http = { workspace = true }
+axum = { workspace = true }
+rustls = { workspace = true }
+tokio-rustls = { workspace = true }
+tokio = { workspace = true }
 ureq = { workspace = true }
 subtle = { workspace = true }
 hmac = { workspace = true }
@@ -30,3 +33,5 @@ mailparse = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# `oneshot`, to drive the router without binding a socket.
+tower = { version = "0.5", features = ["util"] }

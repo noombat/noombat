@@ -96,8 +96,14 @@ wait_for "Noombat" "$NOOMBAT/healthz" || exit 1
 # route, so an unauthenticated 401 is the liveness signal: it proves the
 # process is up and serving. A crash-loop gives a connection error
 # instead, which is exactly what this exists to catch.
-CHATMAIL_ADMIN="${CHATMAIL_ADMIN:-http://localhost:9100}"
-ADMIN_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' \
+# `--insecure`, deliberately. This probe runs on the host, where the
+# name on the relay's certificate does not resolve, and what it asserts
+# is that the process is up and serving rather than that the chain is
+# valid. Certificate validation is exercised by the provisioning path
+# below, which goes through Noombat inside the network and fails the
+# handshake if the CA is wrong.
+CHATMAIL_ADMIN="${CHATMAIL_ADMIN:-https://localhost:9100}"
+ADMIN_CODE=$(curl $CURL_OPTS --insecure -s -o /dev/null -w '%{http_code}' \
   "$CHATMAIL_ADMIN/admin/v1/accounts/probe@example.invalid/exists" 2>/dev/null) || ADMIN_CODE="000"
 if [ "$ADMIN_CODE" = "401" ]; then
     pass "Chatmail admin sidecar is serving (401 without the secret)"

@@ -89,7 +89,7 @@ services:
       NOOMBAT_KEK: 0f1e2d3c4b5a69788796a5b4c3d2e1f00f1e2d3c4b5a69788796a5b4c3d2e1f0
       NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
       NOOMBAT_CHATMAIL_AVAILABLE: "true"
-      NOOMBAT_CHATMAIL_ADMIN_URL: http://chatmail:9100
+      NOOMBAT_CHATMAIL_ADMIN_URL: https://chat.test.local:9100
       NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
       # Provisioning speaks IMAP over TLS to the relay, whose certificate
       # is signed by the CA the chatmail container generates at boot, so
@@ -98,6 +98,9 @@ services:
       # it, which is the same mechanism tests/interop/compose.yml uses to
       # trust Caddy's internal CA for federation.
       SSL_CERT_FILE: /chatmail-ca/ca.crt
+      # The admin client adds roots explicitly rather than resolving
+      # them from the platform store, so it reads this one.
+      NOOMBAT_EXTRA_CA_FILE: /chatmail-ca/ca.crt
     volumes:
       - chatmail-ca:/chatmail-ca:ro
     ports:
