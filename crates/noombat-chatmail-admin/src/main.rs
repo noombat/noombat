@@ -93,12 +93,30 @@ fn tls_acceptor(config: &config::Config) -> TlsAcceptor {
     let key = PrivateKeyDer::from_pem_file(&config.tls_key_path)
         .unwrap_or_else(|e| panic!("cannot read the key at {}: {e}", config.tls_key_path));
 
-    let server = ServerConfig::builder()
-        .with_no_client_auth()
+    let server = tls_builder()
         .with_single_cert(chain, key)
         .unwrap_or_else(|e| panic!("the admin API's certificate and key do not match: {e}"));
 
     TlsAcceptor::from(Arc::new(server))
+}
+
+/// The server configuration, up to the point of needing a certificate.
+///
+/// The provider is named rather than left to `ServerConfig::builder()`,
+/// which resolves a process-wide default and panics outright when the
+/// dependency tree carries both rustls backends. Both are present here,
+/// so there is no default for it to find, and the panic is at startup:
+/// the sidecar never binds and the relay looks healthy, because the
+/// container's health check is an IMAP command Dovecot answers either
+/// way.
+///
+/// Split from [`tls_acceptor`] so a test can reach it without a
+/// certificate to offer.
+fn tls_builder() -> rustls::ConfigBuilder<ServerConfig, rustls::server::WantsServerCert> {
+    ServerConfig::builder_with_provider(Arc::new(rustls::crypto::aws_lc_rs::default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("the bundled provider supports the default protocol versions")
+        .with_no_client_auth()
 }
 
 #[tokio::main]
@@ -175,5 +193,18 @@ pub fn trigger_postfix_reload_debounced(state: &AppState) {
         }
         Ok(s) => tracing::warn!("postfix reload exited with status {s}"),
         Err(e) => tracing::warn!("postfix reload failed: {e}"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // Building it is the whole assertion: the failure mode is a panic,
+    // not a wrong value. Nothing installs a process-wide provider, so a
+    // regression reaches the panic here exactly as it did in the image.
+    #[test]
+    fn the_tls_builder_names_its_crypto_provider() {
+        let _ = tls_builder();
     }
 }

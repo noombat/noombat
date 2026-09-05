@@ -541,8 +541,14 @@ jobs:
             # Admin routes all require the shared secret and there is no
             # health route, so an unauthenticated 401 is the only
             # liveness signal the sidecar offers.
-            admin=$(curl -s -o /dev/null -w '%{http_code}' \
-              http://localhost:9100/admin/v1/accounts/probe@example.invalid/exists || true)
+            #
+            # `--insecure` deliberately: this runs on the host, where the
+            # name on the relay's certificate does not resolve, and what
+            # is asserted is that the process is up and serving. The
+            # chain is validated by the provisioning path inside the
+            # network, which fails the handshake if the CA is wrong.
+            admin=$(curl -s -o /dev/null -w '%{http_code}' --insecure \
+              https://localhost:9100/admin/v1/accounts/probe@example.invalid/exists || true)
             if [ "$health" = "200" ] && [ "$admin" = "401" ]; then
               echo "Noombat and the Chatmail admin sidecar are ready"
               exit 0
