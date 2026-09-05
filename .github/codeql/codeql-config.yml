@@ -6,11 +6,17 @@
 
 name: Noombat CodeQL configuration
 
-# No `queries:` key means the default security suite, which is what
-# default setup was running. The wider `security-extended` and
-# `security-and-quality` raise the count with lower-confidence queries,
-# and this repository is draining its backlog by fixing rather than
-# dismissing. Widen the net in its own commit, once that is done.
+# `security-extended`, not the default suite. The default one omits the
+# path-injection and log-injection queries, and both cover sinks that
+# exist in this tree: dropping them reports fewer findings rather than
+# leaving fewer problems, which is the worst way for a security gate to
+# be quiet.
+#
+# `security-and-quality` is wider again and is a separate decision. It
+# adds maintainability queries, which are not security findings and
+# would bury the ones that are.
+queries:
+  - uses: security-extended
 
 # Excluding every file of a configured language does not skip that
 # language, it fails the job: `database finalize` exits 32 with "detected
