@@ -4,6 +4,7 @@
 //!
 //! All endpoints are served under `/admin/v1/`.
 
+use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -51,6 +52,33 @@ fn validate_address(address: &str) -> Result<(), &'static str> {
     // A Chatmail address must contain exactly one '@'.
     if address.matches('@').count() != 1 {
         return Err("address must contain exactly one '@'");
+    }
+    Ok(())
+}
+
+/// Validate an address this relay is allowed to *create*.
+///
+/// Deliberately separate from [`validate_address`], which is shared by
+/// the block, unblock, rotate, delete and exists handlers. Two of those
+/// take a remote peer's address: `block_sender_pair` blocks the sender
+/// named in a chat report, which is by definition somebody else's
+/// domain. Folding the domain check into the shared validator would
+/// answer 400 to every remote-sender block.
+fn validate_local_address(address: &str, mail_domain: &str) -> Result<(), &'static str> {
+    validate_address(address)?;
+    if mail_domain.is_empty() {
+        return Err("MAIL_DOMAIN is not configured");
+    }
+    // Dovecot lowercases the username before the checkpassword helper
+    // sees it (`auth_username_format` defaults to `%Lu`), so the account
+    // it looks up is the lowercased form. Compare, and later write, in
+    // that form, or a capitalised MAIL_DOMAIN would create an account no
+    // login can ever reach.
+    let Some((_, domain)) = address.rsplit_once('@') else {
+        return Err("address must contain exactly one '@'");
+    };
+    if !domain.eq_ignore_ascii_case(mail_domain) {
+        return Err("address is not on this relay's mail domain");
     }
     Ok(())
 }
@@ -114,7 +142,10 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(rotate_password),
         )
         .route("/admin/v1/accounts/{address}/kick", post(kick))
-        .route("/admin/v1/accounts/{address}", delete(delete_account))
+        .route(
+            "/admin/v1/accounts/{address}",
+            delete(delete_account).put(create_account),
+        )
         .route("/admin/v1/accounts/{address}/exists", get(account_exists))
         .route(
             "/admin/v1/access-maps/recipients/{address}/block",
@@ -222,6 +253,107 @@ async fn rotate_password(
     )
 }
 
+/// `PUT /admin/v1/accounts/{address}`
+///
+/// Create a Chatmail account: the Maildir and a password file holding a
+/// freshly generated password, which is returned so the caller can log
+/// in as the account it just made.
+///
+/// This endpoint exists because the checkpassword helper no longer
+/// creates accounts. It ran before authentication, so anything it made
+/// was made for an anonymous stranger; creation belongs here, behind the
+/// bearer secret the `require_admin_secret` layer checks on every route
+/// in this router.
+///
+/// The password is generated here rather than by the caller so that
+/// exactly one side owns it. Two generators would silently disagree and
+/// every subsequent login would fail.
+async fn create_account(
+    State(state): State<Arc<AppState>>,
+    UrlPath(address): UrlPath<String>,
+) -> Reply {
+    if let Err(e) = validate_local_address(&address, &state.config.mail_domain) {
+        warn!(address = ?address, error = %e, "account creation rejected");
+        return invalid_address();
+    }
+    let address = address.to_lowercase();
+    let (Some(account_dir), Some(password_file)) = (
+        maildir_path(&state.config.vmail_home, &address),
+        password_file_path(&state.config.vmail_home, &address),
+    ) else {
+        return invalid_address();
+    };
+
+    let maildir = account_dir.join("Maildir");
+    for sub in ["cur", "new", "tmp"] {
+        if let Err(e) = std::fs::create_dir_all(maildir.join(sub)) {
+            warn!(address = %address, error = %e, "maildir could not be created");
+            let _ = std::fs::remove_dir_all(&account_dir);
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account creation failed"}),
+            );
+        }
+    }
+
+    let password = generate_password();
+    // `create_new` is the check: it fails if the file exists, so two
+    // concurrent requests for the same address cannot both succeed. An
+    // `exists()` test followed by a write leaves that window open.
+    // `mode` is set at creation rather than after, so the file is never
+    // briefly world-readable.
+    let written = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&password_file)
+        .and_then(|mut f| std::io::Write::write_all(&mut f, password.as_bytes()));
+
+    match written {
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return reply(StatusCode::CONFLICT, json!({"error": "account exists"}));
+        }
+        Err(e) => {
+            warn!(address = %address, error = %e, "password file could not be written");
+            let _ = std::fs::remove_dir_all(&account_dir);
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account creation failed"}),
+            );
+        }
+        Ok(()) => {}
+    }
+
+    // The sidecar runs as root; Dovecot's auth service and LMTP delivery
+    // run as vmail (5000). Without this the password file is unreadable
+    // by the helper and the Maildir unwritable by delivery, so creation
+    // would report success and every login and every message after it
+    // would fail. The helper used to do this itself, on the branch this
+    // endpoint replaces.
+    let mut owned = vec![account_dir.clone(), maildir.clone(), password_file.clone()];
+    owned.extend(["cur", "new", "tmp"].map(|sub| maildir.join(sub)));
+    for path in &owned {
+        if let Err(e) = std::os::unix::fs::chown(
+            path,
+            Some(state.config.vmail_uid),
+            Some(state.config.vmail_gid),
+        ) {
+            warn!(address = %address, path = ?path, error = %e, "ownership could not be set");
+            let _ = std::fs::remove_dir_all(&account_dir);
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account creation failed"}),
+            );
+        }
+    }
+
+    info!(address = %address, "account created");
+    reply(
+        StatusCode::CREATED,
+        json!({"address": address, "password": password}),
+    )
+}
+
 /// `POST /admin/v1/accounts/{address}/kick`
 ///
 /// Invokes `doveadm kick` to terminate all active IMAP sessions.
@@ -263,9 +395,15 @@ async fn kick(UrlPath(address): UrlPath<String>) -> Reply {
 
 /// `DELETE /admin/v1/accounts/{address}`
 ///
-/// Removes the user's entire maildir and password file. Adds the
-/// address to the recipient access map to prevent ghost account
-/// creation.
+/// Removes the user's entire maildir and password file, and blocks the
+/// address in the recipient access map so no further mail is delivered
+/// to it.
+///
+/// The block is a delivery control and not a creation control:
+/// `noombat_recipient_access` is read by Postfix's
+/// `smtpd_recipient_restrictions`, which governs who may be delivered
+/// *to*. What stops the address being recreated is that the only path
+/// that creates one is the authenticated `PUT` above.
 async fn delete_account(
     State(state): State<Arc<AppState>>,
     UrlPath(address): UrlPath<String>,
@@ -287,8 +425,9 @@ async fn delete_account(
         info!(address = %address, "account directory deleted (maildir + password)");
     }
 
-    // Block the recipient to prevent ghost account creation via
-    // doveauth create-on-login.
+    // Block delivery to the address. This is a mail-flow control, not a
+    // creation control: it is read by Postfix, and creation is the
+    // sidecar's own authenticated endpoint.
     {
         let mut maps = state.maps.lock().unwrap_or_else(|e| e.into_inner());
         maps.blocked_recipients.insert(address.clone());
@@ -531,6 +670,20 @@ mod tests {
 
     const SECRET: &str = "a-shared-secret";
 
+    /// The uid and gid this process creates files with.
+    ///
+    /// `geteuid` would need `libc` and the crate forbids unsafe code, so
+    /// ask the filesystem: create a file and read back who owns it.
+    fn own_uid_gid(dir: &std::path::Path) -> (u32, u32) {
+        use std::os::unix::fs::MetadataExt as _;
+        let probe = dir.join(".ownership-probe");
+        std::fs::write(&probe, b"").expect("a temporary directory is writable");
+        let meta = std::fs::metadata(&probe).expect("the probe exists");
+        let ids = (meta.uid(), meta.gid());
+        std::fs::remove_file(&probe).expect("the probe is removable");
+        ids
+    }
+
     fn test_state(home: &std::path::Path) -> Arc<AppState> {
         let at = |name: &str| home.join(name).to_string_lossy().into_owned();
         let config = crate::config::Config {
@@ -548,6 +701,14 @@ mod tests {
             sender_domains_path: at("sender_domains"),
             tls_cert_path: at("chatmail.pem"),
             tls_key_path: at("chatmail.key"),
+            // Matches the `a@b.test` the validator tests already use.
+            mail_domain: "b.test".to_owned(),
+            // The running process, because a test is not root and cannot
+            // chown to another uid. Production defaults to 5000. Taken
+            // from a file this process just created rather than from
+            // `geteuid`, because the crate forbids unsafe code.
+            vmail_uid: own_uid_gid(home).0,
+            vmail_gid: own_uid_gid(home).1,
         };
         Arc::new(AppState {
             config,
@@ -652,5 +813,148 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // ..... Account creation .....
+
+    /// Drive one request against a router sharing `home`, returning the
+    /// status and the parsed JSON body.
+    ///
+    /// `status_of` above builds a fresh tempdir per call, which is right
+    /// for auth checks and wrong here: these assertions are about what is
+    /// left on disk afterwards.
+    async fn request_on(
+        home: &std::path::Path,
+        method: &str,
+        path: &str,
+    ) -> (StatusCode, serde_json::Value) {
+        use tower::ServiceExt;
+
+        let request = axum::http::Request::builder()
+            .method(method)
+            .uri(path)
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {SECRET}"),
+            )
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let response = router(test_state(home))
+            .oneshot(request)
+            .await
+            .expect("the router answers");
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .expect("a small body");
+        let body = serde_json::from_slice(&bytes).unwrap_or(serde_json::Value::Null);
+        (status, body)
+    }
+
+    #[tokio::test]
+    async fn creating_an_account_writes_a_maildir_and_a_password() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let (status, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+
+        assert_eq!(status, StatusCode::CREATED);
+        let password = body["password"].as_str().expect("a password is returned");
+        assert!(
+            !password.is_empty(),
+            "an empty password authenticates nobody"
+        );
+
+        let account = home.path().join("a@b.test");
+        for sub in ["cur", "new", "tmp"] {
+            assert!(
+                account.join("Maildir").join(sub).is_dir(),
+                "Maildir/{sub} was not created"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(account.join("password")).expect("the password file"),
+            password,
+            "the file must hold the password the caller was given, or no login can succeed"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_created_password_file_is_not_readable_by_others() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+
+        let mode = std::fs::metadata(home.path().join("a@b.test/password"))
+            .expect("the password file")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "the password is stored in the clear, so the mode is the control"
+        );
+    }
+
+    #[tokio::test]
+    async fn creating_an_account_twice_is_refused() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let (first, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        assert_eq!(first, StatusCode::CREATED);
+        let original = body["password"].as_str().expect("a password").to_owned();
+
+        let (second, _) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        assert_eq!(second, StatusCode::CONFLICT);
+        assert_eq!(
+            std::fs::read_to_string(home.path().join("a@b.test/password")).expect("still there"),
+            original,
+            "a refused second create must not overwrite the live password"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_address_on_another_domain_is_refused() {
+        // The check that stops this endpoint provisioning mailboxes on a
+        // domain the relay does not serve.
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let (status, _) =
+            request_on(home.path(), "PUT", "/admin/v1/accounts/a@elsewhere.test").await;
+
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(
+            !home.path().join("a@elsewhere.test").exists(),
+            "a refused address must leave nothing on disk"
+        );
+    }
+
+    #[tokio::test]
+    async fn the_domain_check_ignores_case() {
+        // Dovecot lowercases the username before the helper sees it, so an
+        // account written in mixed case is one no login can reach.
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let (status, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@B.TEST").await;
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(
+            body["address"], "a@b.test",
+            "the address is stored lowercased"
+        );
+        assert!(home.path().join("a@b.test/password").exists());
+    }
+
+    #[test]
+    fn an_unconfigured_mail_domain_refuses_every_address() {
+        // Empty rather than a panic at startup: this process starts where
+        // the container health check cannot see it, so a panic here is an
+        // invisible outage. Refusing one request is visible.
+        assert!(validate_local_address("a@b.test", "").is_err());
+    }
+
+    #[test]
+    fn the_shared_validator_still_accepts_a_remote_address() {
+        // `block_sender_pair` blocks the sender named in a chat report,
+        // which is somebody else's domain by definition. Folding the
+        // domain check into `validate_address` would break it.
+        assert!(validate_address("someone@remote.example").is_ok());
+        assert!(validate_local_address("someone@remote.example", "b.test").is_err());
     }
 }

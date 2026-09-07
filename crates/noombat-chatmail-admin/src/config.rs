@@ -56,6 +56,27 @@ pub struct Config {
     /// Private key for [`Config::tls_cert_path`]
     /// (default `/etc/ssl/private/chatmail.key`).
     pub tls_key_path: String,
+    /// The mail domain this relay serves, from `MAIL_DOMAIN`.
+    ///
+    /// Account creation refuses any address outside it. Empty when unset,
+    /// which makes creation refuse everything rather than taking the
+    /// sidecar down: this process starts before the health check can see
+    /// it, so a panic here is invisible.
+    ///
+    /// Not a filesystem path, so it stays out of [`Config::validate`],
+    /// which asserts every entry in its list is absolute.
+    pub mail_domain: String,
+    /// The uid and gid that must own a created account's files, from
+    /// `CHATMAIL_VMAIL_UID` and `CHATMAIL_VMAIL_GID` (default 5000).
+    ///
+    /// Dovecot's auth service and LMTP delivery run as vmail, and this
+    /// sidecar runs as root, so a created file has to be handed over or
+    /// the account is unreadable by the helper and undeliverable to. It
+    /// is configuration rather than a constant so the endpoint can be
+    /// tested by a process that is not root and cannot chown to another
+    /// uid at all.
+    pub vmail_uid: u32,
+    pub vmail_gid: u32,
 }
 
 impl Config {
@@ -108,6 +129,17 @@ impl Config {
                 .unwrap_or_else(|_| "/etc/ssl/certs/chatmail.pem".into()),
             tls_key_path: env::var("CHATMAIL_ADMIN_TLS_KEY")
                 .unwrap_or_else(|_| "/etc/ssl/private/chatmail.key".into()),
+            // `compose.yml` and `tests/chat-interop/compose.yml` both set
+            // this, and the s6 run script reaches it through `with-contenv`.
+            mail_domain: env::var("MAIL_DOMAIN").unwrap_or_default(),
+            vmail_uid: env::var("CHATMAIL_VMAIL_UID")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5000),
+            vmail_gid: env::var("CHATMAIL_VMAIL_GID")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5000),
         };
         config.validate();
         config
