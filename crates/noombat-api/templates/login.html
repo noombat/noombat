@@ -75,6 +75,24 @@
             {{ i18n.t("auth_login_or") }}
         </p>
 
+        {#
+            A closed instance says so here, and keeps the controls below.
+            They are also the sign-in path: an account created through
+            Mastodon or ORCID that never ran `set_password` has no other way
+            in, so hiding them would lock out existing users rather than turn
+            away new ones. The refusal is enforced server-side, in
+            `oauth_util::sign_in_or_register`.
+
+            An Askama comment, not an HTML one: `<!-- -->` is served to
+            every visitor, and a test asserting on page content cannot tell
+            rendered copy from a comment quoting it.
+        #}
+        {% if !open_registrations %}
+        <p class="text-center text-sm text-text-secondary mb-4">
+            {{ i18n.t("auth_login_oauth_signin_only") }}
+        </p>
+        {% endif %}
+
         <!-- Mastodon OAuth. -->
         <form method="get" action="/api/v1/auth/mastodon"
               class="space-y-3 mb-4">

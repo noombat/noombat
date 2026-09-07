@@ -84,15 +84,33 @@ fn test_state(domain: &str) -> AppState {
 
 /// Issue a GET against the assembled router and return the response.
 async fn get(domain: &str, path: &str) -> axum::response::Response {
-    let router = build_router(test_state(domain));
+    get_with(test_state(domain), path).await
+}
+
+/// Issue a GET against a router built from a caller-supplied state.
+///
+/// The seam `get` does not have: the registration tests need a state
+/// with `open_registrations` turned off.
+async fn get_with(state: AppState, path: &str) -> axum::response::Response {
+    let router = build_router(state);
     let request = Request::builder()
         .uri(path)
         .body(Body::empty())
         .expect("request construction");
+    // No `accept-encoding`: the stack carries a `CompressionLayer`, and a
+    // body read here must not have to un-gzip first.
     router
         .oneshot(request)
         .await
         .expect("the router is infallible")
+}
+
+/// Read a response body to a string, for the assertions that read copy.
+async fn body_string(response: axum::response::Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), 256 * 1024)
+        .await
+        .expect("the body is small and fully buffered");
+    String::from_utf8(bytes.to_vec()).expect("templates render UTF-8")
 }
 
 /// The content type Askama's web integration sets on a rendered page.
@@ -285,4 +303,78 @@ async fn policy_is_emitted_exactly_once() {
         .count();
 
     assert_eq!(count, 1, "expected exactly one Content-Security-Policy");
+}
+
+// ..... Registration policy .....
+//
+// These live here because this is the harness that assembles the real
+// router without a database, which is what makes the login page and the
+// register route reachable from a test at all.
+
+/// A state whose operator has closed registration.
+fn closed_state(domain: &str) -> AppState {
+    AppState {
+        open_registrations: false,
+        ..test_state(domain)
+    }
+}
+
+#[tokio::test]
+async fn a_closed_instance_says_so_on_the_login_page() {
+    let body = body_string(get_with(closed_state("example.test"), "/auth/login").await).await;
+    assert!(
+        body.contains("Registration is closed. You can still sign in below"),
+        "a closed instance must say so where it offers the OAuth controls"
+    );
+}
+
+#[tokio::test]
+async fn a_closed_instance_still_offers_the_oauth_sign_in_controls() {
+    // The regression guard that matters most here, and the reason the
+    // template gates copy rather than controls. An account created
+    // through Mastodon that never ran `set_password` has no other way
+    // in, so hiding the form would lock out existing users rather than
+    // turn away new ones. The refusal is server-side, in
+    // `oauth_util::sign_in_or_register`, and is pinned by that module's
+    // own tests.
+    let body = body_string(get_with(closed_state("example.test"), "/auth/login").await).await;
+    assert!(
+        body.contains("/api/v1/auth/mastodon"),
+        "closing registration must not remove the sign-in path for accounts that already exist"
+    );
+}
+
+#[tokio::test]
+async fn an_open_instance_does_not_say_registration_is_closed() {
+    let body = body_string(get("example.test", "/auth/login").await).await;
+    assert!(
+        !body.contains("Registration is closed. You can still sign in below"),
+        "the closed-registration copy must be conditional, not permanent"
+    );
+}
+
+#[tokio::test]
+async fn a_closed_instance_refuses_password_registration() {
+    // A well-formed body, so that a 422 from the `Json` extractor cannot
+    // be mistaken for the guard. The `open_registrations` check runs
+    // before the mailer check, so `mailer: None` does not turn this into
+    // a 503.
+    let router = build_router(closed_state("example.test"));
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/register")
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"username":"alice","auth_key":"a-well-formed-key"}"#,
+        ))
+        .expect("request construction");
+    let response = router
+        .oneshot(request)
+        .await
+        .expect("the router is infallible");
+    assert_eq!(
+        response.status(),
+        StatusCode::FORBIDDEN,
+        "closed registration must refuse the password door too"
+    );
 }

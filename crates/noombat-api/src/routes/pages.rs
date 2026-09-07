@@ -254,6 +254,10 @@ struct LoginPage {
     contrast: Contrast,
     error: Option<String>,
     orcid_enabled: bool,
+    /// Gates the copy on the login page, never the controls. The OAuth
+    /// forms are the only way in for an account that never set a
+    /// password, so a closed instance still has to render them.
+    open_registrations: bool,
 }
 
 #[derive(Template, WebTemplate)]
@@ -653,6 +657,7 @@ async fn login_page(
         contrast,
         error: None,
         orcid_enabled: state.orcid_config.is_some(),
+        open_registrations: state.open_registrations,
     }
 }
 
@@ -1986,6 +1991,7 @@ mod tests {
             contrast,
             error: None,
             orcid_enabled: false,
+            open_registrations: true,
         }
         .render()
         .expect("login.html renders")
@@ -2004,6 +2010,7 @@ mod tests {
             contrast: Contrast::Standard,
             error: None,
             orcid_enabled: false,
+            open_registrations: true,
         }
         .render()
         .expect("login.html renders")
@@ -2142,6 +2149,7 @@ mod tests {
             contrast: Contrast::Standard,
             error: Some(HOSTILE.to_owned()),
             orcid_enabled: false,
+            open_registrations: true,
         };
 
         let html = page.render().expect("login.html renders");
