@@ -3268,9 +3268,9 @@ dependencies = [
 
 [[package]]
 name = "psl"
-version = "2.1.226"
+version = "2.1.228"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7bc88482eea924ca3a2f56a547454169af58deef35567965eb4fc2392a834841"
+checksum = "158b8294dde3909df5a4ec68a35f8c39720151834b1f87050b87b37435150011"
 dependencies = [
  "psl-types",
 ]
@@ -4773,9 +4773,9 @@ dependencies = [
 
 [[package]]
 name = "tokio-rustls"
-version = "0.26.4"
+version = "0.26.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1729aa945f29d91ba541258c8df89027d5792d85a8841fb65e8bf0f4ede4ef61"
+checksum = "b0c85f2c3ef0b1cd58b36682f4b17aaa995f0e5db534d85692b4903abce21f67"
 dependencies = [
  "rustls",
  "tokio",
