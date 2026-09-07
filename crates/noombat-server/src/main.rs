@@ -306,6 +306,35 @@ fn embedded_migrations() -> sqlx::migrate::Migrator {
     sqlx::migrate!("../../migrations")
 }
 
+/// Parse the configured relay verification policy, or explain why it is
+/// not one.
+///
+/// Split out of the boot path so the decision can be tested: the caller
+/// exits the process on `Err`, and `Config` is private to this binary, so
+/// there is no other seam.
+///
+/// The failure is loud because this value is published at `/nodeinfo/2.1`
+/// as well as enforced. Accepting one the enforcement path cannot parse
+/// would advertise a policy the instance does not apply, to every peer
+/// that reads the document, with nothing to report it.
+fn parse_relay_policy(
+    configured: Option<&str>,
+) -> Result<Option<noombat_federation::relay_verify::RelayVerificationPolicy>, String> {
+    let Some(value) = configured else {
+        return Ok(None);
+    };
+    noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(value)
+        .map(Some)
+        .ok_or_else(|| {
+            format!(
+                "relay_verification_policy = {value:?} is not a policy. Expected \
+                 \"verify\", \"verify-or-fetch\" or \"trust-relay\". Refusing to start: \
+                 this value is published at /nodeinfo/2.1, and serving one this instance \
+                 cannot enforce misinforms every peer that reads it."
+            )
+        })
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Load .env (if present) before reading configuration.
@@ -446,12 +475,20 @@ async fn main() -> anyhow::Result<()> {
     noombat_federation::signed_fetch::set_allow_unsigned_fetch(config.allow_unsigned_fetch);
 
     // The instance-wide relay verification default, from the same
-    // configuration the NodeInfo document publishes it from. An
-    // unparsable value leaves the strictest policy in place.
-    if let Some(ref policy) = config.relay_verification_policy
-        && let Some(parsed) =
-            noombat_federation::relay_verify::RelayVerificationPolicy::from_str_opt(policy)
-    {
+    // configuration the NodeInfo document publishes it from. Parsed once,
+    // here, and the parsed value is what both the enforcement path and the
+    // published document get. Refusing to boot on an unparsable value is
+    // deliberate: the key is opt-in, so the only operator affected is one
+    // who typed something, and the alternative is advertising a policy to
+    // every peer that this instance does not enforce.
+    let relay_policy = match parse_relay_policy(config.relay_verification_policy.as_deref()) {
+        Ok(parsed) => parsed,
+        Err(message) => {
+            error!("{message}");
+            std::process::exit(1);
+        }
+    };
+    if let Some(parsed) = relay_policy {
         noombat_federation::relay_verify::set_default_policy(parsed);
     }
     if config.allow_unsigned_fetch {
@@ -836,7 +873,7 @@ async fn main() -> anyhow::Result<()> {
             events_enabled: config.events_enabled,
             articles_enabled: config.articles_enabled,
             integrity_proofs_enabled: config.integrity_proofs_enabled,
-            relay_verification_policy: config.relay_verification_policy.clone(),
+            relay_verification_policy: relay_policy,
         },
         redis,
         session_config,
@@ -858,7 +895,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| format!("admin@{}", config.domain)),
         trending_cache: Some(trending_cache),
         analytics: analytics_backend,
-        relay_verification_policy: config.relay_verification_policy.clone(),
         envelope_key,
         fallback_rate_limiter,
         rate_limit: config.rate_limit as i64,
@@ -1107,9 +1143,56 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::embedded_migrations;
+    use super::{embedded_migrations, parse_relay_policy};
+    use noombat_federation::relay_verify::RelayVerificationPolicy as Policy;
     use sqlx::migrate::{Migration, Migrator};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn an_unset_relay_policy_publishes_nothing() {
+        assert_eq!(parse_relay_policy(None), Ok(None));
+    }
+
+    #[test]
+    fn every_documented_policy_name_parses() {
+        // These three strings are also the CHECK constraint on
+        // `relay_subscriptions.verification_policy` in
+        // migrations/0001_foundation.sql. If they ever diverge, an
+        // operator can configure an instance default that the per-relay
+        // column rejects.
+        assert_eq!(parse_relay_policy(Some("verify")), Ok(Some(Policy::Verify)));
+        assert_eq!(
+            parse_relay_policy(Some("verify-or-fetch")),
+            Ok(Some(Policy::VerifyOrFetch))
+        );
+        assert_eq!(
+            parse_relay_policy(Some("trust-relay")),
+            Ok(Some(Policy::TrustRelay))
+        );
+    }
+
+    #[test]
+    fn an_unparsable_relay_policy_is_refused_rather_than_dropped() {
+        // "allowlist" is the value the crate's own NodeInfo fixture used
+        // to carry. It is not a policy, and the old boot path dropped it
+        // silently and published it anyway.
+        let err = parse_relay_policy(Some("allowlist")).expect_err("must not parse");
+        assert!(err.contains("allowlist"), "the message names the value");
+        assert!(
+            err.contains("nodeinfo"),
+            "the message says why it matters: {err}"
+        );
+    }
+
+    #[test]
+    fn the_variant_names_are_not_accepted_as_configuration() {
+        // The enum derives Serialize with no rename, so "VerifyOrFetch"
+        // is what a careless `json!(policy)` would emit. It must not be
+        // configurable either, or the two spellings would both appear to
+        // work while only one reaches the wire.
+        assert!(parse_relay_policy(Some("VerifyOrFetch")).is_err());
+        assert!(parse_relay_policy(Some("Verify")).is_err());
+    }
 
     fn migrations_dir() -> PathBuf {
         // From the manifest rather than the working directory, so the

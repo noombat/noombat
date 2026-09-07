@@ -49,7 +49,6 @@ fn test_state(pool: PgPool, media: MediaStore) -> AppState {
         contact_email: format!("admin@{DOMAIN}"),
         trending_cache: None,
         analytics: None,
-        relay_verification_policy: None,
         envelope_key: None,
         fallback_rate_limiter: FallbackRateLimiter::new(),
         rate_limit: 100_000,

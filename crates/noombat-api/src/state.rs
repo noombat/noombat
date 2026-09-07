@@ -65,7 +65,6 @@ pub struct AppState {
     /// Analytics backend (default: PostgreSQL counters).
     pub analytics: Option<Arc<dyn noombat_core::extension::AnalyticsBackend>>,
     /// Relay verification policy in effect for this instance.
-    pub relay_verification_policy: Option<String>,
     /// Envelope-encryption key for secrets at rest (TOTP secrets,
     /// private keys). `None` in development when `NOOMBAT_KEK` is
     /// not set.

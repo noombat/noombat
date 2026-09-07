@@ -55,9 +55,11 @@ pub struct NodeInfoFeatures {
     /// Whether FEP-8b32 integrity proofs (`eddsa-jcs-2022`) are
     /// attached to all outbound activities.
     pub integrity_proofs_enabled: bool,
-    /// Whether relay subscriptions are accepted and the verification
-    /// policy in effect.
-    pub relay_verification_policy: Option<String>,
+    /// Whether relay subscriptions are accepted, and the instance-wide
+    /// default verification policy. Typed rather than a string so that a
+    /// value this instance cannot enforce cannot be published: the only
+    /// way to fill this in is to parse the operator's configuration.
+    pub relay_verification_policy: Option<crate::relay_verify::RelayVerificationPolicy>,
 }
 
 /// The FEPs this instance implements, published under
@@ -127,9 +129,13 @@ pub fn build(params: &NodeInfoParams) -> Value {
         metadata["noombat:integrityProofsEnabled"] = json!(true);
         metadata["noombat:integrityProofsCryptosuite"] = json!("eddsa-jcs-2022");
     }
-    if let Some(ref policy) = params.features.relay_verification_policy {
+    if let Some(policy) = params.features.relay_verification_policy {
         metadata["noombat:relaySupported"] = json!(true);
-        metadata["noombat:relayVerificationPolicy"] = json!(policy);
+        // `Display`, not `Serialize`. The derived Serialize emits the
+        // variant names ("VerifyOrFetch"), which are neither the three
+        // documented policy names nor what the CHECK constraint on
+        // `relay_subscriptions.verification_policy` accepts.
+        metadata["noombat:relayVerificationPolicy"] = json!(policy.to_string());
     }
 
     json!({
@@ -296,7 +302,9 @@ mod tests {
                 events_enabled: true,
                 articles_enabled: true,
                 integrity_proofs_enabled: true,
-                relay_verification_policy: Some("allowlist".to_owned()),
+                relay_verification_policy: Some(
+                    crate::relay_verify::RelayVerificationPolicy::TrustRelay,
+                ),
             },
         };
 
@@ -310,6 +318,38 @@ mod tests {
              NodeInfo section of the federation documentation in the same change, so an \
              operator can still learn what their instance discloses by reading it"
         );
+    }
+
+    #[test]
+    fn the_published_relay_policy_is_one_the_instance_can_enforce() {
+        // The golden list above records key paths and discards values, so
+        // nothing there can see a policy string that is not a policy. Every
+        // variant must serialise to a name `from_str_opt` accepts, which is
+        // also what the CHECK constraint on
+        // `relay_subscriptions.verification_policy` allows.
+        use crate::relay_verify::RelayVerificationPolicy as P;
+        for policy in [P::Verify, P::VerifyOrFetch, P::TrustRelay] {
+            let params = NodeInfoParams {
+                total_users: 0,
+                active_month: 0,
+                active_half_year: 0,
+                local_posts: 0,
+                open_registrations: false,
+                features: NodeInfoFeatures {
+                    relay_verification_policy: Some(policy),
+                    ..Default::default()
+                },
+            };
+            let doc = build(&params);
+            let published = doc["metadata"]["noombat:relayVerificationPolicy"]
+                .as_str()
+                .expect("the policy is published as a JSON string");
+            assert_eq!(
+                P::from_str_opt(published),
+                Some(policy),
+                "published {published:?}, which this instance cannot parse back to a policy"
+            );
+        }
     }
 
     #[test]

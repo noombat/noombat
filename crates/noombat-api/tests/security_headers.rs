@@ -61,7 +61,6 @@ fn test_state(domain: &str) -> AppState {
         contact_email: format!("admin@{domain}"),
         trending_cache: None,
         analytics: None,
-        relay_verification_policy: None,
         envelope_key: None,
         // High ceilings: rate limiting is not what these tests probe.
         fallback_rate_limiter: FallbackRateLimiter::new(),
