@@ -712,8 +712,19 @@ async fn provision_chat(
         ))
     })?;
 
+    // Without the sidecar there is no way to create an account: the
+    // relay's checkpassword helper only verifies. Refusing here is what
+    // keeps an unconfigured deployment from quietly falling back to a
+    // login-only path, which is the defect this route was rebuilt around.
+    let admin = state.chatmail_admin_client.as_ref().ok_or_else(|| {
+        ApiError(NoombatError::ServiceUnavailable(
+            "chatmail admin sidecar not configured on this instance".into(),
+        ))
+    })?;
+
     let provisioned =
-        noombat_chat::provision::provision_chatmail_account(chatmail_domain, username).await?;
+        noombat_chat::provision::provision_chatmail_account(admin, chatmail_domain, username)
+            .await?;
 
     // Store the Chatmail address on the actor record.
     sqlx::query("UPDATE actors SET chatmail_addr = $1 WHERE id = $2")

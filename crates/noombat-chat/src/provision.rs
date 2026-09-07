@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Chatmail account provisioning via IMAP first-login.
+//! Chatmail account provisioning through the admin sidecar.
 //!
-//! Chatmail auto-creates accounts on first IMAP login. This module
-//! generates a random Chatmail password, performs the first-login
-//! IMAP connection, and returns the provisioned address and password.
+//! The sidecar creates the account and owns the password; the IMAP login
+//! below is a check that it works, not what brings it into being. The
+//! relay's checkpassword helper answers before anybody has authenticated,
+//! so anything it created would be created for whoever asked.
 
 use noombat_core::error::{NoombatError, Result};
 use tracing::info;
@@ -20,21 +21,20 @@ pub struct ProvisionedAccount {
     pub password: String,
 }
 
-/// Provision a Chatmail account by performing a first-login IMAP
-/// connection.
+/// Provision `username@chatmail_domain`, then verify it with one login.
 ///
-/// Chatmail auto-creates the account on first login. The function
-/// generates a random password, connects via IMAP, authenticates
-/// (which triggers account creation), and returns the credentials.
-///
-/// The address is `username@chatmail_domain`, e.g.
-/// `alice@chat.noombat.social`.
+/// The password comes back from the sidecar rather than being generated
+/// here. Both sides have a generator, and using this one would hand the
+/// caller a password the relay's file does not hold, so every login
+/// would fail with nothing to explain it.
 pub async fn provision_chatmail_account(
+    admin: &crate::admin_client::ChatmailAdminClient,
     chatmail_domain: &str,
     username: &str,
 ) -> Result<ProvisionedAccount> {
     let address = format!("{username}@{chatmail_domain}");
-    let password = generate_chatmail_password();
+    let created = admin.create_account(&address).await?;
+    let password = created.password;
 
     // Establish a TCP connection to the Chatmail IMAP server
     // (port 993, implicit TLS).
@@ -67,10 +67,12 @@ pub async fn provision_chatmail_account(
     // types provided by `tokio-rustls`.
     let client = async_imap::Client::new(tls_stream);
 
-    // Login triggers account auto-creation on Chatmail.
+    // A check, not a creation: the account already exists. A failure
+    // here means the sidecar wrote something the relay cannot read, which
+    // is most likely file ownership.
     let mut session = client.login(&address, &password).await.map_err(|(e, _)| {
         NoombatError::Internal(format!(
-            "IMAP login for {address} failed (account provisioning): {e}"
+            "IMAP login for {address} failed after the sidecar created it: {e}"
         ))
     })?;
 
@@ -80,14 +82,4 @@ pub async fn provision_chatmail_account(
     info!(address = %address, "Chatmail account provisioned");
 
     Ok(ProvisionedAccount { address, password })
-}
-
-/// Generate a random password suitable for Chatmail (24 bytes,
-/// base64url-encoded, no padding).
-fn generate_chatmail_password() -> String {
-    use base64::Engine as _;
-    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let mut buf = [0u8; 24];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
-    URL_SAFE_NO_PAD.encode(buf)
 }
