@@ -10,14 +10,11 @@
 //! 4. The ORCID iD is stored in the `orcid` column; if no local
 //!    account exists, one is created.
 
-use noombat_core::actor::{ActorType, NewActor};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
-
-use crate::keys;
 
 /// ORCID OAuth configuration.
 #[derive(Debug, Clone)]
@@ -107,6 +104,7 @@ pub async fn handle_callback(
     our_domain: &str,
     code: &str,
     state: &str,
+    allow_registration: bool,
 ) -> Result<OrcidAuthResult> {
     // Validate and consume the OAuth state, recovering the account to link
     // to if this flow was started as a link rather than as a sign-in.
@@ -151,16 +149,7 @@ pub async fn handle_callback(
         .map_err(|e| NoombatError::Federation(format!("malformed ORCID token response: {e}")))?;
 
     // Check whether a local actor with this ORCID iD already exists.
-    let existing = sqlx::query_as::<_, (Uuid, String)>(
-        r#"SELECT a.id, a.username FROM actors a
-           JOIN oauth_identities oi ON oi.actor_id = a.id
-           WHERE oi.provider = 'orcid'
-             AND oi.external_id = $1
-             AND a.is_local = TRUE"#,
-    )
-    .bind(&token.orcid)
-    .fetch_optional(pool)
-    .await?;
+    let existing = crate::oauth_util::find_linked_actor(pool, "orcid", &token.orcid).await?;
 
     // Linking: attach this ORCID iD to the account that started the flow.
     if let Some(actor_id) = link_actor_id {
@@ -198,63 +187,42 @@ pub async fn handle_callback(
         });
     }
 
-    if let Some((actor_id, username)) = existing {
-        return Ok(OrcidAuthResult {
-            actor_id,
-            username,
-            orcid: token.orcid,
-            is_new: false,
-        });
-    }
-
-    // Create a new local actor.
+    // Sign in if the iD is already linked, otherwise register, which
+    // `allow_registration` may refuse.
     let base_username = derive_username_from_orcid(&token.orcid, token.name.as_deref());
-    let final_username =
-        crate::oauth_util::ensure_unique_username(pool, &base_username, our_domain).await?;
-
-    let keypair = keys::generate_keypair_async().await?;
-
-    let new_actor = NewActor {
-        actor_type: ActorType::Individual,
-        username: final_username.clone(),
-        display_name: token.name.filter(|s| !s.is_empty()),
-        domain: our_domain.to_owned(),
-        public_key_pem: keypair.rsa.public_pem,
-        private_key_pem: keypair.rsa.private_pem,
-        ed25519_public_key: keypair.ed25519.public_multibase,
-        ed25519_private_key: keypair.ed25519.private_base64,
-    };
-
-    let actor = crate::repo::create_actor(pool, &new_actor).await?;
-
-    // Store the ORCID iD on the actor (for display and profile use).
-    sqlx::query("UPDATE actors SET orcid = $1 WHERE id = $2")
-        .bind(&token.orcid)
-        .bind(actor.id)
-        .execute(pool)
-        .await?;
-
-    // Record the OAuth identity linkage.
-    sqlx::query(
-        r#"INSERT INTO oauth_identities (actor_id, provider, external_id)
-           VALUES ($1, 'orcid', $2)"#,
+    let (actor_id, username, is_new) = crate::oauth_util::sign_in_or_register(
+        pool,
+        "orcid",
+        &token.orcid,
+        &base_username,
+        token.name.clone(),
+        our_domain,
+        allow_registration,
     )
-    .bind(actor.id)
-    .bind(&token.orcid)
-    .execute(pool)
     .await?;
 
-    info!(
-        username = %final_username,
-        orcid = %token.orcid,
-        "ORCID OAuth account created"
-    );
+    if is_new {
+        // The iD also lives on the actor, for display and for the profile
+        // import. Only on creation: the linking branch above sets it with
+        // its own `updated_at`, and a sign-in must not touch the row.
+        sqlx::query("UPDATE actors SET orcid = $1 WHERE id = $2")
+            .bind(&token.orcid)
+            .bind(actor_id)
+            .execute(pool)
+            .await?;
+
+        info!(
+            username = %username,
+            orcid = %token.orcid,
+            "ORCID OAuth account created"
+        );
+    }
 
     Ok(OrcidAuthResult {
-        actor_id: actor.id,
-        username: final_username,
+        actor_id,
+        username,
         orcid: token.orcid,
-        is_new: true,
+        is_new,
     })
 }
 

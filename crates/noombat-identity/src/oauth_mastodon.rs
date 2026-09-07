@@ -12,7 +12,6 @@
 //!    fetches the user's Mastodon profile, and creates or links a
 //!    local Noombat account.
 
-use noombat_core::actor::{ActorType, NewActor};
 use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::net::is_private_ip;
@@ -20,8 +19,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use tracing::info;
 use uuid::Uuid;
-
-use crate::keys;
 
 // ..... Data types .....
 
@@ -291,6 +288,7 @@ pub async fn handle_callback(
     our_domain: &str,
     code: &str,
     state: &str,
+    allow_registration: bool,
 ) -> Result<MastodonAuthResult> {
     // Validate and consume the OAuth state.
     let row = sqlx::query_as::<_, (String, Option<Uuid>)>(
@@ -369,16 +367,7 @@ pub async fn handle_callback(
 
     // Check whether a local actor already exists for this Mastodon
     // account (linked via the `oauth_identities` table).
-    let existing = sqlx::query_as::<_, (Uuid, String)>(
-        r#"SELECT a.id, a.username FROM actors a
-           JOIN oauth_identities oi ON oi.actor_id = a.id
-           WHERE oi.provider = 'mastodon'
-             AND oi.external_id = $1
-             AND a.is_local = TRUE"#,
-    )
-    .bind(&remote_acct)
-    .fetch_optional(pool)
-    .await?;
+    let existing = crate::oauth_util::find_linked_actor(pool, "mastodon", &remote_acct).await?;
 
     // Linking: attach this Mastodon account to the account that started
     // the flow.
@@ -412,56 +401,34 @@ pub async fn handle_callback(
         });
     }
 
-    if let Some((actor_id, username)) = existing {
-        return Ok(MastodonAuthResult {
-            actor_id,
-            username,
-            is_new: false,
-        });
-    }
-
-    // Create a new local actor.
+    // Sign in if the identity is already linked, otherwise register,
+    // which `allow_registration` may refuse. The lookup above is repeated
+    // inside, cheaply, so that the linking branch and this one cannot
+    // drift apart on the `a.is_local = TRUE` filter.
     let local_username = derive_username(&account.acct, &instance_domain);
-
-    // Ensure uniqueness by appending a numeric suffix if needed.
-    let final_username =
-        crate::oauth_util::ensure_unique_username(pool, &local_username, our_domain).await?;
-
-    let keypair = keys::generate_keypair_async().await?;
-
-    let new_actor = NewActor {
-        actor_type: ActorType::Individual,
-        username: final_username.clone(),
-        display_name: account.display_name.filter(|s| !s.is_empty()),
-        domain: our_domain.to_owned(),
-        public_key_pem: keypair.rsa.public_pem,
-        private_key_pem: keypair.rsa.private_pem,
-        ed25519_public_key: keypair.ed25519.public_multibase,
-        ed25519_private_key: keypair.ed25519.private_base64,
-    };
-
-    let actor = crate::repo::create_actor(pool, &new_actor).await?;
-
-    // Record the OAuth identity linkage.
-    sqlx::query(
-        r#"INSERT INTO oauth_identities (actor_id, provider, external_id)
-           VALUES ($1, 'mastodon', $2)"#,
+    let (actor_id, username, is_new) = crate::oauth_util::sign_in_or_register(
+        pool,
+        "mastodon",
+        &remote_acct,
+        &local_username,
+        account.display_name,
+        our_domain,
+        allow_registration,
     )
-    .bind(actor.id)
-    .bind(&remote_acct)
-    .execute(pool)
     .await?;
 
-    info!(
-        username = %final_username,
-        mastodon_acct = %remote_acct,
-        "Mastodon OAuth account created"
-    );
+    if is_new {
+        info!(
+            username = %username,
+            mastodon_acct = %remote_acct,
+            "Mastodon OAuth account created"
+        );
+    }
 
     Ok(MastodonAuthResult {
-        actor_id: actor.id,
-        username: final_username,
-        is_new: true,
+        actor_id,
+        username,
+        is_new,
     })
 }
 

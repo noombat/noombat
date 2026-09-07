@@ -418,6 +418,7 @@ async fn mastodon_callback(
         &state.domain,
         &query.code,
         &query.state,
+        state.open_registrations,
     )
     .await?;
 
@@ -512,6 +513,7 @@ async fn orcid_callback(
         &state.domain,
         &query.code,
         &query.state,
+        state.open_registrations,
     )
     .await?;
 
