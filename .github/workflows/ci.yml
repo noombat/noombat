@@ -34,6 +34,8 @@ on:
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
+      - "scripts/check-doveauth.sh"
+      - "chatmail-config/noombat-doveauth"
       - "scripts/check-migrations.sh"
       - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
@@ -58,6 +60,8 @@ on:
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-inline-scripts.sh"
+      - "scripts/check-doveauth.sh"
+      - "chatmail-config/noombat-doveauth"
       - "scripts/check-migrations.sh"
       - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
@@ -115,6 +119,20 @@ jobs:
       # page, including markup inherited from the layout.
       - name: "Reject unbalanced HTML comment delimiters"
         run: scripts/check-template-comments.sh
+
+  relay-auth:
+    name: Relay authentication helper
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The checkpassword helper runs before anybody is authenticated, so
+      # what it does for an address it has never seen is a security
+      # property. It used to create the account with the offered password,
+      # which let an outsider claim any unused address over published IMAP
+      # or submission. Asserted against the filesystem, because the
+      # behaviour being guarded against is one that succeeds.
+      - name: "The relay helper verifies credentials and never creates them"
+        run: scripts/check-doveauth.sh
 
   dependency-hygiene:
     name: Dependency hygiene

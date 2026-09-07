@@ -3,11 +3,20 @@
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
 # noombat-doveauth: Dovecot checkpassword-compatible authentication
-# helper implementing the Chatmail create-on-login mechanism.
+# helper. It verifies credentials and never creates them.
 #
 # Protocol: Dovecot writes "user\0password\0" to fd 3. This script
-# reads the credentials, checks (or creates) the per-user password
-# file, and execs $1 on success or exits 1 on failure.
+# reads the credentials, checks the per-user password file, and execs
+# $1 on success or exits 1 on failure.
+#
+# Accounts are created by the application, through the admin sidecar's
+# PUT /admin/v1/accounts/{address}, which authenticates the caller and
+# checks the domain. This script must never create one: a checkpassword
+# helper runs before anybody is authenticated, so anything it creates is
+# created for an anonymous stranger. It used to have a create-on-login
+# branch here, which let an outsider claim any unused address on the
+# relay, with a password of their choosing, over published IMAP and
+# submission ports.
 #
 # See: https://doc.dovecot.org/configuration_manual/authentication/checkpassword/
 
@@ -42,11 +51,10 @@ if [ -f "$password_file" ]; then
         exit 1
     fi
 else
-    # New account: create-on-login. Write the submitted password as
-    # the stored credential and initialise the maildir.
-    mkdir -p "${user_home}/Maildir/cur" "${user_home}/Maildir/new" "${user_home}/Maildir/tmp"
-    printf '%s' "$pass" > "$password_file"
-    chown -R 5000:5000 "$user_home"
+    # No such account. The `else` is required, not decorative: without it
+    # control reaches the `exec "$@"` below and every unknown address
+    # authenticates.
+    exit 1
 fi
 
 # Export the userdb response for Dovecot.
