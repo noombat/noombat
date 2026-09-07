@@ -58,6 +58,11 @@ services:
     # assert the admin sidecar is actually serving.
     ports:
       - "9100:9100"
+      # IMAP, so the squat probe can attempt a login from the host. The
+      # relay's create-on-login branch was reachable on exactly this port
+      # in the shipped compose, and a suite that cannot open it cannot
+      # assert the branch is gone.
+      - "993:993"
     # The entrypoint writes the CA it signs the relay certificate with
     # here, and Noombat mounts the same volume read-only to trust it.
     volumes:

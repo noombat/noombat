@@ -335,6 +335,66 @@ else
     skip "Chat provisioning: no token"
 fi
 
+# ..... Account creation is not a login .....
+
+echo ""
+echo "--- Account creation ---"
+echo ""
+
+# An outsider must not be able to bring an address into existence by
+# logging in. The relay's checkpassword helper used to create the mailbox
+# here, storing the password the caller offered, so anyone could claim any
+# unused address over the published IMAP port and hold that chat identity
+# permanently.
+#
+# The assertion is on filesystem state, not on the login result. A helper
+# can create the account and then refuse the session a moment later, which
+# is exactly what the submission path did, so "the login failed" would
+# have passed against the defect.
+CHATMAIL_ADMIN_SECRET="${CHATMAIL_ADMIN_SECRET:-test-admin-secret}"
+SQUATTED="squatter@${CHATMAIL_DOMAIN}"
+
+if ! command -v python3 >/dev/null 2>&1; then
+    skip "Squat probe: python3 is needed to drive an IMAP session"
+else
+    "$(dirname "$0")/squat-probe.py" localhost 993 "$SQUATTED" "attacker-chosen" \
+      > /dev/null 2>&1 || true
+
+    EXISTS=$(curl $CURL_OPTS --insecure -s \
+      -H "Authorization: Bearer ${CHATMAIL_ADMIN_SECRET}" \
+      "$CHATMAIL_ADMIN/admin/v1/accounts/${SQUATTED}/exists" 2>/dev/null) || EXISTS=""
+    case "$EXISTS" in
+        *'"exists":false'*)
+            pass "An unknown address is not created by an IMAP login attempt" ;;
+        *'"exists":true'*)
+            fail "$SQUATTED was created by a login attempt: create-on-login is back" ;;
+        *)
+            fail "Could not read account existence from the sidecar (got '$EXISTS')" ;;
+    esac
+fi
+
+# The other half: a squat attempt against a real user's address must not
+# stop that user provisioning. Under the old behaviour the attempt created
+# the mailbox with the attacker's password, so the IMAP login inside
+# provisioning failed against it and chat never worked for that account.
+if [ -z "$BOB_TOKEN" ]; then
+    skip "Squat then provision: bob has no session"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "Squat then provision: python3 is needed to drive an IMAP session"
+else
+    "$(dirname "$0")/squat-probe.py" localhost 993 "bob@${CHATMAIL_DOMAIN}" "attacker-chosen" \
+      > /dev/null 2>&1 || true
+
+    PROVISION_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' -X POST \
+      -H "Cookie: noombat_session=${BOB_TOKEN}" \
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROVISION_CODE="000"
+    if [ "$PROVISION_CODE" = "200" ]; then
+        pass "A squat attempt does not stop the real user provisioning"
+    else
+        fail "bob could not provision after a squat attempt (HTTP $PROVISION_CODE)"
+    fi
+fi
+
 # 12. Sending, which is the only assertion that leaves over SMTP.
 #
 # SMTP resolves its TLS roots through lettre and IMAP through the chat
@@ -342,8 +402,9 @@ fi
 # while submission fails against the same relay. Everything above passed
 # for a full day with submission broken, because nothing sent.
 #
-# bob is provisioned first so the recipient mailbox exists, which also
-# exercises provisioning for a second account.
+# bob's mailbox already exists: the account-creation section above
+# provisions him, after squatting his address, so this call is a no-op
+# that returns "chat already provisioned" and is ignored.
 if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "$ALICE_CHATMAIL_PASSWORD" ]; then
     curl $CURL_OPTS -s -o /dev/null -X POST \
       -H "Cookie: noombat_session=${BOB_TOKEN}" \
