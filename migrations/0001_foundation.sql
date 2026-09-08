@@ -504,6 +504,32 @@ CREATE TABLE organization_members (
 
 CREATE INDEX idx_organization_members_member ON organization_members (member_id);
 
+-- Every organisation this account has ever enrolled, including ones it has
+-- since erased.
+--
+-- `organization_members` cannot answer the rolling-year question: both its
+-- foreign keys cascade from `actors`, and an owner can erase an
+-- organisation on demand, so deleting one would hand the year-slot back and
+-- make the annual cap mean nothing. This table is what makes that count
+-- durable, and it is append-only: nothing in the workspace updates or
+-- deletes a row.
+--
+-- The two foreign keys differ on purpose. `owner_id` cascades, because an
+-- account's erasure must take its records with it and an erased account
+-- enrols nothing. `organization_id` nulls instead, because the whole point
+-- is that the row outlives the organisation.
+CREATE TABLE organization_enrolments (
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    owner_id        UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
+    organization_id UUID REFERENCES actors(id) ON DELETE SET NULL,
+    created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Both per-owner counts read this: the rolling year, and the most recent
+-- enrolment for the rate limit. Descending, because both want the newest.
+CREATE INDEX idx_organization_enrolments_owner
+    ON organization_enrolments (owner_id, created_at DESC);
+
 -- Recruiters named by `job_application_readers = 'listed'`. Owners and the
 -- posting's creator do not appear here; they are always admitted.
 CREATE TABLE job_posting_readers (
@@ -1149,6 +1175,46 @@ CREATE TABLE instance_settings (
     -- Independently of this, a remote author's own `indexable` is
     -- honoured: turning this on does not index anybody who said no.
     index_remote_posts       BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Whether a signed-in account may enrol a local Organization actor.
+    --
+    -- Separate from `registration_mode`, which governs people signing up.
+    -- The two answer different questions: an instance can be closed to new
+    -- members while its existing members still enrol organisations, and it
+    -- can be open to members while organisation creation is paused because
+    -- moderation capacity is spent. One flag answering both would make
+    -- pausing one mean pausing the other.
+    organization_creation_enabled BOOLEAN NOT NULL DEFAULT TRUE,
+    -- Per-owner ceilings on organisation creation. The three are
+    -- independent and all apply; a count of 0 disables the one it names.
+    --
+    -- Both time-based ceilings carry their own period, as an amount and a
+    -- unit, rather than a fixed one. "One a week" and "one an hour" are the
+    -- same policy at different scales, and an instance that has to choose
+    -- between a hard-coded week and nothing will pick nothing.
+    --
+    -- Amount and unit rather than an INTERVAL column, because the admin
+    -- form has to render the value back into a number and a dropdown, and
+    -- INTERVAL normalises in ways that do not survive that round trip
+    -- ('1 year' and '12 months' are equal and not identical).
+    --
+    -- The CHECK constraints are the last line of validation. The unit set
+    -- is closed here as well as in the handler: the gate turns a unit into
+    -- an argument of `make_interval`, and an unrecognised one must not
+    -- reach it.
+    organization_rate_limit_count  INTEGER NOT NULL DEFAULT 1
+        CHECK (organization_rate_limit_count >= 0),
+    organization_rate_limit_amount INTEGER NOT NULL DEFAULT 7
+        CHECK (organization_rate_limit_amount > 0),
+    organization_rate_limit_unit   TEXT NOT NULL DEFAULT 'days'
+        CHECK (organization_rate_limit_unit IN ('hours', 'days', 'weeks', 'months', 'years')),
+    organization_concurrent_cap    INTEGER NOT NULL DEFAULT 5
+        CHECK (organization_concurrent_cap >= 0),
+    organization_period_cap_count  INTEGER NOT NULL DEFAULT 10
+        CHECK (organization_period_cap_count >= 0),
+    organization_period_cap_amount INTEGER NOT NULL DEFAULT 1
+        CHECK (organization_period_cap_amount > 0),
+    organization_period_cap_unit   TEXT NOT NULL DEFAULT 'years'
+        CHECK (organization_period_cap_unit IN ('hours', 'days', 'weeks', 'months', 'years')),
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
