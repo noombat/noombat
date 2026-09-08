@@ -33,6 +33,16 @@ pub fn qualify(addr: &str, field: &str) -> Result<()> {
             "{field} must not contain whitespace or control characters"
         )));
     }
+    // No address this module admits contains a path separator, and callers
+    // interpolate a qualified address into a request path, where a `/`
+    // splits one segment into two. The client that builds those requests
+    // refuses the separator as well; this is the outer of the two, so that
+    // a caller reading `qualify` gets what the name suggests.
+    if addr.contains('/') || addr.contains('\\') {
+        return Err(NoombatError::BadRequest(format!(
+            "{field} must not contain a path separator"
+        )));
+    }
 
     let mut parts = addr.split('@');
     let (local, domain, extra) = (parts.next(), parts.next(), parts.next());
@@ -93,6 +103,12 @@ mod tests {
             "@nolocal.com",
             "with space@example.com",
             "control\u{0007}@example.com",
+            // Both have one `@` and a domain that neither starts nor ends
+            // with a dot, so every other test here passes them. The
+            // separator is the only thing wrong with them, which is what
+            // makes them the cases that fail if the check is removed.
+            "victim@example.com/kick",
+            "victim@example.com\\kick",
         ] {
             assert!(qualify(bad, "email").is_err(), "accepted {bad:?}");
         }
