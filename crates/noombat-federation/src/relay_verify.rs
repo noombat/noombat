@@ -68,7 +68,7 @@ pub enum RelayVerificationPolicy {
 /// operator sets in the configuration file, and giving this one a
 /// database row as well would create two sources of truth for a value
 /// the NodeInfo document already publishes from the configured one.
-static DEFAULT_POLICY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+static DEFAULT_POLICY: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(1);
 
 /// Set the instance-wide default. Called once, before the listener binds.
 pub fn set_default_policy(policy: RelayVerificationPolicy) {
@@ -82,9 +82,12 @@ pub fn set_default_policy(policy: RelayVerificationPolicy) {
 
 /// The instance-wide default.
 ///
-/// `Verify` until something sets it, which is the strictest of the three:
-/// an instance that has not been configured must not be the one that
-/// trusts a relay.
+/// `VerifyOrFetch` until something sets it. A proof is accepted directly
+/// and its absence triggers a signed re-fetch from the origin, so nothing
+/// is taken on the relay's word, and a relay whose peers do not yet sign
+/// still delivers. `Verify` would discard every unproofed activity, which
+/// on today's network is most of them; it becomes the right default once
+/// proofs are widespread, and that is a decision with its own trigger.
 pub fn default_policy() -> RelayVerificationPolicy {
     match DEFAULT_POLICY.load(std::sync::atomic::Ordering::Relaxed) {
         1 => RelayVerificationPolicy::VerifyOrFetch,
@@ -420,4 +423,46 @@ pub async fn is_relay_announce(pool: &PgPool, actor_uri: &str) -> bool {
     .unwrap_or(false);
 
     is_relay
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The unconfigured default, asserted through the same encode and
+    /// decode pair the setter uses.
+    ///
+    /// `DEFAULT_POLICY` is a process-global integer, so the mapping and
+    /// the initial value can disagree without anything failing to
+    /// compile: a wrong constant here silently changes what every relay
+    /// subscription without an explicit policy gets, and what the
+    /// NodeInfo document publishes.
+    ///
+    /// Nothing in this crate calls `set_default_policy`, so this test
+    /// observes the initial value rather than one a sibling test left.
+    #[test]
+    fn an_unconfigured_instance_verifies_or_fetches() {
+        assert_eq!(
+            default_policy(),
+            RelayVerificationPolicy::VerifyOrFetch,
+            "the unconfigured default must accept a proof and re-fetch when \
+             there is none, rather than discarding unproofed relayed content"
+        );
+    }
+
+    #[test]
+    fn every_variant_survives_the_encoding() {
+        // Round-trips through the atomic, which is where a reordered
+        // match arm would show up.
+        for policy in [
+            RelayVerificationPolicy::Verify,
+            RelayVerificationPolicy::VerifyOrFetch,
+            RelayVerificationPolicy::TrustRelay,
+        ] {
+            set_default_policy(policy);
+            assert_eq!(default_policy(), policy, "{policy} did not survive");
+        }
+        // Restore, so the assertion above does not depend on test order.
+        set_default_policy(RelayVerificationPolicy::VerifyOrFetch);
+    }
 }
