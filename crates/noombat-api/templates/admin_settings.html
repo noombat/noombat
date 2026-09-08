@@ -57,6 +57,64 @@
             </fieldset>
 
             <fieldset>
+                <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_organizations") }}</legend>
+                <!-- The same hidden-field pairing the setting above uses: an
+                     unticked checkbox submits nothing, and the handler reads
+                     absent as "leave alone", so without the hidden field the
+                     pause could be lifted and never reapplied. -->
+                <input type="hidden" name="organization_creation_enabled" value="false">
+                <label class="flex items-center gap-3">
+                    <input type="checkbox" name="organization_creation_enabled" value="true"
+                           {% if organization_creation_enabled %}checked{% endif %}
+                           class="rounded border-border-default">
+                    <span class="text-sm">{{ i18n.t("admin_settings_org_enabled") }}</span>
+                </label>
+                <p class="text-sm text-text-secondary mt-1 ms-8">{{ i18n.t("admin_settings_org_enabled_note") }}</p>
+
+                <label class="text-sm block mt-3">
+                    {{ i18n.t("admin_settings_org_rate_limit") }}
+                    <input type="number" name="organization_rate_limit_count"
+                           value="{{ organization_rate_limit_count }}" min="0" max="1000"
+                           class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm w-20">
+                    {{ i18n.t("admin_settings_org_per") }}
+                    <input type="number" name="organization_rate_limit_amount"
+                           value="{{ organization_rate_limit_amount }}" min="1" max="1000"
+                           class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm w-20">
+                    <select name="organization_rate_limit_unit"
+                            class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm">
+                        {% for unit in period_units %}
+                        <option value="{{ unit.0 }}"
+                                {% if unit.0 == organization_rate_limit_unit %}selected{% endif %}>{{ i18n.t(unit.1) }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <label class="text-sm block mt-3">
+                    {{ i18n.t("admin_settings_org_concurrent") }}
+                    <input type="number" name="organization_concurrent_cap"
+                           value="{{ organization_concurrent_cap }}" min="0" max="1000"
+                           class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm w-20">
+                </label>
+                <label class="text-sm block mt-3">
+                    {{ i18n.t("admin_settings_org_period_cap") }}
+                    <input type="number" name="organization_period_cap_count"
+                           value="{{ organization_period_cap_count }}" min="0" max="1000"
+                           class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm w-20">
+                    {{ i18n.t("admin_settings_org_per") }}
+                    <input type="number" name="organization_period_cap_amount"
+                           value="{{ organization_period_cap_amount }}" min="1" max="1000"
+                           class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm w-20">
+                    <select name="organization_period_cap_unit"
+                            class="ms-2 border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm">
+                        {% for unit in period_units %}
+                        <option value="{{ unit.0 }}"
+                                {% if unit.0 == organization_period_cap_unit %}selected{% endif %}>{{ i18n.t(unit.1) }}</option>
+                        {% endfor %}
+                    </select>
+                </label>
+                <p class="text-sm text-text-secondary mt-1">{{ i18n.t("admin_settings_org_zero_note") }}</p>
+            </fieldset>
+
+            <fieldset>
                 <legend class="text-lg font-semibold mb-2">{{ i18n.t("admin_settings_analytics") }}</legend>
                 <label class="text-sm">
                     {{ i18n.t("admin_settings_retention_days") }}

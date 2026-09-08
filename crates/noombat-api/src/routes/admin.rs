@@ -482,6 +482,47 @@ async fn remove_domain_restriction(
 
 // ..... INSTANCE SETTINGS .....
 
+/// The settings row the admin page renders.
+///
+/// A named type rather than an eight-column tuple: the columns are all
+/// `bool` or `i32` in runs, so a tuple lets two of them swap places
+/// silently. `Default` supplies the schema defaults for an instance whose
+/// settings row has not been created yet.
+#[derive(sqlx::FromRow)]
+struct InstanceSettingsRow {
+    registration_mode: String,
+    default_job_approval: bool,
+    analytics_retention_days: i32,
+    index_remote_posts: bool,
+    organization_creation_enabled: bool,
+    organization_rate_limit_count: i32,
+    organization_rate_limit_amount: i32,
+    organization_rate_limit_unit: String,
+    organization_concurrent_cap: i32,
+    organization_period_cap_count: i32,
+    organization_period_cap_amount: i32,
+    organization_period_cap_unit: String,
+}
+
+impl Default for InstanceSettingsRow {
+    fn default() -> Self {
+        Self {
+            registration_mode: "open".to_owned(),
+            default_job_approval: true,
+            analytics_retention_days: 90,
+            index_remote_posts: false,
+            organization_creation_enabled: true,
+            organization_rate_limit_count: 1,
+            organization_rate_limit_amount: 7,
+            organization_rate_limit_unit: "days".to_owned(),
+            organization_concurrent_cap: 5,
+            organization_period_cap_count: 10,
+            organization_period_cap_amount: 1,
+            organization_period_cap_unit: "years".to_owned(),
+        }
+    }
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "admin_settings.html")]
 struct SettingsAdminPage {
@@ -493,6 +534,19 @@ struct SettingsAdminPage {
     default_job_approval: bool,
     analytics_retention_days: i32,
     index_remote_posts: bool,
+    organization_creation_enabled: bool,
+    organization_rate_limit_count: i32,
+    organization_rate_limit_amount: i32,
+    organization_rate_limit_unit: String,
+    organization_concurrent_cap: i32,
+    organization_period_cap_count: i32,
+    organization_period_cap_amount: i32,
+    organization_period_cap_unit: String,
+    /// The unit dropdown's options: the stored value and its message key.
+    ///
+    /// Rendered from one list so the two selects cannot drift, and so the
+    /// set the form offers is the set the CHECK constraint accepts.
+    period_units: Vec<(&'static str, &'static str)>,
     announcements: Vec<AnnouncementEntry>,
 }
 
@@ -515,18 +569,20 @@ async fn settings_page(
     }
     let uname = nav_username(&viewer);
 
-    let settings: Option<(String, bool, i32, bool)> = sqlx::query_as(
+    let settings: InstanceSettingsRow = sqlx::query_as(
         "SELECT registration_mode, default_job_approval, analytics_retention_days, \
-                index_remote_posts \
+                index_remote_posts, organization_creation_enabled, \
+                organization_rate_limit_count, organization_rate_limit_amount, \
+                organization_rate_limit_unit, organization_concurrent_cap, \
+                organization_period_cap_count, organization_period_cap_amount, \
+                organization_period_cap_unit \
          FROM instance_settings LIMIT 1",
     )
     .fetch_optional(&state.pool)
     .await
     .ok()
-    .flatten();
-
-    let (registration_mode, default_job_approval, analytics_retention_days, index_remote_posts) =
-        settings.unwrap_or(("open".into(), true, 90, false));
+    .flatten()
+    .unwrap_or_default();
 
     let announcement_rows: Vec<(Uuid, String, bool, chrono::DateTime<chrono::Utc>)> =
         sqlx::query_as(
@@ -551,10 +607,25 @@ async fn settings_page(
         theme,
         contrast,
         nav_username: uname,
-        registration_mode,
-        default_job_approval,
-        analytics_retention_days,
-        index_remote_posts,
+        registration_mode: settings.registration_mode,
+        default_job_approval: settings.default_job_approval,
+        analytics_retention_days: settings.analytics_retention_days,
+        index_remote_posts: settings.index_remote_posts,
+        organization_creation_enabled: settings.organization_creation_enabled,
+        organization_rate_limit_count: settings.organization_rate_limit_count,
+        organization_rate_limit_amount: settings.organization_rate_limit_amount,
+        organization_rate_limit_unit: settings.organization_rate_limit_unit,
+        organization_concurrent_cap: settings.organization_concurrent_cap,
+        organization_period_cap_count: settings.organization_period_cap_count,
+        organization_period_cap_amount: settings.organization_period_cap_amount,
+        organization_period_cap_unit: settings.organization_period_cap_unit,
+        period_units: vec![
+            ("hours", "admin_settings_unit_hours"),
+            ("days", "admin_settings_unit_days"),
+            ("weeks", "admin_settings_unit_weeks"),
+            ("months", "admin_settings_unit_months"),
+            ("years", "admin_settings_unit_years"),
+        ],
         announcements,
     }
     .into_response()
@@ -572,6 +643,21 @@ struct UpdateSettingsRequest {
     /// submits nothing when unchecked, so the form posts an explicit
     /// value rather than relying on presence.
     index_remote_posts: Option<bool>,
+    /// Whether a signed-in account may enrol an Organization actor.
+    ///
+    /// Independent of `registration_mode`: an instance can be closed to
+    /// new members while its members still enrol organisations, and open
+    /// to members while organisation creation is paused.
+    organization_creation_enabled: Option<bool>,
+    /// Per-owner ceilings. A count of `0` disables the one it names, and
+    /// each time-based ceiling carries its own window.
+    organization_rate_limit_count: Option<i32>,
+    organization_rate_limit_amount: Option<i32>,
+    organization_rate_limit_unit: Option<String>,
+    organization_concurrent_cap: Option<i32>,
+    organization_period_cap_count: Option<i32>,
+    organization_period_cap_amount: Option<i32>,
+    organization_period_cap_unit: Option<String>,
 }
 
 async fn update_settings(
@@ -581,18 +667,105 @@ async fn update_settings(
 ) -> Result<impl IntoResponse, ApiError> {
     require_admin_api(&viewer)?;
 
+    // Checked here, not left to the CHECK constraints. A constraint
+    // violation reaches the caller through the catch-all arm of the error
+    // mapping as a 500 with no detail, which tells an administrator
+    // nothing about which field they got wrong.
+    for (name, value) in [
+        (
+            "organization_rate_limit_count",
+            body.organization_rate_limit_count,
+        ),
+        (
+            "organization_concurrent_cap",
+            body.organization_concurrent_cap,
+        ),
+        (
+            "organization_period_cap_count",
+            body.organization_period_cap_count,
+        ),
+    ] {
+        if let Some(value) = value
+            && value < 0
+        {
+            return Err(ApiError(NoombatError::BadRequest(format!(
+                "{name} cannot be negative; 0 disables that ceiling"
+            ))));
+        }
+    }
+    // A window of zero is not "no limit", it is a window nothing fits in:
+    // `now() - make_interval(days => 0)` is now, so the count inside it is
+    // always zero and the ceiling silently stops applying. Disabling a
+    // ceiling is what its count is for.
+    for (name, value) in [
+        (
+            "organization_rate_limit_amount",
+            body.organization_rate_limit_amount,
+        ),
+        (
+            "organization_period_cap_amount",
+            body.organization_period_cap_amount,
+        ),
+    ] {
+        if let Some(value) = value
+            && value < 1
+        {
+            return Err(ApiError(NoombatError::BadRequest(format!(
+                "{name} must be at least 1; set the matching count to 0 to remove the limit"
+            ))));
+        }
+    }
+    // Closed here as well as by the CHECK constraint, so a bad unit is a
+    // 400 naming the field rather than a 500 from the catch-all arm.
+    const UNITS: [&str; 5] = ["hours", "days", "weeks", "months", "years"];
+    for (name, value) in [
+        (
+            "organization_rate_limit_unit",
+            &body.organization_rate_limit_unit,
+        ),
+        (
+            "organization_period_cap_unit",
+            &body.organization_period_cap_unit,
+        ),
+    ] {
+        if let Some(value) = value
+            && !UNITS.contains(&value.as_str())
+        {
+            return Err(ApiError(NoombatError::BadRequest(format!(
+                "{name} must be one of {}",
+                UNITS.join(", ")
+            ))));
+        }
+    }
+
     sqlx::query(
         r#"UPDATE instance_settings SET
                registration_mode = COALESCE($1, registration_mode),
                default_job_approval = COALESCE($2, default_job_approval),
                analytics_retention_days = COALESCE($3, analytics_retention_days),
                index_remote_posts = COALESCE($4, index_remote_posts),
+               organization_creation_enabled = COALESCE($5, organization_creation_enabled),
+               organization_rate_limit_count = COALESCE($6, organization_rate_limit_count),
+               organization_rate_limit_amount = COALESCE($7, organization_rate_limit_amount),
+               organization_rate_limit_unit = COALESCE($8, organization_rate_limit_unit),
+               organization_concurrent_cap = COALESCE($9, organization_concurrent_cap),
+               organization_period_cap_count = COALESCE($10, organization_period_cap_count),
+               organization_period_cap_amount = COALESCE($11, organization_period_cap_amount),
+               organization_period_cap_unit = COALESCE($12, organization_period_cap_unit),
                updated_at = now()"#,
     )
     .bind(&body.registration_mode)
     .bind(body.default_job_approval)
     .bind(body.analytics_retention_days)
     .bind(body.index_remote_posts)
+    .bind(body.organization_creation_enabled)
+    .bind(body.organization_rate_limit_count)
+    .bind(body.organization_rate_limit_amount)
+    .bind(&body.organization_rate_limit_unit)
+    .bind(body.organization_concurrent_cap)
+    .bind(body.organization_period_cap_count)
+    .bind(body.organization_period_cap_amount)
+    .bind(&body.organization_period_cap_unit)
     .execute(&state.pool)
     .await
     .map_err(NoombatError::from)?;
