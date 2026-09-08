@@ -56,6 +56,11 @@ impl IntoResponse for ApiError {
             NoombatError::ServiceUnavailable(detail) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ApError::internal(detail))
             }
+            // The detail is returned, unlike a 500: a caller who has hit a
+            // ceiling can only act on it if they are told which one.
+            NoombatError::QuotaExceeded(detail) => {
+                (StatusCode::TOO_MANY_REQUESTS, ApError::bad_request(detail))
+            }
             _ => {
                 // The peer is told nothing, deliberately. Log the cause
                 // here or a 500 leaves no trace of what failed.

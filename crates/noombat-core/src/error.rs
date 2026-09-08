@@ -50,6 +50,15 @@ pub enum NoombatError {
 
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
+
+    /// A per-account ceiling was reached: a quota rather than a refusal.
+    ///
+    /// Distinct from `Forbidden`, which says the caller may not do this at
+    /// all. This says they may, and not yet or not more, so the message
+    /// carries which ceiling and the caller can act on it. Answered as 429
+    /// rather than 403 for the same reason.
+    #[error("quota exceeded: {0}")]
+    QuotaExceeded(String),
 }
 
 /// Convenience alias.
