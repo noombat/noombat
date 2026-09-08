@@ -74,6 +74,37 @@ fn client_trusting_the_relay() -> reqwest::Client {
     })
 }
 
+/// Whether the admin secret can reach `base_url` without being readable
+/// in transit.
+///
+/// `https` anywhere, or `http` to a loopback host, which is how the relay
+/// and the sidecar talk when they share a machine and the traffic never
+/// reaches a network. Everything else, an unparseable URL included, is
+/// refused: the alternative is guessing, and the guess would be made once
+/// per deployment by whoever mistyped the variable.
+fn transport_is_confidential(base_url: &str) -> bool {
+    let Ok(url) = reqwest::Url::parse(base_url) else {
+        return false;
+    };
+    match url.scheme() {
+        "https" => true,
+        "http" => url.host_str().is_some_and(host_is_loopback),
+        _ => false,
+    }
+}
+
+/// Whether `host` names this machine.
+///
+/// The brackets come off first: a URL keeps them around an IPv6 literal,
+/// and `[::1]` does not parse as an address with them attached.
+fn host_is_loopback(host: &str) -> bool {
+    let bare = host.trim_start_matches('[').trim_end_matches(']');
+    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
+        return ip.is_loopback();
+    }
+    host == "localhost" || host.ends_with(".localhost")
+}
+
 /// Client for the Chatmail admin sidecar.
 #[derive(Debug, Clone)]
 pub struct ChatmailAdminClient {
@@ -113,11 +144,31 @@ pub struct AccountExistsResponse {
 impl ChatmailAdminClient {
     /// Create a new client.
     ///
-    /// Returns `None` if either `base_url` or `secret` is `None`
-    /// (sidecar not configured).
+    /// Returns `None` if either `base_url` or `secret` is `None` (sidecar
+    /// not configured), or if the base URL would carry the admin secret in
+    /// clear.
+    ///
+    /// Every method below attaches the secret with `bearer_auth`, so a
+    /// plaintext base URL hands it to anything on the path, on every call.
+    /// The scheme arrives from configuration rather than from a literal,
+    /// so nothing before this point has been in a position to check it.
+    ///
+    /// Refusing disables the sidecar, which stops suspension and
+    /// moderation rather than degrading them. That is the intended
+    /// trade: an unconfigured sidecar is a state the callers already
+    /// handle, and a leaked admin secret is not recoverable by
+    /// reconfiguring.
     pub fn new(base_url: Option<&str>, secret: Option<&str>) -> Option<Self> {
         let base_url = base_url?.trim_end_matches('/').to_owned();
         let secret = secret?.to_owned();
+        if !transport_is_confidential(&base_url) {
+            error!(
+                base_url = %base_url,
+                "refusing to build the Chatmail admin client: the admin secret would travel \
+                 in clear. Use https, or an http URL on a loopback host."
+            );
+            return None;
+        }
         Some(Self {
             base_url,
             secret,
@@ -304,7 +355,10 @@ impl ChatmailAdminClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            warn!(sender = %sender, recipient = %recipient, %status, "block_sender_pair failed: {body}");
+            warn!(
+                sender = %sender, recipient = %recipient, %status,
+                "block_sender_pair failed: {body}"
+            );
         }
         Ok(())
     }
@@ -328,7 +382,10 @@ impl ChatmailAdminClient {
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();
-            warn!(sender = %sender, recipient = %recipient, %status, "unblock_sender_pair failed: {body}");
+            warn!(
+                sender = %sender, recipient = %recipient, %status,
+                "unblock_sender_pair failed: {body}"
+            );
         }
         Ok(())
     }
@@ -492,6 +549,60 @@ mod tests {
         assert_refused(
             client().account_exists(PATH_CHANGING).await,
             "account_exists",
+        );
+    }
+
+    #[test]
+    fn a_confidential_base_url_is_accepted() {
+        // The loopback cases matter as much as the https one: the tests
+        // above build their client from `http://127.0.0.1:1`, and the
+        // interop stack runs the relay and the sidecar on one host.
+        for good in [
+            "https://chat.example.com:9100",
+            "https://chat.example.com",
+            "http://127.0.0.1:9100",
+            "http://localhost:9100",
+            "http://sidecar.localhost",
+            "http://[::1]:9100",
+        ] {
+            assert!(
+                transport_is_confidential(good),
+                "refused a URL that keeps the secret: {good:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_base_url_that_would_leak_the_secret_is_refused() {
+        for bad in [
+            // The finding: plaintext to a host that is not this one.
+            "http://chat.example.com:9100",
+            "http://10.0.0.5:9100",
+            // A loopback *name* under another domain resolves elsewhere.
+            "http://localhost.example.com",
+            "ftp://chat.example.com",
+            "chat.example.com:9100",
+            "",
+        ] {
+            assert!(
+                !transport_is_confidential(bad),
+                "accepted a URL that publishes the secret: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_constructor_refuses_a_plaintext_remote_sidecar() {
+        // Through `new`, not through the helper: the check is only worth
+        // anything if the constructor consults it, and this is the
+        // assertion that fails if the call is dropped.
+        assert!(
+            ChatmailAdminClient::new(Some("http://chat.example.com:9100"), Some("s")).is_none(),
+            "built a client that would send the admin secret in clear"
+        );
+        assert!(
+            ChatmailAdminClient::new(Some("https://chat.example.com:9100"), Some("s")).is_some(),
+            "refused a client over https"
         );
     }
 }
