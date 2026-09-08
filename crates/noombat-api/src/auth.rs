@@ -45,7 +45,8 @@ pub async fn require_acts_for(
     }
 
     let role: Option<OrganizationRole> = sqlx::query_scalar(
-        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+        "SELECT role FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2 AND accepted_at IS NOT NULL",
     )
     .bind(subject_id)
     .bind(actor_id)

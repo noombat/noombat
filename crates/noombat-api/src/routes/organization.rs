@@ -141,7 +141,7 @@ async fn set_posting_readers(
     for member_id in &body.members {
         let is_member: bool = sqlx::query_scalar(
             "SELECT EXISTS (SELECT 1 FROM organization_members \
-             WHERE organization_id = $1 AND member_id = $2)",
+             WHERE organization_id = $1 AND member_id = $2 AND accepted_at IS NOT NULL)",
         )
         .bind(job.actor_id)
         .bind(member_id)
@@ -321,7 +321,8 @@ async fn require_owner(
     }
 
     let role: Option<OrganizationRole> = sqlx::query_scalar(
-        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+        "SELECT role FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2 AND accepted_at IS NOT NULL",
     )
     .bind(organization_id)
     .bind(actor_id)
@@ -547,7 +548,8 @@ async fn company_standing(
     }
 
     let role: Option<OrganizationRole> = sqlx::query_scalar(
-        "SELECT role FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+        "SELECT role FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2 AND accepted_at IS NOT NULL",
     )
     .bind(organization_id)
     .bind(actor_id)

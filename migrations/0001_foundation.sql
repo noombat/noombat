@@ -483,6 +483,21 @@ CREATE TABLE organization_members (
     organization_id UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     member_id       UUID NOT NULL REFERENCES actors(id) ON DELETE CASCADE,
     role            TEXT NOT NULL CHECK (role IN ('owner', 'recruiter')),
+    -- NULL until accepted. A row is the invitation; the timestamp is the
+    -- acceptance, the same shape `connections` uses. Declining and
+    -- revoking both delete the row.
+    --
+    -- Standing is what this grants, and it is larger than the word
+    -- "recruiter" suggests: a member may post as the organisation, patch
+    -- its profile, and confirm or withdraw the employment claims that
+    -- federate as a public credibility signal. None of that is attributed
+    -- to the person in any response or activity, so it must not begin
+    -- without them agreeing to it.
+    --
+    -- **Every read of `role` must require this to be non-NULL.** An
+    -- unaccepted invitation that still answers a permission check is the
+    -- whole defect this column exists to prevent.
+    accepted_at     TIMESTAMPTZ,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (organization_id, member_id)
 );

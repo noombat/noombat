@@ -366,6 +366,9 @@ pub async fn enrol_organization(
     // In the same transaction as the actor. An organisation nobody can
     // act for is unreachable: there is no login to fall back on, so a
     // failure here has to take the actor with it.
+    // Accepted on the spot: the owner is the person enrolling, so there is
+    // nobody to ask. Every other membership starts as an invitation with
+    // `accepted_at` NULL.
     sqlx::query(
         "INSERT INTO organization_members (organization_id, member_id, role) \
          VALUES ($1, $2, 'owner')",

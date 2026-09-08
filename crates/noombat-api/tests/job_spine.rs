@@ -147,8 +147,8 @@ async fn a_posting_records_the_member_who_created_it(pool: PgPool) {
     let org = insert_actor(&pool, "acme", "organization").await;
     let recruiter = insert_actor(&pool, "rita", "individual").await;
     sqlx::query(
-        "INSERT INTO organization_members (organization_id, member_id, role) \
-         VALUES ($1, $2, 'recruiter')",
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'recruiter', now())",
     )
     .bind(org)
     .bind(recruiter)
@@ -597,8 +597,8 @@ async fn only_an_owner_or_the_creator_may_open_a_posting(pool: PgPool) {
     let other = insert_actor(&pool, "ravi", "individual").await;
     for member in [creator, other] {
         sqlx::query(
-            "INSERT INTO organization_members (organization_id, member_id, role) \
-             VALUES ($1, $2, 'recruiter')",
+            "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+             VALUES ($1, $2, 'recruiter', now())",
         )
         .bind(org)
         .bind(member)
@@ -656,8 +656,8 @@ async fn naming_an_outsider_is_refused_rather_than_stored(pool: PgPool) {
     let creator = insert_actor(&pool, "rita", "individual").await;
     let outsider = insert_actor(&pool, "mallory", "individual").await;
     sqlx::query(
-        "INSERT INTO organization_members (organization_id, member_id, role) \
-         VALUES ($1, $2, 'owner')",
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
     )
     .bind(org)
     .bind(creator)
