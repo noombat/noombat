@@ -136,8 +136,15 @@ collect .github/workflows/*.yml >"$WORK/workflow.tsv"
 # can never escape the check by living in one. compose.latest.yml holds
 # a deliberately floating GoToSocial and is allowlisted below, which is
 # the difference between an exception and an oversight.
-collect compose.yml compose.dev.yml tests/*/compose*.yml >"$WORK/compose.tsv"
-built_images compose.yml compose.dev.yml tests/*/compose*.yml | normalise >"$WORK/built.txt"
+#
+# The glob is what makes that true, so keep it a glob. Naming files
+# individually here leaves every compose file added later outside the
+# check, and an image sitting outside it is not reported as unpinned: it
+# is not seen at all, so the run stays green and shorter. The count
+# printed below is the guard against that, and it must move whenever a
+# compose file is added.
+collect compose*.yml tests/*/compose*.yml >"$WORK/compose.tsv"
+built_images compose*.yml tests/*/compose*.yml | normalise >"$WORK/built.txt"
 
 workflow_count=$(wc -l <"$WORK/workflow.tsv")
 compose_count=$(wc -l <"$WORK/compose.tsv")

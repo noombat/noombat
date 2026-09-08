@@ -2,9 +2,17 @@
 #
 # Gated on paths that affect Rust compilation, linting, formatting,
 # dependency auditing, or database-backed integration tests. Commits
-# that touch only documentation, licence files, shell scripts,
-# container definitions, or CI infrastructure that does not affect
-# the Rust build are skipped.
+# that touch only documentation, licence files, shell scripts, or CI
+# infrastructure that does not affect the Rust build are skipped.
+#
+# The compose files are in the list even though they compile nothing.
+# Two jobs here read them: `dependency-hygiene` runs
+# check-image-pins.sh, which exists to catch a workflow and a compose
+# file drifting to different digests, and `integration` starts its
+# Postgres, Redis and Meilisearch from them. Leaving them out meant a
+# compose-only change ran neither, so the one gate written for that
+# drift never fired on the commits that cause it, and the pull request
+# went green having exercised nothing.
 #
 # All jobs run on GitHub-hosted runners (`ubuntu-latest`). The
 # `integration` job additionally uses PostgreSQL, Redis and Meilisearch
@@ -33,6 +41,8 @@ on:
       - "scripts/check-codeql-config.py"
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
+      - "compose*.yml"
+      - "tests/*/compose*.yml"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-doveauth.sh"
       - "chatmail-config/noombat-doveauth"
@@ -59,6 +69,8 @@ on:
       - "scripts/check-codeql-config.py"
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
+      - "compose*.yml"
+      - "tests/*/compose*.yml"
       - "scripts/check-inline-scripts.sh"
       - "scripts/check-doveauth.sh"
       - "chatmail-config/noombat-doveauth"
