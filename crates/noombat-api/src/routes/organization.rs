@@ -46,6 +46,18 @@ pub fn router() -> Router<AppState> {
             "/api/v1/organizations/{id}/employment-claims/{work_experience_id}",
             axum::routing::post(confirm_employment).delete(withdraw_employment),
         )
+        .route(
+            "/api/v1/organizations/{id}/members",
+            get(list_members).post(invite_member),
+        )
+        .route(
+            "/api/v1/organizations/{id}/members/{username}",
+            axum::routing::delete(remove_member),
+        )
+        .route(
+            "/api/v1/organizations/{id}/members/me/acceptance",
+            axum::routing::post(accept_invitation),
+        )
         .route("/api/v1/candidates", get(search_candidates))
         .route(
             "/api/v1/jobs/{job_id}/applications",
@@ -375,6 +387,226 @@ async fn declare_org_kind(
             "org_kind": actor.org_kind.map(|k| k.as_str()),
         })),
     ))
+}
+
+// ..... Membership .....
+
+#[derive(Deserialize)]
+struct InviteMemberRequest {
+    /// The local username to invite. Trimmed, because the neighbouring
+    /// routes that take a username trim at the call site.
+    username: String,
+}
+
+#[derive(Serialize)]
+struct MemberSummary {
+    username: String,
+    role: OrganizationRole,
+    /// `false` while the invitation is outstanding. An owner needs to see
+    /// the difference: an unaccepted row grants nothing.
+    accepted: bool,
+}
+
+/// `GET /api/v1/organizations/{id}/members`
+///
+/// Who acts for this organisation, and who has been asked to.
+///
+/// Any accepted member may read it, because standing is shared: a
+/// recruiter acting on a posting is answerable to the same people.
+async fn list_members(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    require_acts_for(&state.pool, id, &viewer).await?;
+
+    let rows = sqlx::query_as::<
+        _,
+        (
+            String,
+            OrganizationRole,
+            Option<chrono::DateTime<chrono::Utc>>,
+        ),
+    >(
+        "SELECT a.username, m.role, m.accepted_at FROM organization_members m \
+         JOIN actors a ON a.id = m.member_id \
+         WHERE m.organization_id = $1 ORDER BY m.created_at",
+    )
+    .bind(id)
+    .fetch_all(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    let members: Vec<MemberSummary> = rows
+        .into_iter()
+        .map(|(username, role, accepted_at)| MemberSummary {
+            username,
+            role,
+            accepted: accepted_at.is_some(),
+        })
+        .collect();
+
+    Ok((StatusCode::OK, Json(members)))
+}
+
+/// `POST /api/v1/organizations/{id}/members`
+///
+/// Invite a local account to act for this organisation as a recruiter.
+///
+/// **Guarded by `require_owner`, not `require_acts_for`.** Every
+/// neighbouring route on this organisation uses the latter, which is
+/// role-blind; using it here would let a recruiter invite colleagues and
+/// promote themselves the moment this route existed.
+///
+/// The invitation grants nothing until it is accepted. What it will grant
+/// is larger than the word "recruiter" suggests: acting for the
+/// organisation means posting as it, patching its profile, and confirming
+/// the employment claims that federate as a public credibility signal,
+/// none of it attributed to the person in any response. That is why the
+/// person being added has to agree rather than simply be added.
+///
+/// Only `recruiter` is issuable here. A second owner would be able to
+/// dissolve the organisation, which is not a thing to hand over through
+/// the same door as help with hiring.
+async fn invite_member(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+    Json(body): Json<InviteMemberRequest>,
+) -> Result<impl IntoResponse, ApiError> {
+    let inviter = viewer
+        .as_ref()
+        .map(|p| p.actor_id)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    require_owner(&state.pool, id, inviter).await?;
+
+    let invitee =
+        noombat_identity::repo::find_local_by_username(&state.pool, body.username.trim()).await?;
+
+    // An organisation cannot act for another organisation: standing is a
+    // record of which person did something, and a nested actor erases
+    // exactly that.
+    if invitee.actor_type != noombat_core::actor::ActorType::Individual {
+        return Err(ApiError(NoombatError::BadRequest(
+            "only a person can be invited to act for an organisation".into(),
+        )));
+    }
+    if invitee.id == id {
+        return Err(ApiError(NoombatError::BadRequest(
+            "an organisation cannot be invited to act for itself".into(),
+        )));
+    }
+
+    // `ON CONFLICT DO NOTHING` and then a check, rather than a prior
+    // lookup: two concurrent invitations for the same person would both
+    // pass a lookup, and the primary key is the only thing that decides.
+    let inserted = sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role) \
+         VALUES ($1, $2, 'recruiter') ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(invitee.id)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    if inserted.rows_affected() == 0 {
+        return Err(ApiError(NoombatError::BadRequest(
+            "that account is already a member of this organisation, or already invited".into(),
+        )));
+    }
+
+    debug!(organization = %id, invitee = %invitee.id, "recruiter invited");
+    Ok(StatusCode::CREATED)
+}
+
+/// `POST /api/v1/organizations/{id}/members/me/acceptance`
+///
+/// Accept an invitation to act for this organisation.
+///
+/// Only the invited account can call it, and only for itself: the path
+/// says `me` rather than taking a username, so there is no parameter an
+/// owner could pass to accept on somebody's behalf.
+async fn accept_invitation(
+    State(state): State<AppState>,
+    Path(id): Path<uuid::Uuid>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let member_id = viewer
+        .as_ref()
+        .map(|p| p.actor_id)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    // `accepted_at IS NULL` in the predicate, so accepting twice is a 404
+    // rather than a silent refresh of the timestamp.
+    let updated = sqlx::query(
+        "UPDATE organization_members SET accepted_at = now() \
+         WHERE organization_id = $1 AND member_id = $2 AND accepted_at IS NULL",
+    )
+    .bind(id)
+    .bind(member_id)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    if updated.rows_affected() == 0 {
+        return Err(ApiError(NoombatError::ActorNotFound(
+            "no outstanding invitation for this account".into(),
+        )));
+    }
+
+    debug!(organization = %id, member = %member_id, "invitation accepted");
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `DELETE /api/v1/organizations/{id}/members/{username}`
+///
+/// Withdraw an invitation, remove a member, or leave.
+///
+/// One route for all three because they are one row and one effect. An
+/// owner may remove anybody; anybody may remove themselves, which is what
+/// makes declining an invitation possible without a second endpoint.
+///
+/// An owner cannot be removed. Ownership comes from enrolment and ends
+/// with the organisation, so a route that could take the last owner out
+/// would leave an organisation nobody can act for, and it has no login to
+/// fall back on.
+async fn remove_member(
+    State(state): State<AppState>,
+    Path((id, username)): Path<(uuid::Uuid, String)>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let actor_id = viewer
+        .as_ref()
+        .map(|p| p.actor_id)
+        .ok_or(ApiError(NoombatError::Forbidden))?;
+
+    let target =
+        noombat_identity::repo::find_local_by_username(&state.pool, username.trim()).await?;
+
+    if target.id != actor_id {
+        require_owner(&state.pool, id, actor_id).await?;
+    }
+
+    let removed = sqlx::query(
+        "DELETE FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2 AND role <> 'owner'",
+    )
+    .bind(id)
+    .bind(target.id)
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+
+    if removed.rows_affected() == 0 {
+        return Err(ApiError(NoombatError::ActorNotFound(
+            "no removable membership for that account in this organisation".into(),
+        )));
+    }
+
+    debug!(organization = %id, member = %target.id, "membership removed");
+    Ok(StatusCode::NO_CONTENT)
 }
 
 // ..... Candidate search .....

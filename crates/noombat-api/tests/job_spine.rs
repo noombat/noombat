@@ -690,3 +690,266 @@ async fn naming_an_outsider_is_refused_rather_than_stored(pool: PgPool) {
         .expect("countable");
     assert_eq!(listed, 0);
 }
+
+// ..... Membership invitations .....
+//
+// The property under test throughout: a row in `organization_members` is
+// an invitation, and `accepted_at` is the permission. A row alone grants
+// nothing.
+
+/// Invite `username` to `org` and return the outcome, without accepting.
+async fn invite(
+    pool: &PgPool,
+    org: Uuid,
+    inviter: Uuid,
+    inviter_name: &str,
+    username: &str,
+) -> u16 {
+    let token = token_for(pool, inviter, inviter_name).await;
+    let (status, _) = send(
+        pool.clone(),
+        "POST",
+        &format!("/api/v1/organizations/{org}/members"),
+        Some(&token),
+        Some(&format!(r#"{{"username":"{username}"}}"#)),
+    )
+    .await;
+    status.as_u16()
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_owner_invites_and_the_invitee_accepts(pool: PgPool) {
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    let rita = insert_actor(&pool, "rita", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+
+    assert_eq!(invite(&pool, org, owner, "olive", "rita").await, 201);
+
+    let accepted: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT accepted_at FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(org)
+    .bind(rita)
+    .fetch_one(&pool)
+    .await
+    .expect("the invitation row exists");
+    assert!(accepted.is_none(), "an invitation must start unaccepted");
+
+    let rita_token = token_for(&pool, rita, "rita").await;
+    let (status, _) = send(
+        pool.clone(),
+        "POST",
+        &format!("/api/v1/organizations/{org}/members/me/acceptance"),
+        Some(&rita_token),
+        None,
+    )
+    .await;
+    assert_eq!(status.as_u16(), 204);
+
+    let accepted: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
+        "SELECT accepted_at FROM organization_members \
+         WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(org)
+    .bind(rita)
+    .fetch_one(&pool)
+    .await
+    .expect("row");
+    assert!(accepted.is_some(), "acceptance must be recorded");
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_unaccepted_invitation_grants_nothing(pool: PgPool) {
+    // The whole reason `accepted_at` exists. Acting for an organisation
+    // means posting as it and vouching for employment, so an invitation
+    // that conferred standing before it was accepted would hand that to
+    // somebody who never agreed.
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    let rita = insert_actor(&pool, "rita", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+
+    assert_eq!(invite(&pool, org, owner, "olive", "rita").await, 201);
+
+    // `require_acts_for` is what every organisation route goes through.
+    let rita_token = token_for(&pool, rita, "rita").await;
+    let (status, _) = send(
+        pool.clone(),
+        "GET",
+        &format!("/api/v1/organizations/{org}/employment-claims"),
+        Some(&rita_token),
+        None,
+    )
+    .await;
+    assert_eq!(
+        status.as_u16(),
+        403,
+        "an unaccepted invitation must confer no standing"
+    );
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_recruiter_cannot_invite_anybody(pool: PgPool) {
+    // The escalation this route would open if it used `require_acts_for`,
+    // as every neighbouring organisation route does.
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let rita = insert_actor(&pool, "rita", "individual").await;
+    insert_actor(&pool, "sam", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'recruiter', now())",
+    )
+    .bind(org)
+    .bind(rita)
+    .execute(&pool)
+    .await
+    .expect("recruiter membership");
+
+    assert_eq!(
+        invite(&pool, org, rita, "rita", "sam").await,
+        403,
+        "an accepted recruiter must not be able to invite colleagues"
+    );
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_owner_cannot_be_removed(pool: PgPool) {
+    // An organisation has no login. Removing its last owner would leave an
+    // actor nobody can act for and nothing can recover.
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+
+    let token = token_for(&pool, owner, "olive").await;
+    let (status, _) = send(
+        pool.clone(),
+        "DELETE",
+        &format!("/api/v1/organizations/{org}/members/olive"),
+        Some(&token),
+        None,
+    )
+    .await;
+    assert_eq!(status.as_u16(), 404);
+
+    let still_there: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM organization_members WHERE organization_id = $1 AND role = 'owner'",
+    )
+    .bind(org)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(still_there, 1, "the owner must survive the attempt");
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_invitee_can_decline_by_removing_themselves(pool: PgPool) {
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    let rita = insert_actor(&pool, "rita", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+    assert_eq!(invite(&pool, org, owner, "olive", "rita").await, 201);
+
+    let rita_token = token_for(&pool, rita, "rita").await;
+    let (status, _) = send(
+        pool.clone(),
+        "DELETE",
+        &format!("/api/v1/organizations/{org}/members/rita"),
+        Some(&rita_token),
+        None,
+    )
+    .await;
+    assert_eq!(status.as_u16(), 204);
+
+    let rows: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM organization_members WHERE organization_id = $1 AND member_id = $2",
+    )
+    .bind(org)
+    .bind(rita)
+    .fetch_one(&pool)
+    .await
+    .expect("count");
+    assert_eq!(rows, 0, "declining removes the row rather than marking it");
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_organisation_cannot_be_invited_to_act_for_another(pool: PgPool) {
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let other = insert_actor(&pool, "globex", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+    let _ = other;
+
+    assert_eq!(invite(&pool, org, owner, "olive", "globex").await, 400);
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn inviting_the_same_person_twice_is_refused(pool: PgPool) {
+    let org = insert_actor(&pool, "acme", "organization").await;
+    let owner = insert_actor(&pool, "olive", "individual").await;
+    insert_actor(&pool, "rita", "individual").await;
+    sqlx::query(
+        "INSERT INTO organization_members (organization_id, member_id, role, accepted_at) \
+         VALUES ($1, $2, 'owner', now())",
+    )
+    .bind(org)
+    .bind(owner)
+    .execute(&pool)
+    .await
+    .expect("owner membership");
+
+    assert_eq!(invite(&pool, org, owner, "olive", "rita").await, 201);
+    assert_eq!(
+        invite(&pool, org, owner, "olive", "rita").await,
+        400,
+        "a second invitation must not silently reset the first"
+    );
+}
