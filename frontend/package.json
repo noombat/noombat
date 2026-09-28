@@ -17,8 +17,8 @@
     "format:check": "prettier --check --ignore-path ../.prettierignore . ../tests/e2e"
   },
   "dependencies": {
-    "htmx.org": "^2.0.0",
-    "openpgp": "^6.0.0",
+    "htmx.org": "^2.0.11",
+    "openpgp": "^6.3.2",
     "qrcode": "^1.5.0",
     "solid-js": "^1.9.15"
   },
@@ -27,14 +27,14 @@
     "@tailwindcss/vite": "^4.3.3",
     "@types/node": "^24",
     "@types/qrcode": "^1.5.0",
-    "eslint": "^10.10.0",
+    "eslint": "^10.11.0",
     "eslint-plugin-solid": "~0.17.0",
-    "prettier": "^3.5.0",
+    "prettier": "^3.9.9",
     "tailwindcss": "^4.3.3",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.68.0",
-    "vite": "^8.2.2",
+    "typescript-eslint": "^8.70.1",
+    "vite": "^8.3.1",
     "vite-plugin-solid": "^2.11.14",
-    "vitest": "5.0.0"
+    "vitest": "5.0.2"
   }
 }
