@@ -37,8 +37,8 @@ importers:
         specifier: ^10.10.0
         version: 10.10.0(jiti@2.7.0)(supports-color@7.2.0)
       eslint-plugin-solid:
-        specifier: ~0.17.0
-        version: 0.17.0(eslint@10.10.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
+        specifier: ~0.18.1
+        version: 0.18.1(eslint@10.10.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
       prettier:
         specifier: ^3.5.0
         version: 3.9.6
@@ -675,8 +675,8 @@ packages:
     resolution: {integrity: sha512-TtpcNJ3XAzx3Gq8sWRzJaVajRs0uVxA2YAkdb1jm2YkPz4G6egUFAyA3n5vtEIZefPk5Wa4UXbKuS5fKkJWdgA==}
     engines: {node: '>=10'}
 
-  eslint-plugin-solid@0.17.0:
-    resolution: {integrity: sha512-0x38zjAZVm4vW5u5mS14WxO9BJsal3IxsR/8QOB2nBiXBdH1LlbbRs2YfqgtPWVpy3OIlnt6yGhoXuZmoHULwQ==}
+  eslint-plugin-solid@0.18.1:
+    resolution: {integrity: sha512-zxGSWGEfaVCujuOT358UVrBWuKEf91RP6bRbEIQaoX2d3VVP6R2+4NchdSajtpwNliw7eAJDjYBviuyPuSwmUQ==}
     engines: {node: '>=22.0.0'}
     peerDependencies:
       eslint: ^9.0.0 || ^10.0.0
@@ -2016,7 +2016,7 @@ snapshots:
 
   escape-string-regexp@4.0.0: {}
 
-  eslint-plugin-solid@0.17.0(eslint@10.10.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3):
+  eslint-plugin-solid@0.18.1(eslint@10.10.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3):
     dependencies:
       '@typescript-eslint/utils': 8.69.0(eslint@10.10.0(jiti@2.7.0)(supports-color@7.2.0))(supports-color@7.2.0)(typescript@6.0.3)
       eslint: 10.10.0(jiti@2.7.0)(supports-color@7.2.0)
