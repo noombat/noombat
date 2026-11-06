@@ -75,6 +75,13 @@ impl EnvelopeKey {
                 "KEK must be 64 hex characters (32 bytes)".into(),
             ));
         }
+        // Checked first: `from_str_radix` accepts a leading `+`, and the
+        // slicing below panics inside a multi-byte character.
+        if !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+            return Err(NoombatError::Internal(
+                "KEK contains invalid hex characters".into(),
+            ));
+        }
         let mut buf = [0u8; 32];
         for (i, byte) in buf.iter_mut().enumerate() {
             *byte = u8::from_str_radix(&hex[i * 2..i * 2 + 2], 16).map_err(|_| {
@@ -341,5 +348,11 @@ mod tests {
         assert!(EnvelopeKey::from_hex("tooshort").is_err());
         assert!(EnvelopeKey::from_hex(&"gg".repeat(32)).is_err());
         assert!(EnvelopeKey::from_hex(&"ab".repeat(32)).is_ok());
+        assert!(
+            EnvelopeKey::from_hex(&"+f".repeat(32)).is_err(),
+            "a sign is not hex"
+        );
+        let multibyte = format!("{}a", "€".repeat(21)); // 64 bytes, cut mid-character
+        assert!(EnvelopeKey::from_hex(&multibyte).is_err());
     }
 }
