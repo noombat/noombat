@@ -56,12 +56,10 @@ fn test_state(domain: &str) -> AppState {
         mailer: None,
         chatmail_domain: None,
         chatmail_admin_url: None,
-        chatmail_admin_secret: None,
         chatmail_admin_client: None,
         contact_email: format!("admin@{domain}"),
         trending_cache: None,
         analytics: None,
-        envelope_key: None,
         // High ceilings: rate limiting is not what these tests probe.
         fallback_rate_limiter: FallbackRateLimiter::new(),
         rate_limit: 100_000,

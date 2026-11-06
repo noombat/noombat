@@ -5,7 +5,6 @@
 use std::sync::Arc;
 
 use noombat_chat::admin_client::ChatmailAdminClient;
-use noombat_core::envelope::EnvelopeKey;
 use noombat_federation::nodeinfo::NodeInfoFeatures;
 use noombat_identity::oauth_orcid::OrcidConfig;
 use noombat_identity::session::SessionConfig;
@@ -50,8 +49,6 @@ pub struct AppState {
     pub chatmail_domain: Option<String>,
     /// Chatmail admin sidecar REST API URL (internal-only).
     pub chatmail_admin_url: Option<String>,
-    /// Shared secret for authenticating requests to the admin sidecar.
-    pub chatmail_admin_secret: Option<String>,
     /// Pre-constructed HTTP client for the Chatmail admin sidecar.
     /// `None` when the sidecar URL or secret is not configured.
     pub chatmail_admin_client: Option<ChatmailAdminClient>,
@@ -64,11 +61,6 @@ pub struct AppState {
     pub trending_cache: Option<crate::trending::TrendingCache>,
     /// Analytics backend (default: PostgreSQL counters).
     pub analytics: Option<Arc<dyn noombat_core::extension::AnalyticsBackend>>,
-    /// Relay verification policy in effect for this instance.
-    /// Envelope-encryption key for secrets at rest (TOTP secrets,
-    /// private keys). `None` in development when `NOOMBAT_KEK` is
-    /// not set.
-    pub envelope_key: Option<Arc<EnvelopeKey>>,
     /// In-process rate limiter used when Redis is unavailable or
     /// unconfigured, preventing fail-open bypass. Shared by every call
     /// site: it holds one governor limiter per distinct quota, so each

@@ -375,7 +375,7 @@ async fn main() -> anyhow::Result<()> {
     //
     // Parse the hex-encoded KEK (if configured) and initialise the
     // process-global envelope key.
-    let envelope_key: Option<Arc<EnvelopeKey>> = match config.kek() {
+    let envelope_key: Option<EnvelopeKey> = match config.kek() {
         Some(hex) => {
             // A clean exit, not a panic. Compose interpolates an unset
             // host variable as the empty string, so a missing KEK
@@ -393,7 +393,7 @@ async fn main() -> anyhow::Result<()> {
                 }
             };
             info!("envelope encryption enabled (KEK configured)");
-            Some(Arc::new(key))
+            Some(key)
         }
         None => {
             info!("no NOOMBAT_KEK configured; envelope encryption disabled (dev-only)");
@@ -401,9 +401,8 @@ async fn main() -> anyhow::Result<()> {
         }
     };
     // Initialise the process-global key so that `seal_auto` and `open_auto`
-    // work from any crate without explicit key threading. Clone out of
-    // the Arc for the static; the Arc itself is stored in AppState.
-    noombat_core::envelope::init(envelope_key.as_deref().cloned());
+    // work from any crate without explicit key threading.
+    noombat_core::envelope::init(envelope_key);
 
     // Database connection pool.
     let pool = PgPoolOptions::new()
@@ -884,10 +883,6 @@ async fn main() -> anyhow::Result<()> {
         mailer,
         chatmail_domain: config.chatmail_domain.clone(),
         chatmail_admin_url: config.chatmail_admin_url.clone(),
-        chatmail_admin_secret: config
-            .chatmail_admin_secret
-            .as_ref()
-            .map(|s| s.expose().to_string()),
         chatmail_admin_client: noombat_chat::admin_client::ChatmailAdminClient::new(
             config.chatmail_admin_url.as_deref(),
             config.chatmail_admin_secret.as_ref().map(Secret::expose),
@@ -898,7 +893,6 @@ async fn main() -> anyhow::Result<()> {
             .unwrap_or_else(|| format!("admin@{}", config.domain)),
         trending_cache: Some(trending_cache),
         analytics: analytics_backend,
-        envelope_key,
         fallback_rate_limiter,
         rate_limit: config.rate_limit as i64,
         rate_limit_window_secs: config.rate_limit_window_secs,
