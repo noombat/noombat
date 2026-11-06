@@ -71,7 +71,7 @@ archive="$DESTINATION/caddy-data-$stamp.tar.gz"
 umask 077
 docker run --rm \
     -v "$VOLUME:/data:ro" \
-    docker.io/library/caddy:2-alpine@sha256:5f5c8640aae01df9654968d946d8f1a56c497f1dd5c5cda4cf95ab7c14d58648 \
+    docker.io/library/caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e \
     tar -czf - -C /data . > "$archive"
 
 # Assert the archive contains a key, rather than that tar exited 0. An
