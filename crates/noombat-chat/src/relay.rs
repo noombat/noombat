@@ -11,7 +11,7 @@ use noombat_core::error::Result;
 use serde::{Deserialize, Serialize};
 
 /// A message from the browser to the relay.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 #[serde(tag = "type")]
 pub enum ClientMessage {
     /// Session establishment: the browser sends the Chatmail
@@ -44,6 +44,33 @@ pub enum ClientMessage {
     /// Acknowledge receipt of a message (mark as seen in IMAP).
     #[serde(rename = "ack")]
     Ack { uid: u32 },
+}
+
+// Hand-written so the password never reaches a log.
+impl std::fmt::Debug for ClientMessage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auth { .. } => f
+                .debug_struct("Auth")
+                .field("password", &"[REDACTED]")
+                .finish(),
+            Self::Send {
+                to,
+                body_b64,
+                autocrypt_header_b64,
+            } => f
+                .debug_struct("Send")
+                .field("to", to)
+                .field("body_b64", body_b64)
+                .field("autocrypt_header_b64", autocrypt_header_b64)
+                .finish(),
+            Self::Fetch { since_uid } => f
+                .debug_struct("Fetch")
+                .field("since_uid", since_uid)
+                .finish(),
+            Self::Ack { uid } => f.debug_struct("Ack").field("uid", uid).finish(),
+        }
+    }
 }
 
 /// A message from the relay to the browser.
@@ -199,4 +226,18 @@ pub async fn unblock_sender(
         .execute(pool)
         .await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn debug_output_redacts_the_password() {
+        let auth = ClientMessage::Auth {
+            password: "relay-password".into(),
+        };
+        let shown = format!("{auth:?}");
+        assert!(!shown.contains("relay-password"), "{shown}");
+    }
 }

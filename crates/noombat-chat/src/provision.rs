@@ -13,12 +13,21 @@ use tracing::info;
 use crate::session;
 
 /// The result of a successful Chatmail account provisioning.
-#[derive(Debug)]
 pub struct ProvisionedAccount {
     /// The full Chatmail address (e.g. `alice@chat.noombat.social`).
     pub address: String,
     /// The generated Chatmail password.
     pub password: String,
+}
+
+// Hand-written so the password never reaches a log.
+impl std::fmt::Debug for ProvisionedAccount {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ProvisionedAccount")
+            .field("address", &self.address)
+            .field("password", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Provision `username@chatmail_domain`, then verify it with one login.
@@ -82,4 +91,16 @@ pub async fn provision_chatmail_account(
     info!(address = %address, "Chatmail account provisioned");
 
     Ok(ProvisionedAccount { address, password })
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn debug_output_redacts_the_password() {
+        let account = super::ProvisionedAccount {
+            address: "a@chat.example".into(),
+            password: "hunter2".into(),
+        };
+        assert!(!format!("{account:?}").contains("hunter2"));
+    }
 }
