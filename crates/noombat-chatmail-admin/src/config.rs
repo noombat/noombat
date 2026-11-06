@@ -5,7 +5,7 @@
 use std::env;
 
 /// Sidecar configuration, loaded from environment variables.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Config {
     /// Listen address (default `0.0.0.0`).
     pub listen_host: String,
@@ -61,10 +61,13 @@ pub struct Config {
     /// Account creation refuses any address outside it. Empty when unset,
     /// which makes creation refuse everything rather than taking the
     /// sidecar down: this process starts before the health check can see
-    /// it, so a panic here is invisible.
+    /// it, so a panic here is invisible. The development secret is the
+    /// exception: [`Config::validate`] panics on it unless the domain is a
+    /// development one (an empty domain is not), since serving behind a
+    /// public secret is worse.
     ///
-    /// Not a filesystem path, so it stays out of [`Config::validate`],
-    /// which asserts every entry in its list is absolute.
+    /// Not a filesystem path, so it is not among the paths
+    /// [`Config::validate`] asserts are absolute.
     pub mail_domain: String,
     /// The uid and gid that must own a created account's files, from
     /// `CHATMAIL_VMAIL_UID` and `CHATMAIL_VMAIL_GID` (default 5000).
@@ -79,13 +82,26 @@ pub struct Config {
     pub vmail_gid: u32,
 }
 
+// Hand-written so the admin secret never reaches a log.
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("listen_host", &self.listen_host)
+            .field("listen_port", &self.listen_port)
+            .field("admin_secret", &"[REDACTED]")
+            .field("mail_domain", &self.mail_domain)
+            .finish_non_exhaustive()
+    }
+}
+
 impl Config {
     /// Load configuration from environment variables.
     ///
     /// # Panics
     ///
-    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set, or if any
-    /// configured filesystem path fails validation.
+    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set or is the development
+    /// secret on a real mail domain, or if any configured filesystem path
+    /// fails validation.
     pub fn from_env() -> Self {
         let config = Self {
             listen_host: env::var("CHATMAIL_ADMIN_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
@@ -146,8 +162,9 @@ impl Config {
     }
 
     /// Verify that all configured filesystem paths are absolute and free
-    /// of traversal sequences. Panics on failure, i.e. configuration errors
-    /// are caught at startup, not at request time.
+    /// of traversal sequences, and that the admin secret is not the public
+    /// development one on a real domain. Panics on failure, i.e.
+    /// configuration errors are caught at startup, not at request time.
     fn validate(&self) {
         for (name, path) in [
             ("VMAIL_HOME", &self.vmail_home),
@@ -172,5 +189,94 @@ impl Config {
             );
             assert!(!path.contains('\0'), "{name} must not contain null bytes");
         }
+        assert!(
+            admin_secret_allowed(&self.admin_secret, &self.mail_domain),
+            "CHATMAIL_ADMIN_SECRET is the documented development secret; \
+             set a random one for {:?}",
+            self.mail_domain
+        );
+    }
+}
+
+/// The secret `compose.yml` falls back to, which is public.
+const DEV_ADMIN_SECRET: &str = "noombat-chatmail-dev-secret";
+
+/// The development secret is accepted only for a mail domain the
+/// container's entrypoint also treats as development
+/// (`is_development_domain`): `localhost` and special-use names no real
+/// relay can serve.
+fn admin_secret_allowed(secret: &str, mail_domain: &str) -> bool {
+    secret != DEV_ADMIN_SECRET
+        || mail_domain == "localhost"
+        || [".localhost", ".local", ".test", ".example", ".invalid"]
+            .iter()
+            .any(|suffix| mail_domain.ends_with(suffix))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn config(secret: &str, mail_domain: &str) -> Config {
+        Config {
+            listen_host: "127.0.0.1".into(),
+            listen_port: 0,
+            admin_secret: secret.into(),
+            vmail_home: "/home/vmail".into(),
+            access_maps_path: "/home/vmail/access-maps.json".into(),
+            recipient_access_path: "/etc/postfix/recipient_access".into(),
+            sender_access_path: "/etc/postfix/sender_access".into(),
+            reload_debounce_secs: 2,
+            allowlist_url: String::new(),
+            allowlist_poll_interval_secs: 21_600,
+            transport_maps_path: "/etc/postfix/transport_maps".into(),
+            sender_domains_path: "/etc/postfix/sender_domains".into(),
+            tls_cert_path: "/etc/ssl/certs/chatmail.pem".into(),
+            tls_key_path: "/etc/ssl/private/chatmail.key".into(),
+            mail_domain: mail_domain.into(),
+            vmail_uid: 5000,
+            vmail_gid: 5000,
+        }
+    }
+
+    #[test]
+    fn the_development_secret_is_accepted_on_development_domains_only() {
+        for domain in [
+            "localhost",
+            "chat.localhost",
+            "chat.noombat.test",
+            "chat.test.local",
+        ] {
+            config(DEV_ADMIN_SECRET, domain).validate();
+        }
+        config("a-random-secret", "chat.noombat.social").validate();
+    }
+
+    #[test]
+    fn real_domains_and_lookalikes_are_not_development() {
+        for domain in [
+            "chat.noombat.social",
+            "chat.localhost.evil.com",
+            "chat.contest",
+            "mylocal",
+            "",
+        ] {
+            assert!(
+                !admin_secret_allowed(DEV_ADMIN_SECRET, domain),
+                "{domain:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn debug_output_redacts_the_admin_secret() {
+        let shown = format!("{:?}", config("a-random-secret", "chat.noombat.social"));
+        assert!(!shown.contains("a-random-secret"), "{shown}");
+    }
+
+    #[test]
+    #[should_panic(expected = "documented development secret")]
+    fn validate_refuses_the_development_secret_on_a_real_domain() {
+        config(DEV_ADMIN_SECRET, "chat.noombat.social").validate();
     }
 }
