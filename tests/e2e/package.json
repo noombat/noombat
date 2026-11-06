@@ -16,12 +16,12 @@
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",
     "@eslint/js": "^10.0.1",
-    "@playwright/test": "1.62.1",
-    "@types/node": "24.13.3",
+    "@playwright/test": "1.63.0",
+    "@types/node": "24.13.6",
     "axe-core": "4.13.0",
-    "eslint": "^10.10.0",
-    "eslint-plugin-playwright": "^2.11.0",
+    "eslint": "^10.11.0",
+    "eslint-plugin-playwright": "^2.12.0",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.68.0"
+    "typescript-eslint": "^8.70.1"
   }
 }

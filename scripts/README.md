@@ -128,13 +128,13 @@ That is not hypothetical: an early version read clean because its file list incl
 
 ## `check-image-pins.sh`
 
-Asserts that container images named in workflows are pinned by digest, and that they agree with the compose file naming the same image.
+Asserts that container images named in workflows are pinned by digest, that they agree with the compose file naming the same image, and that the Playwright job container's tag names the exact `@playwright/test` version in `tests/e2e`.
 
 ```sh
 ./scripts/check-image-pins.sh
 ```
 
-Exit `0` means pinned and in agreement, `1` means a disagreement or an unpinned image, and `2` means the parser matched nothing and the run proves nothing.
+Exit `0` means pinned and in agreement, `1` means a disagreement, an unpinned image or a Playwright mismatch, and `2` means a parser matched nothing and the run proves nothing.
 
 This exists because a workflow `services:` or `container:` image is the one image reference no updater reaches.
 Dependabot's docker ecosystem reads Dockerfiles, docker-compose reads compose files, and github-actions reads `uses:`.
@@ -144,7 +144,7 @@ The durable half of the fix was to stop naming those images twice: `ci.yml`'s in
 This check covers what could not move, and pins what stayed.
 
 Two images are allowlisted, each with its reason printed on every run.
-The Playwright job container cannot come from compose and must equal the `@playwright/test` version in `tests/e2e`.
+The Playwright job container cannot come from compose and must equal the `@playwright/test` version in `tests/e2e`, which the check enforces.
 GoToSocial tracks `latest` in both the workflow and `tests/interop/compose.yml`, and the reason is unrecorded, so that one is a decision waiting to be made rather than a settled exemption.
 
 It compares what the files say, not what a registry resolves them to; a digest that has been withdrawn upstream passes here and fails at `docker pull`.

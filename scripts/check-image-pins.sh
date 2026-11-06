@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Assert that container images named in workflows are pinned, and that
-# they agree with the compose files that name the same image.
+# Assert that container images named in workflows are pinned, that they
+# agree with the compose files that name the same image, and that the
+# Playwright job container matches @playwright/test.
 #
 # Nothing else checks this, and no updater proposes it. Dependabot's
 # docker ecosystem reads Dockerfiles, docker-compose reads compose files,
@@ -18,7 +19,7 @@
 # would have said so: both start, both serve, and the integration suite
 # passes either way. It was caught by grepping for the old tag by hand.
 #
-# TWO RULES.
+# THREE RULES.
 #
 #   1. Agreement. If a workflow and a compose file name the same image,
 #      they must resolve to the same digest. This is the failure above.
@@ -27,6 +28,9 @@
 #      an `@sha256:` digest. A floating tag cannot agree with anything,
 #      drifts on its own, and is invisible to Dependabot, which proposes
 #      digest updates only for pinned images.
+#
+#   3. Playwright. The job container's tag must name the exact
+#      @playwright/test version in tests/e2e; its browsers fit no other.
 #
 # Rule 2 has an allowlist, because two images are deliberately unpinned
 # and the reasons differ. Each entry has to carry its reason, and they are
@@ -202,6 +206,38 @@ while IFS=$'\t' read -r file name digest; do
     printf '  UNPINNED %-42s %s\n' "$name" "$file"
     FAIL=1
 done < <(cat "$WORK/workflow.tsv" "$WORK/compose.tsv")
+
+# ..... Rule 3: the Playwright job container .....
+
+PW_IMAGE="mcr.microsoft.com/playwright"
+pw_spec='s/^[[:space:]]*"@playwright\/test":[[:space:]]*"\([^"]*\)".*/\1/p'
+pw_line='^[[:space:]]*(image|container):[[:space:]]*"?mcr\.microsoft\.com/playwright:'
+pw_want="$(sed -n "$pw_spec" tests/e2e/package.json)"
+# A distro and an architecture suffix are fine; a prerelease or canary is not.
+pw_tag="^v${pw_want//./\\.}(-[a-z]+(-(amd64|arm64))?)?\$"
+pw_seen=0
+while IFS= read -r line; do
+    file="${line%%:*}"
+    tag="${line##*"$PW_IMAGE":}"
+    tag="${tag%%#*}"
+    tag="$(echo "$tag" | tr -d '[:space:]"')"
+    tag="${tag%%@*}"
+    pw_seen=$((pw_seen + 1))
+    if [[ "$tag" =~ $pw_tag ]]; then
+        printf '  matches  %-42s %s\n' "$PW_IMAGE" "$tag in $file, as tests/e2e pins"
+    else
+        printf '  MISMATCH %-42s %s\n' "$PW_IMAGE" \
+            "$tag in $file, but tests/e2e pins @playwright/test $pw_want"
+        FAIL=1
+    fi
+done < <(grep -HE "$pw_line" .github/workflows/*.yml || true)
+
+# A side that parses to nothing would pass without comparing.
+if [ -z "$pw_want" ] || [ "$pw_seen" -eq 0 ]; then
+    echo "error: found @playwright/test '${pw_want}' and $pw_seen Playwright job container(s)." >&2
+    echo '       Both must be found; a pattern in rule 3 has stopped matching.' >&2
+    exit 2
+fi
 
 echo
 if [ "$FAIL" -eq 0 ]; then
