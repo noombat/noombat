@@ -197,25 +197,35 @@ impl Resolve for GuardedResolver {
 /// The redirect policy: bounded, and every hop re-checked.
 fn redirect_policy() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= MAX_REDIRECTS {
-            return attempt.error(format!(
-                "federation fetch exceeded {MAX_REDIRECTS} redirects"
-            ));
-        }
-        match check_url(attempt.url()) {
+        match redirect_decision(attempt.previous().len(), attempt.url()) {
             Ok(()) => attempt.follow(),
-            Err(e) => attempt.error(e.to_string()),
+            Err(e) => attempt.error(e),
         }
     })
 }
 
+/// Whether to follow a redirect to `next`. `visited` counts the URLs
+/// already requested, the caller's included, so hop `n` arrives with `n`.
+fn redirect_decision(visited: usize, next: &reqwest::Url) -> std::result::Result<(), String> {
+    if visited > MAX_REDIRECTS {
+        return Err(format!(
+            "federation fetch exceeded {MAX_REDIRECTS} redirects"
+        ));
+    }
+    check_url(next).map_err(|e| e.to_string())
+}
+
 /// Build the client every federation fetch and delivery goes through.
+///
+/// `no_proxy`: a proxy taken from the environment would resolve names
+/// itself, out of [`GuardedResolver`]'s reach.
 pub fn client(user_agent: String, timeout: Duration) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .user_agent(user_agent)
         .timeout(timeout)
         .redirect(redirect_policy())
         .dns_resolver(Arc::new(GuardedResolver))
+        .no_proxy()
         .build()
 }
 
@@ -480,5 +490,53 @@ mod tests {
         for domain in ["noombat.social", "localhost.evil.example"] {
             assert!(!domain_is_local(domain), "{domain} is not");
         }
+    }
+
+    #[test]
+    fn two_redirects_are_followed_and_every_hop_is_checked() {
+        let public = Url::parse("https://remote.example/users/a").unwrap();
+        assert!(redirect_decision(1, &public).is_ok());
+        assert!(redirect_decision(MAX_REDIRECTS, &public).is_ok());
+        assert!(redirect_decision(MAX_REDIRECTS + 1, &public).is_err());
+        for hop in ["http://remote.example/users/a", "https://169.254.169.254/"] {
+            assert!(
+                redirect_decision(1, &Url::parse(hop).unwrap()).is_err(),
+                "{hop} must not be followed"
+            );
+        }
+    }
+
+    // The environment is process-wide, so the request runs in a child
+    // copy of this test binary given a proxy that is a local listener.
+    #[tokio::test]
+    async fn a_proxy_named_in_the_environment_is_not_used() {
+        if std::env::var_os("NOOMBAT_PROXY_PROBE").is_some() {
+            let client = client("probe".into(), Duration::from_secs(3)).unwrap();
+            let _ = client.get("https://proxy-probe.invalid/").send().await;
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "http::tests::a_proxy_named_in_the_environment_is_not_used",
+            ])
+            .env("NOOMBAT_PROXY_PROBE", "1")
+            .envs(["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"].map(|k| (k, &proxy)))
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .output()
+            .unwrap();
+        // A filter that matches nothing runs no test and still exits 0.
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("test result: ok. 1 passed"),
+            "the child did not run this test, or it failed"
+        );
+        assert!(
+            listener.accept().is_err(),
+            "the client connected to the proxy named in the environment"
+        );
     }
 }

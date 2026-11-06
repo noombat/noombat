@@ -583,8 +583,12 @@ mod tests {
         assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
             0xfebf, 0, 0, 0, 0, 0, 0, 1
         ))));
-        // fec0::1 is outside fe80::/10.
+        // fe7f::1 is just below fe80::/10, and in no refused range.
         assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(
+            0xfe7f, 0, 0, 0, 0, 0, 0, 1
+        ))));
+        // fec0::1, just above it, is refused as site-local instead.
+        assert!(is_private_ip(IpAddr::V6(Ipv6Addr::new(
             0xfec0, 0, 0, 0, 0, 0, 0, 1
         ))));
     }

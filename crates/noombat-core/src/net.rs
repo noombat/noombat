@@ -18,20 +18,34 @@ use std::net::{IpAddr, Ipv4Addr};
 ///
 /// Covers loopback, the RFC 1918 private ranges, link-local (which is
 /// where cloud instance-metadata services live), carrier-grade NAT,
-/// documentation, multicast, broadcast and the reserved top of the IPv4
-/// space; for IPv6, loopback, unspecified, unique-local, link-local, and
-/// any IPv4-mapped form of the above.
+/// documentation, benchmarking, multicast, broadcast and the reserved
+/// IPv4 ranges; for IPv6, loopback, unspecified, unique-local,
+/// link-local, site-local, multicast, local-use NAT64, and the mapped,
+/// compatible, NAT64 (64:ff9b::/96) and 6to4 forms of a refused IPv4
+/// address. Teredo and IPv4-translated forms are not decoded.
 pub fn is_private_ip(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_private_v4(v4),
         IpAddr::V6(v6) => {
+            let s = v6.segments();
+            let low = Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8);
             v6.is_loopback()                              // ::1
                 || v6.is_unspecified()                    // ::
-                || (v6.segments()[0] & 0xfe00) == 0xfc00  // fc00::/7 (ULA)
-                || (v6.segments()[0] & 0xffc0) == 0xfe80  // fe80::/10 (link-local)
-                // IPv4-mapped IPv6 (::ffff:a.b.c.d): an attacker writing
-                // the target in this form must not slip past the v4 rules.
-                || v6.to_ipv4_mapped().is_some_and(is_private_v4)
+                || (s[0] & 0xfe00) == 0xfc00              // fc00::/7 (ULA)
+                || (s[0] & 0xffc0) == 0xfe80              // fe80::/10 (link-local)
+                || (s[0] & 0xffc0) == 0xfec0              // fec0::/10 (site-local)
+                || (s[0] & 0xff00) == 0xff00              // ff00::/8 (multicast)
+                || v6.to_ipv4_mapped().is_some_and(is_private_v4) // ::ffff:a.b.c.d
+                || (s[..6] == [0; 6] && is_private_v4(low)) // ::a.b.c.d (compatible)
+                || (s[..6] == [0x64, 0xff9b, 0, 0, 0, 0] && is_private_v4(low)) // NAT64
+                || s[..3] == [0x64, 0xff9b, 1]            // 64:ff9b:1::/48 (local NAT64)
+                || (s[0] == 0x2002                        // 2002::/16 (6to4)
+                    && is_private_v4(Ipv4Addr::new(
+                        (s[1] >> 8) as u8,
+                        s[1] as u8,
+                        (s[2] >> 8) as u8,
+                        s[2] as u8,
+                    )))
         }
     }
 }
@@ -43,8 +57,10 @@ pub fn is_private_v4(v4: Ipv4Addr) -> bool {
         || v4.is_private()         // 10/8, 172.16/12, 192.168/16
         || v4.is_link_local()      // 169.254/16, the cloud metadata range
         || v4.is_broadcast()       // 255.255.255.255
-        || v4.is_unspecified()     // 0.0.0.0
+        || v4.octets()[0] == 0     // 0/8, "this network"
         || v4.is_documentation()   // 192.0.2/24, 198.51.100/24, 203.0.113/24
+        || (v4.octets()[..3] == [192, 0, 0])                          // 192.0.0/24
+        || (v4.octets()[0] == 198 && (v4.octets()[1] & 0xfe) == 18)  // 198.18/15
         || v4.is_multicast()       // 224/4
         || (v4.octets()[0] == 100 && (v4.octets()[1] & 0xC0) == 64) // 100.64/10 (CGN)
         || (v4.octets()[0] & 0xf0) == 240 // 240/4 reserved, includes 255/8
@@ -73,6 +89,16 @@ mod tests {
             "fe80::1",
             "::ffff:127.0.0.1",
             "::ffff:169.254.169.254",
+            "0.1.2.3",
+            "192.0.0.8",
+            "198.18.0.1",
+            "198.19.255.255",
+            "::7f00:1",
+            "64:ff9b::a9fe:a9fe",
+            "64:ff9b:1::1",
+            "2002:a9fe:a9fe::",
+            "fec0::1",
+            "ff02::1",
         ] {
             assert!(
                 is_private_ip(addr.parse().unwrap()),
@@ -83,7 +109,15 @@ mod tests {
 
     #[test]
     fn public_addresses_are_reachable() {
-        for addr in ["1.1.1.1", "93.184.216.34", "2606:4700:4700::1111"] {
+        for addr in [
+            "1.1.1.1",
+            "93.184.216.34",
+            "198.17.0.1",
+            "198.20.0.1",
+            "2606:4700:4700::1111",
+            "64:ff9b::101:101",
+            "2002:101:101::",
+        ] {
             assert!(
                 !is_private_ip(addr.parse().unwrap()),
                 "{addr} must be reachable"

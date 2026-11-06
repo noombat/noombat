@@ -407,8 +407,8 @@ fn same_origin(a: &Url, b: &Url) -> bool {
 ///
 /// Two conditions must hold, and they guard different attacks:
 ///
-/// 1. **Same origin.** `reqwest` follows up to ten redirects by default,
-///    so the document may have arrived from somewhere other than the URI
+/// 1. **Same origin.** The federation client follows redirects, so the
+///    document may have arrived from somewhere other than the URI
 ///    requested. A cross-origin redirect is refused outright: without
 ///    this, `good.example` could 302 to `evil.example` and have the
 ///    result persisted under `evil.example`'s id, while the caller (and,

@@ -122,10 +122,11 @@ pub async fn signed_get(
     signing_actor_id: Uuid,
 ) -> Result<reqwest::Response> {
     // Checked here as well as in `unsigned_get`, because the signed path
-    // below does not go through it and is the one the inbox uses.
-    crate::http::check_url(&reqwest::Url::parse(url).map_err(|e| {
-        NoombatError::BadRequest(format!("unusable URI {}: {e}", in_message(url)))
-    })?)?;
+    // below does not go through it and is the one the inbox uses. The
+    // request is built from this checked value, not from `url` again.
+    let checked = reqwest::Url::parse(url)
+        .map_err(|e| NoombatError::BadRequest(format!("unusable URI {}: {e}", in_message(url))))?;
+    crate::http::check_url(&checked)?;
 
     let fallback = allow_unsigned_fallback();
     // Look up the signing actor's AP ID and private key.
@@ -168,7 +169,7 @@ pub async fn signed_get(
         .set_expiration(Duration::from_secs(30));
 
     let signed_request = http_client
-        .get(url)
+        .get(checked)
         .header("Accept", "application/activity+json")
         .signature(&config, key_id, move |signing_string| {
             crate::delivery::rsa_sha256_sign(signing_string, &private_key_pem)
