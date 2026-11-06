@@ -69,6 +69,13 @@ fi
 step "Checking container image pins"
 run ./scripts/check-image-pins.sh
 
+if command -v docker > /dev/null 2>&1; then
+    step "Checking every compose combination loads"
+    run ./scripts/check-compose-config.sh
+else
+    step "Skipping the compose check: docker is not available"
+fi
+
 # Three files name the DKIM selector and for months they named three
 # different ones, which produces signatures no receiver can verify.
 step "Checking the DKIM selector agrees everywhere"

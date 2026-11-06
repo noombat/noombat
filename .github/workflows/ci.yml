@@ -41,6 +41,7 @@ on:
       - "scripts/check-codeql-config.py"
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
+      - "scripts/check-compose-config.sh"
       - "compose*.yml"
       - "tests/*/compose*.yml"
       - "scripts/check-inline-scripts.sh"
@@ -69,6 +70,7 @@ on:
       - "scripts/check-codeql-config.py"
       - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
+      - "scripts/check-compose-config.sh"
       - "compose*.yml"
       - "tests/*/compose*.yml"
       - "scripts/check-inline-scripts.sh"
@@ -157,6 +159,9 @@ jobs:
       # image. Deterministic, and blocking for that reason.
       - name: "Assert workflow images are pinned and agree with compose"
         run: scripts/check-image-pins.sh
+      # Nothing else loads compose.prod.yml before a deployment does.
+      - name: "Assert every compose combination loads"
+        run: scripts/check-compose-config.sh
       # Advisory: the scan reports candidates, not conclusions, because a
       # dependency can be load-bearing without being named anywhere, by
       # enabling a feature or registering a runtime provider. Failing on a

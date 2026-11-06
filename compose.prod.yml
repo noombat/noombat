@@ -31,8 +31,8 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
-    depends_on:
-      - noombat
+    # No depends_on noombat: chatmail waits on caddy and noombat on chatmail,
+    # so it would be a cycle. reverse_proxy answers 502 until noombat is up.
     deploy:
       resources:
         limits:

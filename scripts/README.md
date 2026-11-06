@@ -17,6 +17,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `e2e-stack.sh`                | Raise/tear down the e2e stack          | Before and after a Playwright run (`up`, `down`, `status`) |
 | `check-unused-deps.sh`        | Find unused dependency declarations    | After removing code, or when a Dependabot bump looks odd   |
 | `check-image-pins.sh`         | Compare workflow images to compose     | After touching a workflow service or a compose image       |
+| `check-compose-config.sh`     | Load every compose combination         | After editing any compose file                             |
 | `check-template-comments.sh`  | Find unbalanced HTML comments          | After editing an Askama template                           |
 | `check-logical-properties.sh` | Reject physical-direction utilities    | After writing markup that positions anything               |
 | `check-contrast.py`           | Measure every semantic colour pair     | After changing any colour token                            |
@@ -157,6 +158,15 @@ Every check now has one: `check-inline-scripts.sh`, `check-template-comments.sh`
 
 When pinning a digest by hand, take the **manifest list** digest and not a platform one.
 `docker manifest inspect --verbose` returns the per-platform descriptor, and pinning that ties the image to a single architecture; `docker buildx imagetools inspect <ref> --format '{{println .Manifest.Digest}}'` returns the list digest, which is also what Dependabot writes.
+
+## `check-compose-config.sh`
+
+Loads every compose combination the repository runs (`docker compose config`), with a placeholder for each required variable, and fails on any that cannot start, such as a dependency cycle between overlays.
+A compose file that appears in no combination fails too, so a new overlay must be added to the list.
+
+```sh
+./scripts/check-compose-config.sh
+```
 
 ## `check-action-allowlist.sh`
 
