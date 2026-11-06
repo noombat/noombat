@@ -112,6 +112,9 @@ services:
       # the claim was checked against rather than the one pinned above;
       # re-check it if this setting ever appears not to take effect.
       MEILI_NO_ANALYTICS: "true"
+      # A minor version refuses the previous one's data; this upgrades it in
+      # place on start, and does nothing on a fresh volume.
+      MEILI_UPGRADE_DB: "true"
     # See the note on redis. `/health` is unauthenticated, which is why it
     # works here without the master key.
     #
