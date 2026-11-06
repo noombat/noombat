@@ -109,7 +109,7 @@ services:
   # ..... GOTOSOCIAL .....
 
   gotosocial:
-    image: docker.io/superseriousbusiness/gotosocial:0.22.2@sha256:43e5dd574c5d5f94238b73e2ce17cf5c778f763cebebf06cc7894623d151c78b
+    image: docker.io/superseriousbusiness/gotosocial:0.22.3@sha256:3f36dcf14a4f2e5562122e4783117c48a219d67988f841181b5c2ecaa65d5581
     environment:
       GTS_HOST: gotosocial.localhost:8443
       GTS_ACCOUNT_DOMAIN: gotosocial.localhost:8443
