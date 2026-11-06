@@ -121,15 +121,10 @@ async fn discover_instance(domain: &str) -> Result<String> {
     // `reqwest::RequestBuilder` does not support per-request DNS
     // overrides, so a new `Client` is constructed. The user-agent
     // and timeout are replicated from the shared client constructed
-    // in `main.rs`. If those defaults change, this block must be
+    // in `main.rs`. If those defaults change, `pinned_client` must be
     // updated to match.
     let resolved_addr = addrs[0];
-    let pinned_client = reqwest::Client::builder()
-        .user_agent(format!("Noombat/{}", env!("CARGO_PKG_VERSION")))
-        .timeout(std::time::Duration::from_secs(30))
-        .resolve(domain, resolved_addr)
-        .build()
-        .map_err(|e| NoombatError::Internal(format!("failed to build pinned HTTP client: {e}")))?;
+    let pinned_client = pinned_client(domain, resolved_addr)?;
     let base = format!("https://{domain}");
     let webfinger_url = format!("{base}/.well-known/webfinger?resource=acct:test@{domain}");
     let resp = pinned_client
@@ -146,6 +141,20 @@ async fn discover_instance(domain: &str) -> Result<String> {
     }
 
     Ok(base)
+}
+
+/// A client that reaches `domain` at `addr` and nowhere else. A redirect
+/// or a proxy named in the environment would reach an address nobody
+/// checked, so it follows neither.
+fn pinned_client(domain: &str, addr: std::net::SocketAddr) -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .user_agent(format!("Noombat/{}", env!("CARGO_PKG_VERSION")))
+        .timeout(std::time::Duration::from_secs(30))
+        .resolve(domain, addr)
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(|e| NoombatError::Internal(format!("failed to build pinned HTTP client: {e}")))
 }
 
 // ..... Client registration .....
@@ -625,5 +634,76 @@ mod tests {
         assert!(!is_private_ip(IpAddr::V6(Ipv6Addr::new(
             0x2606, 0x4700, 0, 0, 0, 0, 0, 0x1111
         ))));
+    }
+
+    // ..... pinned_client .....
+
+    #[tokio::test]
+    async fn the_pinned_client_follows_no_redirect() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // Accepts a connection and never answers, so following the
+        // redirect would hang until the timeout below.
+        let target = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        target.set_nonblocking(true).unwrap();
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = server.local_addr().unwrap();
+        let reply = format!(
+            "HTTP/1.1 302 Found\r\nLocation: http://{}/\r\nContent-Length: 0\r\n\r\n",
+            target.local_addr().unwrap()
+        );
+        tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.unwrap();
+            let _ = stream.read(&mut [0u8; 1024]).await;
+            stream.write_all(reply.as_bytes()).await.unwrap();
+        });
+        let client = pinned_client("instance.test", addr).unwrap();
+        let url = format!("http://instance.test:{}/", addr.port());
+        let response =
+            tokio::time::timeout(std::time::Duration::from_secs(5), client.get(url).send())
+                .await
+                .expect("the redirect was followed")
+                .unwrap();
+        assert_eq!(response.status(), reqwest::StatusCode::FOUND);
+        assert!(
+            target.accept().is_err(),
+            "the redirect target was contacted"
+        );
+    }
+
+    // The environment is process-wide, so the request runs in a child
+    // copy of this test binary given a proxy that is a local listener.
+    #[tokio::test]
+    async fn the_pinned_client_ignores_a_proxy_named_in_the_environment() {
+        if std::env::var_os("NOOMBAT_PROXY_PROBE").is_some() {
+            // Nothing listens on port 1, so a direct connection fails at once.
+            let client =
+                pinned_client("proxy-probe.invalid", "127.0.0.1:1".parse().unwrap()).unwrap();
+            let request = client.get("https://proxy-probe.invalid:1/").send();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), request).await;
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "oauth_mastodon::tests::the_pinned_client_ignores_a_proxy_named_in_the_environment",
+            ])
+            .env("NOOMBAT_PROXY_PROBE", "1")
+            .envs(["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"].map(|k| (k, &proxy)))
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .output()
+            .unwrap();
+        // A filter that matches nothing runs no test and still exits 0.
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("test result: ok. 1 passed"),
+            "the child did not run this test, or it failed"
+        );
+        assert!(
+            listener.accept().is_err(),
+            "the client connected to the proxy named in the environment"
+        );
     }
 }
