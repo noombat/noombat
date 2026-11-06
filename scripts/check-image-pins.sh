@@ -59,10 +59,13 @@ superseriousbusiness/gotosocial
 allow_reason() {
     case "$1" in
         mcr.microsoft.com/playwright)
-            echo "job container, must equal the @playwright/test version in tests/e2e; no ecosystem proposes it"
+            echo "job container, must equal the @playwright/test version in tests/e2e;" \
+                "no ecosystem proposes it"
             ;;
         superseriousbusiness/gotosocial)
-            echo "floating on purpose in tests/interop/compose.latest.yml, which ci-interop-latest.yml runs on a schedule; pinned by digest in compose.yml for the merge path"
+            echo "floating on purpose in tests/interop/compose.latest.yml, which" \
+                "ci-interop-latest.yml runs on a schedule; pinned by digest in compose.yml" \
+                "for the merge path"
             ;;
         *) echo "no reason recorded" ;;
     esac

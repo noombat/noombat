@@ -3,11 +3,10 @@
 
 //! Who may act for an account, through the assembled router.
 //!
-//! These routes used to accept one instance-wide bearer token and take
-//! the account they acted on from the request path, so a single secret
-//! could write to every profile on the instance. The property asserted
-//! here is the one that replaced it: a session acts for its own account
-//! and for organisations it belongs to, and for nothing else.
+//! A session acts for its own account and for organisations it belongs
+//! to, and for nothing else. No single secret may write to every profile
+//! on the instance, and the account acted on is never taken from the
+//! request path alone.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -141,8 +140,8 @@ async fn a_session_may_not_edit_another_account(pool: PgPool) {
     insert_person(&pool, "bob").await;
     let token = token_for(&pool, alice, "alice").await;
 
-    // The old admin token took the account from the path, so this is
-    // exactly the request that used to succeed.
+    // Bob in the path, Alice's session: a check that took the account from
+    // the path would let this through.
     let status = patch_profile(pool.clone(), "bob", Some(&token)).await;
 
     assert_eq!(status, StatusCode::FORBIDDEN);

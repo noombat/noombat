@@ -3234,7 +3234,8 @@ mod tests {
         sqlx::query(
             r#"INSERT INTO posts (actor_id, ap_id, post_type, content_md, content_html,
                                   visibility, ap_object, integrity_proof_verified)
-               VALUES ($1, $2, 'note', NULL, '<p>alice wrote this</p>', 'public', '{}'::jsonb, TRUE)"#,
+               VALUES ($1, $2, 'note', NULL, '<p>alice wrote this</p>', 'public',
+                       '{}'::jsonb, TRUE)"#,
         )
         .bind(alice_id)
         .bind(post_uri)

@@ -141,10 +141,10 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The checkpassword helper runs before anybody is authenticated, so
       # what it does for an address it has never seen is a security
-      # property. It used to create the account with the offered password,
-      # which let an outsider claim any unused address over published IMAP
-      # or submission. Asserted against the filesystem, because the
-      # behaviour being guarded against is one that succeeds.
+      # property: creating the account with the offered password would let
+      # an outsider claim any unused address over published IMAP or
+      # submission. Asserted against the filesystem, because the behaviour
+      # being guarded against is one that succeeds.
       - name: "The relay helper verifies credentials and never creates them"
         run: scripts/check-doveauth.sh
 

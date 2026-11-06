@@ -372,30 +372,23 @@ jobs:
           path: tests/e2e/playwright-report/
           retention-days: 14
 
-  # Runs the harness the repository documents, rather than a second
-  # topology maintained only here.
+  # Runs the harness the repository documents, the invocation of
+  # `run.sh` a developer runs locally, not a topology kept only here.
   #
   # `tests/interop/compose.yml` is the topology: Noombat containerised as
   # `noombat-backend` on the `interop` network, behind Caddy terminating
-  # TLS, serving `noombat.localhost:8443`. The cheaper alternative, a
-  # natively built server reaching services on localhost over plain HTTP,
-  # is not a smaller version of this test but a different one, and for a
-  # federation test the difference is the test. HTTP Signatures cover
-  # `(request-target)` and `host`, so a reverse proxy is part of what is
-  # under test. Actor ids are absolute URLs, and
-  # `http://localhost:8443/users/alice` is not a shape any peer resolves
-  # in the wild. Delivery and WebFinger require the peer to fetch back
-  # over the same scheme. Under plain HTTP on localhost none of that is
-  # exercised, so proxy header handling and scheme or port leaking into
-  # generated URLs cannot fail here however broken they are.
+  # TLS, serving `noombat.localhost:8443`. A natively built server on
+  # localhost over plain HTTP is cheaper, but it is a different test:
+  # HTTP Signatures cover `(request-target)` and `host`, so the proxy is
+  # under test; actor ids are absolute URLs, and no peer resolves one
+  # shaped like `http://localhost:8443/users/alice`; delivery and
+  # WebFinger fetch back over the same scheme. Over plain HTTP none of
+  # that runs, so proxy header handling and a scheme or port leaking into
+  # generated URLs could not fail however broken they were.
   #
-  # `run.sh` already documented both invocations. This runs the second,
-  # the one a developer runs locally.
-  #
-  # The Rust build moves into Docker, so `actions/cache` on `target/` no
-  # longer applies. buildx with a GitHub Actions cache replaces it; the
-  # Dockerfile is already staged so the dependency layers survive a source
-  # change.
+  # The Rust build runs in Docker, so buildx with the GitHub Actions cache
+  # stands where `actions/cache` on `target/` would; the Dockerfile stages
+  # the dependency layers so they survive a source change.
   interop:
     name: Federation interop (GotoSocial)
     runs-on: ubuntu-latest

@@ -161,7 +161,8 @@ async fn get_or_register_client(
 ) -> Result<OAuthClient> {
     // Check the cache first.
     if let Some(row) = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT client_id, client_secret, redirect_uri FROM oauth_clients WHERE instance_domain = $1",
+        "SELECT client_id, client_secret, redirect_uri FROM oauth_clients \
+         WHERE instance_domain = $1",
     )
     .bind(instance_domain)
     .fetch_optional(pool)
@@ -269,7 +270,8 @@ pub async fn build_authorise_url(
     .await?;
 
     let url = format!(
-        "{instance_base}/oauth/authorize?client_id={}&redirect_uri={}&response_type=code&scope=read:accounts&state={state}",
+        "{instance_base}/oauth/authorize?client_id={}&redirect_uri={}\
+         &response_type=code&scope=read:accounts&state={state}",
         crate::oauth_util::urlencoding(&client.client_id),
         crate::oauth_util::urlencoding(&client.redirect_uri),
     );
@@ -309,12 +311,15 @@ pub async fn handle_callback(
     let instance_base = format!("https://{instance_domain}");
 
     let client = sqlx::query_as::<_, (String, String, String)>(
-        "SELECT client_id, client_secret, redirect_uri FROM oauth_clients WHERE instance_domain = $1",
+        "SELECT client_id, client_secret, redirect_uri FROM oauth_clients \
+         WHERE instance_domain = $1",
     )
     .bind(&instance_domain)
     .fetch_optional(pool)
     .await?
-    .ok_or_else(|| NoombatError::Internal("OAuth client not found after state validation".into()))?;
+    .ok_or_else(|| {
+        NoombatError::Internal("OAuth client not found after state validation".into())
+    })?;
 
     let decrypted_secret = envelope::open_auto(&client.1)?;
 

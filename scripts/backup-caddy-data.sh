@@ -63,15 +63,18 @@ archive="$DESTINATION/caddy-data-$stamp.tar.gz"
 # rootless or Podman host it does not exist at all.
 #
 # The image is the one already pulled for the reverse proxy, so this adds
-# no download and no digest to track.
+# no download. Its digest is a copy of `compose.prod.yml`'s that
+# `check-image-pins.sh` does not read: bump the two together.
 #
 # The archive is streamed to stdout and redirected, rather than written
 # through a bind mount. A container writing into a mounted directory
 # writes as root, and the host user then cannot chmod its own backup.
+CADDY_IMAGE=docker.io/library/caddy:2-alpine
+CADDY_IMAGE+=@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
 umask 077
 docker run --rm \
     -v "$VOLUME:/data:ro" \
-    docker.io/library/caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e \
+    "$CADDY_IMAGE" \
     tar -czf - -C /data . > "$archive"
 
 # Assert the archive contains a key, rather than that tar exited 0. An

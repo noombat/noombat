@@ -643,7 +643,8 @@ async fn main() -> anyhow::Result<()> {
         });
     if session_config.is_none() {
         info!(
-            "no NOOMBAT_JWT_SECRET configured; sessions are disabled, so every route that acts for an account is unreachable"
+            "no NOOMBAT_JWT_SECRET configured; sessions are disabled, so every route \
+             that acts for an account is unreachable"
         );
     }
 
@@ -752,12 +753,14 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Err(_) => error!(
                     %username,
-                    "NOOMBAT_BOOTSTRAP_ADMIN names no local account; register it first, then restart"
+                    "NOOMBAT_BOOTSTRAP_ADMIN names no local account; \
+                     register it first, then restart"
                 ),
             },
             Ok(n) => info!(
                 admins = n,
-                "NOOMBAT_BOOTSTRAP_ADMIN is set but the instance already has an administrator; ignoring it"
+                "NOOMBAT_BOOTSTRAP_ADMIN is set but the instance already has an \
+                 administrator; ignoring it"
             ),
             Err(e) => error!("could not count administrators, skipping the bootstrap: {e}"),
         }
