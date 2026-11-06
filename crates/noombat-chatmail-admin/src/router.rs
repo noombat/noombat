@@ -362,6 +362,12 @@ async fn kick(UrlPath(address): UrlPath<String>) -> Reply {
         warn!(address = ?address, error = %e, "kick rejected: invalid address");
         return invalid_address();
     }
+    // doveadm reads `*` and `?` in a user mask as wildcards, so one
+    // request would kick every matching account.
+    if address.contains(['*', '?']) {
+        warn!(address = ?address, "kick rejected: wildcard");
+        return invalid_address();
+    }
     let status = std::process::Command::new("doveadm")
         .args(["kick", &address])
         .status();
@@ -412,17 +418,18 @@ async fn delete_account(
         return invalid_address();
     };
 
+    // No address in these lines: they record an erasure.
     if account_dir.exists() {
         // remove_dir_all deletes the entire account directory,
         // including the password file and all maildir contents.
         if let Err(e) = std::fs::remove_dir_all(&account_dir) {
-            warn!(address = %address, error = %e, "account directory could not be removed");
+            warn!(error = %e, "account directory could not be removed");
             return reply(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": "account deletion failed"}),
             );
         }
-        info!(address = %address, "account directory deleted (maildir + password)");
+        info!("account directory deleted (maildir + password)");
     }
 
     // Block delivery to the address. This is a mail-flow control, not a
@@ -813,6 +820,19 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
+    }
+
+    // Refused before doveadm is spawned, so this needs no doveadm.
+    #[tokio::test]
+    async fn kick_refuses_a_wildcard_and_a_leading_dash() {
+        for path in [
+            "/admin/v1/accounts/*@b.test/kick",
+            "/admin/v1/accounts/a%3F@b.test/kick",
+            "/admin/v1/accounts/-a@b.test/kick",
+        ] {
+            let status = status_of(Some(&format!("Bearer {SECRET}")), "POST", path).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{path}");
+        }
     }
 
     // ..... Account creation .....
