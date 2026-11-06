@@ -15,5 +15,5 @@
 # promise is `rust-version` in Cargo.toml, which the MSRV job reads.
 
 [toolchain]
-channel = "1.98.0"
+channel = "1.99.1"
 components = ["rustfmt", "clippy"]
