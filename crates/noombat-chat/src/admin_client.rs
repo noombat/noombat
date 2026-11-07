@@ -55,8 +55,11 @@ fn check_segment(value: &str) -> Result<()> {
 /// Reports rather than fails, matching the transports: an unusable CA
 /// file surfaces as a handshake failure naming an untrusted issuer,
 /// which is a better diagnosis than a client that could not be built.
+///
+/// Proxies named in the environment are ignored: the sidecar is always
+/// reached directly, on the relay's host or network.
 fn client_trusting_the_relay() -> reqwest::Client {
-    let mut builder = reqwest::Client::builder();
+    let mut builder = reqwest::Client::builder().no_proxy();
 
     if let Some(path) = std::env::var_os(crate::session::EXTRA_CA_ENV) {
         match std::fs::read(&path) {
@@ -76,39 +79,20 @@ fn client_trusting_the_relay() -> reqwest::Client {
 
     builder.build().unwrap_or_else(|error| {
         error!(%error, "falling back to a client trusting only the platform roots");
-        reqwest::Client::new()
+        reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("a client with default settings builds")
     })
 }
 
 /// Whether the admin secret can reach `base_url` without being readable
-/// in transit.
-///
-/// `https` anywhere, or `http` to a loopback host, which is how the relay
-/// and the sidecar talk when they share a machine and the traffic never
-/// reaches a network. Everything else, an unparseable URL included, is
-/// refused: the alternative is guessing, and the guess would be made once
-/// per deployment by whoever mistyped the variable.
+/// in transit: `https` only. The sidecar serves nothing but TLS, so an
+/// `http` URL could never reach it. Everything else, an unparseable URL
+/// included, is refused: the alternative is guessing, and the guess would
+/// be made once per deployment by whoever mistyped the variable.
 fn transport_is_confidential(base_url: &str) -> bool {
-    let Ok(url) = reqwest::Url::parse(base_url) else {
-        return false;
-    };
-    match url.scheme() {
-        "https" => true,
-        "http" => url.host_str().is_some_and(host_is_loopback),
-        _ => false,
-    }
-}
-
-/// Whether `host` names this machine.
-///
-/// The brackets come off first: a URL keeps them around an IPv6 literal,
-/// and `[::1]` does not parse as an address with them attached.
-fn host_is_loopback(host: &str) -> bool {
-    let bare = host.trim_start_matches('[').trim_end_matches(']');
-    if let Ok(ip) = bare.parse::<std::net::IpAddr>() {
-        return ip.is_loopback();
-    }
-    host == "localhost" || host.ends_with(".localhost")
+    reqwest::Url::parse(base_url).is_ok_and(|url| url.scheme() == "https")
 }
 
 /// Client for the Chatmail admin sidecar.
@@ -199,7 +183,7 @@ impl ChatmailAdminClient {
             error!(
                 base_url = %base_url,
                 "refusing to build the Chatmail admin client: the admin secret would travel \
-                 in clear. Use https, or an http URL on a loopback host."
+                 in clear. Use https, the only scheme the sidecar serves."
             );
             return None;
         }
@@ -470,7 +454,7 @@ mod tests {
     /// below meaningful: with the check gone the call reaches the
     /// network and fails as `Internal`, never as `BadRequest`.
     fn client() -> ChatmailAdminClient {
-        ChatmailAdminClient::new(Some("http://127.0.0.1:1"), Some("test-secret"))
+        ChatmailAdminClient::new(Some("https://127.0.0.1:1"), Some("test-secret"))
             .expect("a base URL and a secret produce a client")
     }
 
@@ -600,16 +584,10 @@ mod tests {
 
     #[test]
     fn a_confidential_base_url_is_accepted() {
-        // The loopback cases matter as much as the https one: the tests
-        // above build their client from `http://127.0.0.1:1`, and the
-        // interop stack runs the relay and the sidecar on one host.
         for good in [
             "https://chat.example.com:9100",
             "https://chat.example.com",
-            "http://127.0.0.1:9100",
-            "http://localhost:9100",
-            "http://sidecar.localhost",
-            "http://[::1]:9100",
+            "https://127.0.0.1:9100",
         ] {
             assert!(
                 transport_is_confidential(good),
@@ -624,8 +602,11 @@ mod tests {
             // The finding: plaintext to a host that is not this one.
             "http://chat.example.com:9100",
             "http://10.0.0.5:9100",
-            // A loopback *name* under another domain resolves elsewhere.
             "http://localhost.example.com",
+            // Loopback too: the sidecar serves only TLS.
+            "http://127.0.0.1:9100",
+            "http://localhost:9100",
+            "http://[::1]:9100",
             "ftp://chat.example.com",
             "chat.example.com:9100",
             "",
@@ -669,7 +650,7 @@ mod tests {
     fn debug_output_redacts_the_secret_and_the_passwords() {
         let shown = format!(
             "{:?} {:?} {:?}",
-            ChatmailAdminClient::new(Some("http://127.0.0.1:1"), Some("hunter2-secret")).unwrap(),
+            ChatmailAdminClient::new(Some("https://127.0.0.1:1"), Some("hunter2-secret")).unwrap(),
             RotatePasswordResponse {
                 address: SAFE.into(),
                 password: "hunter2-rotated".into()
@@ -702,7 +683,12 @@ mod tests {
                 let _ = socket.write_all(reply).await;
             }
         });
-        let client = ChatmailAdminClient::new(Some(&base), Some("test-secret")).unwrap();
+        // Built directly: `new` refuses `http`, and this server speaks nothing else.
+        let client = ChatmailAdminClient {
+            base_url: base,
+            secret: "test-secret".into(),
+            http: client_trusting_the_relay(),
+        };
         for err in [
             client.account_exists(SAFE).await.unwrap_err(),
             client.create_account(SAFE).await.unwrap_err(),
@@ -714,5 +700,42 @@ mod tests {
             );
             assert!(!err.to_string().contains(SAFE), "the address leaked: {err}");
         }
+    }
+
+    // The environment is process-wide, so the request runs in a child
+    // copy of this test binary given a proxy that is a local listener.
+    #[tokio::test]
+    async fn a_proxy_named_in_the_environment_is_not_used() {
+        if std::env::var_os("NOOMBAT_PROXY_PROBE").is_some() {
+            let client =
+                ChatmailAdminClient::new(Some("https://sidecar-probe.invalid:1"), Some("s"))
+                    .unwrap();
+            let request = client.account_exists(SAFE);
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(3), request).await;
+            return;
+        }
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let proxy = format!("http://{}", listener.local_addr().unwrap());
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "admin_client::tests::a_proxy_named_in_the_environment_is_not_used",
+            ])
+            .env("NOOMBAT_PROXY_PROBE", "1")
+            .envs(["HTTPS_PROXY", "https_proxy", "ALL_PROXY", "all_proxy"].map(|k| (k, &proxy)))
+            .env_remove("NO_PROXY")
+            .env_remove("no_proxy")
+            .output()
+            .unwrap();
+        // A filter that matches nothing runs no test and still exits 0.
+        assert!(
+            String::from_utf8_lossy(&out.stdout).contains("test result: ok. 1 passed"),
+            "the child did not run this test, or it failed"
+        );
+        assert!(
+            listener.accept().is_err(),
+            "the client connected to the proxy named in the environment"
+        );
     }
 }
