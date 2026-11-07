@@ -104,7 +104,7 @@ struct Config {
     /// If unset, rate limiting and session storage are disabled.
     redis_url: Option<Secret>,
     /// JWT signing secret for session tokens (HS256). Must be at
-    /// least 32 bytes. If unset, session-based auth is disabled.
+    /// least 32 bytes. If unset or blank, session-based auth is disabled.
     jwt_secret: Option<Secret>,
     /// Access-token lifetime in seconds (default: 900 = 15 min).
     #[serde(default = "default_access_ttl")]
@@ -291,6 +291,12 @@ impl Config {
     /// a decision to run without one either.
     fn kek(&self) -> Option<&str> {
         self.kek.as_ref().and_then(Secret::non_empty)
+    }
+
+    /// The JWT secret, treating blank as absent for the same reason:
+    /// HS256 under an empty key signs tokens anyone can forge.
+    fn jwt_secret(&self) -> Option<&str> {
+        self.jwt_secret.as_ref().and_then(Secret::non_empty)
     }
 }
 
@@ -627,20 +633,10 @@ async fn main() -> anyhow::Result<()> {
         };
 
     // Session configuration (optional).
-    let session_config = config
-        .jwt_secret
-        .as_ref()
-        .map(Secret::expose)
-        .map(|secret| {
-            info!("JWT session authentication enabled");
-            noombat_identity::session::SessionConfig {
-                jwt_secret: secret.to_string(),
-                domain: config.domain.clone(),
-                access_ttl_secs: config.access_ttl_secs,
-                refresh_ttl_secs: config.refresh_ttl_secs,
-            }
-        });
-    if session_config.is_none() {
+    let session_config = session_config(&config);
+    if session_config.is_some() {
+        info!("JWT session authentication enabled");
+    } else {
         info!(
             "no NOOMBAT_JWT_SECRET configured; sessions are disabled, so every route \
              that acts for an account is unreachable"
@@ -1044,7 +1040,7 @@ fn validate_production_config(config: &Config) {
 
     let mut fatal = false;
 
-    match config.jwt_secret.as_ref().map(Secret::expose) {
+    match config.jwt_secret() {
         None => {
             error!(
                 "NOOMBAT_JWT_SECRET is not set. Session-based \
@@ -1114,6 +1110,18 @@ fn validate_production_config(config: &Config) {
     }
 }
 
+/// Session settings, or `None` when no JWT secret is configured.
+fn session_config(config: &Config) -> Option<noombat_identity::session::SessionConfig> {
+    config
+        .jwt_secret()
+        .map(|secret| noombat_identity::session::SessionConfig {
+            jwt_secret: secret.to_string(),
+            domain: config.domain.clone(),
+            access_ttl_secs: config.access_ttl_secs,
+            refresh_ttl_secs: config.refresh_ttl_secs,
+        })
+}
+
 /// What makes the Chatmail admin secret unfit for production, if anything.
 fn chatmail_secret_problem(secret: Option<&str>) -> Option<String> {
     let secret = secret?;
@@ -1162,12 +1170,34 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::{
-        INSECURE_CHATMAIL_SECRET, MIN_CHATMAIL_SECRET_LEN, chatmail_secret_problem,
-        embedded_migrations, parse_relay_policy,
+        Config, INSECURE_CHATMAIL_SECRET, MIN_CHATMAIL_SECRET_LEN, chatmail_secret_problem,
+        embedded_migrations, parse_relay_policy, session_config,
     };
+    use figment::Figment;
+    use figment::providers::{Format, Toml};
     use noombat_federation::relay_verify::RelayVerificationPolicy as Policy;
     use sqlx::migrate::{Migration, Migrator};
     use std::path::{Path, PathBuf};
+
+    fn config_with_jwt_secret(secret: &str) -> Config {
+        let toml = format!(
+            "domain = \"localhost\"\ndatabase_url = \"postgres://db/x\"\njwt_secret = {secret:?}"
+        );
+        Figment::new().merge(Toml::string(&toml)).extract().unwrap()
+    }
+
+    // Compose passes `NOOMBAT_JWT_SECRET=` from an empty `.env` line as
+    // `Some("")`, and localhost skips the production checks.
+    #[test]
+    fn a_blank_jwt_secret_enables_no_sessions() {
+        for blank in ["", "   "] {
+            assert!(
+                session_config(&config_with_jwt_secret(blank)).is_none(),
+                "{blank:?}"
+            );
+        }
+        assert!(session_config(&config_with_jwt_secret(&"k".repeat(32))).is_some());
+    }
 
     #[test]
     fn a_published_or_short_chatmail_secret_is_unfit_for_production() {
