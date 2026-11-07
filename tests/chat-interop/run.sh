@@ -351,7 +351,7 @@ echo ""
 # can create the account and then refuse the session a moment later, which
 # is exactly what the submission path did, so "the login failed" would
 # have passed against the defect.
-CHATMAIL_ADMIN_SECRET="${CHATMAIL_ADMIN_SECRET:-test-admin-secret}"
+CHATMAIL_ADMIN_SECRET="${CHATMAIL_ADMIN_SECRET:-chat-interop-admin-secret-for-tests-only}"
 SQUATTED="squatter@${CHATMAIL_DOMAIN}"
 
 if ! command -v python3 >/dev/null 2>&1; then

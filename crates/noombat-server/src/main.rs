@@ -1027,6 +1027,10 @@ const INSECURE_CHATMAIL_SECRET: &str = "noombat-chatmail-dev-secret";
 /// Minimum acceptable length for the JWT signing secret (HS256).
 const MIN_JWT_SECRET_LEN: usize = 32;
 
+/// Minimum length for the Chatmail admin secret, the JWT secret's floor;
+/// the sidecar holds the same one.
+const MIN_CHATMAIL_SECRET_LEN: usize = 32;
+
 /// Validate that security-critical configuration values are not set
 /// to their documented defaults when the domain is not `localhost`.
 ///
@@ -1082,13 +1086,10 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
-    if config.chatmail_admin_secret.as_ref().map(Secret::expose) == Some(INSECURE_CHATMAIL_SECRET) {
-        error!(
-            "NOOMBAT_CHATMAIL_ADMIN_SECRET is set to the documented \
-             default (\"{secret}\"). Set CHATMAIL_ADMIN_SECRET to a \
-             random value.",
-            secret = INSECURE_CHATMAIL_SECRET
-        );
+    if let Some(problem) =
+        chatmail_secret_problem(config.chatmail_admin_secret.as_ref().map(Secret::expose))
+    {
+        error!("{problem}");
         fatal = true;
     }
 
@@ -1111,6 +1112,26 @@ fn validate_production_config(config: &Config) {
         );
         std::process::exit(1);
     }
+}
+
+/// What makes the Chatmail admin secret unfit for production, if anything.
+fn chatmail_secret_problem(secret: Option<&str>) -> Option<String> {
+    let secret = secret?;
+    if secret == INSECURE_CHATMAIL_SECRET {
+        return Some(format!(
+            "NOOMBAT_CHATMAIL_ADMIN_SECRET is set to the documented \
+             default (\"{INSECURE_CHATMAIL_SECRET}\"). Set CHATMAIL_ADMIN_SECRET to a \
+             random value."
+        ));
+    }
+    (secret.len() < MIN_CHATMAIL_SECRET_LEN).then(|| {
+        format!(
+            "NOOMBAT_CHATMAIL_ADMIN_SECRET is too short ({} bytes, minimum \
+             {MIN_CHATMAIL_SECRET_LEN}). Set CHATMAIL_ADMIN_SECRET to a random value \
+             (generate with: openssl rand -hex 32).",
+            secret.len()
+        )
+    })
 }
 
 /// Wait for SIGINT or SIGTERM for graceful shutdown.
@@ -1140,10 +1161,26 @@ async fn shutdown_signal() {
 
 #[cfg(test)]
 mod tests {
-    use super::{embedded_migrations, parse_relay_policy};
+    use super::{
+        INSECURE_CHATMAIL_SECRET, MIN_CHATMAIL_SECRET_LEN, chatmail_secret_problem,
+        embedded_migrations, parse_relay_policy,
+    };
     use noombat_federation::relay_verify::RelayVerificationPolicy as Policy;
     use sqlx::migrate::{Migration, Migrator};
     use std::path::{Path, PathBuf};
+
+    #[test]
+    fn a_published_or_short_chatmail_secret_is_unfit_for_production() {
+        assert_eq!(chatmail_secret_problem(None), None);
+        let published = chatmail_secret_problem(Some(INSECURE_CHATMAIL_SECRET)).unwrap();
+        assert!(published.contains("documented default"), "{published}");
+        let short = chatmail_secret_problem(Some(&"a".repeat(MIN_CHATMAIL_SECRET_LEN - 1)));
+        assert!(short.unwrap().contains("too short"));
+        assert_eq!(
+            chatmail_secret_problem(Some(&"a".repeat(MIN_CHATMAIL_SECRET_LEN))),
+            None
+        );
+    }
 
     #[test]
     fn an_unset_relay_policy_publishes_nothing() {

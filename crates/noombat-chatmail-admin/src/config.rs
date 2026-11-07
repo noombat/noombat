@@ -61,10 +61,10 @@ pub struct Config {
     /// Account creation refuses any address outside it. Empty when unset,
     /// which makes creation refuse everything rather than taking the
     /// sidecar down: this process starts before the health check can see
-    /// it, so a panic here is invisible. The development secret is the
-    /// exception: [`Config::validate`] panics on it unless the domain is a
-    /// development one (an empty domain is not), since serving behind a
-    /// public secret is worse.
+    /// it, so a panic here is invisible. A short admin secret, the
+    /// development one included, is the exception: [`Config::validate`]
+    /// panics on it unless the domain is a development one (an empty domain
+    /// is not), since serving behind a guessable secret is worse.
     ///
     /// Not a filesystem path, so it is not among the paths
     /// [`Config::validate`] asserts are absolute.
@@ -99,9 +99,9 @@ impl Config {
     ///
     /// # Panics
     ///
-    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set or is the development
-    /// secret on a real mail domain, or if any configured filesystem path
-    /// fails validation.
+    /// Panics if `CHATMAIL_ADMIN_SECRET` is not set or is under 32 bytes on
+    /// a real mail domain, or if any configured filesystem path fails
+    /// validation.
     pub fn from_env() -> Self {
         let config = Self {
             listen_host: env::var("CHATMAIL_ADMIN_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
@@ -162,9 +162,9 @@ impl Config {
     }
 
     /// Verify that all configured filesystem paths are absolute and free
-    /// of traversal sequences, and that the admin secret is not the public
-    /// development one on a real domain. Panics on failure, i.e.
-    /// configuration errors are caught at startup, not at request time.
+    /// of traversal sequences, and that the admin secret is at least 32
+    /// bytes on a real domain. Panics on failure, i.e. configuration
+    /// errors are caught at startup, not at request time.
     fn validate(&self) {
         for (name, path) in [
             ("VMAIL_HOME", &self.vmail_home),
@@ -191,22 +191,22 @@ impl Config {
         }
         assert!(
             admin_secret_allowed(&self.admin_secret, &self.mail_domain),
-            "CHATMAIL_ADMIN_SECRET is the documented development secret; \
-             set a random one for {:?}",
+            "CHATMAIL_ADMIN_SECRET is under {MIN_ADMIN_SECRET_LEN} bytes, as the documented \
+             development secret is; set a random one for {:?} (openssl rand -hex 32)",
             self.mail_domain
         );
     }
 }
 
-/// The secret `compose.yml` falls back to, which is public.
-const DEV_ADMIN_SECRET: &str = "noombat-chatmail-dev-secret";
+/// The application's floor for its JWT secret. The documented development
+/// secret is shorter, so it is refused with every other short one.
+const MIN_ADMIN_SECRET_LEN: usize = 32;
 
-/// The development secret is accepted only for a mail domain the
-/// container's entrypoint also treats as development
-/// (`is_development_domain`): `localhost` and special-use names no real
-/// relay can serve.
+/// A short secret is accepted only for a mail domain the container's
+/// entrypoint also treats as development (`is_development_domain`):
+/// `localhost` and special-use names no real relay can serve.
 fn admin_secret_allowed(secret: &str, mail_domain: &str) -> bool {
-    secret != DEV_ADMIN_SECRET
+    secret.len() >= MIN_ADMIN_SECRET_LEN
         || mail_domain == "localhost"
         || [".localhost", ".local", ".test", ".example", ".invalid"]
             .iter()
@@ -216,6 +216,9 @@ fn admin_secret_allowed(secret: &str, mail_domain: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The secret `compose.yml` falls back to, which is public.
+    const DEV_ADMIN_SECRET: &str = "noombat-chatmail-dev-secret";
 
     fn config(secret: &str, mail_domain: &str) -> Config {
         Config {
@@ -249,7 +252,14 @@ mod tests {
         ] {
             config(DEV_ADMIN_SECRET, domain).validate();
         }
-        config("a-random-secret", "chat.noombat.social").validate();
+        config(&"a".repeat(MIN_ADMIN_SECRET_LEN), "chat.noombat.social").validate();
+    }
+
+    #[test]
+    fn a_short_secret_is_refused_on_a_real_domain_only() {
+        let short = "a".repeat(MIN_ADMIN_SECRET_LEN - 1);
+        assert!(!admin_secret_allowed(&short, "chat.noombat.social"));
+        assert!(admin_secret_allowed(&short, "chat.localhost"));
     }
 
     #[test]

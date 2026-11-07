@@ -49,7 +49,7 @@ services:
       dockerfile: Dockerfile.chatmail
     environment:
       MAIL_DOMAIN: chat.test.local
-      CHATMAIL_ADMIN_SECRET: test-admin-secret
+      CHATMAIL_ADMIN_SECRET: chat-interop-admin-secret-for-tests-only
       CHATMAIL_ADMIN_HOST: "0.0.0.0"
       CHATMAIL_ADMIN_PORT: "9100"
       # Disable allowlist polling in the test environment.
@@ -95,7 +95,7 @@ services:
       NOOMBAT_CHATMAIL_DOMAIN: chat.test.local
       NOOMBAT_CHATMAIL_AVAILABLE: "true"
       NOOMBAT_CHATMAIL_ADMIN_URL: https://chat.test.local:9100
-      NOOMBAT_CHATMAIL_ADMIN_SECRET: test-admin-secret
+      NOOMBAT_CHATMAIL_ADMIN_SECRET: chat-interop-admin-secret-for-tests-only
       # Provisioning speaks IMAP over TLS to the relay, whose certificate
       # is signed by the CA the chatmail container generates at boot, so
       # that CA is what has to be trusted. `rustls-native-certs` reads
