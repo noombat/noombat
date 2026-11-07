@@ -103,6 +103,11 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      # Also run by ci.yml, whose paths leave out tests/e2e/** and this
+      # file: the two its Playwright rule compares. This job starts on both.
+      - name: "Assert the job container matches @playwright/test"
+        run: scripts/check-image-pins.sh
+
       - name: Install system build dependencies
         run: |
           apt-get update -qq
