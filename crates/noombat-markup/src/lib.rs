@@ -332,7 +332,7 @@ fn converter() -> Option<&'static math_core::LatexToMathML> {
                 xml_namespace: true,
                 ..Default::default()
             };
-            math_core::LatexToMathML::new(config).ok()
+            math_core::LatexToMathML::new(config, Vec::new()).ok()
         })
         .as_ref()
 }

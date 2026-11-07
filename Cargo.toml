@@ -105,7 +105,7 @@ rust-i18n = "4"
 # Markup pipeline.
 pulldown-cmark = { version = "0.13", default-features = false, features = ["html"] }
 ammonia = "4"
-math-core = "0.8"
+math-core = "0.9"
 regex = "1"
 
 # Search.
@@ -231,7 +231,7 @@ bs58 = "0.5"
 serde_json_canonicalizer = "0.3"
 
 # HTML parsing (domain verification).
-scraper = "0.27"
+scraper = "0.29"
 
 # Synchronous HTTP server (noombat-chatmail-admin sidecar).
 
