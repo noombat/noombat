@@ -1203,7 +1203,8 @@ mod tests {
     fn a_published_or_short_chatmail_secret_is_unfit_for_production() {
         assert_eq!(chatmail_secret_problem(None), None);
         let published = chatmail_secret_problem(Some(INSECURE_CHATMAIL_SECRET)).unwrap();
-        assert!(published.contains("documented default"), "{published}");
+        // No message: CodeQL reads this function's output as the secret.
+        assert!(published.contains("documented default"));
         let short = chatmail_secret_problem(Some(&"a".repeat(MIN_CHATMAIL_SECRET_LEN - 1)));
         assert!(short.unwrap().contains("too short"));
         assert_eq!(
