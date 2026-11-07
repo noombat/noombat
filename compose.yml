@@ -182,8 +182,14 @@ services:
       default:
         aliases:
           - chat.${NOOMBAT_DOMAIN:-localhost}
+    # Replaces the image's own check, so it probes the same two things:
+    # IMAP, and a TLS handshake with the admin sidecar.
     healthcheck:
-      test: ["CMD", "doveadm", "service", "status", "imap"]
+      test:
+        - CMD-SHELL
+        - >-
+          doveadm service status imap
+          && openssl s_client -connect "127.0.0.1:$${CHATMAIL_ADMIN_PORT:-9100}" </dev/null >/dev/null 2>&1
       interval: 30s
       timeout: 5s
 

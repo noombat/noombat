@@ -209,11 +209,14 @@ EXPOSE 25 465 993 9100
 # Volumes.
 VOLUME ["/home/vmail"]
 
-# Health check: IMAP NOOP.
+# Health check: IMAP, and a TLS handshake with the admin sidecar, which
+# s6 restarts in a loop when it fails at startup while IMAP stays up.
 # `start-period` and a short interval because readiness is a dependency,
-# not just a monitor: Noombat waits for this container to report healthy
-# before it starts, since it reads the CA this one writes.
+# not just a monitor: a stack can start Noombat only once this reports
+# healthy (tests/chat-interop does), since it reads the CA this one writes.
 HEALTHCHECK --start-period=10s --interval=5s --timeout=5s \
-    CMD doveadm service status imap || exit 1
+    CMD doveadm service status imap \
+        && openssl s_client -connect "127.0.0.1:${CHATMAIL_ADMIN_PORT:-9100}" </dev/null >/dev/null 2>&1 \
+        || exit 1
 
 ENTRYPOINT ["/entrypoint.sh"]
