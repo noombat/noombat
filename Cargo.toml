@@ -228,7 +228,7 @@ mailparse = "0.16"
 bs58 = "0.5"
 
 # JSON Canonicalization Scheme (RFC 8785) for FEP-8b32 Object Integrity Proofs.
-serde_json_canonicalizer = "0.3"
+serde_json_canonicalizer = "0.4"
 
 # HTML parsing (domain verification).
 scraper = "0.29"
