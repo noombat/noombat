@@ -162,7 +162,7 @@ qrcode = { version = "0.14", default-features = false, features = ["svg"] }
 # IMAP client (Chatmail relay).
 # default-features = false to avoid the discontinued async-std (RUSTSEC-2025-0052);
 # runtime-tokio aligns with the project's async runtime.
-async-imap = { version = "0.11", default-features = false, features = ["runtime-tokio"] }
+async-imap = { version = "0.12", default-features = false, features = ["runtime-tokio"] }
 
 # TLS connector for async-imap.
 tokio-rustls = "0.26"
@@ -212,7 +212,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 blurhash = { version = "0.2.3", default-features = false }
 
 # MIME parsing (Autocrypt header extraction from IMAP messages).
-mailparse = "0.16"
+mailparse = "0.18"
 
 # The browser side of the chat relay speaks WebSocket through axum's `ws`
 # feature (see `noombat-api::routes::ws_chat`), which vendors its own
@@ -228,7 +228,7 @@ mailparse = "0.16"
 bs58 = "0.5"
 
 # JSON Canonicalization Scheme (RFC 8785) for FEP-8b32 Object Integrity Proofs.
-serde_json_canonicalizer = "0.3"
+serde_json_canonicalizer = "0.4"
 
 # HTML parsing (domain verification).
 scraper = "0.29"
