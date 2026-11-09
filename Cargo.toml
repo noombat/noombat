@@ -212,7 +212,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 blurhash = { version = "0.2.3", default-features = false }
 
 # MIME parsing (Autocrypt header extraction from IMAP messages).
-mailparse = "0.16"
+mailparse = "0.18"
 
 # The browser side of the chat relay speaks WebSocket through axum's `ws`
 # feature (see `noombat-api::routes::ws_chat`), which vendors its own
