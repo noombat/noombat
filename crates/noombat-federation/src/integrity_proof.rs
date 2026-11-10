@@ -503,21 +503,42 @@ pub fn is_ed25519_multikey(multibase: &str) -> bool {
     decode_multibase_public_key(multibase).is_ok()
 }
 
+// Longest multibase text a valid key or signature can take: the `z` and
+// at most ceil(n * log58(256)) base58 characters for n bytes, so 47 for a
+// 34-byte key (32 behind the two-byte multicodec prefix) and 88 for a
+// 64-byte signature.
+const MAX_KEY_MULTIBASE_LEN: usize = 48;
+const MAX_SIGNATURE_MULTIBASE_LEN: usize = 89;
+
+/// Decode `z`-prefixed base58btc, refusing text longer than `max_len`
+/// first: base58 decoding costs time quadratic in its input, and keys and
+/// proofs arrive in remote documents of up to a mebibyte.
+fn decode_base58btc_multibase(multibase: &str, max_len: usize, what: &str) -> Result<Vec<u8>> {
+    if multibase.len() > max_len {
+        return Err(NoombatError::Internal(format!(
+            "multibase {what} is {} bytes, longer than any valid one",
+            multibase.len()
+        )));
+    }
+
+    let raw = multibase.strip_prefix('z').ok_or_else(|| {
+        NoombatError::Internal(format!(
+            "multibase {what} does not start with 'z': {multibase}"
+        ))
+    })?;
+
+    bs58::decode(raw)
+        .into_vec()
+        .map_err(|e| NoombatError::Internal(format!("base58btc decode of {what} failed: {e}")))
+}
+
 /// Decode a multibase-encoded Ed25519 public key.
 ///
 /// Expected format: `z` prefix followed by base58btc-encoded raw
 /// 32-byte public key (as produced by
 /// [`noombat_identity::keys::generate_ed25519_keypair`]).
 fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
-    let raw = multibase.strip_prefix('z').ok_or_else(|| {
-        NoombatError::Internal(format!(
-            "multibase public key does not start with 'z': {multibase}"
-        ))
-    })?;
-
-    let decoded = bs58::decode(raw).into_vec().map_err(|e| {
-        NoombatError::Internal(format!("base58btc decode of public key failed: {e}"))
-    })?;
+    let decoded = decode_base58btc_multibase(multibase, MAX_KEY_MULTIBASE_LEN, "public key")?;
 
     // The key may be stored with or without a multicodec prefix.
     // Noombat's key generation stores the raw 32-byte key without
@@ -544,15 +565,7 @@ fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
 /// Expected format: `z` prefix followed by base58btc-encoded raw
 /// 64-byte signature.
 fn decode_multibase_signature(multibase: &str) -> Result<Vec<u8>> {
-    let raw = multibase.strip_prefix('z').ok_or_else(|| {
-        NoombatError::Internal(format!(
-            "multibase signature does not start with 'z': {multibase}"
-        ))
-    })?;
-
-    let decoded = bs58::decode(raw).into_vec().map_err(|e| {
-        NoombatError::Internal(format!("base58btc decode of signature failed: {e}"))
-    })?;
+    let decoded = decode_base58btc_multibase(multibase, MAX_SIGNATURE_MULTIBASE_LEN, "signature")?;
 
     if decoded.len() != 64 {
         return Err(NoombatError::Internal(format!(
@@ -1194,6 +1207,42 @@ mod tests {
 
         let decoded = decode_multibase_public_key(&multibase).unwrap();
         assert_eq!(&decoded, verifying_key.as_bytes());
+    }
+
+    #[test]
+    fn the_longest_valid_key_and_signature_fit_their_bounds() {
+        // All-0xff bytes are the largest values, so the longest encodings;
+        // a leading zero byte encodes as a single `1`, which is shorter.
+        let key = [&[0xed, 0x01][..], &[0xff; 32][..]].concat();
+        let key = format!("z{}", bs58::encode(&key).into_string());
+        assert_eq!(key.len(), MAX_KEY_MULTIBASE_LEN);
+        assert_eq!(decode_multibase_public_key(&key).unwrap(), [0xff; 32]);
+
+        let signature = format!("z{}", bs58::encode([0xff; 64]).into_string());
+        assert_eq!(signature.len(), MAX_SIGNATURE_MULTIBASE_LEN);
+        assert_eq!(decode_multibase_signature(&signature).unwrap(), [0xff; 64]);
+    }
+
+    #[test]
+    fn text_past_the_bound_is_refused_for_its_length() {
+        // `0` is not base58 and the second input has no `z`, so a decode or a
+        // prefix check run first would fail with a different message.
+        for input in [
+            format!("z{}", "0".repeat(MAX_KEY_MULTIBASE_LEN)),
+            "0".repeat(MAX_KEY_MULTIBASE_LEN + 1),
+        ] {
+            let err = decode_multibase_public_key(&input).unwrap_err().to_string();
+            assert!(err.contains("longer than any valid one"), "{err}");
+            assert!(!err.contains(&input), "the input is echoed: {err}");
+        }
+        for input in [
+            format!("z{}", "0".repeat(MAX_SIGNATURE_MULTIBASE_LEN)),
+            "0".repeat(MAX_SIGNATURE_MULTIBASE_LEN + 1),
+        ] {
+            let err = decode_multibase_signature(&input).unwrap_err().to_string();
+            assert!(err.contains("longer than any valid one"), "{err}");
+            assert!(!err.contains(&input), "the input is echoed: {err}");
+        }
     }
 
     #[test]
