@@ -57,32 +57,24 @@ updates:
       include: scope
     groups:
       # askama and askama_web must land in ONE pull request, for the same
-      # reason as the axe pair below: the wrapper hard-pins the engine to a
-      # single 0.x minor. Every askama_web release ever published declares
-      # askama at exactly one minor (0.14.7 requires `askama ^0.14.0`, 0.16.0
-      # requires `^0.16.0`), so bumping either alone leaves Cargo resolving
-      # BOTH copies into the lockfile. That is not a warning, it is a hard
-      # compile error: `#[derive(Template)]` then implements a trait from one
-      # askama while askama_web expects the trait from the other, giving
-      # E0277 "there are multiple different versions of crate `askama` in the
-      # dependency graph". Verified in both directions, and confirmed that the
-      # pair applied together resolves to one copy and compiles.
+      # reason as the axe pair below: every askama_web release requires askama
+      # at exactly one 0.x minor (0.14.7 `^0.14.0`, 0.16.0 `^0.16.0`), so
+      # bumping either alone resolves BOTH askama copies into the lockfile.
+      # That is a hard compile error, not a warning: `#[derive(Template)]`
+      # implements one askama's trait while askama_web expects the other's
+      # (E0277, "multiple different versions of crate `askama`").
       #
       # This group deliberately carries NO `update-types`, unlike
-      # cargo-minor-patch below, and the reason is specific to Cargo rather
-      # than to this crate. Dependabot classifies a 0.x MINOR bump in the
-      # Cargo ecosystem as semver-MAJOR: for a `0.y.z` version its cargo
-      # classifier only ever returns "major" or "patch", never "minor". So
-      # `update-types: [minor, patch]` excludes 0.14 -> 0.16 by design, which
-      # is exactly why cargo-minor-patch did not capture these two on
-      # 2026-07-21 while correctly grouping twelve other crates the same
-      # minute. Adding `minor` here would be a no-op; omitting update-types is
-      # what makes the group work.
+      # cargo-minor-patch below. For a `0.y.z` version Dependabot's cargo
+      # classifier returns only "major" or "patch", so a 0.x minor such as
+      # 0.14 -> 0.16 counts as major and `[minor, patch]` would exclude it.
+      # Adding `minor` would be a no-op; omitting `update-types` is what makes
+      # the group work.
       #
-      # Note this is the OPPOSITE of npm's behaviour, where a 0.x minor is
-      # classified as minor and therefore does get swallowed by a
-      # [minor, patch] group. See the `0.x` note on frontend-minor-patch
-      # below. Do not generalise either rule across ecosystems.
+      # npm is the OPPOSITE: a 0.x minor is classified as minor and does get
+      # swallowed by a `[minor, patch]` group (see the `0.x` note on
+      # frontend-minor-patch below). Do not generalise either rule across
+      # ecosystems.
       askama:
         patterns:
           - "askama"
@@ -149,16 +141,11 @@ updates:
         # this file, where omitting `update-types` swallows majors: here
         # the filter is correct and the version scheme is what differs.
         #
-        # A pin is not protection. A tilde range constrains what npm
-        # RESOLVES, not what Dependabot PROPOSES: PR #52 rewrote the
-        # manifest itself, `~0.14.5` to `~0.15.0`, and arrived inside this
-        # group anyway. An exclusion is the only thing that keeps a `0.x`
-        # minor out.
-        #
-        # eslint-plugin-solid's rules became enforced on 2026-08-17, having
-        # been silently discarded by the config beforehand, so a minor bump
-        # can now change what CI rejects rather than only what the bundle
-        # contains.
+        # A pin is not protection: a tilde range constrains what npm
+        # RESOLVES, not what Dependabot PROPOSES, and Dependabot rewrites the
+        # range itself (`~0.14.5` to `~0.15.0`). Only an exclusion keeps a
+        # `0.x` minor out. eslint-plugin-solid's rules are enforced, so its
+        # minor bumps can change what CI rejects.
         #
         # Add an entry below the next time an unconstrained `0.x`
         # dependency is added here, or the group will carry its breaking

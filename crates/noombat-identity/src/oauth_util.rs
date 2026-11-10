@@ -28,7 +28,8 @@ pub async fn ensure_unique_username(pool: &PgPool, base: &str, domain: &str) -> 
     let truncated: String = base.chars().take(27).collect();
 
     if !sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM actors WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
+        "SELECT EXISTS(SELECT 1 FROM actors \
+         WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
     )
     .bind(&truncated)
     .bind(domain)
@@ -41,7 +42,8 @@ pub async fn ensure_unique_username(pool: &PgPool, base: &str, domain: &str) -> 
     for i in 1u32..1000 {
         let candidate = format!("{truncated}{i}");
         if !sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM actors WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
+            "SELECT EXISTS(SELECT 1 FROM actors \
+             WHERE username = $1 AND domain = $2 AND is_local = TRUE)",
         )
         .bind(&candidate)
         .bind(domain)

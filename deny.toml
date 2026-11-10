@@ -59,9 +59,9 @@ allow = ["AGPL-3.0"]
 crate = "http-signature-normalization-reqwest"
 
 [bans]
-# `deny` with the accepted duplicates listed, rather than `warn`. At warn
-# level 32 duplicate findings scrolled past on every run and nothing read
-# them, so a new duplicate arrived invisibly. Each entry below skips the
+# `deny` with the accepted duplicates listed, rather than `warn`: at warn
+# level nothing reads the findings, so a new duplicate arrives unnoticed.
+# Each entry below skips the
 # older copy of a pair this workspace cannot currently collapse, and the
 # newest copy is deliberately left unskipped, so a third version fails.
 #

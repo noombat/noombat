@@ -550,7 +550,8 @@ fn decode_multibase_public_key(multibase: &str) -> Result<[u8; 32]> {
         &decoded
     } else {
         return Err(NoombatError::Internal(format!(
-            "Ed25519 public key has unexpected length {} (expected 32 or 34 with multicodec prefix)",
+            "Ed25519 public key has unexpected length {} \
+             (expected 32 or 34 with multicodec prefix)",
             decoded.len()
         )));
     };

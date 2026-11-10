@@ -131,8 +131,8 @@ mod tests {
 
     const MESSAGE: &[u8] = b"noombat FEP-8b32 integrity proof vector";
 
-    /// Signature over [`MESSAGE`], captured from ed25519-dalek 2.2.0
-    /// before the upgrade to 3.0.0.
+    /// Known-answer signature over [`MESSAGE`]. Ed25519 signing is
+    /// deterministic, so no ed25519-dalek release may change it.
     const SIGNATURE_HEX: &str = "2f788a1d4ebb5dd32ad41b5655dc8ca133cdf671d6e58b63616f75bfcdee9d6a\
                                  aa0378c61a157ad78e191f3a2dc76c1d8f0ecd605b769c6664c8b3ac3f8dba08";
 
