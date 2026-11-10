@@ -6,6 +6,10 @@
 # start (a dependency cycle, overlays that do not merge) fails here rather
 # than at `up` on a server. Each `${VAR:?}` gets a placeholder value.
 #
+# Then check the host ports production publishes. An overlay cannot take
+# away a port the base file publishes, because Compose merges port lists,
+# so a published port only shows up in the merged result.
+#
 # Usage:
 #   ./scripts/check-compose-config.sh
 
@@ -51,9 +55,25 @@ for combo in "${COMBOS[@]}"; do
     fi
 done
 
+# Caddy's HTTP and HTTPS, and the relay's SMTP, submission and IMAPS; the
+# application stays on the internal network, behind Caddy.
+expected="caddy:443 caddy:80 chatmail:25 chatmail:465 chatmail:993"
+published=$(docker compose -f compose.yml -f compose.prod.yml \
+        config --no-interpolate --format json |
+    python3 -c 'import json, sys
+for name, svc in json.load(sys.stdin)["services"].items():
+    for port in svc.get("ports", []):
+        print(name + ":" + str(port["published"]))' | sort | xargs)
+if [ "$published" = "$expected" ]; then
+    printf '  ok        production ports: %s\n' "$published"
+else
+    printf '  FAILED    production ports: %s (expected %s)\n' "$published" "$expected"
+    FAIL=1
+fi
+
 echo
 if [ "$FAIL" -eq 0 ]; then
-    echo "Every compose combination loads."
+    echo "Every compose combination loads, and production publishes only its ports."
     exit 0
 fi
 echo "Compose check FAILED." >&2

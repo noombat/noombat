@@ -41,7 +41,6 @@ services:
 
   noombat:
     restart: unless-stopped
-    ports: [] # Caddy handles external traffic.
     expose:
       - "8443"
     environment:

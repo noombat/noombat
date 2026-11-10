@@ -229,7 +229,7 @@ if [ "${FAILURES}" -eq 0 ]; then
     echo "     Noombat project allowlist, do so before inter-instance"
     echo "     messaging will function."
     echo "  2. Start the Compose stack:"
-    echo "     NOOMBAT_DOMAIN=<your_domain> docker compose up -d"
+    echo "     NOOMBAT_DOMAIN=<your_domain> docker compose -f compose.yml -f compose.prod.yml up -d"
     echo ""
     exit 0
 else

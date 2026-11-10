@@ -38,8 +38,10 @@ services:
       # its own relay: provisioning fails, actors.chatmail_addr stays
       # NULL, and the only trace is one server log line.
       NOOMBAT_EXTRA_CA_FILE: /etc/ssl/chatmail-ca/ca.crt
-    ports:
-      - "8443:8443"
+    # Not published: production reaches it through Caddy, and only
+    # compose.test.yml publishes it, on loopback.
+    expose:
+      - "8443"
     volumes:
       - chatmail-ca:/etc/ssl/chatmail-ca:ro
       # Uploaded media, when no object storage is configured. Named, or
