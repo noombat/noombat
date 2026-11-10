@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! SHA-256 body-digest computation for HTTP Signature verification.
+//! SHA-256 body-digest computation for HTTP Signatures.
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as BASE64;
@@ -8,7 +8,8 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 /// Compute the SHA-256 digest of a body, returned as a Base64 string.
 ///
 /// Used by the inbox handler to verify the `Digest` header of inbound
-/// requests independently of the HTTP Signature verification itself.
+/// requests independently of the HTTP Signature verification itself, and
+/// by delivery to produce that header for outbound ones.
 pub fn sha256(body: &[u8]) -> String {
     use sha2::Digest;
     let hash = sha2::Sha256::digest(body);

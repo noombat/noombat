@@ -14,9 +14,6 @@ unmaintained = "all"
 unsound = "workspace"
 yanked = "warn"
 ignore = [
-    # Marvin Attack (RSA timing side-channel). No patched version available.
-    # https://rustsec.org/advisories/RUSTSEC-2023-0071
-    "RUSTSEC-2023-0071",
     # Unmaintained, not vulnerable. Drop once an async-imap release stops pulling it.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils, via async-imap" },
 ]
@@ -85,14 +82,10 @@ skip = [
     { crate = "getrandom@0.3" },
     { crate = "hashbrown@0.14" },
     { crate = "hashbrown@0.16" },
-    { crate = "hmac@0.12" },
     { crate = "jsonwebtoken@10" },
     { crate = "num-bigint@0.4" },
     { crate = "r-efi@5" },
-    { crate = "rand@0.8" },
     { crate = "rand@0.9" },
-    { crate = "rand_chacha@0.3" },
-    { crate = "rand_core@0.6" },
     { crate = "rand_core@0.9" },
     { crate = "reqwest@0.12" },
     { crate = "sha1@0.10" },

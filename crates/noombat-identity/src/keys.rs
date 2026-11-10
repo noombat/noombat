@@ -8,7 +8,7 @@ use base64::engine::general_purpose::STANDARD as BASE64;
 use ed25519_dalek::SigningKey;
 use getrandom::SysRng;
 use getrandom::rand_core::UnwrapErr;
-use rsa::RsaPrivateKey;
+use rsa::PrivateKey;
 use rsa::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
 
 use noombat_core::error::{NoombatError, Result};
@@ -41,9 +41,9 @@ pub struct ActorKeypair {
 /// [`generate_keypair_async`] when calling from an async context to
 /// avoid blocking the Tokio worker thread.
 pub fn generate_rsa_keypair() -> Result<RsaKeypair> {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let bits = 2048;
-    let private_key = RsaPrivateKey::new(&mut rng, bits)
+    let private_key = PrivateKey::new(&mut rng, bits)
         .map_err(|e| NoombatError::Internal(format!("RSA key generation failed: {e}")))?;
 
     let private_pem = private_key
@@ -69,14 +69,8 @@ pub fn generate_rsa_keypair() -> Result<RsaKeypair> {
 /// `assertionMethod` property in the ActivityPub actor document
 /// (per FEP-521a).
 pub fn generate_ed25519_keypair() -> Result<Ed25519Keypair> {
-    // Entropy comes straight from the OS, not through `rand`.
-    //
-    // ed25519-dalek 3 requires an RNG implementing rand_core 0.10's
-    // `CryptoRng`. The workspace's `rand` is pinned at 0.8 because
-    // rsa 0.9 needs rand_core 0.6 for `generate_rsa_keypair` above, and
-    // one `rand` cannot satisfy both. `SysRng` is getrandom's direct
-    // interface to the operating system's CSPRNG, which is what a
-    // signing key must be seeded from.
+    // Entropy comes straight from the OS: `SysRng` is getrandom's direct
+    // interface to the operating system's CSPRNG.
     //
     // `UnwrapErr` turns the fallible `TryCryptoRng` into the infallible
     // `CryptoRng` the API wants, by panicking if the OS cannot provide

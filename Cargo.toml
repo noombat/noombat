@@ -75,21 +75,19 @@ anyhow = "1"
 # HTTP client.
 reqwest = { version = "0.13", default-features = false, features = ["rustls", "json", "form"] }
 
-# Cryptography.
-rsa = { version = "0.9", features = ["sha2"] }
+# Cryptography. HTTP Signatures are RSA PKCS#1 v1.5, which rsa gates
+# behind its `pkcs1v15` feature.
+rsa = { version = "0.10", features = ["pkcs1v15"] }
 ed25519-dalek = { version = "3", features = ["rand_core"] }
-sha2 = "0.10"
+sha2 = "0.11"
 base64 = "0.23"
-# `rand` stays at 0.8 because rsa 0.9 requires rand_core 0.6 for
-# `generate_rsa_keypair`. ed25519-dalek 3 wants rand_core 0.10, and the
-# two cannot be satisfied by one `rand`, so the Ed25519 path takes its
-# entropy straight from the OS via getrandom instead of through `rand`.
-rand = "0.8"
+rand = "0.10"
 getrandom = "0.4"
 
-# HTTP Signatures.
+# HTTP Signatures. No `sha-2` feature: its digest is sha2 0.10's type, so
+# `noombat-federation` supplies the body digest itself.
 http-signature-normalization = "0.7"
-http-signature-normalization-reqwest = { version = "0.14", default-features = false, features = ["sha-2", "default-spawner"] }
+http-signature-normalization-reqwest = { version = "0.14", default-features = false, features = ["digest", "default-spawner"] }
 
 # Types.
 uuid = { version = "1", features = ["v4", "serde"] }
@@ -148,7 +146,7 @@ governor = { version = "0.10", features = ["dashmap", "std"] }
 argon2 = "0.6"
 
 # HMAC-SHA256 for constant-time token comparison.
-hmac = "0.12"
+hmac = "0.13"
 
 # JWT (short-lived access tokens). Backend must match meilisearch-sdk's.
 jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
@@ -244,5 +242,8 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 [profile.dev.package.sqlx-macros]
 opt-level = 2
 
-[profile.dev.package.num-bigint-dig]
+[profile.dev.package.crypto-bigint]
+opt-level = 3
+
+[profile.dev.package.crypto-primes]
 opt-level = 3

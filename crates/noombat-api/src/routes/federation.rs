@@ -167,6 +167,39 @@ async fn shared_inbox_handler(
 
 // ..... SHARED VERIFICATION AND DISPATCH .....
 
+/// Longest public-key PEM accepted from a remote actor. rsa decodes the
+/// whole modulus before it checks the key's size, so the length is checked
+/// first and a hostile key of any size never reaches the parser. An
+/// 8192-bit key, the largest rsa accepts, is about 1.5 KiB.
+const MAX_REMOTE_KEY_PEM_BYTES: usize = 2048;
+
+fn parse_remote_public_key(pem: &str) -> Option<rsa::PublicKey> {
+    if pem.len() > MAX_REMOTE_KEY_PEM_BYTES {
+        return None;
+    }
+    rsa::PublicKey::from_public_key_pem(pem).ok()
+}
+
+/// Whether `signature_b64` is an `rsa-sha256` (RSA PKCS#1 v1.5 with SHA-256)
+/// signature of `signing_string` under the remote actor's key.
+fn rsa_sha256_verifies(public_key_pem: &str, signing_string: &str, signature_b64: &str) -> bool {
+    let Some(public_key) = parse_remote_public_key(public_key_pem) else {
+        return false;
+    };
+    let verifying_key = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
+
+    let Ok(sig_bytes) = BASE64.decode(signature_b64) else {
+        return false;
+    };
+    let Ok(signature) = rsa::pkcs1v15::Signature::try_from(sig_bytes.as_slice()) else {
+        return false;
+    };
+
+    verifying_key
+        .verify(signing_string.as_bytes(), &signature)
+        .is_ok()
+}
+
 /// Verify the HTTP Signature, body digest, domain restrictions, and
 /// per-domain rate limit for an inbound ActivityPub delivery, then
 /// dispatch the activity for processing.
@@ -292,19 +325,7 @@ async fn verify_and_process_inbound(
         let sig_str = signing_string.to_owned();
 
         tokio::task::block_in_place(move || {
-            let Ok(public_key) = rsa::RsaPublicKey::from_public_key_pem(&public_key_pem) else {
-                return false;
-            };
-            let verifying_key = rsa::pkcs1v15::VerifyingKey::<sha2::Sha256>::new(public_key);
-
-            let Ok(sig_bytes) = BASE64.decode(&sig_b64) else {
-                return false;
-            };
-            let Ok(signature) = rsa::pkcs1v15::Signature::try_from(sig_bytes.as_slice()) else {
-                return false;
-            };
-
-            verifying_key.verify(sig_str.as_bytes(), &signature).is_ok()
+            rsa_sha256_verifies(&public_key_pem, &sig_str, &sig_b64)
         })
     });
 
@@ -412,4 +433,108 @@ fn activity_addresses_local_actor(activity: &Activity, domain: &str) -> bool {
     }
 
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// An 8192-bit public key, the largest rsa accepts.
+    const RSA_8192_PUBLIC_PEM: &str = "\
+-----BEGIN PUBLIC KEY-----\n\
+MIIEIjANBgkqhkiG9w0BAQEFAAOCBA8AMIIECgKCBAEAnwsP9V+dnpAMJ6OdX6gA\n\
+1f6mdJgBZ7dyalXU7lpvJqwrSeugZFTAtK5qPBbS+0fzHh9qvqqhaF4vCfk8L8sG\n\
+0ISn0ZB2ftXdx3fRaglY1D8b7TkoN8vGIsj/LgGA/9fg2YXPtVa0ZyY+u+CSrBxv\n\
+OhRATXo6rPqUrslT+jpDVDjlc0+yvVmUKWDKxBRGqOVoYzjoyDCtuf7OXiCZ+AdX\n\
+xU7/7FV4hUsJmpXs2FscwwlTN3s5lr5UHrVrOzuqfqxtoMcrxzQnIyVUk1K7zytH\n\
+iOChNsjQIcwrQbriWz4WEud6Cea+LKjWngeIgUm/m3qStq+gOgveEOXOBhADBPWI\n\
+RUczREJKaB6kNy0XdXzHLvjrLvDvRKlq2Dam4sPcH1EvIIyJo3WIl9entIn/ldZE\n\
+7sS3S0U6pPuZghhK9YFRJWT2DNLQC/46/XlBKRec5Otm1jFXJGqnTKa9vxy4A5QJ\n\
+JxrIog2VjgY932zMA8nrtjHkmu7fnkwKVBKNhKo6aDaE4QuPMd+4KfxEYDQaG8P/\n\
+YZvL9muMyXQVMy0OakgciAr3aakifgXCWF9UGjb1a0L7icp05+PTkXpZv9gpZ4eP\n\
+upiZFLZD8zuou5iaJ3UjQAtvVMTs9KZuGwC3mkxkev7nyHQOORZTVufNWHV7unIB\n\
+lUbqTY8/DlIHCvz39+l4Ool9SDImvJANisv2QHZ1A3SVOdGVXivPn3nd/zm8B+9H\n\
+GUBGFbke6Elfbmf+/c/nUEqfgVVLXpA84AH1MmtBdL9montXg7E2u4jh0bIobROn\n\
+eZXr3CmYSom+Wd3VzNge3d0pKd7tICzSM+RaQYfFhtIu6yBTvaDGUdVeVJD6dIiK\n\
+XtVThNlAQcrdRYdnefdihosT6OppLXu/AXfr07kL1SraU9YiJ+FwsExdyCtbDAF3\n\
+7A7pY29tf7ypKULKERCt/hSjb6BxoGiHYZSeNd6dXDSvh74y7LjfTXU+2OH0LtD9\n\
+ZMfYfr3Yt8HJeo5HPo7Z4vLlQ2Ru/0t8nTJhGAIkf1S84Q5AogcNlFDbxFWHM1en\n\
+UIgpHQlKOVtXqvkNOwayM0wpPYV6uLeWVbTjQcGCPHAQtw9IaWm9lr9LWwbFdhQ1\n\
++vyd6wumNooLp5lTL+HWPbfLnlpw7yMUYPT9pPfd3a6Xp/0s0j3DeM0gdUtAT9op\n\
+18d/DGI28Mbb3n2/hNdP6SMHEZvdkcSvDXR2UmMKoE4P+kdYCOz6X+NOfKnsuoNy\n\
+CxUWRBhxe/HE1rd93i7nfJhCIvU4hmqAqY6p6e4JgdHqxR9Qm0GAhaT/2moTW6lz\n\
+119CixO/octXQknGsVL/YzLUdEZ+btPsCART3b1AaWyJFmjmO3pETlYOfIJ9KHoU\n\
+TQIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+
+    #[test]
+    fn the_largest_key_rsa_accepts_fits_the_bound() {
+        let crlf = RSA_8192_PUBLIC_PEM.replace('\n', "\r\n");
+        for pem in [RSA_8192_PUBLIC_PEM, crlf.as_str()] {
+            assert!(pem.len() <= MAX_REMOTE_KEY_PEM_BYTES);
+            assert!(parse_remote_public_key(pem).is_some());
+        }
+    }
+
+    #[test]
+    fn a_key_rsa_accepts_is_refused_past_the_bound() {
+        // PEM parsing skips text before the BEGIN line, so rsa alone
+        // accepts this key although it is longer than the bound.
+        let padded = format!(
+            "{}\n{RSA_8192_PUBLIC_PEM}",
+            "x".repeat(MAX_REMOTE_KEY_PEM_BYTES)
+        );
+        assert!(rsa::PublicKey::from_public_key_pem(&padded).is_ok());
+        assert!(parse_remote_public_key(&padded).is_none());
+    }
+
+    /// A 2048-bit public key, and an `rsa-sha256` signature made with its
+    /// private key over an HTTP Signatures signing string.
+    const KAT_PUBLIC_PEM: &str = "\
+-----BEGIN PUBLIC KEY-----\n\
+MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAzA5JmvFcGI29MS+obkz8\n\
+I1I44AMRgLB7BpA8Dan5iWef341ikpkQjXMFHEltkSXF4L7Xs+bDFHU9GAopKtLh\n\
+k/VoE7gXZGnhbEwDANbd8EVNI4BNUWXWa0EQkOXuq/QFLtA2sN+XkyKYeoCy/Bzh\n\
+fAFhex3f/OETVPP6Hl+5oWMxqhrMOZIFL+H+39E/GLz7ONsZ/hC5K4Gc1nKB5mGx\n\
+d3+zgL516mp8FQKg5aHFeH88UEsV/F2NUSespASkHtD3kwixSX8JeCa9GR03Q4aD\n\
+Vmqoe82XbjLpFtKJyMBv/U1urvjqsAzu79tBUuFG/8T6gzaoljX9QvpC6okD0Gnt\n\
+dwIDAQAB\n\
+-----END PUBLIC KEY-----\n";
+    const KAT_SIGNING_STRING: &str = "(request-target): post /users/alice/inbox\n\
+        host: remote.example\n\
+        date: Tue, 10 Nov 2026 00:00:00 GMT\n\
+        digest: SHA-256=47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=";
+    const KAT_SIGNATURE_B64: &str = "\
+        Jfqe+OlNrOKHpHIjvcE9WQyVDS1aS52SOe1TpGa7g3U7jkOhUJo6jOx5hcZa/oODUb+IrhFS\
+        qDpopUDl4dg5C7IKuio0z7kEl0N8ufbQn+WkfgfcqV+bJS26SgIluOw50P6DIlwovS7ATc1Z\
+        ZJa8iD4OWc86B5IocDI1eHGl1jTCCF0L3YRHtFOTPEXNre6DA6n/5jBY93XHTodcgG+zVsWb\
+        QnanywOq5vEMFUlu7MMgM0fJ3SBZ21CbzR537hYEt3dESwuFCgQBjJsxGGkelhvNnow+yCyr\
+        IIDkZCnGNnBBEqc+TXjokB0/sZBLnlNMg7Au67DoyVT5ou86dzm1Vg==";
+
+    #[test]
+    fn a_known_good_signature_verifies() {
+        assert!(rsa_sha256_verifies(
+            KAT_PUBLIC_PEM,
+            KAT_SIGNING_STRING,
+            KAT_SIGNATURE_B64
+        ));
+    }
+
+    #[test]
+    fn a_signature_verifies_only_for_its_own_string_and_bytes() {
+        let other = "(request-target): post /inbox";
+        assert!(!rsa_sha256_verifies(
+            KAT_PUBLIC_PEM,
+            other,
+            KAT_SIGNATURE_B64
+        ));
+        let mut tampered = BASE64.decode(KAT_SIGNATURE_B64).unwrap();
+        tampered[10] ^= 1;
+        let tampered = BASE64.encode(tampered);
+        assert!(!rsa_sha256_verifies(
+            KAT_PUBLIC_PEM,
+            KAT_SIGNING_STRING,
+            &tampered
+        ));
+    }
 }

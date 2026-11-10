@@ -10,7 +10,7 @@ pub fn generate_state_token() -> String {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
     let mut buf = [0u8; 24];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
+    rand::fill(&mut buf);
     URL_SAFE_NO_PAD.encode(buf)
 }
 

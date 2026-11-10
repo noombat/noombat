@@ -62,7 +62,7 @@ fn hash_token(token: &str) -> String {
 /// 32 bytes of randomness, hex encoded.
 fn mint_token() -> String {
     let mut buf = [0u8; 32];
-    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
+    rand::fill(&mut buf);
     buf.iter().map(|b| format!("{b:02x}")).collect()
 }
 

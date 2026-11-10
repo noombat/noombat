@@ -597,7 +597,7 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
 }
 
 fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    use hmac::Mac;
+    use hmac::{KeyInit, Mac};
     let mut mac =
         hmac::Hmac::<sha2::Sha256>::new_from_slice(key).expect("HMAC accepts a key of any length");
     mac.update(message);

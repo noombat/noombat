@@ -12,7 +12,6 @@ use http_signature_normalization_reqwest::prelude::*;
 use rsa::pkcs8::DecodePrivateKey;
 use rsa::signature::{SignatureEncoding, Signer};
 use serde_json::Value;
-use sha2::Digest as _;
 use sqlx::{FromRow, PgPool};
 use tokio::sync::Semaphore;
 use tokio::task::JoinSet;
@@ -38,7 +37,7 @@ struct SigningCredentials {
     key_id: String,
     /// Pre-parsed RSA private key (avoids redundant PEM parsing on
     /// every invocation of the signing closure).
-    private_key: rsa::RsaPrivateKey,
+    private_key: rsa::PrivateKey,
     /// The actor's AP identifier (used to derive the Ed25519
     /// verification method URI for integrity proofs).
     ap_id: String,
@@ -146,7 +145,7 @@ pub async fn process_queue(pool: &PgPool, http_client: &reqwest::Client) {
 
 /// Fetch the signing credentials for the sending actor.
 ///
-/// The PEM is parsed into an [`rsa::RsaPrivateKey`] here (once per
+/// The PEM is parsed into an [`rsa::PrivateKey`] here (once per
 /// delivery cycle) rather than inside the signing closure (which
 /// would re-parse on every invocation). The Ed25519 private key is
 /// decoded from Base64 for integrity proof attachment.
@@ -174,7 +173,7 @@ async fn fetch_signing_credentials(
     // Decrypt the RSA private key from the database.
     let private_key_pem = noombat_core::envelope::open_auto(&sealed_pem)?;
 
-    let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
+    let private_key = rsa::PrivateKey::from_pkcs8_pem(&private_key_pem).map_err(|e| {
         noombat_core::error::NoombatError::Internal(format!(
             "failed to parse private key for actor {}: {e}",
             row.0
@@ -222,6 +221,18 @@ fn signing_config() -> Config {
         .set_expiration(Duration::from_secs(30))
 }
 
+/// The `Digest` header of an outbound request: `SHA-256=` and the body's
+/// SHA-256 in Base64, computed as the inbox computes it for inbound ones.
+struct BodyDigest;
+
+impl DigestCreate for BodyDigest {
+    const NAME: &'static str = "SHA-256";
+
+    fn compute(&mut self, input: &[u8]) -> String {
+        crate::digest::sha256(input)
+    }
+}
+
 /// Sign a string with an RSA-SHA256 key (from PEM) and return the
 /// Base64-encoded signature.
 ///
@@ -232,7 +243,7 @@ pub fn rsa_sha256_sign(
     signing_string: &str,
     private_key_pem: &str,
 ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
-    let private_key = rsa::RsaPrivateKey::from_pkcs8_pem(private_key_pem)
+    let private_key = rsa::PrivateKey::from_pkcs8_pem(private_key_pem)
         .map_err(|e| -> Box<dyn std::error::Error + Send + Sync> { Box::new(e) })?;
     rsa_sha256_sign_with_key(signing_string, &private_key)
 }
@@ -245,10 +256,10 @@ pub fn rsa_sha256_sign(
 /// [`fetch_signing_credentials`] and reused across the signing closure.
 pub fn rsa_sha256_sign_with_key(
     signing_string: &str,
-    private_key: &rsa::RsaPrivateKey,
+    private_key: &rsa::PrivateKey,
 ) -> std::result::Result<String, Box<dyn std::error::Error + Send + Sync>> {
     let signing_key = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(private_key.clone());
-    let signature = signing_key.sign(signing_string.as_bytes());
+    let signature = signing_key.try_sign(signing_string.as_bytes())?;
     Ok(BASE64.encode(signature.to_bytes()))
 }
 
@@ -325,7 +336,7 @@ async fn deliver_one(pool: &PgPool, http_client: &reqwest::Client, row: Delivery
         .signature_with_digest(
             signing_config(),
             creds.key_id.clone(),
-            sha2::Sha256::new(),
+            BodyDigest,
             body,
             move |signing_string| rsa_sha256_sign_with_key(signing_string, &private_key),
         )
@@ -518,10 +529,33 @@ pub async fn run_worker(pool: PgPool, http_client: reqwest::Client, poll_interva
 
 /// Pure-polling fallback when PgListener is unavailable.
 async fn polling_fallback(pool: &PgPool, http_client: &reqwest::Client, interval: Duration) {
-    use rand::Rng as _;
     loop {
         process_queue(pool, http_client).await;
-        let jitter = rand::thread_rng().gen_range(0..=5);
+        let jitter = rand::random_range(0..=5);
         tokio::time::sleep(interval + Duration::from_secs(jitter)).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_digest_header_is_the_bodys_sha256_in_base64() {
+        let request = reqwest::Client::new()
+            .post("https://remote.example/inbox")
+            .signature_with_digest(
+                signing_config(),
+                "https://noombat.example/users/alice#main-key",
+                BodyDigest,
+                b"hello".to_vec(),
+                |_| Ok::<_, Box<dyn std::error::Error + Send + Sync>>("signature".to_owned()),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            request.headers()["Digest"],
+            "SHA-256=LPJNul+wow4m6DsqxbninhsWHlwfp0JecwQzYpOLmCQ="
+        );
     }
 }
