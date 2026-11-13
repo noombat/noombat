@@ -58,7 +58,7 @@ services:
         condition: service_started
 
   db:
-    image: docker.io/library/postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+    image: docker.io/library/postgres:18-alpine@sha256:1018733457011bf88d81db98cf43aac6d5150afc18787dbe204771fedf80ff95
     environment:
       POSTGRES_USER: noombat
       POSTGRES_PASSWORD: noombat
@@ -77,7 +77,7 @@ services:
       start_period: 10s
 
   redis:
-    image: docker.io/library/redis:8-alpine@sha256:becdda6c7f4b3fb42e42fd7f120bbf5c54c4caaaf16f26da24e4563d2c1f0576
+    image: docker.io/library/redis:8-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3
     volumes:
       - redis-data:/data
     # Present so that `docker compose up --wait` actually waits: a
@@ -90,7 +90,7 @@ services:
       retries: 10
 
   meilisearch:
-    image: docker.io/getmeili/meilisearch:v1.56@sha256:b7ba431bf6f9b26cc86132798f3640964147a699cf23f026b74c6c05dbb1d60d
+    image: docker.io/getmeili/meilisearch:v1.56@sha256:9600db22be3fcbf3d506176d3a73dd70a65c5719d9aa1d2837355b75afb8f4fb
     environment:
       MEILI_MASTER_KEY: ${MEILI_MASTER_KEY:-noombat-dev-key}
       # Development by default, production selected by compose.prod.yml,
@@ -107,7 +107,7 @@ services:
       # privacy-oriented network should not do by default. The CI
       # integration job already sets it; no compose file did.
       #
-      # Not conditional on MEILI_ENV: analytics/mod.rs branches only on
+      # Not conditional on MEILI_ENV: Meilisearch's analytics module branches only on
       # `opt.no_analytics`, and `Opt::analytics` is `!self.no_analytics`.
       # MEILI_ENV is reported as a field, never consulted as a gate.
       # Read in the meilisearch source at v1.52.0, which is the version

@@ -52,16 +52,11 @@ cd "$REPO_ROOT"
 # `file:image` entries that may be unpinned, each with the reason it is.
 # Remove an entry rather than editing it if the reason stops holding.
 ALLOWLIST_IMAGES="
-mcr.microsoft.com/playwright
 superseriousbusiness/gotosocial
 "
 
 allow_reason() {
     case "$1" in
-        mcr.microsoft.com/playwright)
-            echo "job container, must equal the @playwright/test version in tests/e2e;" \
-                "no ecosystem proposes it"
-            ;;
         superseriousbusiness/gotosocial)
             echo "floating on purpose in tests/interop/compose.latest.yml, which" \
                 "ci-interop-latest.yml runs on a schedule; pinned by digest in compose.yml" \

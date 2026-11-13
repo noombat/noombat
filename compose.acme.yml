@@ -31,7 +31,7 @@ services:
   pebble:
     # Pinned to the multi-arch index digest, not a per-platform manifest:
     # a platform digest would restrict this file to one architecture.
-    image: ghcr.io/letsencrypt/pebble:latest@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
     command: -config /pebble/config.json -dnsserver 127.0.0.11:53
     environment:
       # Issue on every request rather than Pebble's default of failing
@@ -48,7 +48,7 @@ services:
           - pebble
 
   caddy:
-    image: docker.io/library/caddy:2-alpine@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+    image: docker.io/library/caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     environment:
       NOOMBAT_DOMAIN: ${NOOMBAT_DOMAIN:-localhost}
       ACME_CA: https://pebble:14000/dir
