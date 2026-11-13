@@ -34,13 +34,22 @@ cd "$REPO_ROOT"
 
 export NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-noombat.test}"
 CHAT_DOMAIN="chat.${NOOMBAT_DOMAIN}"
-PEBBLE_IMAGE="ghcr.io/letsencrypt/pebble:latest@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199"
 PEBBLE_DIR="$REPO_ROOT/tests/acme/.pebble"
-COMPOSE=(docker compose -f compose.yml -f compose.acme.yml)
+# A project of its own, so the `down -v` below never removes the
+# development stack's volumes.
+COMPOSE=(docker compose -p noombat-cert-check -f compose.yml -f compose.acme.yml)
 
 say() { printf '  %s\n' "$*"; }
 fail() { printf '  FAIL: %s\n' "$*" >&2; FAILURES=$((FAILURES + 1)); }
 FAILURES=0
+
+# The image the stack runs Pebble from, so the CA extracted below is the one
+# it serves under.
+PEBBLE_IMAGE="$("${COMPOSE[@]}" config --images pebble 2>/dev/null)"
+if [ -z "$PEBBLE_IMAGE" ]; then
+    fail "compose names no image for the pebble service"
+    exit 1
+fi
 
 cleanup() {
     if [ -z "${KEEP:-}" ]; then
@@ -52,7 +61,7 @@ cleanup() {
         say "stack removed"
     else
         say "stack left up (KEEP is set); remove it with:"
-        say "  docker compose -f compose.yml -f compose.acme.yml down -v"
+        say "  docker compose -p noombat-cert-check -f compose.yml -f compose.acme.yml down -v"
     fi
 }
 trap cleanup EXIT
