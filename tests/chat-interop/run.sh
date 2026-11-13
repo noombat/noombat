@@ -12,6 +12,8 @@
 #   07 - 08. Auth page rendering (login, register).
 #   09 - 10. Closed federation checks (allowlisted domain, config).
 #   11 - 12. Chatmail provisioning and sending.
+#        13. Delivery, read back over IMAP.
+#        14. Plain text through the relay's filter.
 #
 # Usage:
 #   tests/chat-interop/seed.sh tests/chat-interop/compose.yml
@@ -50,6 +52,11 @@ SKIP=0
 pass() { PASS=$((PASS + 1)); printf "  \033[32mPASS\033[0m  %s\n" "$1"; }
 fail() { FAIL=$((FAIL + 1)); printf "  \033[31mFAIL\033[0m  %s\n" "$1"; }
 skip() { SKIP=$((SKIP + 1)); printf "  \033[33mSKIP\033[0m  %s\n" "$1"; }
+# A known defect is a check that fails while the defect stands. It is
+# reported without failing the run; once the defect is fixed the check
+# fails the run instead, and is turned into a plain pass or fail.
+KNOWN=0
+known() { KNOWN=$((KNOWN + 1)); printf "  \033[35mKNOWN\033[0m %s\n" "$1"; }
 
 # Generate a mock auth_key (64 hex chars). In CI this would use the
 # real PBKDF2+HKDF derivation; for the shell test, a deterministic
@@ -385,14 +392,33 @@ else
     "$(dirname "$0")/squat-probe.py" localhost 993 "bob@${CHATMAIL_DOMAIN}" "attacker-chosen" \
       > /dev/null 2>&1 || true
 
-    PROVISION_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' -X POST \
+    BOB_PROV=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
       -H "Cookie: noombat_session=${BOB_TOKEN}" \
-      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROVISION_CODE="000"
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || BOB_PROV=""
+    PROVISION_CODE=$(printf '%s' "$BOB_PROV" | tail -n1)
+    [ -n "$PROVISION_CODE" ] || PROVISION_CODE="000"
+    BOB_CHATMAIL_PASSWORD=$(printf '%s' "$BOB_PROV" \
+      | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
     if [ "$PROVISION_CODE" = "200" ]; then
         pass "A squat attempt does not stop the real user provisioning"
     else
         fail "bob could not provision after a squat attempt (HTTP $PROVISION_CODE)"
     fi
+fi
+
+# 12 to 14 send a real OpenPGP message, encrypted with gpg to a key made
+# for bob, so that sending does not depend on what the relay's filter
+# lets through, and read bob's mailbox over IMAP as his mail client would.
+WORK=""
+if command -v gpg >/dev/null 2>&1; then
+    WORK=$(mktemp -d)
+    export GNUPGHOME="$WORK/gnupg"
+    mkdir -m 700 "$GNUPGHOME"
+    gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+      --quick-gen-key "bob@${CHATMAIL_DOMAIN}" default default never 2>/dev/null
+    printf 'noombat chat interop: delivered and encrypted' > "$WORK/plain"
+    gpg --batch --quiet --trust-model always --output "$WORK/cipher" \
+      --encrypt --recipient "bob@${CHATMAIL_DOMAIN}" "$WORK/plain" 2>/dev/null
 fi
 
 # 12. Sending, which is the only assertion that leaves over SMTP.
@@ -405,26 +431,82 @@ fi
 # bob's mailbox already exists: the account-creation section above
 # provisions him, after squatting his address, so this call is a no-op
 # that returns "chat already provisioned" and is ignored.
-if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "$ALICE_CHATMAIL_PASSWORD" ]; then
+SENT=no
+if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
     curl $CURL_OPTS -s -o /dev/null -X POST \
       -H "Cookie: noombat_session=${BOB_TOKEN}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null || true
 
     if ! command -v python3 >/dev/null 2>&1; then
         skip "Chat send: python3 is needed to drive the relay WebSocket"
+    elif [ -z "$WORK" ] || [ ! -s "$WORK/cipher" ]; then
+        skip "Chat send: gpg is needed to encrypt the message"
     else
         SEND_OUT=$("$(dirname "$0")/send-probe.py" \
           "$NOOMBAT" "$ALICE_TOKEN" "$ALICE_CHATMAIL_PASSWORD" \
-          "bob@${CHATMAIL_DOMAIN}" 2>&1)
+          "bob@${CHATMAIL_DOMAIN}" "$WORK/cipher" 2>&1)
         SEND_CODE=$?
         if [ "$SEND_CODE" = "0" ]; then
             pass "Message sent to bob@${CHATMAIL_DOMAIN} over SMTP"
+            SENT=yes
         else
             fail "Sending to bob@${CHATMAIL_DOMAIN} failed: $SEND_OUT"
         fi
     fi
 else
     skip "Chat send: no token or no provisioned credential"
+fi
+
+# 13. Delivery, as bob's mail client sees it.
+#
+# "sent" is the relay accepting a submission, which says nothing about
+# delivery. Known defect: Dovecot checks that a recipient exists by asking
+# the checkpassword helper with no password, the helper refuses any empty
+# password, and so every delivery is deferred and no mailbox receives mail.
+if [ "$SENT" != yes ]; then
+    skip "Delivery: nothing was sent"
+elif [ -z "${BOB_CHATMAIL_PASSWORD:-}" ]; then
+    skip "Delivery: bob has no provisioned credential"
+else
+    "$(dirname "$0")/fetch-probe.py" localhost 993 "bob@${CHATMAIL_DOMAIN}" \
+      "$BOB_CHATMAIL_PASSWORD" "alice@${CHATMAIL_DOMAIN}" 1 \
+      > "$WORK/payloads" 2>"$WORK/fetch-errors"
+    FETCH_CODE=$?
+    if [ "$FETCH_CODE" = "2" ]; then
+        fail "Delivery: could not read bob's mailbox: $(cat "$WORK/fetch-errors")"
+    elif grep -qxF "$(base64 -w0 < "$WORK/cipher")" "$WORK/payloads"; then
+        fail "alice's message reached bob: the delivery defect is fixed, make this check plain"
+        if gpg --batch --quiet --decrypt "$WORK/cipher" 2>/dev/null \
+             | cmp -s - "$WORK/plain"; then
+            pass "The message bob received is OpenPGP that his key opens"
+        else
+            fail "bob's key does not open the message he received"
+        fi
+    else
+        known "alice's message never reached bob's mailbox: every delivery is deferred"
+    fi
+fi
+
+# 14. The relay's filter and plain text.
+#
+# Known defect: the filter accepts any multipart/encrypted part, and the
+# server wraps every body in one, so plain text is accepted as if it were
+# encrypted.
+if [ -z "$ALICE_TOKEN" ] || [ -z "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
+    skip "Plain text: no token or no provisioned credential"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "Plain text: python3 is needed to drive the relay WebSocket"
+elif "$(dirname "$0")/send-probe.py" "$NOOMBAT" "$ALICE_TOKEN" "$ALICE_CHATMAIL_PASSWORD" \
+       "bob@${CHATMAIL_DOMAIN}" > /dev/null 2>&1; then
+    known "The relay accepted a plain-text body as if it were OpenPGP"
+else
+    fail "The relay refused plain text: the filter defect is fixed, make this check plain"
+fi
+
+if [ -n "$WORK" ]; then
+    gpgconf --kill gpg-agent 2>/dev/null || true
+    rm -rf "$WORK"
+    unset GNUPGHOME
 fi
 
 # ..... Summary .....
@@ -437,6 +519,9 @@ if [ "$FAIL" -gt 0 ]; then
 fi
 if [ "$SKIP" -gt 0 ]; then
     printf ", \033[33m%d skipped\033[0m" "$SKIP"
+fi
+if [ "$KNOWN" -gt 0 ]; then
+    printf ", \033[35m%d known defect(s)\033[0m" "$KNOWN"
 fi
 echo ""
 echo "=============================="

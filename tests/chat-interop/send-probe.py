@@ -4,7 +4,7 @@
 
 """Send one chat message over the relay WebSocket and report the outcome.
 
-Usage: send-probe.py BASE_URL SESSION_TOKEN CHATMAIL_PASSWORD RECIPIENT
+Usage: send-probe.py BASE_URL SESSION_TOKEN CHATMAIL_PASSWORD RECIPIENT [BODY_FILE]
 Exit 0 when the server confirms the send, 1 otherwise.
 
 Sending is the only part of the Chatmail integration that leaves over
@@ -129,10 +129,15 @@ def await_type(frames, wanted):
 
 
 def main():
-    if len(sys.argv) != 5:
+    if len(sys.argv) not in (5, 6):
         print(__doc__.splitlines()[2], file=sys.stderr)
         return 2
-    base, token, password, recipient = sys.argv[1:]
+    base, token, password, recipient = sys.argv[1:5]
+    if len(sys.argv) == 6:
+        with open(sys.argv[5], "rb") as body_file:
+            body_bytes = body_file.read()
+    else:
+        body_bytes = b"noombat chat interop probe"
 
     url = urlparse(base)
     if url.scheme != "http":
@@ -148,8 +153,8 @@ def main():
         send_text(sock, json.dumps({"type": "auth", "password": password}))
         await_type(frames, "ready")
 
-        # The body is opaque to the relay, which forwards ciphertext.
-        body = base64.b64encode(b"noombat chat interop probe").decode()
+        # The body is opaque to the server, which wraps it as PGP/MIME.
+        body = base64.b64encode(body_bytes).decode()
         send_text(sock, json.dumps({"type": "send", "to": recipient, "body_b64": body}))
         confirmed = await_type(frames, "sent")
 
