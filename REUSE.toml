@@ -48,7 +48,6 @@ path = [
     "tests/e2e/package.json",
     "tests/e2e/tsconfig.json",
     "tests/e2e/pnpm-lock.yaml",
-    "tests/acme/pebble-config.json",
     # Documentation (all Markdown files).
     "**/*.md",
     "docs/**",
@@ -109,3 +108,14 @@ SPDX-FileCopyrightText = "2020 The JetBrains Mono Project Authors (https://githu
 path = ["frontend/src/fonts/STIXTwoMath-Regular.woff2"]
 SPDX-License-Identifier = "OFL-1.1"
 SPDX-FileCopyrightText = "2001-2021 The STIX Fonts Project Authors (https://github.com/stipub/stixfonts), with Reserved Font Name \"TM Math\""
+
+# Pebble's own test/config/pebble-config.json (v2.10.3), cut down: the
+# two ports changed and the trailing keys dropped. MPL-2.0 is file-level
+# copyleft, so the adapted file stays under it.
+[[annotations]]
+path = ["tests/acme/pebble-config.json"]
+SPDX-License-Identifier = "MPL-2.0"
+SPDX-FileCopyrightText = [
+    "2016 Internet Security Research Group and the Pebble contributors (https://github.com/letsencrypt/pebble)",
+    "2026 Gabriel Henrique Lopes Gomes Alves Nunes",
+]
