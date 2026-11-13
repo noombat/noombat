@@ -1,0 +1,10 @@
+[package]
+name = "noombat-openpgp"
+version = "0.1.0"
+edition.workspace = true
+license = "AGPL-3.0-or-later"
+repository.workspace = true
+description = "Whether a message is OpenPGP-encrypted and nothing else."
+
+[dependencies]
+base64 = { workspace = true }

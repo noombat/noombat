@@ -39,6 +39,7 @@
   -o smtpd_tls_wrappermode=yes
   -o smtpd_sasl_auth_enable=yes
   -o smtpd_client_restrictions=permit_sasl_authenticated,reject
+  -o smtpd_sender_restrictions=$noombat_submission_sender_restrictions
   -o smtpd_proxy_filter=127.0.0.1:10026
   -o smtpd_milters=
 
@@ -54,7 +55,8 @@
 127.0.0.1:10025 inet  n  -       n       -       -       smtpd
   -o syslog_name=postfix/reinject
   -o smtpd_proxy_filter=
-  -o receive_override_options=no_unknown_recipient_checks,no_header_body_checks
+  -o receive_override_options=no_unknown_recipient_checks
+  -o cleanup_service_name=submission_cleanup
   -o smtpd_helo_restrictions=
   -o smtpd_client_restrictions=
   -o smtpd_sender_restrictions=
@@ -62,9 +64,15 @@
   -o mynetworks=127.0.0.0/8
   -o smtpd_authorized_xforward_hosts=127.0.0.0/8
 
-# The incoming re-injection listener. Identical to the one above except
-# for the milter: this one verifies the peer's signature and refuses
-# what does not check out, and holds no key of its own.
+# Members' mail only, from the listener above: its Subject is replaced
+# and the headers naming their client are dropped, before signing.
+submission_cleanup unix n  -       n       -       0       cleanup
+  -o header_checks=regexp:/etc/postfix/noombat_submission_header_cleanup
+
+# The incoming re-injection listener. Like the outgoing one except for
+# the milter, which here verifies the peer's signature and refuses what
+# does not check out, holding no key of its own, and for the header
+# cleanup, which is for members' mail only.
 127.0.0.1:10028 inet  n  -       n       -       -       smtpd
   -o syslog_name=postfix/reinject-in
   -o smtpd_proxy_filter=

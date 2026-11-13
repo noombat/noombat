@@ -153,7 +153,8 @@ def main():
         send_text(sock, json.dumps({"type": "auth", "password": password}))
         await_type(frames, "ready")
 
-        # The body is opaque to the server, which wraps it as PGP/MIME.
+        # The server refuses a body that is not OpenPGP, and otherwise
+        # armours it and wraps it as PGP/MIME.
         body = base64.b64encode(body_bytes).decode()
         send_text(sock, json.dumps({"type": "send", "to": recipient, "body_b64": body}))
         confirmed = await_type(frames, "sent")

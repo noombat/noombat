@@ -1,0 +1,6 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+#
+# smtpd_sender_login_maps: every address is owned by the login of the same
+# name, so a member sends only as the address they log in as.
+/^(.*)$/	${1}

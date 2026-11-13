@@ -2448,6 +2448,7 @@ dependencies = [
  "lettre",
  "mailparse",
  "noombat-core",
+ "noombat-openpgp",
  "rand 0.10.3",
  "reqwest 0.13.5",
  "rustls",
@@ -2472,6 +2473,7 @@ dependencies = [
  "base64 0.23.1",
  "hmac",
  "mailparse",
+ "noombat-openpgp",
  "rand 0.10.3",
  "rustls",
  "serde",
@@ -2604,6 +2606,13 @@ dependencies = [
  "pulldown-cmark",
  "regex",
  "tokio",
+]
+
+[[package]]
+name = "noombat-openpgp"
+version = "0.1.0"
+dependencies = [
+ "base64 0.23.1",
 ]
 
 [[package]]

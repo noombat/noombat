@@ -32,9 +32,11 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::net::{TcpListener, TcpStream};
 use std::process::ExitCode;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
+
+use mailparse::MailHeaderMap as _;
 
 /// Where Postfix's smtpd connects, one listener per direction.
 ///
@@ -173,7 +175,21 @@ impl RateLimiter {
     }
 }
 
+/// This relay's own mail domain, lowercased, from `MAIL_DOMAIN`.
+static LOCAL_DOMAIN: OnceLock<String> = OnceLock::new();
+
+/// Empty when `MAIL_DOMAIN` is unset, which leaves no address local.
+fn local_domain() -> &'static str {
+    LOCAL_DOMAIN.get().map(String::as_str).unwrap_or("")
+}
+
 fn main() -> ExitCode {
+    let domain = std::env::var("MAIL_DOMAIN").unwrap_or_default();
+    if domain.is_empty() {
+        eprintln!("filtermail: MAIL_DOMAIN is unset, so no address counts as this relay's own");
+    }
+    let _ = LOCAL_DOMAIN.set(domain.to_ascii_lowercase());
+
     let outgoing = std::env::var("FILTERMAIL_OUTGOING_LISTEN")
         .unwrap_or_else(|_| DEFAULT_OUTGOING_LISTEN.to_string());
     let incoming = std::env::var("FILTERMAIL_INCOMING_LISTEN")
@@ -532,7 +548,12 @@ fn converse(
                     Body::Message(raw) => raw,
                 };
 
-                match inspect(mode, &raw, envelope.mail_from.as_deref().unwrap_or("")) {
+                match inspect(
+                    mode,
+                    &raw,
+                    envelope.mail_from.as_deref().unwrap_or(""),
+                    &envelope.recipients,
+                ) {
                     Verdict::Refuse(reply) => {
                         eprintln!(
                             "filtermail: {} refusing a message from {}: {reply}",
@@ -639,7 +660,7 @@ enum Verdict {
 }
 
 /// Every content check, in one place, so the order is visible.
-fn inspect(mode: Mode, raw: &[u8], mail_from: &str) -> Verdict {
+fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Verdict {
     let parsed = match mailparse::parse_mail(raw) {
         Ok(p) => p,
         // Unparseable is refused rather than passed on: the encryption
@@ -648,7 +669,15 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str) -> Verdict {
         Err(_) => return Verdict::Refuse(REJECT_REPLY.to_string()),
     };
 
-    if !is_encrypted_part(&parsed) {
+    // Postfix ties a member's sender address to their login, but an empty
+    // sender has no address to tie, and a member's mail always has one.
+    if matches!(mode, Mode::Outgoing) && !mail_from.contains('@') {
+        return Verdict::Refuse(
+            "550 5.7.1 a member's mail must name the member as sender".to_string(),
+        );
+    }
+
+    if !is_carried(mode, &parsed, recipients) {
         return Verdict::Refuse(REJECT_REPLY.to_string());
     }
 
@@ -684,8 +713,9 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str) -> Verdict {
             //
             // Alignment alone proves nothing, because anyone can write
             // a `DKIM-Signature` header with any `d=`. It is worth
-            // having only once OpenDKIM is set to reject what does not
-            // verify, and that is not yet configured.
+            // having because OpenDKIM, on the listener behind this one,
+            // is set to reject unsigned mail and bad signatures
+            // (`opendkim-verify.conf`).
             if let (Some(from_domain), Some(signing_domain)) =
                 (from.as_deref().and_then(domain_of), dkim_domain(&parsed))
                 && from_domain != signing_domain
@@ -895,157 +925,495 @@ fn trim_eol(line: &[u8]) -> &[u8] {
     &line[..end]
 }
 
-/// Pull the address out of `MAIL FROM:<a@b>` or `RCPT TO:<a@b>`, for
-/// the log line on refusal. Best effort: nothing depends on it.
+/// Pull the address out of `MAIL FROM:<a@b>` or `RCPT TO:<a@b>`: from the
+/// first `<` to the first `>` after it, so a parameter such as
+/// `ENVID=<x@y>` cannot become the address. The envelope it builds feeds
+/// the rate limit, the refusal's log line, the null-sender check and the
+/// setup-message exemption.
 fn address_of(command: &str) -> String {
-    match (command.find('<'), command.rfind('>')) {
-        (Some(open), Some(close)) if close > open => command[open + 1..close].to_string(),
-        _ => command
+    let bracketed = command.find('<').and_then(|open| {
+        let rest = &command[open + 1..];
+        rest.find('>').map(|close| &rest[..close])
+    });
+    match bracketed {
+        Some(address) => address.to_string(),
+        None => command
             .split_once(':')
             .map(|(_, rest)| rest.trim().to_string())
             .unwrap_or_default(),
     }
 }
 
-/// Whether an armoured PGP block starts and ends at a line boundary.
-///
-/// RFC 4880 puts both markers on lines of their own, so requiring a
-/// line start is what separates a real armoured message from the same
-/// characters quoted inside running text, and requiring the closing
-/// marker too rules out a fragment of a forwarded mail.
-fn has_pgp_armour(body: &[u8]) -> bool {
-    fn at_line_start(haystack: &[u8], needle: &[u8]) -> bool {
-        haystack
-            .windows(needle.len())
-            .enumerate()
-            .any(|(i, w)| w == needle && (i == 0 || haystack[i - 1] == b'\n'))
+/// Whether the message may cross the relay: PGP/MIME around an encrypted
+/// OpenPGP message and nothing else, or one of the few plain messages a
+/// Chatmail relay also carries.
+fn is_carried(mode: Mode, parsed: &mailparse::ParsedMail<'_>, recipients: &[String]) -> bool {
+    if is_pgp_mime(mode, parsed) || is_securejoin_request(parsed) {
+        return true;
     }
-
-    at_line_start(body, b"-----BEGIN PGP MESSAGE-----")
-        && at_line_start(body, b"-----END PGP MESSAGE-----")
+    match mode {
+        Mode::Outgoing => is_own_setup_message(parsed, recipients),
+        Mode::Incoming => is_delivery_report(parsed),
+    }
 }
 
-/// Recursively check whether a MIME part (or any of its subparts)
-/// is PGP-encrypted.
-fn is_encrypted_part(part: &mailparse::ParsedMail<'_>) -> bool {
-    let content_type = part
-        .headers
-        .iter()
-        .find(|h| h.get_key().eq_ignore_ascii_case("content-type"))
-        .map(|h| h.get_value())
-        .unwrap_or_default()
-        .to_ascii_lowercase();
+/// RFC 3156, exactly: `multipart/encrypted` holding a `Version: 1` control
+/// part and one `application/octet-stream` part, whose content is an
+/// encrypted OpenPGP message and nothing else. Armour may carry a
+/// `Version:` header only on mail arriving from elsewhere.
+fn is_pgp_mime(mode: Mode, parsed: &mailparse::ParsedMail<'_>) -> bool {
+    let [control, payload] = parsed.subparts.as_slice() else {
+        return false;
+    };
+    parsed
+        .ctype
+        .mimetype
+        .eq_ignore_ascii_case("multipart/encrypted")
+        && control.subparts.is_empty()
+        && payload.subparts.is_empty()
+        && control
+            .ctype
+            .mimetype
+            .eq_ignore_ascii_case("application/pgp-encrypted")
+        && control
+            .get_body()
+            .is_ok_and(|body| body.trim() == "Version: 1")
+        && payload
+            .ctype
+            .mimetype
+            .eq_ignore_ascii_case("application/octet-stream")
+        && payload.get_body_raw().is_ok_and(|body| {
+            noombat_openpgp::is_encrypted_armour(&body, matches!(mode, Mode::Incoming))
+        })
+        && only_part_headers(control, &CONTROL_DESCRIPTIONS)
+        && only_part_headers(payload, &PAYLOAD_DESCRIPTIONS)
+        && nothing_beside_the_parts(parsed)
+}
 
-    // PGP/MIME: multipart/encrypted with the OpenPGP protocol.
-    if content_type.contains("multipart/encrypted")
-        && content_type.contains("application/pgp-encrypted")
-    {
-        return true;
-    }
+/// The headers a PGP/MIME part may carry: any other is text beside the
+/// ciphertext.
+const PART_HEADERS: [&str; 4] = [
+    "content-type",
+    "content-transfer-encoding",
+    "content-description",
+    "content-disposition",
+];
 
-    // Inline PGP: an armour block in this part's own body.
-    if let Ok(body) = part.get_body_raw()
-        && has_pgp_armour(&body)
-    {
-        return true;
-    }
+/// The `Content-Description` wordings clients write on each part.
+const CONTROL_DESCRIPTIONS: [&str; 2] = [
+    "PGP/MIME version identification",
+    "PGP/MIME Versions Identification",
+];
+const PAYLOAD_DESCRIPTIONS: [&str; 1] = ["OpenPGP encrypted message"];
 
-    // Autocrypt Setup Message: application/autocrypt-setup part.
-    if content_type.contains("application/autocrypt-setup") {
-        return true;
-    }
+fn only_part_headers(part: &mailparse::ParsedMail<'_>, descriptions: &[&str]) -> bool {
+    part.headers.iter().all(|header| {
+        let name = header.get_key().to_ascii_lowercase();
+        PART_HEADERS.contains(&name.as_str())
+            && (name != "content-description"
+                || descriptions
+                    .iter()
+                    .any(|wording| header.get_value().trim().eq_ignore_ascii_case(wording)))
+    })
+}
 
-    // Recurse into subparts (handles multipart/mixed with an
-    // inline-PGP text/plain subpart, among other structures).
-    for subpart in &part.subparts {
-        if is_encrypted_part(subpart) {
-            return true;
+/// Whether nothing follows or sits beside the parts: no epilogue, and
+/// boundary lines with nothing after them but the closing `--` and the
+/// white space RFC 2046 allows. A preamble passes, as on other Chatmail
+/// relays, because Thunderbird writes a fixed sentence there. mailparse
+/// reads a line that merely starts with the boundary as one and skips the
+/// rest of it, so the raw lines are checked here.
+fn nothing_beside_the_parts(parsed: &mailparse::ParsedMail<'_>) -> bool {
+    let Some(boundary) = parsed.ctype.params.get("boundary") else {
+        return false;
+    };
+    let delimiter = format!("--{boundary}");
+    let mut closed = false;
+    for line in parsed.raw_bytes.split(|&byte| byte == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if closed {
+            if !line.iter().all(u8::is_ascii_whitespace) {
+                return false;
+            }
+        } else if let Some(rest) = line.strip_prefix(delimiter.as_bytes()) {
+            let rest = match rest.strip_prefix(b"--") {
+                Some(after) => {
+                    closed = true;
+                    after
+                }
+                None => rest,
+            };
+            if !rest.iter().all(|&byte| byte == b' ' || byte == b'\t') {
+                return false;
+            }
         }
     }
+    closed
+}
 
-    false
+/// A SecureJoin request, which a Delta Chat client sends before it holds
+/// the other side's key: one `text/plain` part naming the request and
+/// nothing more.
+fn is_securejoin_request(parsed: &mailparse::ParsedMail<'_>) -> bool {
+    let Some(kind) = parsed.headers.get_first_value("Secure-Join") else {
+        return false;
+    };
+    if kind != "vc-request" && kind != "vg-request" {
+        return false;
+    }
+    let [part] = parsed.subparts.as_slice() else {
+        return false;
+    };
+    part.subparts.is_empty()
+        && part.ctype.mimetype.eq_ignore_ascii_case("text/plain")
+        && part
+            .get_body()
+            .is_ok_and(|body| body.trim().to_lowercase() == format!("secure-join: {kind}"))
+}
+
+/// An Autocrypt Setup Message a member sends to their own address on this
+/// relay, which carries their secret key encrypted under a passphrase.
+/// Outside this relay's domain it would be plain text leaving for anyone.
+fn is_own_setup_message(parsed: &mailparse::ParsedMail<'_>, recipients: &[String]) -> bool {
+    let [recipient] = recipients else {
+        return false;
+    };
+    let local = local_domain();
+    !local.is_empty()
+        && domain_of(recipient).is_some_and(|domain| domain == local)
+        && header_address(parsed, "from").is_some_and(|from| from.eq_ignore_ascii_case(recipient))
+        && parsed.headers.get_first_value("Subject").as_deref() == Some("Autocrypt Setup Message")
+        && parsed
+            .ctype
+            .mimetype
+            .eq_ignore_ascii_case("multipart/mixed")
+}
+
+/// A delivery report from another server's mailer daemon, which has no
+/// key to encrypt with.
+fn is_delivery_report(parsed: &mailparse::ParsedMail<'_>) -> bool {
+    parsed
+        .headers
+        .get_first_value("Auto-Submitted")
+        .is_some_and(|value| !value.is_empty())
+        && header_address(parsed, "from").is_some_and(|from| from.starts_with("mailer-daemon@"))
+        && parsed
+            .ctype
+            .mimetype
+            .eq_ignore_ascii_case("multipart/report")
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// The whole-message form of the encryption decision. Production
-    /// parses once in `inspect` and calls `is_encrypted_part`; these
-    /// tests are about the decision rather than the parse.
-    fn is_encrypted(raw: &[u8]) -> bool {
-        mailparse::parse_mail(raw)
-            .map(|parsed| is_encrypted_part(&parsed))
-            .unwrap_or(false)
-    }
     use std::io::Cursor;
     use std::net::{Shutdown, TcpListener};
     use std::sync::mpsc;
 
     // ..... THE ENCRYPTION DECISION .....
 
+    // A real OpenPGP message, made with GnuPG 2.4.8 for a throwaway key:
+    // a public-key session key, then the encrypted data.
+    const ARMOURED: &str = "-----BEGIN PGP MESSAGE-----
+
+hF4D5gR+wRuO+a0SAQdAkzTkDA6L+XZ47GvWXl0qDJJskcaDQ6iML7xon5M9UVEw
+HbLADjGpItcxPP5bZ6DVMiHCE6ThuyA74SLmX2/0jmUn0MuYxbTgq9W/ucx9bhnO
+0k4BXD3fX6pXDIXLbd33/VqHjKPDiJG+eclwQjojzTXbMEOYdzHhDWjcH+hBtYRN
+z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=
+=rS9G
+-----END PGP MESSAGE-----";
+
+    /// PGP/MIME around `payload`, with `eol` line endings.
+    fn pgp_mime_around(payload: &str, eol: &str) -> String {
+        [
+            "Content-Type: multipart/encrypted; \
+             protocol=\"application/pgp-encrypted\"; boundary=b",
+            "",
+            "--b",
+            "Content-Type: application/pgp-encrypted",
+            "",
+            "Version: 1",
+            "--b",
+            "Content-Type: application/octet-stream",
+            "",
+            payload,
+            "--b--",
+            "",
+        ]
+        .join(eol)
+    }
+
+    fn pgp_mime(eol: &str) -> String {
+        pgp_mime_around(&ARMOURED.replace('\n', eol), eol)
+    }
+
+    /// The decision alone, for a message from `a@chat.example` to
+    /// `b@chat.example`.
+    fn carried(mode: Mode, headers: &str, body: &str) -> bool {
+        let raw = format!("From: <a@chat.example>\r\nTo: <b@chat.example>\r\n{headers}{body}");
+        mailparse::parse_mail(raw.as_bytes())
+            .is_ok_and(|parsed| is_carried(mode, &parsed, &["b@chat.example".to_owned()]))
+    }
+
+    const BOTH: [Mode; 2] = [Mode::Outgoing, Mode::Incoming];
+
     #[test]
-    fn pgp_mime_is_encrypted() {
-        let raw = b"Content-Type: multipart/encrypted; \
-                     protocol=\"application/pgp-encrypted\"; boundary=abc\r\n\
-                     \r\n\
-                     --abc\r\n\
-                     Content-Type: application/pgp-encrypted\r\n\
-                     \r\n\
-                     Version: 1\r\n\
-                     \r\n\
-                     --abc--\r\n";
-        assert!(is_encrypted(raw));
+    fn pgp_mime_around_a_real_message_is_carried() {
+        for mode in BOTH {
+            assert!(carried(mode, "", &pgp_mime("\r\n")), "{}", mode.label());
+            assert!(carried(mode, "", &pgp_mime("\n")), "{}", mode.label());
+        }
     }
 
     #[test]
-    fn inline_pgp_is_encrypted() {
-        let raw = b"Content-Type: text/plain\r\n\
-                     \r\n\
-                     -----BEGIN PGP MESSAGE-----\r\n\
-                     abcdef\r\n\
-                     -----END PGP MESSAGE-----\r\n";
-        assert!(is_encrypted(raw));
+    fn raw_packets_are_refused_even_in_base64() {
+        // Real ciphertext, unarmoured: Chatmail relays read only armour.
+        let packets = "hF4D5gR+wRuO+a0SAQdAkzTkDA6L+XZ47GvWXl0qDJJskcaDQ6iML7xon5M9UVEw\r\n\
+                       HbLADjGpItcxPP5bZ6DVMiHCE6ThuyA74SLmX2/0jmUn0MuYxbTgq9W/ucx9bhnO\r\n\
+                       0k4BXD3fX6pXDIXLbd33/VqHjKPDiJG+eclwQjojzTXbMEOYdzHhDWjcH+hBtYRN\r\n\
+                       z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=";
+        let body = pgp_mime_around(packets, "\r\n").replace(
+            "Content-Type: application/octet-stream\r\n",
+            "Content-Type: application/octet-stream\r\nContent-Transfer-Encoding: base64\r\n",
+        );
+        for mode in BOTH {
+            assert!(!carried(mode, "", &body), "{}", mode.label());
+        }
     }
 
     #[test]
-    fn autocrypt_setup_is_accepted() {
-        let raw = b"Content-Type: multipart/mixed; boundary=b\r\n\
-                     \r\n\
-                     --b\r\n\
-                     Content-Type: application/autocrypt-setup\r\n\
-                     \r\n\
-                     data\r\n\
-                     --b--\r\n";
-        assert!(is_encrypted(raw));
+    fn text_after_or_beside_the_parts_is_refused() {
+        let good = pgp_mime("\r\n");
+        let epilogue = format!("{good}meet me at noon\r\n");
+        let after_boundary = good.replacen("--b\r\n", "--b meet me at noon\r\n", 1);
+        let glued = good.replacen("--b\r\n", "--bmeetmeatnoon\r\n", 1);
+        for (name, body) in [
+            ("epilogue", epilogue),
+            ("after a boundary", after_boundary),
+            ("glued to a boundary", glued),
+        ] {
+            assert!(!carried(Mode::Outgoing, "", &body), "{name}");
+        }
+        // White space there is what clients write, and passes.
+        let padded = good
+            .replacen("boundary=b\r\n\r\n", "boundary=b\r\n\r\n\r\n", 1)
+            .replacen("--b\r\n", "--b \r\n", 1);
+        assert!(carried(Mode::Outgoing, "", &padded));
     }
 
     #[test]
-    fn plaintext_is_not_encrypted() {
-        let raw = b"Content-Type: text/plain\r\n\r\nhello\r\n";
-        assert!(!is_encrypted(raw));
+    fn a_preamble_passes_as_thunderbird_writes_one() {
+        let thunderbird = pgp_mime("\r\n").replacen(
+            "boundary=b\r\n\r\n",
+            "boundary=b\r\n\r\n\
+             This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)\r\n",
+            1,
+        );
+        for mode in BOTH {
+            assert!(carried(mode, "", &thunderbird), "{}", mode.label());
+        }
     }
 
     #[test]
-    fn plaintext_naming_the_pgp_content_types_is_not_encrypted() {
-        // The strings appear; the MIME structure does not.
-        let raw = b"Content-Type: text/plain\r\n\
-                     \r\n\
-                     I tried multipart/encrypted with application/pgp-encrypted and it failed.\r\n\
-                     Someone wrote -----BEGIN PGP MESSAGE----- in a reply once.\r\n";
-        assert!(!is_encrypted(raw));
+    fn a_part_carries_only_its_four_headers_in_the_usual_words() {
+        let good = pgp_mime("\r\n");
+        let with = |part: &str, header: &str| {
+            good.replace(
+                &format!("Content-Type: {part}\r\n"),
+                &format!("Content-Type: {part}\r\n{header}\r\n"),
+            )
+        };
+        let usual = with(
+            "application/pgp-encrypted",
+            "Content-Description: PGP/MIME version identification",
+        );
+        let usual = usual.replace(
+            "Content-Type: application/octet-stream\r\n",
+            "Content-Type: application/octet-stream\r\n\
+             Content-Description: OpenPGP encrypted message\r\n\
+             Content-Disposition: inline; filename=\"encrypted.asc\"\r\n",
+        );
+        assert!(carried(Mode::Outgoing, "", &usual));
+        for body in [
+            with("application/octet-stream", "X-Note: meet me at noon"),
+            with(
+                "application/octet-stream",
+                "Content-Description: meet me at noon",
+            ),
+            with(
+                "application/pgp-encrypted",
+                "Content-Description: OpenPGP encrypted message",
+            ),
+        ] {
+            assert!(!carried(Mode::Outgoing, "", &body));
+        }
     }
 
     #[test]
-    fn a_truncated_armour_block_is_not_encrypted() {
-        let raw = b"Content-Type: text/plain\r\n\
-                     \r\n\
-                     -----BEGIN PGP MESSAGE-----\r\n\
-                     abcdef\r\n";
-        assert!(!is_encrypted(raw));
+    fn the_shape_without_ciphertext_is_refused() {
+        let fake = "-----BEGIN PGP MESSAGE-----\r\n\
+                    aGVsbG8gd29ybGQgY2lwaGVydGV4dA==\r\n\
+                    -----END PGP MESSAGE-----";
+        for mode in BOTH {
+            assert!(
+                !carried(mode, "", &pgp_mime_around(fake, "\r\n")),
+                "{}",
+                mode.label()
+            );
+            assert!(
+                !carried(mode, "", &pgp_mime_around("hello", "\r\n")),
+                "{}",
+                mode.label()
+            );
+        }
     }
 
-    // ..... LINE HANDLING .....
+    #[test]
+    fn plain_text_beside_real_ciphertext_is_refused() {
+        let mixed = format!(
+            "Content-Type: multipart/mixed; boundary=m\r\n\r\n\
+             --m\r\nContent-Type: text/plain\r\n\r\nmeet me at noon\r\n\
+             --m\r\n{}\r\n--m--\r\n",
+            pgp_mime("\r\n")
+        );
+        let inline = format!(
+            "Content-Type: text/plain\r\n\r\n{}\r\n",
+            ARMOURED.replace('\n', "\r\n")
+        );
+        for mode in BOTH {
+            assert!(!carried(mode, "", &mixed), "{}", mode.label());
+            assert!(
+                !carried(mode, "", &inline),
+                "inline armour, {}",
+                mode.label()
+            );
+        }
+    }
+
+    #[test]
+    fn anything_but_the_two_rfc_3156_parts_is_refused() {
+        let wrong_version = pgp_mime("\r\n").replace("Version: 1", "Version: 2");
+        let third_part = pgp_mime("\r\n").replace(
+            "--b--",
+            "--b\r\nContent-Type: text/plain\r\n\r\nhello\r\n--b--",
+        );
+        // The same two parts under another multipart type.
+        let not_encrypted_type = pgp_mime("\r\n").replace("multipart/encrypted", "multipart/mixed");
+        for body in [wrong_version, third_part, not_encrypted_type] {
+            assert!(!carried(Mode::Outgoing, "", &body));
+        }
+    }
+
+    #[test]
+    fn a_version_header_in_the_armour_is_carried_only_inbound() {
+        let versioned = pgp_mime("\r\n").replace(
+            "-----BEGIN PGP MESSAGE-----\r\n",
+            "-----BEGIN PGP MESSAGE-----\r\nVersion: GnuPG v2\r\n",
+        );
+        assert!(carried(Mode::Incoming, "", &versioned));
+        assert!(!carried(Mode::Outgoing, "", &versioned));
+    }
+
+    #[test]
+    fn a_securejoin_request_is_carried_and_nothing_more() {
+        let request = |kind: &str, text: &str| {
+            (
+                format!("Secure-Join: {kind}\r\n"),
+                format!(
+                    "Content-Type: multipart/mixed; boundary=m\r\n\r\n\
+                     --m\r\nContent-Type: text/plain\r\n\r\n{text}\r\n--m--\r\n"
+                ),
+            )
+        };
+        for mode in BOTH {
+            let (h, b) = request("vc-request", "Secure-Join: vc-request");
+            assert!(carried(mode, &h, &b), "{}", mode.label());
+            let (h, b) = request("vg-request", "secure-join: vg-request");
+            assert!(carried(mode, &h, &b), "{}", mode.label());
+            let (h, b) = request("vc-request", "Secure-Join: vc-request\r\nand some news");
+            assert!(!carried(mode, &h, &b), "{}", mode.label());
+            let (h, b) = request("vc-auth-required", "Secure-Join: vc-auth-required");
+            assert!(!carried(mode, &h, &b), "{}", mode.label());
+        }
+    }
+
+    #[test]
+    fn an_autocrypt_setup_message_is_carried_only_to_its_sender_here() {
+        let setup = "Content-Type: multipart/mixed; boundary=m\r\n\r\n\
+                     --m\r\nContent-Type: text/plain\r\n\r\nYour key\r\n--m--\r\n";
+        let raw = |to: &str| {
+            format!(
+                "From: <{to}>\r\nTo: <{to}>\r\n\
+                 Subject: Autocrypt Setup Message\r\n{setup}"
+            )
+        };
+        let decide = |mode: Mode, to: &str| {
+            let raw = raw(to);
+            mailparse::parse_mail(raw.as_bytes())
+                .is_ok_and(|parsed| is_carried(mode, &parsed, &[to.to_owned()]))
+        };
+        let _ = LOCAL_DOMAIN.set("chat.example".to_owned());
+        assert!(decide(Mode::Outgoing, "a@chat.example"));
+        assert!(!decide(Mode::Incoming, "a@chat.example"));
+        // Self-sent, but off this relay: plain text leaving for anyone.
+        assert!(!decide(Mode::Outgoing, "a@elsewhere.example"));
+        // Sent to someone else.
+        let other =
+            raw("b@chat.example").replace("From: <b@chat.example>", "From: <a@chat.example>");
+        assert!(
+            !mailparse::parse_mail(other.as_bytes()).is_ok_and(|parsed| is_carried(
+                Mode::Outgoing,
+                &parsed,
+                &["b@chat.example".to_owned()]
+            ))
+        );
+    }
+
+    #[test]
+    fn a_delivery_report_is_carried_only_inbound() {
+        let report = |from: &str, auto: &str| {
+            format!(
+                "From: <{from}>\r\n{auto}\
+                 Content-Type: multipart/report; report-type=delivery-status; boundary=r\r\n\r\n\
+                 --r\r\nContent-Type: text/plain\r\n\r\nUndeliverable\r\n--r--\r\n"
+            )
+        };
+        let decide = |mode: Mode, raw: &str| {
+            mailparse::parse_mail(raw.as_bytes())
+                .is_ok_and(|parsed| is_carried(mode, &parsed, &["b@chat.example".to_owned()]))
+        };
+        let genuine = report(
+            "MAILER-DAEMON@peer.example",
+            "Auto-Submitted: auto-replied\r\n",
+        );
+        assert!(decide(Mode::Incoming, &genuine));
+        assert!(!decide(Mode::Outgoing, &genuine));
+        assert!(!decide(
+            Mode::Incoming,
+            &report("MAILER-DAEMON@peer.example", "")
+        ));
+        assert!(!decide(
+            Mode::Incoming,
+            &report("someone@peer.example", "Auto-Submitted: auto-replied\r\n")
+        ));
+    }
+
+    #[test]
+    fn plaintext_is_refused() {
+        for mode in BOTH {
+            assert!(!carried(
+                mode,
+                "",
+                "Content-Type: text/plain\r\n\r\nhello\r\n"
+            ));
+            assert!(!carried(
+                mode,
+                "",
+                "Content-Type: text/plain\r\n\r\nContent-Type: multipart/encrypted\r\n"
+            ));
+        }
+    }
 
     #[test]
     fn a_line_without_a_newline_is_capped() {
@@ -1075,6 +1443,12 @@ mod tests {
             "c@d.example"
         );
         assert_eq!(address_of("MAIL FROM:<>"), "");
+        // A parameter's brackets are not the address's.
+        assert_eq!(address_of("MAIL FROM:<> ENVID=<x@y.example>"), "");
+        assert_eq!(
+            address_of("MAIL FROM:<a@b.example> ENVID=<n1@x>"),
+            "a@b.example"
+        );
     }
 
     // ..... CAPABILITY FILTERING .....
@@ -1161,11 +1535,9 @@ mod tests {
 
     fn message(headers: &str, encrypted: bool) -> Vec<u8> {
         let body = if encrypted {
-            "Content-Type: multipart/encrypted; \
-             protocol=\"application/pgp-encrypted\"; boundary=b\r\n\
-             \r\n--b\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n--b--\r\n"
+            pgp_mime("\r\n")
         } else {
-            "Content-Type: text/plain\r\n\r\nhello\r\n"
+            "Content-Type: text/plain\r\n\r\nhello\r\n".to_owned()
         };
         format!("{headers}{body}").into_bytes()
     }
@@ -1174,7 +1546,7 @@ mod tests {
     fn outgoing_refuses_a_from_that_is_not_the_envelope_sender() {
         let raw = message("From: <someone.else@chat.example>\r\n", true);
         assert_eq!(
-            inspect(Mode::Outgoing, &raw, "user@chat.example"),
+            inspect(Mode::Outgoing, &raw, "user@chat.example", &[]),
             Verdict::Refuse("550 5.7.1 the From header must match the envelope sender".to_string())
         );
     }
@@ -1183,7 +1555,7 @@ mod tests {
     fn outgoing_accepts_a_matching_from() {
         let raw = message("From: \"A User\" <user@chat.example>\r\n", true);
         assert_eq!(
-            inspect(Mode::Outgoing, &raw, "user@chat.example"),
+            inspect(Mode::Outgoing, &raw, "user@chat.example", &[]),
             Verdict::Accept {
                 strip_sender: false
             }
@@ -1201,7 +1573,7 @@ mod tests {
             true,
         );
         assert_eq!(
-            inspect(Mode::Incoming, &raw, "bounce@peer.example"),
+            inspect(Mode::Incoming, &raw, "bounce@peer.example", &[]),
             Verdict::Accept { strip_sender: true }
         );
     }
@@ -1214,7 +1586,7 @@ mod tests {
             true,
         );
         assert!(matches!(
-            inspect(Mode::Incoming, &raw, "someone@victim.example"),
+            inspect(Mode::Incoming, &raw, "someone@victim.example", &[]),
             Verdict::Refuse(reply) if reply.contains("does not match the From domain")
         ));
     }
@@ -1226,7 +1598,7 @@ mod tests {
         // can, decides whether unsigned mail is acceptable.
         let raw = message("From: <someone@peer.example>\r\n", true);
         assert_eq!(
-            inspect(Mode::Incoming, &raw, "someone@peer.example"),
+            inspect(Mode::Incoming, &raw, "someone@peer.example", &[]),
             Verdict::Accept {
                 strip_sender: false
             }
@@ -1241,11 +1613,24 @@ mod tests {
             true,
         );
         assert_eq!(
-            inspect(Mode::Incoming, &raw, "someone@peer.example"),
+            inspect(Mode::Incoming, &raw, "someone@peer.example", &[]),
             Verdict::Accept {
                 strip_sender: false
             }
         );
+    }
+
+    #[test]
+    fn a_member_cannot_send_from_the_null_sender() {
+        let raw = message("From: <user@chat.example>\r\n", true);
+        assert!(matches!(
+            inspect(Mode::Outgoing, &raw, "", &[]),
+            Verdict::Refuse(_)
+        ));
+        assert!(matches!(
+            inspect(Mode::Outgoing, &raw, "user", &[]),
+            Verdict::Refuse(_)
+        ));
     }
 
     #[test]
@@ -1257,7 +1642,7 @@ mod tests {
             true,
         );
         assert_eq!(
-            inspect(Mode::Incoming, &raw, ""),
+            inspect(Mode::Incoming, &raw, "", &[]),
             Verdict::Accept {
                 strip_sender: false
             }
@@ -1273,7 +1658,10 @@ mod tests {
         );
         for mode in [Mode::Outgoing, Mode::Incoming] {
             assert!(
-                matches!(inspect(mode, &raw, "user@chat.example"), Verdict::Refuse(_)),
+                matches!(
+                    inspect(mode, &raw, "user@chat.example", &[]),
+                    Verdict::Refuse(_)
+                ),
                 "{mode:?} accepted plaintext"
             );
         }
@@ -1394,17 +1782,7 @@ mod tests {
         let (fake, delivered) = fake_reinjection_listener();
         let proxy = start_proxy(fake);
 
-        let (verdict, stream) = submit_through_proxy(
-            &proxy,
-            "Content-Type: multipart/encrypted; \
-             protocol=\"application/pgp-encrypted\"; boundary=b\n\
-             \n\
-             --b\n\
-             Content-Type: application/pgp-encrypted\n\
-             \n\
-             Version: 1\n\
-             --b--\n",
-        );
+        let (verdict, stream) = submit_through_proxy(&proxy, &pgp_mime("\n"));
 
         assert!(verdict.starts_with("250"), "verdict was {verdict}");
         // The queue id from the listener behind the filter, not one
@@ -1436,18 +1814,21 @@ mod tests {
     #[test]
     fn dot_stuffing_survives_the_round_trip() {
         let (fake, delivered) = fake_reinjection_listener();
-        let proxy = start_proxy(fake);
+        let proxy = start_proxy_in(Mode::Incoming, fake);
 
         // A body line starting with a dot, which SMTP stuffs on the
-        // wire and which must arrive unstuffed and unchanged.
-        let (verdict, stream) = submit_through_proxy(
-            &proxy,
-            "Content-Type: text/plain\n\
-             \n\
-             -----BEGIN PGP MESSAGE-----\n\
-             ..dotted line\n\
-             -----END PGP MESSAGE-----\n",
-        );
+        // wire and which must arrive unstuffed and unchanged. Ciphertext
+        // has no such line, so it sits in a delivery report's text.
+        let body = "From: <MAILER-DAEMON@peer.example>\n\
+                    Auto-Submitted: auto-replied\n\
+                    Content-Type: multipart/report; report-type=delivery-status; boundary=r\n\
+                    \n\
+                    --r\n\
+                    Content-Type: text/plain\n\
+                    \n\
+                    ..dotted line\n\
+                    --r--\n";
+        let (verdict, stream) = submit_through_proxy(&proxy, body);
         assert!(verdict.starts_with("250"), "verdict was {verdict}");
         let _ = stream.shutdown(Shutdown::Both);
 

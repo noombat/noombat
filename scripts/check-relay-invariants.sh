@@ -190,6 +190,16 @@ if [ "${accepted_bytes:-0}" -gt 0 ]; then
 else
     fail "an encrypted message was accepted but never delivered"
 fi
+# A member's Subject travels in clear, so the relay replaces it, and drops
+# the header naming their client.
+if grep -q '^Subject: \[\.\.\.\]' "$WORKDIR/accepted.eml" 2>/dev/null \
+    && ! grep -qi '^Subject: ACCEPTED' "$WORKDIR/accepted.eml" \
+    && ! grep -qi '^X-Mailer:' "$WORKDIR/accepted.eml"; then
+    say "a member's Subject is replaced and their X-Mailer dropped"
+else
+    leaked="$(grep -i -E '^(Subject|X-Mailer):' "$WORKDIR/accepted.eml" 2>/dev/null | tr '\n' ' ')"
+    fail "a member's Subject or X-Mailer reached delivery: $leaked"
+fi
 
 submit plain refused
 verdict="$(verdict_of refused)"
@@ -205,6 +215,20 @@ if [ "${refused_bytes:-1}" -eq 0 ]; then
 else
     fail "a refused message still produced $refused_bytes bytes of delivery"
 fi
+
+# The shape without the substance: PGP/MIME around something that is not
+# an encrypted OpenPGP message, and plain text beside a real one. The
+# filter's own port, as for the accepted message above.
+for kind in fake mixed raw; do
+    sleep 1   # the bucket refills one a second; refusals spend from it too
+    verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+        --body "$kind" --tag "SHAPE-$kind")"
+    if [[ "$verdict" == *" 550 "* ]]; then
+        say "PGP/MIME that is $kind is refused: $verdict"
+    else
+        fail "PGP/MIME that is $kind was not refused: ${verdict:-no reply at all}"
+    fi
+done
 
 still_queued="$(queued_now)"
 if [ "${still_queued:-1}" -eq 0 ]; then
@@ -225,6 +249,22 @@ if grep -q "proxy-reject: END-OF-MESSAGE" "$WORKDIR/relay.log"; then
 else
     fail "no proxy-reject in the log; the refusal did not happen before the queue"
 fi
+
+# Thunderbird writes a fixed sentence before the first part, and other
+# Chatmail relays accept it, so this one must too. Delivered before the
+# DKIM section empties the capture file and expects it to stay empty.
+sleep 1
+verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body preamble --tag SHAPE-thunderbird)"
+if [[ "$verdict" == *" 250 "* ]]; then
+    say "PGP/MIME with Thunderbird's preamble is accepted"
+else
+    fail "PGP/MIME with Thunderbird's preamble was refused: ${verdict:-no reply at all}"
+fi
+for _ in $(seq 1 10); do
+    [ "$(queued_now)" = "0" ] && break
+    sleep 1
+done
 
 # ..... TWO: DKIM SIGNING .....
 
@@ -310,6 +350,25 @@ fi
 sleep 5   # the sections above spend from the same rate-limit bucket
 printf '\n== the submission checks ==\n'
 
+# A member who could log in on port 25 would send past the sender binding
+# and every check below, so only 465 may offer AUTH. An empty reply is a
+# failure too: a missing AUTH line proves nothing if EHLO never answered.
+ehlo_after_tls() {
+    in_relay sh -c "(sleep 1; printf 'EHLO probe.example\r\n'; sleep 1; printf 'QUIT\r\n') |
+        timeout 6 openssl s_client $1 -connect 127.0.0.1:$2 -quiet 2>/dev/null"
+}
+ehlo_25="$(ehlo_after_tls '-starttls smtp' 25)"
+ehlo_465="$(ehlo_after_tls '' 465)"
+if ! grep -q '^250 ' <<<"$ehlo_25" || ! grep -q '^250 ' <<<"$ehlo_465"; then
+    fail "EHLO after TLS got no reply (port 25: ${#ehlo_25} bytes, 465: ${#ehlo_465})"
+elif grep -q '^250.AUTH' <<<"$ehlo_25"; then
+    fail "port 25 offers AUTH after STARTTLS, so a member could send there unchecked"
+elif ! grep -q '^250.AUTH' <<<"$ehlo_465"; then
+    fail "port 465 offers no AUTH, so no member could send"
+else
+    say "only the submission port offers AUTH"
+fi
+
 verdict="$(filter --port 10026 --body encrypted --tag OUT-MISMATCH \
     --from user@$MAIL_DOMAIN --header-from other@$MAIL_DOMAIN)"
 if [[ "$verdict" == *" 550 "* ]]; then
@@ -377,8 +436,13 @@ sleep 4
 if [ "$(captured_bytes)" -eq 0 ]; then
     fail "no signed message was captured to replay"
 fi
+# The changed byte is in the last line of smtp-submit.pl's ciphertext, inside
+# the encrypted data packet, and the armour's checksum line goes with it,
+# since the filter would refuse a checksum that no longer matches: the filter
+# still passes the message, so only the signature can refuse it.
 in_relay sh -c 'sed "/^Return-Path:/d" /tmp/captured.eml > /tmp/replay.eml
-                sed "s/aGVsbG8/aGVsbG9/" /tmp/replay.eml > /tmp/corrupt.eml'
+                sed "s/z4kgkIr9/z4kgkIr8/; /^=rS9G/d" /tmp/replay.eml > /tmp/corrupt.eml
+                cmp -s /tmp/replay.eml /tmp/corrupt.eml && echo "corrupt.eml is unchanged" >&2'
 
 verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
     --message /tmp/replay.eml)"
@@ -390,7 +454,7 @@ fi
 
 verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
     --message /tmp/corrupt.eml)"
-if [[ "$verdict" == *" 550 "* ]]; then
+if [[ "$verdict" == *" 550 "*DKIM* ]]; then
     say "one changed byte in the body makes it refuse: $verdict"
 else
     fail "a corrupted body was not refused: ${verdict:-nothing}"

@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+#
+# header_checks for members' mail only (the submission_cleanup service in
+# master.cf). The Subject travels in clear, so it is replaced; the rest
+# would identify the member's client or network. The rules are
+# chatmail/relay's cmdeploy/src/cmdeploy/postfix/submission_header_cleanup
+# (commit 7a0bd2d4f8d0), unchanged, so mail from this relay looks like
+# mail from any other Chatmail relay.
+# SPDX-SnippetBegin
+# SPDX-License-Identifier: MIT
+# SPDX-SnippetCopyrightText: 2023 chatmail and delta chat teams
+/^Received:/            IGNORE
+/^X-Originating-IP:/    IGNORE
+/^X-Mailer:/            IGNORE
+/^User-Agent:/          IGNORE
+/^Subject:/             REPLACE Subject: [...]
+# SPDX-SnippetEnd

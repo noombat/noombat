@@ -30,6 +30,7 @@ subtle = { workspace = true }
 hmac = { workspace = true }
 sha2 = { workspace = true }
 argon2 = { workspace = true }
+noombat-openpgp = { workspace = true }
 mailparse = { workspace = true }
 
 [dev-dependencies]

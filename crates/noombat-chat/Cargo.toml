@@ -8,6 +8,7 @@ description = "IMAP/SMTP ciphertext relay for Chatmail (WebSocket to Chatmail br
 
 [dependencies]
 noombat-core = { workspace = true }
+noombat-openpgp = { workspace = true }
 async-imap = { workspace = true }
 tokio-rustls = { workspace = true }
 rustls = { workspace = true }

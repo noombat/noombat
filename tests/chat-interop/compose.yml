@@ -63,6 +63,8 @@ services:
       # in the shipped compose, and a suite that cannot open it cannot
       # assert the branch is gone.
       - "993:993"
+      # Submission, so the suite can try to send as somebody else.
+      - "465:465"
     # The entrypoint writes the CA it signs the relay certificate with
     # here, and Noombat mounts the same volume read-only to trust it.
     volumes:

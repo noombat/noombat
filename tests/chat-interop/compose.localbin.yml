@@ -10,9 +10,10 @@
 #
 # Mounts the locally built binary, and the relay's scripts and
 # configuration, over the image, so a change to any of them costs no image
-# build. Templates, migrations and the
-# built frontend still come from the image: if one of those changes, this
-# loop is invalid and the image has to be rebuilt.
+# build. Templates, migrations, the
+# built frontend and the relay's own binaries (filtermail, the admin
+# sidecar) still come from the image: if one of those changes, this loop
+# is invalid and the image has to be rebuilt.
 #
 # CI builds the Dockerfile, not this, so confirm any fix with a real build.
 
@@ -30,6 +31,8 @@ services:
       - ../../chatmail-config/master.cf.filtermail:/etc/postfix/master.cf.filtermail:ro
       - ../../chatmail-config/main.cf:/etc/postfix/main.cf.local:ro
       - ../../chatmail-config/opendkim.conf:/etc/opendkim.conf:ro
+      - ../../chatmail-config/noombat_login_map:/etc/postfix/noombat_login_map:ro
+      - ../../chatmail-config/noombat_submission_header_cleanup:/etc/postfix/noombat_submission_header_cleanup:ro
 
   noombat:
     volumes:

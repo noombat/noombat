@@ -35,11 +35,12 @@ pub fn extract_autocrypt_header(raw_message: &[u8]) -> Result<Option<ExtractedAu
     Ok(None)
 }
 
-/// Extract the encrypted body from a raw MIME message.
+/// Extract the encrypted body from a raw MIME message, as OpenPGP packets.
 ///
-/// For PGP/MIME messages, returns the raw encrypted payload (the
-/// second part of the `multipart/encrypted` body). For inline PGP,
-/// returns the body text.
+/// For PGP/MIME messages, the payload is the second part of the
+/// `multipart/encrypted` body; otherwise the whole body. Armour, which
+/// noombat's server and other clients send, is turned back into packets,
+/// which is all the web client reads; anything else is returned as it is.
 pub fn extract_ciphertext_body(raw_message: &[u8]) -> Result<Vec<u8>> {
     let parsed = mailparse::parse_mail(raw_message)
         .map_err(|e| NoombatError::Internal(format!("MIME parse error: {e}")))?;
@@ -52,19 +53,16 @@ pub fn extract_ciphertext_body(raw_message: &[u8]) -> Result<Vec<u8>> {
         .map(|h| h.get_value())
         .unwrap_or_default();
 
-    if content_type.contains("multipart/encrypted") {
-        // The encrypted payload is the second subpart.
-        if parsed.subparts.len() >= 2 {
-            return parsed.subparts[1]
-                .get_body_raw()
-                .map_err(|e| NoombatError::Internal(format!("body extraction failed: {e}")));
-        }
-    }
-
-    // Fallback: return the raw body (inline PGP or plaintext).
-    parsed
+    // The encrypted payload is the second subpart; otherwise the body.
+    let part = if content_type.contains("multipart/encrypted") && parsed.subparts.len() >= 2 {
+        &parsed.subparts[1]
+    } else {
+        &parsed
+    };
+    let body = part
         .get_body_raw()
-        .map_err(|e| NoombatError::Internal(format!("body extraction failed: {e}")))
+        .map_err(|e| NoombatError::Internal(format!("body extraction failed: {e}")))?;
+    Ok(noombat_openpgp::dearmour(&body, true).unwrap_or(body))
 }
 
 /// Extract the sender address from the `From` header.
@@ -95,6 +93,56 @@ pub fn extract_from(raw_message: &[u8]) -> Result<Option<String>> {
 mod tests {
     use super::*;
 
+    // A real OpenPGP message, made with GnuPG 2.4.8 for a throwaway key.
+    const PACKETS_B64: &str = concat!(
+        "jA0ECQMKI4VJJnHskHr/0kgBbtNTv/pJtCeda2gQ4XL2Fk5nmaMT6qQx+QZDzL8L",
+        "1pWIv2IsmD/bOt9aCnHMqm9B7dlr0XdABMIo65FzlAsoHA9kLMHdFIc="
+    );
+
+    fn pgp_mime(payload_headers: &str, payload: &str) -> Vec<u8> {
+        format!(
+            "From: <a@chat.example>\r\n\
+             Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; \
+             boundary=b\r\n\
+             \r\n--b\r\nContent-Type: application/pgp-encrypted\r\n\r\nVersion: 1\r\n\
+             --b\r\nContent-Type: application/octet-stream\r\n\
+             {payload_headers}\r\n{payload}\r\n--b--\r\n"
+        )
+        .into_bytes()
+    }
+
+    fn packets() -> Vec<u8> {
+        use base64::Engine as _;
+        base64::engine::general_purpose::STANDARD
+            .decode(PACKETS_B64)
+            .expect("a fixture")
+    }
+
+    #[test]
+    fn an_armoured_payload_comes_out_as_packets() {
+        let raw = pgp_mime("", &noombat_openpgp::armour(&packets()));
+        assert_eq!(extract_ciphertext_body(&raw).unwrap(), packets());
+    }
+
+    #[test]
+    fn armour_with_a_version_header_comes_out_as_packets() {
+        // Other implementations still write one, and the relay lets it in.
+        let armoured = noombat_openpgp::armour(&packets()).replacen(
+            "-----BEGIN PGP MESSAGE-----\r\n",
+            "-----BEGIN PGP MESSAGE-----\r\nVersion: GnuPG v2\r\n",
+            1,
+        );
+        let raw = pgp_mime("", &armoured);
+        assert_eq!(extract_ciphertext_body(&raw).unwrap(), packets());
+    }
+
+    #[test]
+    fn a_base64_payload_comes_out_as_it_was_sent() {
+        // Messages that arrived before the server armoured what it sends.
+        let raw = pgp_mime("Content-Transfer-Encoding: base64\r\n", PACKETS_B64);
+        assert_eq!(extract_ciphertext_body(&raw).unwrap(), packets());
+    }
+
     #[test]
     fn extract_from_angle_brackets() {
         let msg = b"From: Alice <alice@example.com>\r\nSubject: Test\r\n\r\nHello";
@@ -111,7 +159,8 @@ mod tests {
 
     #[test]
     fn extract_autocrypt_present() {
-        let msg = b"From: alice@example.com\r\nAutocrypt: addr=alice@example.com; keydata=AAAA\r\n\r\nBody";
+        let msg = b"From: alice@example.com\r\n\
+                    Autocrypt: addr=alice@example.com; keydata=AAAA\r\n\r\nBody";
         let header = extract_autocrypt_header(msg).unwrap().unwrap();
         assert!(header.header_value.contains("alice@example.com"));
     }

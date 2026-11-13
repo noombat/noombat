@@ -16,6 +16,18 @@
 #
 #   --body encrypted   a PGP/MIME message the filter must accept
 #   --body plain       a plaintext message the filter must refuse
+#   --body fake        PGP/MIME around something that is not ciphertext,
+#                      which the filter must refuse
+#   --body mixed       plain text beside a real PGP/MIME message, which
+#                      the filter must refuse
+#   --body raw         the same ciphertext unarmoured, in base64, which
+#                      the filter must refuse
+#   --body preamble    the real PGP/MIME message with Thunderbird's fixed
+#                      sentence before its first part, which the filter
+#                      must accept
+#
+# Every message carries an X-Mailer header, which the relay drops from
+# members' mail.
 #   --header-from A    put A in the From header instead of the envelope
 #                      sender, so the two disagree
 #   --message FILE     send FILE verbatim as the message, headers and
@@ -50,8 +62,25 @@ while (@ARGV) {
     $opt{$flag} = shift @ARGV;
 }
 
-my $body = $opt{body} eq 'encrypted'
-    ? join("\r\n",
+# A real OpenPGP message, made with GnuPG 2.4.8 for a throwaway key.
+my @ciphertext = (
+    '-----BEGIN PGP MESSAGE-----',
+    '',
+    'hF4D5gR+wRuO+a0SAQdAkzTkDA6L+XZ47GvWXl0qDJJskcaDQ6iML7xon5M9UVEw',
+    'HbLADjGpItcxPP5bZ6DVMiHCE6ThuyA74SLmX2/0jmUn0MuYxbTgq9W/ucx9bhnO',
+    '0k4BXD3fX6pXDIXLbd33/VqHjKPDiJG+eclwQjojzTXbMEOYdzHhDWjcH+hBtYRN',
+    'z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=',
+    '=rS9G',
+    '-----END PGP MESSAGE-----',
+);
+my @not_ciphertext = (
+    '-----BEGIN PGP MESSAGE-----',
+    'aGVsbG8gd29ybGQgY2lwaGVydGV4dA==',
+    '-----END PGP MESSAGE-----',
+);
+
+sub pgp_mime {
+    return (
         'Content-Type: multipart/encrypted; protocol="application/pgp-encrypted"; boundary=bnd',
         '',
         '--bnd',
@@ -62,15 +91,44 @@ my $body = $opt{body} eq 'encrypted'
         '--bnd',
         'Content-Type: application/octet-stream',
         '',
-        '-----BEGIN PGP MESSAGE-----',
-        'aGVsbG8gd29ybGQgY2lwaGVydGV4dA==',
-        '-----END PGP MESSAGE-----',
+        @_,
         '',
-        '--bnd--')
-    : join("\r\n",
+        '--bnd--');
+}
+
+my @raw_ciphertext = (
+    'hF4D5gR+wRuO+a0SAQdAkzTkDA6L+XZ47GvWXl0qDJJskcaDQ6iML7xon5M9UVEw',
+    'HbLADjGpItcxPP5bZ6DVMiHCE6ThuyA74SLmX2/0jmUn0MuYxbTgq9W/ucx9bhnO',
+    '0k4BXD3fX6pXDIXLbd33/VqHjKPDiJG+eclwQjojzTXbMEOYdzHhDWjcH+hBtYRN',
+    'z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=',
+);
+my @raw = pgp_mime(@raw_ciphertext);
+s/^(Content-Type: application\/octet-stream)$/$1\r\nContent-Transfer-Encoding: base64/ for @raw;
+my @preamble = pgp_mime(@ciphertext);
+splice(@preamble, 2, 0, 'This is an OpenPGP/MIME encrypted message (RFC 4880 and 3156)');
+
+my %bodies = (
+    encrypted => [pgp_mime(@ciphertext)],
+    raw       => \@raw,
+    preamble  => \@preamble,
+    fake      => [pgp_mime(@not_ciphertext)],
+    mixed     => [
+        'Content-Type: multipart/mixed; boundary=mix',
+        '',
+        '--mix',
         'Content-Type: text/plain',
         '',
-        'this message is not encrypted and the relay must refuse it');
+        'meet me at noon',
+        '--mix',
+        pgp_mime(@ciphertext),
+        '--mix--'],
+    plain     => [
+        'Content-Type: text/plain',
+        '',
+        'this message is not encrypted and the relay must refuse it'],
+);
+my $chosen = $bodies{$opt{body}} or do { print "unknown --body $opt{body}\n"; exit 2 };
+my $body = join("\r\n", @$chosen);
 
 my $sock = IO::Socket::INET->new(
     PeerAddr => $opt{host},
@@ -121,7 +179,8 @@ if ($opt{message} ne '') {
     }
 } else {
     my $header_from = $opt{'header-from'} || $opt{from};
-    print $sock "Subject: $opt{tag}\r\nFrom: <$header_from>\r\nTo: <$opt{to}>\r\n$body\r\n";
+    print $sock "Subject: $opt{tag}\r\nX-Mailer: smtp-submit\r\n"
+        . "From: <$header_from>\r\nTo: <$opt{to}>\r\n$body\r\n";
 }
 
 print $sock ".\r\n";

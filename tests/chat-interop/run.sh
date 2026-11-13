@@ -410,9 +410,10 @@ else
     fi
 fi
 
-# 12 to 14 send a real OpenPGP message, encrypted with gpg to a key made
+# 12 and 13 send a real OpenPGP message, encrypted with gpg to a key made
 # for bob, so that sending does not depend on what the relay's filter
 # lets through, and read bob's mailbox over IMAP as his mail client would.
+# 14 sends plain text, which must be refused.
 WORK=""
 if command -v gpg >/dev/null 2>&1; then
     WORK=$(mktemp -d)
@@ -491,20 +492,54 @@ else
     fi
 fi
 
-# 14. The relay's filter and plain text.
+# 14. Plain text.
 #
-# Known defect: the filter accepts any multipart/encrypted part, and the
-# server wraps every body in one, so plain text is accepted as if it were
-# encrypted.
+# The server wraps every body it sends in PGP/MIME, so the shape proves
+# nothing: what matters is that the body is an encrypted OpenPGP message.
+# The server refuses anything else before sending, which this checks; the
+# relay's filter refuses it again for a client submitting over SMTP
+# directly, which scripts/check-relay-invariants.sh checks.
 if [ -z "$ALICE_TOKEN" ] || [ -z "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
     skip "Plain text: no token or no provisioned credential"
 elif ! command -v python3 >/dev/null 2>&1; then
     skip "Plain text: python3 is needed to drive the relay WebSocket"
-elif "$(dirname "$0")/send-probe.py" "$NOOMBAT" "$ALICE_TOKEN" "$ALICE_CHATMAIL_PASSWORD" \
-       "bob@${CHATMAIL_DOMAIN}" > /dev/null 2>&1; then
-    known "The relay accepted a plain-text body as if it were OpenPGP"
 else
-    fail "The relay refused plain text: the filter defect is fixed, make this check plain"
+    PLAIN_OUT=$("$(dirname "$0")/send-probe.py" "$NOOMBAT" "$ALICE_TOKEN" \
+      "$ALICE_CHATMAIL_PASSWORD" "bob@${CHATMAIL_DOMAIN}" 2>&1)
+    PLAIN_CODE=$?
+    if [ "$PLAIN_CODE" = "0" ]; then
+        fail "A plain-text body was sent as if it were OpenPGP"
+    elif printf '%s' "$PLAIN_OUT" | grep -q "not OpenPGP-encrypted"; then
+        pass "A plain-text body is refused before it is sent"
+    else
+        fail "Plain text: the send failed for another reason: $PLAIN_OUT"
+    fi
+fi
+
+# 15. The sender is the login.
+#
+# A member sends only as the address they log in as: the submission port
+# refuses any other sender before a message is taken. alice's own address
+# is the control, so a relay refusing every sender cannot pass.
+if [ -z "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
+    skip "Sender: alice has no provisioned credential"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "Sender: python3 is needed to drive SMTP"
+else
+    SENDER_PROBE="$(dirname "$0")/sender-probe.py"
+    AS_ALICE=$("$SENDER_PROBE" localhost 465 "alice@${CHATMAIL_DOMAIN}" "$ALICE_CHATMAIL_PASSWORD" \
+      "alice@${CHATMAIL_DOMAIN}" "bob@${CHATMAIL_DOMAIN}" 2>&1)
+    AS_BOB=$("$SENDER_PROBE" localhost 465 "alice@${CHATMAIL_DOMAIN}" "$ALICE_CHATMAIL_PASSWORD" \
+      "bob@${CHATMAIL_DOMAIN}" "bob@${CHATMAIL_DOMAIN}" 2>&1)
+    if [ "$AS_ALICE" != accepted ]; then
+        fail "Sender: alice could not send as herself: $AS_ALICE"
+    elif [ "${AS_BOB%% *}" = refused ]; then
+        pass "alice cannot send as bob: $AS_BOB"
+    elif [ "$AS_BOB" = accepted ]; then
+        fail "alice was allowed to send as bob"
+    else
+        fail "Sender: the probe did not complete: $AS_BOB"
+    fi
 fi
 
 if [ -n "$WORK" ]; then

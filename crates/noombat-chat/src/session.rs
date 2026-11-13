@@ -53,7 +53,11 @@ fn read_extra_roots(path: &std::ffi::OsStr) -> Vec<CertificateDer<'static>> {
                 match certificate {
                     Ok(certificate) => certs.push(certificate),
                     Err(error) => {
-                        error!(?path, %error, "NOOMBAT_EXTRA_CA_FILE holds a certificate that could not be parsed");
+                        error!(
+                            ?path,
+                            %error,
+                            "NOOMBAT_EXTRA_CA_FILE holds a certificate that could not be parsed"
+                        );
                     }
                 }
             }
@@ -245,9 +249,37 @@ pub async fn fetch_messages(
     Ok(result)
 }
 
+/// The body of the message [`send_message`] sends (RFC 3156): the
+/// `Version: 1` control part, then `packets` in ASCII armour, which is what
+/// Chatmail relays carry and other clients read.
+fn pgp_mime_body(boundary: &str, packets: &[u8]) -> String {
+    let armoured = noombat_openpgp::armour(packets);
+    format!(
+        "--{boundary}\r\n\
+         Content-Type: application/pgp-encrypted\r\n\
+         Content-Description: PGP/MIME version identification\r\n\
+         \r\n\
+         Version: 1\r\n\
+         \r\n\
+         --{boundary}\r\n\
+         Content-Type: application/octet-stream; name=\"encrypted.asc\"\r\n\
+         Content-Description: OpenPGP encrypted message\r\n\
+         Content-Disposition: inline; filename=\"encrypted.asc\"\r\n\
+         \r\n\
+         {armoured}\
+         \r\n\
+         --{boundary}--\r\n"
+    )
+}
+
+/// Why [`send_message`] refuses a body before sending it.
+pub const NOT_ENCRYPTED: &str = "the message is not OpenPGP-encrypted";
+
 /// Send an encrypted message via SMTP.
 ///
-/// Constructs a valid PGP/MIME message (RFC 3156: `multipart/encrypted`
+/// Refuses a body that is not an encrypted OpenPGP message and nothing
+/// else, which the relay would refuse too. Otherwise armours it and
+/// constructs a valid PGP/MIME message (RFC 3156: `multipart/encrypted`
 /// with a `Version: 1` control part and the ciphertext payload) and
 /// delivers it via SMTPS.
 pub async fn send_message(
@@ -265,35 +297,22 @@ pub async fn send_message(
     let ciphertext = B64
         .decode(body_b64)
         .map_err(|e| format!("invalid base64 body: {e}"))?;
+    if !noombat_openpgp::is_encrypted_packets(&ciphertext) {
+        return Err(NOT_ENCRYPTED.to_owned());
+    }
 
-    // Build the PGP/MIME message as raw RFC 2822 text.
-    //
-    // PGP/MIME (RFC 3156) requires a multipart/encrypted body with:
-    //   Part 1: Content-Type: application/pgp-encrypted
-    //           Body: "Version: 1"
-    //   Part 2: Content-Type: application/octet-stream
-    //           Body: the PGP-encrypted data
-    //
-    // lettre's Message builder does not support constructing this
+    // lettre's Message builder does not support constructing RFC 3156's
     // two-part structure directly, so the raw MIME is assembled here.
     let boundary = format!("noombat-pgp-{:016x}", rand::random::<u64>());
     let date = chrono::Utc::now().to_rfc2822();
-
-    let ciphertext_b64 = B64.encode(&ciphertext);
-    // Wrap base64 at 76 characters per line per RFC 2045.
-    let wrapped: String = ciphertext_b64
-        .as_bytes()
-        .chunks(76)
-        .map(|chunk| std::str::from_utf8(chunk).unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\r\n");
 
     let mut headers = format!(
         "From: <{from_addr}>\r\n\
          To: <{to_addr}>\r\n\
          Date: {date}\r\n\
          MIME-Version: 1.0\r\n\
-         Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; boundary=\"{boundary}\"\r\n"
+         Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; \
+         boundary=\"{boundary}\"\r\n"
     );
 
     // Inject the Autocrypt header if provided, after validation.
@@ -317,24 +336,7 @@ pub async fn send_message(
         }
     }
 
-    let raw_message = format!(
-        "{headers}\r\n\
-         --{boundary}\r\n\
-         Content-Type: application/pgp-encrypted\r\n\
-         Content-Description: PGP/MIME version identification\r\n\
-         \r\n\
-         Version: 1\r\n\
-         \r\n\
-         --{boundary}\r\n\
-         Content-Type: application/octet-stream; name=\"encrypted.asc\"\r\n\
-         Content-Description: OpenPGP encrypted message\r\n\
-         Content-Disposition: inline; filename=\"encrypted.asc\"\r\n\
-         Content-Transfer-Encoding: base64\r\n\
-         \r\n\
-         {wrapped}\r\n\
-         \r\n\
-         --{boundary}--\r\n"
-    );
+    let raw_message = format!("{headers}\r\n{}", pgp_mime_body(&boundary, &ciphertext));
 
     let creds = Credentials::new(from_addr.to_owned(), password.to_owned());
 
@@ -563,6 +565,67 @@ OiIwENmeuWDbN7XsIs/6lqOs7RM0nFKjmA==
     }
 
     // ..... validate_autocrypt_header .....
+
+    // A real OpenPGP message, made with GnuPG 2.4.8 for a throwaway key.
+    const CIPHERTEXT_B64: &str = concat!(
+        "hF4D5gR+wRuO+a0SAQdAHkKpTbvSw1fNE9zFhmx3xhSmjCnRKdVh6zebBJ1iYxEw",
+        "31lS3a5e39Ng0/EhCl4klDieHsPRu7y8valn/aeFR6MqslAMEOOwKdA89j+gwGRE",
+        "0k4BhvC57sRxfy3Rv6gOA1+1o1MSqh27Wn9VvTZ/A7y/UP+6zXBediljZse40vQN",
+        "ulEjt8D59g1HCA8z0I+5L2WsvuRHPa1RLKTxdw1YeLs="
+    );
+
+    /// Sends to a relay whose name never resolves, so anything past the
+    /// encryption check ends as a connection error, not as its refusal.
+    async fn send(body_b64: &str) -> Result<(), String> {
+        let config = crate::relay::RelayConfig::from_domain("relay.invalid");
+        send_message(
+            &config,
+            "a@chat.example",
+            "pw",
+            "b@chat.example",
+            body_b64,
+            None,
+        )
+        .await
+    }
+
+    #[test]
+    fn the_body_is_pgp_mime_around_armour_and_nothing_else() {
+        let packets = B64.decode(CIPHERTEXT_B64).expect("a fixture");
+        let raw = format!(
+            "Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; \
+             boundary=\"b\"\r\n\r\n{}",
+            pgp_mime_body("b", &packets)
+        );
+        let parsed = mailparse::parse_mail(raw.as_bytes()).expect("a parse");
+        assert_eq!(parsed.subparts.len(), 2);
+        let control = parsed.subparts[0].get_body().expect("a control part");
+        assert_eq!(control.trim(), "Version: 1");
+        let preamble = parsed.get_body_raw().expect("a preamble");
+        assert!(preamble.iter().all(u8::is_ascii_whitespace), "{preamble:?}");
+        let payload = parsed.subparts[1].get_body_raw().expect("a payload");
+        assert!(payload.starts_with(b"-----BEGIN PGP MESSAGE-----\r\n"));
+        assert_eq!(noombat_openpgp::dearmour(&payload, false), Some(packets));
+    }
+
+    #[tokio::test]
+    async fn plain_text_is_refused_before_anything_is_sent() {
+        assert_eq!(
+            send(&B64.encode("meet me at noon")).await,
+            Err(NOT_ENCRYPTED.to_owned())
+        );
+        let fake = "-----BEGIN PGP MESSAGE-----\n\
+                    aGVsbG8gd29ybGQgY2lwaGVydGV4dA==\n\
+                    -----END PGP MESSAGE-----\n";
+        assert_eq!(send(&B64.encode(fake)).await, Err(NOT_ENCRYPTED.to_owned()));
+    }
+
+    #[tokio::test]
+    async fn real_ciphertext_gets_past_the_check() {
+        let outcome = send(CIPHERTEXT_B64).await;
+        assert!(outcome.is_err(), "relay.invalid accepted a message");
+        assert_ne!(outcome, Err(NOT_ENCRYPTED.to_owned()));
+    }
 
     #[test]
     fn valid_header_matching_addr() {

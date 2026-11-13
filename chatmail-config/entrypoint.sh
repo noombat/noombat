@@ -206,7 +206,7 @@ fi
 # Generate the signing key on first boot and write the tables that
 # opendkim.conf points at. Without these, opendkim has nothing to sign
 # with; without opendkim.conf it would also be listening on a unix
-# socket while Postfix dials inet:localhost:8891.
+# socket while Postfix dials inet:127.0.0.1:8891.
 #
 # The selector is `noombat`, which must match the TXT record name
 # printed below.

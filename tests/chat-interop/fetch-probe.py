@@ -8,9 +8,10 @@ Usage: fetch-probe.py HOST PORT ADDRESS PASSWORD SENDER COUNT
 
 Logs in over IMAP with implicit TLS and waits, up to a minute because
 delivery is asynchronous, until INBOX holds COUNT messages from SENDER.
-Prints the payload of each message's `application/octet-stream` part,
-base64-encoded, one per line. Exits 0 once COUNT have arrived, 1 if fewer
-did, and 2 if the session could not be opened.
+Prints the payload of each message's `application/octet-stream` part as
+OpenPGP packets, armour taken off, base64-encoded, one per line. Exits 0
+once COUNT have arrived, 1 if fewer did, and 2 if the session could not be
+opened.
 
 The relay's certificate is not verified: this runs on the host, where the
 name it was issued for does not resolve.
@@ -25,6 +26,19 @@ import sys
 import time
 
 WAIT_SECONDS = 60
+
+
+def packets(payload: bytes) -> bytes:
+    """The OpenPGP packets in a payload, with any ASCII armour taken off."""
+    text = payload.decode("ascii", errors="replace")
+    if not text.startswith("-----BEGIN PGP MESSAGE-----"):
+        return payload
+    data = [
+        line.strip()
+        for line in text.splitlines()[1:]
+        if line.strip() and not line.startswith(("-----END", "=")) and ": " not in line
+    ]
+    return base64.b64decode("".join(data))
 
 
 def payloads(connection: imaplib.IMAP4_SSL, sender: str) -> list[bytes]:
@@ -75,7 +89,7 @@ def main() -> int:
             pass
 
     for payload in found:
-        print(base64.b64encode(payload).decode())
+        print(base64.b64encode(packets(payload)).decode())
     return 0 if len(found) >= count else 1
 
 

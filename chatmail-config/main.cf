@@ -53,7 +53,21 @@ smtpd_tls_auth_only = yes
 
 smtpd_sasl_type = dovecot
 smtpd_sasl_path = private/auth
-smtpd_sasl_auth_enable = yes
+# Off everywhere but the submission port, which turns it on in master.cf.
+# Port 25 must not offer AUTH: a member logged in there would send past
+# the sender binding and the submission checks below.
+smtpd_sasl_auth_enable = no
+
+# A member sends only as the address they log in as. Applied on the
+# submission port alone (master.cf): every address has an owner in this
+# map, so on port 25 it would refuse all federation mail, which arrives
+# unauthenticated. The blocked-sender check matches smtpd_sender_restrictions.
+smtpd_sender_login_maps = regexp:/etc/postfix/noombat_login_map
+noombat_submission_sender_restrictions =
+    reject_sender_login_mismatch,
+    check_sender_access hash:/etc/postfix/noombat_sender_access,
+    permit_sasl_authenticated,
+    reject
 
 # ..... VIRTUAL MAILBOX .....
 
@@ -144,8 +158,10 @@ milter_protocol = 6
 # the filter has accepted it.
 smtpd_milters = inet:127.0.0.1:8891
 
-# Mail submitted with sendmail(1) rather than over SMTP: bounces, and
-# anything an operator sends by hand. The normal path does not reach it.
+# Mail submitted with sendmail(1) rather than over SMTP, such as
+# anything an operator sends by hand. The normal path does not reach it,
+# and nor do Postfix's own bounces (internal_mail_filter_classes is
+# empty), which leave unsigned.
 non_smtpd_milters = inet:127.0.0.1:8891
 
 # ..... ENCRYPTION-ONLY ENFORCEMENT .....
