@@ -9,7 +9,7 @@
 #   docker buildx imagetools inspect <image>:<tag>
 
 # ..... FRONTEND BUILD .....
-FROM node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e AS frontend
+FROM node:26-trixie-slim@sha256:e6bedef217677b276c591795e169840edd9096dbf13f29df8ef8d1856b8820bc AS frontend
 
 WORKDIR /build
 
@@ -50,10 +50,10 @@ RUN NOOMBAT_VERSION="$NOOMBAT_VERSION" NOOMBAT_COMMIT="$NOOMBAT_COMMIT" \
     sh /build/scripts/asset-manifest.sh dist/assets > dist/assets-manifest.json
 
 # ..... RUST BUILD .....
-# The `rust:1-bookworm` tag tracks the latest stable Rust 1.x release,
+# The `rust:1-trixie` tag tracks the latest stable Rust 1.x release,
 # matching the CI `stable` channel. The workspace MSRV (rust-version in
 # Cargo.toml) is verified separately by the CI `msrv` job.
-FROM rust:1-bookworm@sha256:0e2bcaef56d041a486784e54104a81aebe0da44bd03019bd70bc0401e42e4a97 AS builder
+FROM rust:1-trixie@sha256:0b0ea86881537b3f645aace7e8e39556289f8787db057317c8d4978548213b9e AS builder
 
 WORKDIR /build
 COPY Cargo.toml rust-toolchain.toml ./
@@ -76,7 +76,7 @@ RUN cargo build --release --bin noombat
 FROM ghcr.io/typst/typst:0.15.1@sha256:032e292249bcd378480cc7c142cfa324b63ef8aadeb88d7e7230320c4c9c422f AS typst
 
 # ..... RUNTIME .....
-FROM debian:bookworm-slim@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \

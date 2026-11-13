@@ -36,4 +36,4 @@ services:
     volumes:
       # Built by build-local.sh. Compose silently creates a directory here
       # if the file is missing, so run that first.
-      - ../../target/bookworm/release/noombat:/usr/local/bin/noombat:ro
+      - ../../target/localbin/release/noombat:/usr/local/bin/noombat:ro

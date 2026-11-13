@@ -116,18 +116,11 @@ updates:
       include: scope
     ignore:
       # @types/node describes the runtime, so it has to track the runtime
-      # rather than the newest release. Node is pinned to 24, the current
+      # rather than the newest release. Node is pinned to 26, the current
       # Active LTS, in three places: .nvmrc, the `engines` field in
-      # frontend/package.json, and the `node:24` frontend stage in the
-      # Dockerfile. Without this rule Dependabot reopens the same major
-      # indefinitely, because nothing here will ever accept it.
-      #
-      # Moving to 26 is not just a version bump: Node stopped distributing
-      # Corepack at 25.0.0, and `corepack enable` is load-bearing in ten
-      # jobs across four files: ci-frontend.yml (typecheck, lint, lint-e2e,
-      # format, test, reproducible), ci-e2e.yml (e2e, interop), ci.yml
-      # (release-build) and release.yml (release). Counted 2026-08-15
-      # across all four files, not ci-frontend.yml's share alone.
+      # frontend/package.json, and the `node:26` frontend stage in the
+      # Dockerfile. Without this rule Dependabot proposes each new major,
+      # which nothing here accepts until the runtime moves with it.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     groups:
@@ -172,7 +165,7 @@ updates:
       prefix: "deps(e2e)"
       include: scope
     ignore:
-      # Same reasoning as the frontend: pinned to the Node 24 line.
+      # Same reasoning as the frontend: pinned to the Node 26 line.
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
     groups:
@@ -213,17 +206,6 @@ updates:
     commit-message:
       prefix: "deps(docker)"
       include: scope
-    ignore:
-      # The same Node 24 hold both npm ecosystems carry, applied to the
-      # image that the `engines` field and `.nvmrc` are pinned against.
-      # Without it the hold is only two thirds enforced: the group below
-      # cannot suppress this, because majors are deliberately proposed
-      # individually rather than grouped, so `node:24 -> node:26` was
-      # reopened every Monday and failed the same check each time. The
-      # blocker is Corepack, dropped from the Node distribution at
-      # 25.0.0; lift this rule in the change that stops relying on it.
-      - dependency-name: "node"
-        update-types: ["version-update:semver-major"]
     groups:
       docker-base-images:
         patterns:
