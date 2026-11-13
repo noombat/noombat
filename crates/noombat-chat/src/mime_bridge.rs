@@ -66,27 +66,35 @@ pub fn extract_ciphertext_body(raw_message: &[u8]) -> Result<Vec<u8>> {
 }
 
 /// Extract the sender address from the `From` header.
+///
+/// `None` unless there is exactly one `From` field and it names exactly
+/// one mailbox, so a display name, a list or a group never stands in for
+/// the sender. The relay filter reads `From` by the same rule.
 pub fn extract_from(raw_message: &[u8]) -> Result<Option<String>> {
     let parsed = mailparse::parse_mail(raw_message)
         .map_err(|e| NoombatError::Internal(format!("MIME parse error: {e}")))?;
-
-    for header in &parsed.headers {
-        if header.get_key().eq_ignore_ascii_case("from") {
-            let value = header.get_value();
-            // Extract the email address from the header value.
-            // Handles both `Alice <alice@example.com>` and bare
-            // `alice@example.com` forms.
-            if let Some(start) = value.find('<')
-                && let Some(end) = value.find('>')
-            {
-                return Ok(Some(value[start + 1..end].to_owned()));
-            }
-            // Bare address.
-            return Ok(Some(value.trim().to_owned()));
-        }
-    }
-
-    Ok(None)
+    // A space before the colon is not part of the name, as OpenDKIM reads it.
+    let [header] = parsed
+        .headers
+        .iter()
+        .filter(|h| h.get_key_ref().trim().eq_ignore_ascii_case("from"))
+        .collect::<Vec<_>>()[..]
+    else {
+        return Ok(None);
+    };
+    // From the raw header, so an encoded word can only be a display name.
+    let Some(mailbox) = mailparse::addrparse_header(header)
+        .ok()
+        .and_then(|list| list.extract_single_info())
+    else {
+        return Ok(None);
+    };
+    let addr = mailbox.addr.trim();
+    let well_formed = addr
+        .rsplit_once('@')
+        .is_some_and(|(local, domain)| !local.is_empty() && !domain.is_empty())
+        && !addr.contains(|c: char| c.is_whitespace() || c.is_control());
+    Ok(well_formed.then(|| addr.to_owned()))
 }
 
 #[cfg(test)]
@@ -155,6 +163,56 @@ mod tests {
         let msg = b"From: alice@example.com\r\nSubject: Test\r\n\r\nHello";
         let from = extract_from(msg).unwrap().unwrap();
         assert_eq!(from, "alice@example.com");
+    }
+
+    fn from_of(value: &str) -> Option<String> {
+        extract_from(format!("From: {value}\r\nSubject: t\r\n\r\nx").as_bytes()).unwrap()
+    }
+
+    #[test]
+    fn a_display_name_is_never_the_sender() {
+        let cases = [
+            // A `>` in the name once sliced backwards and panicked.
+            ("\"Bob :>\" <bob@peer.example>", "bob@peer.example"),
+            (
+                "\"<victim@dom.example>\" <attacker@atk.example>",
+                "attacker@atk.example",
+            ),
+            (
+                "=?utf-8?q?=3Cvictim=40dom=2Eexample=3E?= <attacker@atk.example>",
+                "attacker@atk.example",
+            ),
+            ("\"Bob <3\" <bob@dom.example>", "bob@dom.example"),
+            (
+                "MAILER-DAEMON@peer.example (Mail Delivery System)",
+                "MAILER-DAEMON@peer.example",
+            ),
+        ];
+        for (value, sender) in cases {
+            assert_eq!(from_of(value).as_deref(), Some(sender), "{value}");
+        }
+    }
+
+    #[test]
+    fn anything_but_one_mailbox_names_no_sender() {
+        for value in [
+            "",
+            "garbage",
+            "<victim@dom.example>, <attacker@atk.example>",
+            "friends: victim@dom.example;",
+            "<victim@>",
+            "<@dom.example>",
+            "victim@dom.example x@atk.example",
+        ] {
+            assert_eq!(from_of(value), None, "{value:?}");
+        }
+        for twice in [
+            "From: <victim@dom.example>\r\nFrom: <attacker@atk.example>",
+            "From : <victim@dom.example>\r\nFrom: <attacker@atk.example>",
+        ] {
+            let raw = format!("{twice}\r\n\r\nx");
+            assert_eq!(extract_from(raw.as_bytes()).unwrap(), None, "{twice}");
+        }
     }
 
     #[test]
