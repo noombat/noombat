@@ -7,16 +7,17 @@
 #
 # Protocol: Dovecot writes "user\0password\0" to fd 3. This script
 # reads the credentials, checks the per-user password file, and execs
-# $1 on success or exits 1 on failure.
+# $1 on success or exits 1 on failure. A lookup, which Dovecot makes
+# with no password and AUTHORIZED=1, succeeds for an existing account
+# and sets AUTHORIZED=2.
 #
 # Accounts are created by the application, through the admin sidecar's
 # PUT /admin/v1/accounts/{address}, which authenticates the caller and
 # checks the domain. This script must never create one: a checkpassword
 # helper runs before anybody is authenticated, so anything it creates is
-# created for an anonymous stranger. It used to have a create-on-login
-# branch here, which let an outsider claim any unused address on the
-# relay, with a password of their choosing, over published IMAP and
-# submission ports.
+# created for an anonymous stranger. A create-on-login branch here would
+# let an outsider claim any unused address on the relay, with a password
+# of their choosing, over the published IMAP and submission ports.
 #
 # See: https://doc.dovecot.org/configuration_manual/authentication/checkpassword/
 
@@ -37,24 +38,29 @@ eval "$(head -c 512 <&3 | tr '\0' '\n' | {
     printf "user='%s'\\npass='%s'\\n" "$user_q" "$pass_q"
 })"
 
-if [ -z "$user" ] || [ -z "$pass" ]; then
+if [ -z "$user" ]; then
     exit 1
 fi
 
 password_file="${VMAIL_HOME}/${user}/password"
 user_home="${VMAIL_HOME}/${user}"
 
-if [ -f "$password_file" ]; then
-    # Existing account: verify the password.
+# No such account. Refused before either branch below, so neither can
+# reach the `exec "$@"` for an address the application never created.
+if [ ! -f "$password_file" ]; then
+    exit 1
+fi
+
+if [ "${AUTHORIZED:-}" = 1 ]; then
+    # A lookup, not a login: Dovecot asks whether the account exists, as
+    # before every LMTP delivery, and sends no password. Its reply program
+    # rejects the answer unless AUTHORIZED is 2.
+    export AUTHORIZED=2
+else
     stored=$(cat "$password_file")
-    if [ "$pass" != "$stored" ]; then
+    if [ -z "$pass" ] || [ "$pass" != "$stored" ]; then
         exit 1
     fi
-else
-    # No such account. The `else` is required, not decorative: without it
-    # control reaches the `exec "$@"` below and every unknown address
-    # authenticates.
-    exit 1
 fi
 
 # Export the userdb response for Dovecot.

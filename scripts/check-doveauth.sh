@@ -37,7 +37,18 @@ fi
 run_helper() {
     local user="$1" pass="$2" root="$3"
     printf '%s\0%s\0' "$user" "$pass" > "$root/creds"
-    VMAIL_HOME="$root" "$HELPER" true 3< "$root/creds"
+    env -u AUTHORIZED VMAIL_HOME="$root" "$HELPER" true 3< "$root/creds"
+}
+
+# A lookup, as Dovecot makes one before every LMTP delivery: no password,
+# AUTHORIZED=1, and a reply program that rejects the answer unless
+# AUTHORIZED is 2. This reply program records the value it was given.
+run_lookup() {
+    local user="$1" root="$2"
+    printf '%s\0\0' "$user" > "$root/creds"
+    rm -f "$root/authorized"
+    AUTHORIZED=1 VMAIL_HOME="$root" "$HELPER" \
+        sh -c 'printf %s "${AUTHORIZED:-}" > "$1"' sh "$root/authorized" 3< "$root/creds"
 }
 
 check() {
@@ -87,6 +98,22 @@ fi
 # now "verify" the attacker's own password and return 0.
 run_helper "squatter@chat.test" "attacker-chosen" "$WORK"
 check "a repeated attempt on an unknown address is still refused" 1 $?
+
+# Without these, Dovecot cannot confirm that a recipient exists, and every
+# delivery is deferred.
+run_lookup "alice@chat.test" "$WORK"
+check "a lookup finds an existing account without a password" 0 $?
+check "a lookup tells Dovecot it was answered" 2 "$(cat "$WORK/authorized" 2>/dev/null)"
+
+run_lookup "squatter@chat.test" "$WORK"
+check "a lookup of an unknown address is refused" 1 $?
+
+if [ -e "$WORK/squatter@chat.test" ]; then
+    echo "FAIL an unknown address must not be created by a lookup"
+    FAILURES=$((FAILURES + 1))
+else
+    echo "ok   an unknown address is not created by a lookup"
+fi
 
 echo
 if [ "$FAILURES" -eq 0 ]; then

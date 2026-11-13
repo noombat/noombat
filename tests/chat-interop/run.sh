@@ -460,9 +460,9 @@ fi
 # 13. Delivery, as bob's mail client sees it.
 #
 # "sent" is the relay accepting a submission, which says nothing about
-# delivery. Known defect: Dovecot checks that a recipient exists by asking
-# the checkpassword helper with no password, the helper refuses any empty
-# password, and so every delivery is deferred and no mailbox receives mail.
+# delivery. Before delivering, Dovecot checks that the recipient exists by
+# asking the checkpassword helper with no password; if the helper refuses,
+# every delivery is deferred and no mailbox receives mail.
 if [ "$SENT" != yes ]; then
     skip "Delivery: nothing was sent"
 elif [ -z "${BOB_CHATMAIL_PASSWORD:-}" ]; then
@@ -475,7 +475,7 @@ else
     if [ "$FETCH_CODE" = "2" ]; then
         fail "Delivery: could not read bob's mailbox: $(cat "$WORK/fetch-errors")"
     elif grep -qxF "$(base64 -w0 < "$WORK/cipher")" "$WORK/payloads"; then
-        fail "alice's message reached bob: the delivery defect is fixed, make this check plain"
+        pass "alice's message reached bob's mailbox"
         if gpg --batch --quiet --decrypt "$WORK/cipher" 2>/dev/null \
              | cmp -s - "$WORK/plain"; then
             pass "The message bob received is OpenPGP that his key opens"
@@ -483,7 +483,7 @@ else
             fail "bob's key does not open the message he received"
         fi
     else
-        known "alice's message never reached bob's mailbox: every delivery is deferred"
+        fail "alice's message never reached bob's mailbox"
     fi
 fi
 
