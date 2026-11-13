@@ -4,7 +4,6 @@
 //!
 //! All endpoints are served under `/admin/v1/`.
 
-use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -16,6 +15,7 @@ use axum::{Router, middleware};
 use serde_json::json;
 use tracing::{info, warn};
 
+use crate::passwd_file;
 use crate::password::generate_password;
 use crate::{AppState, trigger_postfix_reload_debounced};
 
@@ -69,9 +69,9 @@ fn validate_local_address(address: &str, mail_domain: &str) -> Result<(), &'stat
     if mail_domain.is_empty() {
         return Err("MAIL_DOMAIN is not configured");
     }
-    // Dovecot lowercases the username before the checkpassword helper
-    // sees it (`auth_username_format` defaults to `%Lu`), so the account
-    // it looks up is the lowercased form. Compare, and later write, in
+    // Dovecot lowercases the username before looking it up
+    // (`auth_username_format` defaults to lowercase), so the account it
+    // looks up is the lowercased form. Compare, and later write, in
     // that form, or a capitalised MAIL_DOMAIN would create an account no
     // login can ever reach.
     let Some((_, domain)) = address.rsplit_once('@') else {
@@ -224,26 +224,30 @@ async fn require_admin_secret(
 
 /// `POST /admin/v1/accounts/{address}/rotate-password`
 ///
-/// Overwrites the user's password file with a new randomly generated
-/// password. Returns the new password.
+/// Replaces the account's line in the passwd-file with a new randomly
+/// generated password. Returns the new password.
 async fn rotate_password(
     State(state): State<Arc<AppState>>,
     UrlPath(address): UrlPath<String>,
 ) -> Reply {
-    let Some(password_file) = password_file_path(&state.config.vmail_home, &address) else {
+    if validate_address(&address).is_err() {
         return invalid_address();
-    };
-    if !password_file.exists() {
-        return reply(StatusCode::NOT_FOUND, json!({"error": "account not found"}));
     }
 
     let new_password = generate_password();
-    if let Err(e) = std::fs::write(&password_file, &new_password) {
-        warn!(address = %address, error = %e, "password file could not be written");
-        return reply(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({"error": "password rotation failed"}),
-        );
+    match state.passwd.replace(&address, new_password.as_bytes()) {
+        Ok(()) => {}
+        Err(passwd_file::Error::NotFound) => {
+            return reply(StatusCode::NOT_FOUND, json!({"error": "account not found"}));
+        }
+        Err(passwd_file::Error::Unsafe) => return invalid_address(),
+        Err(e) => {
+            warn!(address = %address, error = %e, "the passwd-file could not be written");
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "password rotation failed"}),
+            );
+        }
     }
     info!(address = %address, "password rotated");
 
@@ -255,15 +259,14 @@ async fn rotate_password(
 
 /// `PUT /admin/v1/accounts/{address}`
 ///
-/// Create a Chatmail account: the Maildir and a password file holding a
-/// freshly generated password, which is returned so the caller can log
-/// in as the account it just made.
+/// Create a Chatmail account: the Maildir and a line in the passwd-file
+/// for a freshly generated password, which is returned so the caller can
+/// log in as the account it just made.
 ///
-/// This endpoint exists because the checkpassword helper no longer
-/// creates accounts. It ran before authentication, so anything it made
-/// was made for an anonymous stranger; creation belongs here, behind the
-/// bearer secret the `require_admin_secret` layer checks on every route
-/// in this router.
+/// Creation happens here and nowhere else, behind the bearer secret the
+/// `require_admin_secret` layer checks on every route in this router:
+/// anything that created an account before authentication would create
+/// it for an anonymous stranger.
 ///
 /// The password is generated here rather than by the caller so that
 /// exactly one side owns it. Two generators would silently disagree and
@@ -277,18 +280,39 @@ async fn create_account(
         return invalid_address();
     }
     let address = address.to_lowercase();
-    let (Some(account_dir), Some(password_file)) = (
-        maildir_path(&state.config.vmail_home, &address),
-        password_file_path(&state.config.vmail_home, &address),
-    ) else {
+    if !passwd_file::usable(&address) {
+        warn!(address = ?address, "account creation rejected: not a usable passwd-file line");
         return invalid_address();
+    }
+    let Some(account_dir) = maildir_path(&state.config.vmail_home, &address) else {
+        return invalid_address();
+    };
+    match state.passwd.contains(&address) {
+        Ok(false) => {}
+        Ok(true) => return reply(StatusCode::CONFLICT, json!({"error": "account exists"})),
+        Err(e) => {
+            warn!(address = %address, error = %e, "the passwd-file could not be read");
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account creation failed"}),
+            );
+        }
+    }
+
+    // A failure below removes the directory only if this request made it:
+    // one already there, with no line, may hold an account's mail.
+    let created = !account_dir.exists();
+    let discard = || {
+        if created {
+            let _ = std::fs::remove_dir_all(&account_dir);
+        }
     };
 
     let maildir = account_dir.join("Maildir");
     for sub in ["cur", "new", "tmp"] {
         if let Err(e) = std::fs::create_dir_all(maildir.join(sub)) {
             warn!(address = %address, error = %e, "maildir could not be created");
-            let _ = std::fs::remove_dir_all(&account_dir);
+            discard();
             return reply(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": "account creation failed"}),
@@ -296,41 +320,10 @@ async fn create_account(
         }
     }
 
-    let password = generate_password();
-    // `create_new` is the check: it fails if the file exists, so two
-    // concurrent requests for the same address cannot both succeed. An
-    // `exists()` test followed by a write leaves that window open.
-    // `mode` is set at creation rather than after, so the file is never
-    // briefly world-readable.
-    let written = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .mode(0o600)
-        .open(&password_file)
-        .and_then(|mut f| std::io::Write::write_all(&mut f, password.as_bytes()));
-
-    match written {
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-            return reply(StatusCode::CONFLICT, json!({"error": "account exists"}));
-        }
-        Err(e) => {
-            warn!(address = %address, error = %e, "password file could not be written");
-            let _ = std::fs::remove_dir_all(&account_dir);
-            return reply(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({"error": "account creation failed"}),
-            );
-        }
-        Ok(()) => {}
-    }
-
-    // The sidecar runs as root; Dovecot's auth service and LMTP delivery
-    // run as vmail (5000). Without this the password file is unreadable
-    // by the helper and the Maildir unwritable by delivery, so creation
-    // would report success and every login and every message after it
-    // would fail. The helper used to do this itself, on the branch this
-    // endpoint replaces.
-    let mut owned = vec![account_dir.clone(), maildir.clone(), password_file.clone()];
+    // The sidecar runs as root; LMTP delivery runs as vmail (5000).
+    // Without this the Maildir is unwritable by delivery, so creation
+    // would report success and every message after it would fail.
+    let mut owned = vec![account_dir.clone(), maildir.clone()];
     owned.extend(["cur", "new", "tmp"].map(|sub| maildir.join(sub)));
     for path in &owned {
         if let Err(e) = std::os::unix::fs::chown(
@@ -339,7 +332,26 @@ async fn create_account(
             Some(state.config.vmail_gid),
         ) {
             warn!(address = %address, path = ?path, error = %e, "ownership could not be set");
-            let _ = std::fs::remove_dir_all(&account_dir);
+            discard();
+            return reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account creation failed"}),
+            );
+        }
+    }
+
+    // Last, so a failure above leaves no login behind. `add` checks again
+    // under its lock: of two concurrent requests for one address, one
+    // gets the account and the other a conflict.
+    let password = generate_password();
+    match state.passwd.add(&address, password.as_bytes()) {
+        Ok(()) => {}
+        Err(passwd_file::Error::Exists) => {
+            return reply(StatusCode::CONFLICT, json!({"error": "account exists"}));
+        }
+        Err(e) => {
+            warn!(address = %address, error = %e, "the passwd-file could not be written");
+            discard();
             return reply(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 json!({"error": "account creation failed"}),
@@ -401,9 +413,9 @@ async fn kick(UrlPath(address): UrlPath<String>) -> Reply {
 
 /// `DELETE /admin/v1/accounts/{address}`
 ///
-/// Removes the user's entire maildir and password file, and blocks the
-/// address in the recipient access map so no further mail is delivered
-/// to it.
+/// Removes the account's passwd-file line and its entire maildir, and
+/// blocks the address in the recipient access map so no further mail is
+/// delivered to it.
 ///
 /// The block is a delivery control and not a creation control:
 /// `noombat_recipient_access` is read by Postfix's
@@ -418,10 +430,16 @@ async fn delete_account(
         return invalid_address();
     };
 
-    // No address in these lines: they record an erasure.
+    // No address in these lines: they record an erasure. The line goes
+    // first, so no login succeeds while the mail is being removed.
+    if let Err(e) = state.passwd.remove(&address) {
+        warn!(error = %e, "the passwd-file could not be written");
+        return reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "account deletion failed"}),
+        );
+    }
     if account_dir.exists() {
-        // remove_dir_all deletes the entire account directory,
-        // including the password file and all maildir contents.
         if let Err(e) = std::fs::remove_dir_all(&account_dir) {
             warn!(error = %e, "account directory could not be removed");
             return reply(
@@ -429,7 +447,7 @@ async fn delete_account(
                 json!({"error": "account deletion failed"}),
             );
         }
-        info!("account directory deleted (maildir + password)");
+        info!("account deleted (passwd-file line and maildir)");
     }
 
     // Block delivery to the address. This is a mail-flow control, not a
@@ -572,25 +590,25 @@ async fn account_exists(
     State(state): State<Arc<AppState>>,
     UrlPath(address): UrlPath<String>,
 ) -> Reply {
-    let Some(password_file) = password_file_path(&state.config.vmail_home, &address) else {
+    if validate_address(&address).is_err() {
         return invalid_address();
-    };
-    reply(
-        StatusCode::OK,
-        json!({"address": address, "exists": password_file.exists()}),
-    )
+    }
+    match state.passwd.contains(&address) {
+        Ok(exists) => reply(
+            StatusCode::OK,
+            json!({"address": address, "exists": exists}),
+        ),
+        Err(e) => {
+            warn!(address = %address, error = %e, "the passwd-file could not be read");
+            reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "account lookup failed"}),
+            )
+        }
+    }
 }
 
 // ..... HELPERS .....
-
-/// Derive the password file path for a Chatmail address.
-///
-/// Chatmail stores passwords at `{vmail_home}/{address}/password`.
-/// Returns `None` if the address fails validation or the resolved path
-/// escapes `vmail_home`.
-fn password_file_path(vmail_home: &str, address: &str) -> Option<PathBuf> {
-    safe_child_path(vmail_home, address).map(|p| p.join("password"))
-}
 
 /// Derive the maildir path for a Chatmail address.
 ///
@@ -717,9 +735,11 @@ mod tests {
             vmail_uid: own_uid_gid(home).0,
             vmail_gid: own_uid_gid(home).1,
         };
+        let gid = config.vmail_gid;
         Arc::new(AppState {
             config,
             maps: std::sync::Mutex::new(crate::access_maps::AccessMaps::default()),
+            passwd: crate::passwd_file::PasswdFile::new(home.join(".noombat-admin/passwd"), gid),
             last_reload: std::sync::Mutex::new(std::time::Instant::now()),
         })
     }
@@ -871,8 +891,31 @@ mod tests {
         (status, body)
     }
 
+    /// The passwd-file line for `address`, if it has one.
+    fn passwd_line(home: &std::path::Path, address: &str) -> Option<String> {
+        std::fs::read_to_string(home.join(".noombat-admin/passwd"))
+            .ok()?
+            .lines()
+            .find(|l| l.split(':').next() == Some(address))
+            .map(str::to_owned)
+    }
+
+    /// Whether `password` is the one the line was hashed from.
+    fn opens(line: &str, password: &str) -> bool {
+        use argon2::password_hash::PasswordVerifier as _;
+        let Some((_, hash)) = line.split_once(":{ARGON2ID}") else {
+            return false;
+        };
+        let Ok(parsed) = argon2::password_hash::phc::PasswordHash::new(hash) else {
+            return false;
+        };
+        argon2::Argon2::default()
+            .verify_password(password.as_bytes(), &parsed)
+            .is_ok()
+    }
+
     #[tokio::test]
-    async fn creating_an_account_writes_a_maildir_and_a_password() {
+    async fn creating_an_account_writes_a_maildir_and_a_passwd_line() {
         let home = tempfile::tempdir().expect("a temporary directory");
         let (status, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
 
@@ -890,29 +933,28 @@ mod tests {
                 "Maildir/{sub} was not created"
             );
         }
-        assert_eq!(
-            std::fs::read_to_string(account.join("password")).expect("the password file"),
-            password,
-            "the file must hold the password the caller was given, or no login can succeed"
+        let line = passwd_line(home.path(), "a@b.test").expect("a passwd-file line");
+        assert!(
+            opens(&line, password),
+            "the line must hold the password the caller was given, or no login can succeed"
+        );
+        assert!(
+            !account.join("password").exists(),
+            "no password is stored in the clear"
         );
     }
 
     #[tokio::test]
-    async fn a_created_password_file_is_not_readable_by_others() {
-        use std::os::unix::fs::PermissionsExt as _;
+    async fn the_passwd_file_is_readable_by_dovecot_s_group_only() {
+        use std::os::unix::fs::MetadataExt as _;
 
         let home = tempfile::tempdir().expect("a temporary directory");
         request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
 
-        let mode = std::fs::metadata(home.path().join("a@b.test/password"))
-            .expect("the password file")
-            .permissions()
-            .mode()
-            & 0o777;
-        assert_eq!(
-            mode, 0o600,
-            "the password is stored in the clear, so the mode is the control"
-        );
+        let meta =
+            std::fs::metadata(home.path().join(".noombat-admin/passwd")).expect("the passwd-file");
+        assert_eq!(meta.mode() & 0o777, 0o640);
+        assert_eq!(meta.gid(), test_state(home.path()).config.vmail_gid);
     }
 
     #[tokio::test]
@@ -921,13 +963,124 @@ mod tests {
         let (first, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
         assert_eq!(first, StatusCode::CREATED);
         let original = body["password"].as_str().expect("a password").to_owned();
+        let line = passwd_line(home.path(), "a@b.test").expect("a passwd-file line");
 
         let (second, _) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
         assert_eq!(second, StatusCode::CONFLICT);
         assert_eq!(
-            std::fs::read_to_string(home.path().join("a@b.test/password")).expect("still there"),
-            original,
+            passwd_line(home.path(), "a@b.test").as_deref(),
+            Some(line.as_str()),
             "a refused second create must not overwrite the live password"
+        );
+        assert!(opens(&line, &original));
+    }
+
+    #[tokio::test]
+    async fn rotating_replaces_the_password() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let (_, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        let old = body["password"].as_str().expect("a password").to_owned();
+
+        let (status, body) = request_on(
+            home.path(),
+            "POST",
+            "/admin/v1/accounts/a@b.test/rotate-password",
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK);
+        let new = body["password"].as_str().expect("a new password");
+        let line = passwd_line(home.path(), "a@b.test").expect("a passwd-file line");
+        assert!(opens(&line, new), "the new password must log in");
+        assert!(!opens(&line, &old), "the old password must not");
+
+        let (unknown, _) = request_on(
+            home.path(),
+            "POST",
+            "/admin/v1/accounts/x@b.test/rotate-password",
+        )
+        .await;
+        assert_eq!(unknown, StatusCode::NOT_FOUND);
+        assert!(passwd_line(home.path(), "x@b.test").is_none());
+    }
+
+    #[tokio::test]
+    async fn deleting_removes_the_line_and_the_mail() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        request_on(home.path(), "PUT", "/admin/v1/accounts/c@b.test").await;
+
+        let (status, _) = request_on(home.path(), "DELETE", "/admin/v1/accounts/a@b.test").await;
+        assert_eq!(status, StatusCode::OK);
+        assert!(
+            passwd_line(home.path(), "a@b.test").is_none(),
+            "a deleted account still logs in"
+        );
+        assert!(!home.path().join("a@b.test").exists());
+        assert!(
+            passwd_line(home.path(), "c@b.test").is_some(),
+            "another account was removed"
+        );
+    }
+
+    #[tokio::test]
+    async fn existence_is_a_passwd_file_line() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        // A mailbox with no line is not an account: nothing can log in to it.
+        std::fs::create_dir_all(home.path().join("x@b.test/Maildir")).expect("a stray maildir");
+
+        let exists = |address: &'static str| {
+            let home = home.path().to_owned();
+            async move {
+                let path = format!("/admin/v1/accounts/{address}/exists");
+                request_on(&home, "GET", &path).await.1["exists"].clone()
+            }
+        };
+        assert_eq!(exists("a@b.test").await, true);
+        assert_eq!(exists("x@b.test").await, false);
+        assert_eq!(exists("y@b.test").await, false);
+    }
+
+    #[tokio::test]
+    async fn an_address_dovecot_would_not_read_back_is_refused() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        // A leading `#` makes the line a comment; `:` splits it.
+        for address in ["%23a@b.test", "a:b@b.test"] {
+            let path = format!("/admin/v1/accounts/{address}");
+            let (status, _) = request_on(home.path(), "PUT", &path).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{address}");
+            let rotate = format!("/admin/v1/accounts/{address}/rotate-password");
+            let (status, _) = request_on(home.path(), "POST", &rotate).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{address}");
+        }
+        assert!(!home.path().join("#a@b.test").exists());
+        assert!(!home.path().join("a:b@b.test").exists());
+    }
+
+    #[tokio::test]
+    async fn a_failed_create_removes_only_what_it_made() {
+        let home = tempfile::tempdir().expect("a temporary directory");
+        // A directory where the passwd-file's temporary copy goes, so
+        // every write fails after the maildir is made.
+        std::fs::create_dir_all(home.path().join(".noombat-admin/passwd.tmp/x"))
+            .expect("a blocker");
+        // A mailbox with no line, holding mail.
+        let stray = home.path().join("a@b.test/Maildir/cur");
+        std::fs::create_dir_all(&stray).expect("a stray maildir");
+        std::fs::write(stray.join("1.msg"), "mail").expect("a message");
+
+        let (status, _) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            stray.join("1.msg").exists(),
+            "a failed create deleted existing mail"
+        );
+
+        let (status, _) = request_on(home.path(), "PUT", "/admin/v1/accounts/c@b.test").await;
+        assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        assert!(
+            !home.path().join("c@b.test").exists(),
+            "a failed create left the maildir it made"
         );
     }
 
@@ -948,7 +1101,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_domain_check_ignores_case() {
-        // Dovecot lowercases the username before the helper sees it, so an
+        // Dovecot lowercases the username before looking it up, so an
         // account written in mixed case is one no login can reach.
         let home = tempfile::tempdir().expect("a temporary directory");
         let (status, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@B.TEST").await;
@@ -958,7 +1111,7 @@ mod tests {
             body["address"], "a@b.test",
             "the address is stored lowercased"
         );
-        assert!(home.path().join("a@b.test/password").exists());
+        assert!(passwd_line(home.path(), "a@b.test").is_some());
     }
 
     #[test]

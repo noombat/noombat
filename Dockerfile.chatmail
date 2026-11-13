@@ -3,8 +3,8 @@
 
 # noombat-chatmail container image.
 #
-# Packages the standard Chatmail relay (Postfix + Dovecot + doveauth +
-# filtermail + OpenDKIM) alongside the noombat-chatmail-admin sidecar
+# Packages the standard Chatmail relay (Postfix + Dovecot + filtermail +
+# OpenDKIM) alongside the noombat-chatmail-admin sidecar
 # daemon, managed by s6-overlay.
 
 # Base images are pinned by digest as well as by tag.
@@ -18,7 +18,7 @@
 #
 # Builds both the sidecar daemon and the filtermail content filter
 # as release binaries.
-FROM rust:1-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS rust-builder
+FROM rust:1-trixie@sha256:0b0ea86881537b3f645aace7e8e39556289f8787db057317c8d4978548213b9e AS rust-builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
@@ -29,11 +29,11 @@ RUN cargo build --release --bin noombat-chatmail-admin --bin noombat-filtermail
 
 # ..... RUNTIME .....
 #
-# Base image: Debian bookworm-slim with the mail stack installed via
+# Base image: Debian trixie-slim with the mail stack installed via
 # packages. In production, the upstream Chatmail relay is deployed via
 # Ansible (cmdeploy); for containerisation, we install the required
 # packages directly and overlay the Chatmail-specific configuration.
-FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
+FROM debian:trixie-slim@sha256:a72b4433de1cf7d6bae0c4cee74d0547f58601a643b3375f070c51600d63b6b2
 
 # Install s6-overlay for process supervision.
 ARG S6_OVERLAY_VERSION=3.2.0.2
@@ -48,7 +48,7 @@ ARG S6_OVERLAY_VERSION=3.2.0.2
 # the artefact.
 #
 # Verification is a separate `RUN` using sha256sum from coreutils, which
-# bookworm-slim already provides.
+# trixie-slim already provides.
 #
 # To refresh after a version bump:
 #   curl -fsSL <url>.sha256
@@ -67,7 +67,7 @@ RUN printf '%s  /tmp/s6-overlay-noarch.tar.xz\n%s  /tmp/s6-overlay-x86_64.tar.xz
 
 # Install all system packages in a single layer.
 # xz-utils is required to extract the s6-overlay .tar.xz archives and is
-# not present in bookworm-slim.
+# not present in trixie-slim.
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         xz-utils \
@@ -110,8 +110,7 @@ COPY chatmail-config/opendkim-verify.conf /etc/opendkim-verify.conf
 COPY chatmail-config/master.cf.filtermail /etc/postfix/master.cf.filtermail
 COPY chatmail-config/entrypoint.sh /entrypoint.sh
 COPY chatmail-config/cert-watch.sh /usr/local/bin/cert-watch
-COPY chatmail-config/noombat-doveauth /usr/local/bin/noombat-doveauth
-RUN chmod +x /entrypoint.sh /usr/local/bin/cert-watch /usr/local/bin/noombat-doveauth
+RUN chmod +x /entrypoint.sh /usr/local/bin/cert-watch
 
 # Copy the Rust binaries from the builder stage.
 COPY --from=rust-builder /build/target/release/noombat-chatmail-admin /usr/local/bin/noombat-chatmail-admin

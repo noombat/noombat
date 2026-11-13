@@ -4,12 +4,9 @@
 #
 # List Chatmail mailboxes on the relay that no Noombat account claims.
 #
-# A one-off, for deployments that ran the relay before account creation
-# moved behind the admin sidecar. The checkpassword helper used to create
-# a mailbox on first login, so anyone could bring an address into
-# existence by attempting to log in. Removing that branch stops new
-# mailboxes appearing; it does nothing about ones already there, and an
-# existing directory blocks the real user forever: the create endpoint
+# For a relay holding accounts the application did not create, such as an
+# address claimed by a login attempt on a relay that created accounts on
+# login. Such an account blocks the real user forever: the create endpoint
 # answers 409 and provisioning fails.
 #
 # Reports. It does not delete, because the two states it cannot tell
@@ -45,10 +42,10 @@ docker inspect "$VMAIL_CONTAINER" >/dev/null 2>&1 \
 docker inspect "$DB_CONTAINER" >/dev/null 2>&1 \
     || fatal "no container named '$DB_CONTAINER' (set DB_CONTAINER)"
 
-# One directory per address, and only those holding a password file: a
-# directory without one authenticates nobody and is not an account.
+# One line per account in the passwd-file Dovecot authenticates against:
+# a directory with no line authenticates nobody and is not an account.
 ON_DISK=$(docker exec "$VMAIL_CONTAINER" sh -c \
-    "find '$VMAIL_HOME' -mindepth 2 -maxdepth 2 -name password -printf '%h\n' 2>/dev/null | xargs -r -n1 basename")
+    "cut -d: -f1 '$VMAIL_HOME/.noombat-admin/passwd'")
 DISK_STATUS=$?
 if [ "$DISK_STATUS" -ne 0 ]; then
     fatal "could not list mailboxes in '$VMAIL_CONTAINER' (exit $DISK_STATUS)"
@@ -96,7 +93,7 @@ printf '%s\n' "$ORPHANS" | while IFS= read -r address; do
     [ -n "$address" ] || continue
     size=$(docker exec "$VMAIL_CONTAINER" du -sh "$VMAIL_HOME/$address" 2>/dev/null | cut -f1)
     messages=$(docker exec "$VMAIL_CONTAINER" sh -c \
-        "find '$VMAIL_HOME/$address/Maildir' -type f -not -name password 2>/dev/null | wc -l")
+        "find '$VMAIL_HOME/$address/Maildir' -type f 2>/dev/null | wc -l")
     printf '  %-40s %6s  %s message(s)\n' "$address" "${size:-?}" "${messages:-?}"
 done
 
@@ -112,7 +109,7 @@ To remove one, once you have decided:
   curl -X DELETE -H "Authorization: Bearer $CHATMAIL_ADMIN_SECRET" \
     https://<relay>:9100/admin/v1/accounts/<address>
 
-That deletes the maildir and the password file, and blocks inbound
+That deletes the passwd-file line and the maildir, and blocks inbound
 delivery to the address. It does not stop the address being created
 again, and nothing does: creation is the sidecar's authenticated
 endpoint, so re-creation is a deliberate act.

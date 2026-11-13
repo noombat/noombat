@@ -4,8 +4,8 @@
 //!
 //! The sidecar creates the account and owns the password; the IMAP login
 //! below is a check that it works, not what brings it into being. The
-//! relay's checkpassword helper answers before anybody has authenticated,
-//! so anything it created would be created for whoever asked.
+//! relay answers a login before anybody has authenticated, so anything it
+//! created would be created for whoever asked.
 
 use noombat_core::error::{NoombatError, Result};
 use tracing::info;

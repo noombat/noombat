@@ -274,6 +274,18 @@ chmod 600 "${DKIM_DIR}/keys/${MAIL_DOMAIN}/${DKIM_SELECTOR}.private"
 
 chown -R vmail:vmail /home/vmail
 
+# The admin sidecar's state, the passwd-file Dovecot authenticates against
+# among it, is root's, and Dovecot's auth service reads the passwd-file
+# through the vmail group: no process that handles mail can add an
+# account, or plant a link for the root sidecar to follow. The file exists
+# before Dovecot starts, so a relay with no accounts yet refuses logins
+# rather than failing to open it.
+mkdir -p /home/vmail/.noombat-admin
+[ -e /home/vmail/.noombat-admin/passwd ] || : > /home/vmail/.noombat-admin/passwd
+chown -R root:vmail /home/vmail/.noombat-admin
+chmod 750 /home/vmail/.noombat-admin
+find /home/vmail/.noombat-admin -type f -exec chmod 640 {} +
+
 # ..... SYSLOG .....
 
 # Nothing in this image creates /dev/log, so every daemon that logs

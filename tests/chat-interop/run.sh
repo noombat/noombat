@@ -349,23 +349,27 @@ echo "--- Account creation ---"
 echo ""
 
 # An outsider must not be able to bring an address into existence by
-# logging in. The relay's checkpassword helper used to create the mailbox
-# here, storing the password the caller offered, so anyone could claim any
-# unused address over the published IMAP port and hold that chat identity
-# permanently.
+# logging in: a relay that created the mailbox here, storing the password
+# the caller offered, would let anyone claim any unused address over the
+# published IMAP port and hold that chat identity permanently.
 #
-# The assertion is on filesystem state, not on the login result. A helper
-# can create the account and then refuse the session a moment later, which
-# is exactly what the submission path did, so "the login failed" would
-# have passed against the defect.
+# The assertion is on the account, through the sidecar, not on the login
+# result: a relay can create the account and then refuse the session a
+# moment later, so "the login failed" would pass against that defect.
 CHATMAIL_ADMIN_SECRET="${CHATMAIL_ADMIN_SECRET:-chat-interop-admin-secret-for-tests-only}"
 SQUATTED="squatter@${CHATMAIL_DOMAIN}"
 
 if ! command -v python3 >/dev/null 2>&1; then
     skip "Squat probe: python3 is needed to drive an IMAP session"
 else
+    SQUAT_CODE=0
     "$(dirname "$0")/squat-probe.py" localhost 993 "$SQUATTED" "attacker-chosen" \
-      > /dev/null 2>&1 || true
+      > /dev/null 2>&1 || SQUAT_CODE=$?
+    case "$SQUAT_CODE" in
+        0) pass "An IMAP login for an unknown address is refused" ;;
+        1) fail "An IMAP login for $SQUATTED succeeded with a password nobody issued" ;;
+        *) fail "The squat probe could not reach the relay (exit $SQUAT_CODE)" ;;
+    esac
 
     EXISTS=$(curl $CURL_OPTS --insecure -s \
       -H "Authorization: Bearer ${CHATMAIL_ADMIN_SECRET}" \
@@ -381,9 +385,9 @@ else
 fi
 
 # The other half: a squat attempt against a real user's address must not
-# stop that user provisioning. Under the old behaviour the attempt created
-# the mailbox with the attacker's password, so the IMAP login inside
-# provisioning failed against it and chat never worked for that account.
+# stop that user provisioning. Had the attempt created the mailbox with
+# the attacker's password, the IMAP login inside provisioning would fail
+# against it and chat would never work for that account.
 if [ -z "$BOB_TOKEN" ]; then
     skip "Squat then provision: bob has no session"
 elif ! command -v python3 >/dev/null 2>&1; then
@@ -460,9 +464,9 @@ fi
 # 13. Delivery, as bob's mail client sees it.
 #
 # "sent" is the relay accepting a submission, which says nothing about
-# delivery. Before delivering, Dovecot checks that the recipient exists by
-# asking the checkpassword helper with no password; if the helper refuses,
-# every delivery is deferred and no mailbox receives mail.
+# delivery. Before delivering, Dovecot checks that the recipient exists
+# with a password-less lookup; if that lookup fails, every delivery is
+# deferred and no mailbox receives mail.
 if [ "$SENT" != yes ]; then
     skip "Delivery: nothing was sent"
 elif [ -z "${BOB_CHATMAIL_PASSWORD:-}" ]; then

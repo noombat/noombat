@@ -40,7 +40,7 @@ services:
   #
   # Uses the project's noombat-chatmail container image, which
   # packages the standard Chatmail relay (Postfix + Dovecot +
-  # doveauth + filtermail + OpenDKIM) alongside the
+  # filtermail + OpenDKIM) alongside the
   # noombat-chatmail-admin sidecar daemon.
 
   chatmail:

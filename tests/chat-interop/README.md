@@ -28,7 +28,7 @@ CI runs the same three steps in the `chat-interop` job of `.github/workflows/ci-
 
 ## Local loop
 
-`build-local.sh` and `compose.localbin.yml` exist so that changing Rust source or a Chatmail script does not cost an image build. The binary is compiled in the same builder image the Dockerfile uses, then mounted over the image's copy along with the relay's entrypoint, Dovecot configuration and checkpassword helper.
+`build-local.sh` and `compose.localbin.yml` exist so that changing Rust source or a Chatmail script does not cost an image build. The binary is compiled in the same builder image the Dockerfile uses, then mounted over the image's copy along with the relay's entrypoint and its Postfix, Dovecot and OpenDKIM configuration.
 
 ```sh
 tests/chat-interop/build-local.sh

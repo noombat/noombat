@@ -3,17 +3,17 @@
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 """Attempt an IMAP login for an address that has never been provisioned.
 
-Stands in for an outsider with no account. The relay's checkpassword
-helper used to create the mailbox on this login, storing whatever
-password arrived, which let anyone claim any unused address over the
-published IMAP port. This probe makes that request; run.sh then asks the
-sidecar whether an account now exists.
+Stands in for an outsider with no account. A relay that created the
+mailbox on this login, storing whatever password arrived, would let
+anyone claim any unused address over the published IMAP port. This
+probe makes that request; run.sh then asks the sidecar whether an
+account now exists.
 
 Exits 0 when the login is refused, which is the expected outcome. It
 exits 1 if the login *succeeds*, because that means the account was
-created for us. Neither exit code is the real assertion: an account can
-be created by a login that is then refused for some other reason, so what
-run.sh checks afterwards is whether any filesystem state appeared.
+created for us. run.sh asserts that, and separately asks the sidecar
+whether an account appeared, because an account can be created by a
+login that is then refused for some other reason.
 
 Certificate verification is off. The relay's CA is generated at boot
 inside the container and its leaf names `chat.test.local`, while this

@@ -169,7 +169,7 @@ They are requests the feature cannot work without, not reporting.
 Two known gaps, stated rather than left to be "discovered".
 
 **Reproducible Rust builds are not implemented yet.**
-The manifests attest to the `noombat`, `noombat-chatmail-admin`, `noombat-filtermail`, and `noombat-doveauth` binaries, i.e. you can confirm that the image you run is the image that was released, but nothing yet lets you confirm that the image corresponds to the source.
+The manifests attest to the `noombat`, `noombat-chatmail-admin`, and `noombat-filtermail` binaries, i.e. you can confirm that the image you run is the image that was released, but nothing yet lets you confirm that the image corresponds to the source.
 Nothing sets `SOURCE_DATE_EPOCH` or `--remap-path-prefix`, and dependency paths under `$CARGO_HOME` reach the binary through panic location metadata, so an independent rebuild in a different environment will not match.
 Closing this needs those flags, a pinned toolchain version rather than `channel = "stable"`, and a CI gate that builds twice in different directories and compares.
 It is planned;

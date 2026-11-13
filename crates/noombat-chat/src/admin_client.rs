@@ -232,8 +232,8 @@ impl ChatmailAdminClient {
     ///
     /// Create the account and return the password the sidecar wrote.
     ///
-    /// The relay's checkpassword helper only verifies; it does not
-    /// create. This is the only way an account comes into existence, so a
+    /// The relay only verifies logins; it never creates an account.
+    /// This is the only way an account comes into existence, so a
     /// failure here means provisioning failed rather than that it can be
     /// retried by logging in.
     pub async fn create_account(&self, address: &str) -> Result<CreateAccountResponse> {
@@ -289,7 +289,7 @@ impl ChatmailAdminClient {
 
     /// `DELETE /admin/v1/accounts/{address}`
     ///
-    /// Deletes the account's maildir and password file. Blocks the
+    /// Deletes the account's passwd-file line and its maildir. Blocks the
     /// address in the recipient access map.
     pub async fn delete_account(&self, address: &str) -> Result<()> {
         check_segment(address)?;

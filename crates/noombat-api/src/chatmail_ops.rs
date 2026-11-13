@@ -159,7 +159,7 @@ pub async fn drain(pool: &PgPool, client: &Option<ChatmailAdminClient>) -> u64 {
             Ok(()) => {
                 // The liveness probe, and the reason it is worth having:
                 // a sidecar can answer 200 to a delete and still hold
-                // the mailbox, and only asking afterwards catches that.
+                // the account, and only asking afterwards catches that.
                 match client.account_exists(&address).await {
                     Ok(false) => {
                         mark_succeeded(pool, id).await;

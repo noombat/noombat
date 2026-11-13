@@ -34,7 +34,7 @@ The server image manifest covers everything under `/opt/noombat` and `/usr/local
 installed Debian package and its version.
 
 The chatmail image manifest covers the same ground for that image: `noombat-chatmail-admin`,
-`noombat-filtermail`, `noombat-doveauth`, the Postfix and Dovecot configuration, the entrypoint,
+`noombat-filtermail`, the Postfix and Dovecot configuration, the entrypoint,
 and the package list.
 
 Each Sigstore bundle carries a signature, a certificate, and a Rekor inclusion proof.

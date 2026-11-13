@@ -338,7 +338,9 @@ async fn totp_verify(
 
     // Return an HTML fragment that HTMX swaps into the #totp-enrolment
     // container, replacing the verification form with a success message.
-    let html = r#"<div class="bg-bg-success-subtle border border-border-success text-text-success rounded px-4 py-3 text-sm" role="status">Two-factor authentication is now enabled.</div>"#;
+    let html = "<div class=\"bg-bg-success-subtle border border-border-success \
+                text-text-success rounded px-4 py-3 text-sm\" role=\"status\">\
+                Two-factor authentication is now enabled.</div>";
     Ok((StatusCode::OK, axum::response::Html(html)).into_response())
 }
 
@@ -654,7 +656,8 @@ async fn set_password(
 
     // Atomic update: auth_key_hash and chatmail_cred in one statement.
     sqlx::query(
-        "UPDATE actors SET auth_key_hash = $1, chatmail_cred = COALESCE($2, chatmail_cred) WHERE id = $3"
+        "UPDATE actors SET auth_key_hash = $1, chatmail_cred = COALESCE($2, chatmail_cred) \
+         WHERE id = $3",
     )
     .bind(&hash)
     .bind(&blob_bytes)
@@ -715,9 +718,8 @@ async fn provision_chat(
     })?;
 
     // Without the sidecar there is no way to create an account: the
-    // relay's checkpassword helper only verifies. Refusing here is what
-    // keeps an unconfigured deployment from quietly falling back to a
-    // login-only path, which is the defect this route was rebuilt around.
+    // relay only verifies logins. Refusing here keeps an unconfigured
+    // deployment from quietly falling back to a login-only path.
     let admin = state.chatmail_admin_client.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
             "chatmail admin sidecar not configured on this instance".into(),

@@ -13,7 +13,7 @@
 
 # ..... BASIC SETTINGS .....
 
-# Suppress backwards-compatibility warnings (Postfix 3.7 on bookworm).
+# Suppress backwards-compatibility warnings.
 compatibility_level = 3.6
 
 myhostname = MAIL_DOMAIN

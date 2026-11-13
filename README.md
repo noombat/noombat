@@ -369,7 +369,7 @@ caller, so without it every route that acts for an account is unreachable.
 ### Chatmail (encrypted messaging)
 
 Every Noombat instance co-deploys its own Chatmail relay (`noombat-chatmail`) with a `noombat-chatmail-admin` sidecar daemon.
-The Chatmail relay is a standard upstream Chatmail deployment (Postfix + Dovecot + `doveauth` + `filtermail` + OpenDKIM) packaged with the admin sidecar in a single container.
+The Chatmail relay is a standard upstream Chatmail deployment (Postfix + Dovecot + `filtermail` + OpenDKIM) packaged with the admin sidecar in a single container.
 A closed federation policy restricts message exchange to registered Noombat Chatmail domains via Postfix `transport_maps` allowlist.
 The admin sidecar exposes a private REST API for account lifecycle operations (password rotation, session termination, maildir deletion, access map management) required by the moderation layer.
 

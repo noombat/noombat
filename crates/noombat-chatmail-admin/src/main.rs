@@ -14,6 +14,7 @@
 mod access_maps;
 mod allowlist;
 mod config;
+mod passwd_file;
 mod password;
 mod router;
 
@@ -132,9 +133,29 @@ async fn main() {
 
     // Load or initialise access maps from persistent storage.
     let maps = access_maps::AccessMaps::load_or_init(&config.access_maps_path);
+
+    let vmail_home = std::path::Path::new(&config.vmail_home);
+    let passwd =
+        passwd_file::PasswdFile::new(vmail_home.join(".noombat-admin/passwd"), config.vmail_gid);
+    match passwd.migrate_plain_files(vmail_home) {
+        Ok(migration) => {
+            if migration.moved > 0 {
+                info!(
+                    moved = migration.moved,
+                    "plain-text password files moved into the passwd-file"
+                );
+            }
+            for (address, reason) in &migration.skipped {
+                warn!(%address, %reason, "a plain-text password file was not moved");
+            }
+        }
+        Err(e) => warn!(error = %e, "plain-text password files could not be moved"),
+    }
+
     let state = Arc::new(AppState {
         config,
         maps: Mutex::new(maps),
+        passwd,
         last_reload: Mutex::new(std::time::Instant::now()),
     });
 
@@ -163,6 +184,8 @@ async fn main() {
 pub struct AppState {
     pub config: config::Config,
     pub maps: Mutex<access_maps::AccessMaps>,
+    /// The accounts Dovecot authenticates against.
+    pub passwd: passwd_file::PasswdFile,
     /// Debounce tracking for Postfix reloads.
     pub last_reload: Mutex<std::time::Instant>,
 }
