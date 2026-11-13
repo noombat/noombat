@@ -2428,6 +2428,7 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+ "totp-rs",
  "tower",
  "tower-http 0.7.1",
  "tracing",

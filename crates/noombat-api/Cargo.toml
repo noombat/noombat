@@ -44,6 +44,8 @@ blurhash = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
+# Generates the codes an authenticator app would show.
+totp-rs = { workspace = true }
 # `ServiceExt::oneshot` drives the assembled Router in integration
 # tests without binding a socket.
 tower = { version = "0.5", features = ["util"] }

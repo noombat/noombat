@@ -332,3 +332,263 @@ async fn an_anonymous_post_changes_nothing(pool: PgPool) {
         "an unauthenticated post must not alter anyone's settings"
     );
 }
+
+// Known defect: the column default is not conservative; remove `should_panic` once it is. No
+// account gets it today, since every creation path writes `ActorPrivacy::default()` itself.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: the column default is not conservative")]
+async fn the_column_default_is_conservative(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+    let stored = stored_privacy(&pool, actor_id).await;
+    let parsed = serde_json::from_value::<noombat_core::privacy::ActorPrivacy>(stored.clone())
+        .expect("the stored settings read back through ActorPrivacy");
+
+    // The column as stored, not after serde: a key the column left out
+    // would be filled in by the Rust default and hide the disagreement.
+    let conservative = serde_json::json!({
+        "discoverable": true,
+        "indexable": false,
+        "require_follow_approval": false,
+        "federate_profile": false,
+        "chatmail_visible": true,
+        "show_followers_count": true,
+        "list_in_directory": false,
+        "cv_download": "public",
+    });
+    assert_eq!(
+        stored, conservative,
+        "known defect: the column default is not conservative"
+    );
+    assert_eq!(
+        serde_json::to_value(parsed).expect("ActorPrivacy serialises"),
+        conservative,
+        "the stored settings must read back unchanged through ActorPrivacy"
+    );
+}
+
+// Known defect: career sections default to public; remove `should_panic` once they default to
+// followers.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: sections default to public")]
+async fn a_section_added_without_a_visibility_is_followers_only(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+
+    for insert in [
+        "INSERT INTO work_experiences (actor_id, title, organization, start_date, ap_object) \
+         VALUES ($1, 'Research engineer', 'Example Labs', '2018-01-15', '{}')",
+        "INSERT INTO education_entries (actor_id, institution, start_date, ap_object) \
+         VALUES ($1, 'University of Example', '2015-09-01', '{}')",
+        "INSERT INTO skills (actor_id, name) VALUES ($1, 'Distributed systems')",
+        "INSERT INTO verified_links (actor_id, url) VALUES ($1, 'https://alice.example/')",
+        "INSERT INTO scholarly_articles \
+             (actor_id, doi, title, authors, doi_metadata, fetched_at, ap_object) \
+         VALUES ($1, '10.1000/xyz123', 'A paper', '[]', '{}', now(), '{}')",
+        "INSERT INTO custom_profile_sections (actor_id, section_type, title, ap_object) \
+         VALUES ($1, 'awards', 'Awards', '{}')",
+    ] {
+        sqlx::query(insert)
+            .bind(actor_id)
+            .execute(&pool)
+            .await
+            .expect("section fixture inserted");
+    }
+
+    let visibilities: Vec<String> = sqlx::query_scalar(
+        "SELECT visibility FROM work_experiences WHERE actor_id = $1 \
+         UNION ALL SELECT visibility FROM education_entries WHERE actor_id = $1 \
+         UNION ALL SELECT visibility FROM skills WHERE actor_id = $1 \
+         UNION ALL SELECT visibility FROM verified_links WHERE actor_id = $1 \
+         UNION ALL SELECT visibility FROM scholarly_articles WHERE actor_id = $1 \
+         UNION ALL SELECT visibility FROM custom_profile_sections WHERE actor_id = $1",
+    )
+    .bind(actor_id)
+    .fetch_all(&pool)
+    .await
+    .expect("section visibilities readable");
+
+    assert_eq!(
+        visibilities,
+        vec!["followers"; 6],
+        "known defect: sections default to public"
+    );
+}
+
+async fn visibility_of(pool: &PgPool, table: &str, actor_id: Uuid) -> String {
+    sqlx::query_scalar(sqlx::AssertSqlSafe(format!(
+        "SELECT visibility FROM {table} WHERE actor_id = $1"
+    )))
+    .bind(actor_id)
+    .fetch_one(pool)
+    .await
+    .unwrap_or_else(|e| panic!("{table} readable: {e}"))
+}
+
+// The pages add sections through the profile functions, so a default kept only in the column
+// would never apply to them.
+
+// Known defect: the function falls back to public; remove `should_panic` once it defaults to
+// followers.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: an experience added without a visibility is public")]
+async fn an_experience_added_without_a_visibility_is_followers_only(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+    let experience: noombat_identity::profile::NewWorkExperience =
+        serde_json::from_value(serde_json::json!({
+            "title": "Research engineer",
+            "organization": "Example Labs",
+            "start_date": "2018-01-15",
+        }))
+        .expect("experience parameters");
+    noombat_identity::profile::create_work_experience(&pool, actor_id, &experience)
+        .await
+        .expect("experience added");
+
+    assert_eq!(
+        visibility_of(&pool, "work_experiences", actor_id).await,
+        "followers",
+        "known defect: an experience added without a visibility is public"
+    );
+}
+
+// Known defect: the function falls back to public; remove `should_panic` once it defaults to
+// followers.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: an education entry added without a visibility is public")]
+async fn an_education_entry_added_without_a_visibility_is_followers_only(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+    let education: noombat_identity::profile::NewEducationEntry =
+        serde_json::from_value(serde_json::json!({
+            "institution": "University of Example",
+            "start_date": "2015-09-01",
+        }))
+        .expect("education parameters");
+    noombat_identity::profile::create_education_entry(&pool, actor_id, &education)
+        .await
+        .expect("education added");
+
+    assert_eq!(
+        visibility_of(&pool, "education_entries", actor_id).await,
+        "followers",
+        "known defect: an education entry added without a visibility is public"
+    );
+}
+
+// Known defect: the function falls back to public; remove `should_panic` once it defaults to
+// followers. It also admits only public and private, so the fix widens that check too.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: a skill added without a visibility is public")]
+async fn a_skill_added_without_a_visibility_is_followers_only(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+    noombat_identity::profile::add_skill(&pool, actor_id, "Distributed systems", None)
+        .await
+        .expect("skill added");
+
+    assert_eq!(
+        visibility_of(&pool, "skills", actor_id).await,
+        "followers",
+        "known defect: a skill added without a visibility is public"
+    );
+}
+
+/// `GET /settings/privacy` as the owner sees it.
+async fn privacy_page(pool: &PgPool, actor_id: Uuid) -> String {
+    let token = access_token(pool, actor_id).await;
+    let response = build_router(test_state(
+        pool.clone(),
+        Arc::new(RecordingSearch::default()),
+    ))
+    .oneshot(
+        Request::builder()
+            .uri("/settings/privacy")
+            .header(header::AUTHORIZATION, format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("page request"),
+    )
+    .await
+    .expect("the router is infallible");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "the privacy page must serve its owner"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("page body read");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Whether the page's checkbox for `name` is ticked.
+fn ticked(page: &str, name: &str) -> bool {
+    let start = page
+        .find(&format!("name=\"{name}\""))
+        .unwrap_or_else(|| panic!("the privacy page has no {name} checkbox"));
+    let end = start + page[start..].find('>').expect("the input tag closes");
+    page[start..end].contains("checked")
+}
+
+// Known defect: the page falls back to on for unset indexable and federate_profile; remove
+// `should_panic` once it falls back to off.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(
+    expected = "known defect: the privacy page ticks unset indexable and federate_profile"
+)]
+async fn the_privacy_page_shows_conservative_defaults_for_unset_flags(pool: PgPool) {
+    // Saving the page as shown writes what it shows, so a ticked box here
+    // would turn a flag on that the stored settings leave unset.
+    let actor_id = insert_actor(&pool).await;
+    sqlx::query("UPDATE actors SET actor_privacy = '{}' WHERE id = $1")
+        .bind(actor_id)
+        .execute(&pool)
+        .await
+        .expect("settings cleared");
+
+    let page = privacy_page(&pool, actor_id).await;
+
+    assert!(
+        !ticked(&page, "indexable") && !ticked(&page, "federate_profile"),
+        "known defect: the privacy page ticks unset indexable and federate_profile"
+    );
+}
+
+// Known defect: the page's publications query names a column the table lacks, and the error is
+// dropped; remove `should_panic` once fixed.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: the privacy page leaves publications out")]
+async fn the_privacy_page_lists_a_publication(pool: PgPool) {
+    let actor_id = insert_actor(&pool).await;
+    let experience: Uuid = sqlx::query_scalar(
+        "INSERT INTO work_experiences (actor_id, title, organization, start_date, ap_object) \
+         VALUES ($1, 'Research engineer', 'Example Labs', '2018-01-15', '{}') RETURNING id",
+    )
+    .bind(actor_id)
+    .fetch_one(&pool)
+    .await
+    .expect("experience fixture");
+    let publication: Uuid = sqlx::query_scalar(
+        "INSERT INTO scholarly_articles \
+             (actor_id, doi, title, authors, doi_metadata, fetched_at, ap_object) \
+         VALUES ($1, '10.1000/xyz123', 'A paper', '[]', '{}', now(), '{}') RETURNING id",
+    )
+    .bind(actor_id)
+    .fetch_one(&pool)
+    .await
+    .expect("publication fixture");
+
+    let page = privacy_page(&pool, actor_id).await;
+
+    assert!(
+        page.contains(&format!("/api/v1/sections/{experience}/visibility")),
+        "the page lists no section at all, so the check below tests nothing"
+    );
+    assert!(
+        page.contains(&format!("/api/v1/sections/{publication}/visibility")),
+        "known defect: the privacy page leaves publications out"
+    );
+}

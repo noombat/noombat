@@ -351,3 +351,82 @@ async fn blocking_without_a_follow_sends_no_undo(pool: PgPool) {
     // for an activity it never saw.
     assert_eq!(undos, 0);
 }
+
+// Known defect: the follow route saves no id, so blocks send no Undo; remove `should_panic` once
+// fixed.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(
+    expected = "known defect: blocking an account followed through the follow route queues no Undo"
+)]
+async fn blocking_an_account_followed_through_the_route_undoes_that_follow(pool: PgPool) {
+    let alice = insert_person(&pool, "alice").await;
+    let remote = insert_remote(&pool, "mallory", "peer.example").await;
+    let token = token_for(&pool, alice, "alice").await;
+
+    let followed = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/users/alice/following")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(
+                    r#"{"target_ap_id":"https://peer.example/users/mallory"}"#,
+                ))
+                .expect("follow request"),
+        )
+        .await
+        .expect("the router is infallible");
+    assert_eq!(
+        followed.status(),
+        StatusCode::ACCEPTED,
+        "the follow was not taken"
+    );
+
+    // What the peer's Accept records.
+    noombat_identity::repo::accept_follow(&pool, alice, remote)
+        .await
+        .expect("follow accepted");
+
+    let follow_id: String = sqlx::query_scalar(
+        "SELECT payload->>'id' FROM delivery_queue WHERE payload->>'type' = 'Follow'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("the Follow was queued");
+
+    let blocked = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri("/users/alice/blocks")
+                .header("content-type", "application/json")
+                .header("authorization", format!("Bearer {token}"))
+                .body(Body::from(
+                    r#"{"target_ap_id":"https://peer.example/users/mallory"}"#,
+                ))
+                .expect("block request"),
+        )
+        .await
+        .expect("the router is infallible");
+    assert_eq!(
+        blocked.status(),
+        StatusCode::CREATED,
+        "the block was not taken"
+    );
+
+    let undos: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM delivery_queue \
+         WHERE payload->>'type' = 'Undo' AND payload->'object'->>'id' = $1",
+    )
+    .bind(&follow_id)
+    .fetch_one(&pool)
+    .await
+    .expect("queue readable");
+
+    assert_eq!(
+        undos, 1,
+        "known defect: blocking an account followed through the follow route queues no Undo"
+    );
+}

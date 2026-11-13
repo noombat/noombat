@@ -360,3 +360,69 @@ async fn only_a_sign_in_records_a_sign_in(pool: PgPool) {
         "refreshing a token is not signing in and must leave last_sign_in_at alone"
     );
 }
+
+// ..... Registration status .....
+
+async fn set_registration_mode(pool: &PgPool, mode: &str) {
+    sqlx::query("UPDATE instance_settings SET registration_mode = $1")
+        .bind(mode)
+        .execute(pool)
+        .await
+        .expect("registration mode set");
+}
+
+async fn published_open_registrations(state: AppState) -> bool {
+    let response = build_router(state)
+        .oneshot(
+            Request::builder()
+                .uri("/nodeinfo/2.1")
+                .body(Body::empty())
+                .expect("request built"),
+        )
+        .await
+        .expect("router responded");
+
+    assert_eq!(response.status(), StatusCode::OK, "nodeinfo must serve");
+
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body read");
+    let json: Value = serde_json::from_slice(&bytes).expect("nodeinfo is JSON");
+    json["openRegistrations"]
+        .as_bool()
+        .expect("openRegistrations present")
+}
+
+// Known defect: openRegistrations ignores the registration mode; remove `should_panic` once fixed.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(expected = "known defect: NodeInfo reports registration open in closed mode")]
+async fn open_registrations_follows_the_administrator_setting(pool: PgPool) {
+    set_registration_mode(&pool, "open").await;
+    assert!(
+        published_open_registrations(test_state(pool.clone())).await,
+        "an instance open by both settings says so"
+    );
+
+    set_registration_mode(&pool, "closed").await;
+    assert!(
+        !published_open_registrations(test_state(pool)).await,
+        "known defect: NodeInfo reports registration open in closed mode"
+    );
+}
+
+/// The configuration flag closes registration whatever the administrator's
+/// mode, so a fix that publishes the mode must keep reading the flag too.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_configuration_flag_still_closes_registration_in_nodeinfo(pool: PgPool) {
+    set_registration_mode(&pool, "open").await;
+    let state = AppState {
+        open_registrations: false,
+        ..test_state(pool)
+    };
+    assert!(
+        !published_open_registrations(state).await,
+        "NodeInfo reports registration closed when the configuration closes it"
+    );
+}

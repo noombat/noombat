@@ -208,4 +208,75 @@ mod tests {
         assert_eq!(parsed.discoverable, privacy.discoverable);
         assert_eq!(parsed.cv_download, privacy.cv_download);
     }
+
+    type Flags = (bool, bool, bool, bool, bool, bool, CvDownload);
+
+    /// discoverable, indexable, require_follow_approval, federate_profile,
+    /// chatmail_visible, show_followers_count, cv_download.
+    fn flags(privacy: &ActorPrivacy) -> Flags {
+        (
+            privacy.discoverable,
+            privacy.indexable,
+            privacy.require_follow_approval,
+            privacy.federate_profile,
+            privacy.chatmail_visible,
+            privacy.show_followers_count,
+            privacy.cv_download,
+        )
+    }
+
+    /// Findable by internal search, but neither indexed by search engines
+    /// nor federated until the owner opts in.
+    const CONSERVATIVE: Flags = (true, false, false, false, true, true, CvDownload::Public);
+
+    // Known defect: indexable and federate_profile default to on. Remove `should_panic` once
+    // fixed, together with `default_privacy_is_open` above, which pins today's defaults.
+    #[test]
+    #[should_panic(expected = "known defect: the Rust default is not conservative")]
+    fn the_default_privacy_is_conservative() {
+        assert_eq!(
+            flags(&ActorPrivacy::default()),
+            CONSERVATIVE,
+            "known defect: the Rust default is not conservative"
+        );
+    }
+
+    // Known defect: absent indexable or federate_profile reads as on; remove `should_panic` once
+    // fixed.
+    #[test]
+    #[should_panic(expected = "known defect: absent keys do not read as the conservative defaults")]
+    fn absent_keys_read_as_the_conservative_defaults() {
+        let privacy: ActorPrivacy =
+            serde_json::from_str("{}").expect("an empty object deserialises");
+
+        assert_eq!(
+            flags(&privacy),
+            CONSERVATIVE,
+            "known defect: absent keys do not read as the conservative defaults"
+        );
+    }
+
+    // Known defect: there is no list_in_directory flag; remove `should_panic` once it exists.
+    #[test]
+    #[should_panic(expected = "known defect: there is no list_in_directory flag")]
+    fn the_directory_flag_exists_and_defaults_off() {
+        let from_default =
+            serde_json::to_value(ActorPrivacy::default()).expect("the default serialises");
+        let from_empty = serde_json::to_value(
+            serde_json::from_str::<ActorPrivacy>("{}").expect("an empty object deserialises"),
+        )
+        .expect("the parsed value serialises");
+
+        assert_eq!(
+            (
+                &from_default["list_in_directory"],
+                &from_empty["list_in_directory"]
+            ),
+            (
+                &serde_json::Value::Bool(false),
+                &serde_json::Value::Bool(false)
+            ),
+            "known defect: there is no list_in_directory flag"
+        );
+    }
 }

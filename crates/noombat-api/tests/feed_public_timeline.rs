@@ -320,3 +320,109 @@ async fn the_public_fallback_stops_after_the_first_page(pool: PgPool) {
         "the fallback continued past page one: {second}"
     );
 }
+
+/// The partial as the page fetches it for a signed-in viewer. The viewer
+/// goes in both ways a fix might read it: by name in the query string, as
+/// the page sends it, and as the extension the auth middleware adds for
+/// the session.
+async fn feed_body_as(state: AppState, viewer_id: Uuid, username: &str) -> String {
+    feed_body_naming(state, username, viewer_id, username).await
+}
+
+/// The partial requested with `named` in the query string by a session
+/// belonging to someone who may be another member.
+async fn feed_body_naming(
+    state: AppState,
+    named: &str,
+    session_id: Uuid,
+    session_username: &str,
+) -> String {
+    let mut request = Request::builder()
+        .uri(format!("/feed?page=1&user={named}"))
+        .body(Body::empty())
+        .expect("request built");
+    request.extensions_mut().insert(Viewer {
+        actor_id: session_id,
+        username: session_username.to_owned(),
+        instance_role: noombat_core::actor::InstanceRole::User,
+        actor_status: noombat_core::actor::ActorStatus::Active,
+    });
+
+    let response = build_router(state)
+        .oneshot(request)
+        .await
+        .expect("router responded");
+
+    assert_eq!(response.status(), StatusCode::OK, "the feed must serve");
+
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("body read");
+    String::from_utf8(bytes.to_vec()).expect("the partial is UTF-8")
+}
+
+// Known defect: the home feed admits only public and unlisted posts, so a
+// followers-only post never reaches the followers it was written for.
+// Remove `should_panic` once it is fixed.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+#[should_panic(
+    expected = "known defect: a followers-only post is missing from a follower's home feed"
+)]
+async fn a_followers_only_post_reaches_a_followers_home_feed(pool: PgPool) {
+    let follower = insert_actor(&pool, "follower").await;
+    let author = insert_actor(&pool, "author").await;
+    let stranger = insert_actor(&pool, "stranger").await;
+
+    insert_follow(&pool, follower, author).await;
+    insert_post(&pool, author, "public", "<p>a note tagged fieldwork</p>").await;
+    insert_post(&pool, author, "public", "<p>a note with no tag</p>").await;
+    insert_post(&pool, author, "followers", "<p>for followers only</p>").await;
+
+    // The stranger reaches the author's posts only through a followed
+    // hashtag, a path that does not ask who follows whom.
+    noombat_identity::hashtags::follow_hashtag(&pool, stranger, "fieldwork")
+        .await
+        .expect("hashtag followed");
+    for body in [
+        "<p>a note tagged fieldwork</p>",
+        "<p>for followers only</p>",
+    ] {
+        let post: Uuid = sqlx::query_scalar("SELECT id FROM posts WHERE content_html = $1")
+            .bind(body)
+            .fetch_one(&pool)
+            .await
+            .expect("tagged post fixture found");
+        noombat_identity::hashtags::link_post_hashtags(&pool, post, &["fieldwork".to_owned()])
+            .await
+            .expect("hashtag linked");
+    }
+
+    let state = test_state(pool);
+    let stranger_feed = feed_body_as(state.clone(), stranger, "stranger").await;
+    let impostor_feed = feed_body_naming(state.clone(), "follower", stranger, "stranger").await;
+    let follower_feed = feed_body_as(state, follower, "follower").await;
+
+    assert!(
+        stranger_feed.contains("a note tagged fieldwork")
+            && !stranger_feed.contains("a note with no tag"),
+        "the stranger's feed is not the one their hashtag builds, so the next \
+         check tests nothing: {stranger_feed}"
+    );
+    assert!(
+        !stranger_feed.contains("for followers only"),
+        "a followers-only post reached a reader who does not follow its author: {stranger_feed}"
+    );
+    // Anyone can put a name in the query string, so it cannot be what admits
+    // a followers-only post.
+    assert!(
+        !impostor_feed.contains("for followers only"),
+        "naming a follower in the query string showed their followers-only posts: \
+         {impostor_feed}"
+    );
+    assert!(
+        follower_feed.contains("for followers only"),
+        "known defect: a followers-only post is missing from a follower's home feed: \
+         {follower_feed}"
+    );
+}
