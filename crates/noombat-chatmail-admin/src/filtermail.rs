@@ -681,13 +681,16 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Ve
         return Verdict::Refuse(REJECT_REPLY.to_string());
     }
 
-    let from = header_address(&parsed, "from");
+    // Without exactly one sender there is nothing to hold the envelope
+    // sender or a signature to, and readers could disagree on who sent it.
+    let Some(from) = header_address(&parsed, "from") else {
+        return Verdict::Refuse(
+            "550 5.7.1 the From header must name exactly one address".to_string(),
+        );
+    };
     let envelope = mail_from.to_ascii_lowercase();
     // A null sender is a bounce and has no `From` to agree with.
-    let mismatch = !envelope.is_empty()
-        && from
-            .as_deref()
-            .is_some_and(|f| f.to_ascii_lowercase() != envelope);
+    let mismatch = !envelope.is_empty() && from != envelope;
 
     match mode {
         Mode::Outgoing => {
@@ -701,7 +704,8 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Ve
             }
         }
         Mode::Incoming => {
-            // Alignment only, and only when a signature is present.
+            // Alignment only: every signature present must claim the From
+            // domain.
             //
             // This filter cannot verify a signature: that needs the
             // signing domain's public key from DNS, which OpenDKIM
@@ -715,11 +719,9 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Ve
             // a `DKIM-Signature` header with any `d=`. It is worth
             // having because OpenDKIM, on the listener behind this one,
             // is set to reject unsigned mail and bad signatures
-            // (`opendkim-verify.conf`).
-            if let (Some(from_domain), Some(signing_domain)) =
-                (from.as_deref().and_then(domain_of), dkim_domain(&parsed))
-                && from_domain != signing_domain
-            {
+            // (`opendkim-verify.conf`). OpenDKIM accepts a message when
+            // any one signature verifies, so all of them are checked.
+            if !signatures_align(&parsed, &domain_of(&from).unwrap_or_default()) {
                 return Verdict::Refuse(
                     "550 5.7.1 the DKIM signature does not match the From domain".to_string(),
                 );
@@ -735,19 +737,35 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Ve
     }
 }
 
-/// The addr-spec of a header, lowercased, or `None` when absent.
+/// The address of the one mailbox a header names, lowercased, or `None`
+/// when the header is absent, repeated, or names anything else. Read from
+/// the raw header, so an encoded word can only be a display name; the web
+/// client reads `From` by the same rule.
 fn header_address(parsed: &mailparse::ParsedMail<'_>, name: &str) -> Option<String> {
-    let value = parsed
+    let [header] = parsed
         .headers
         .iter()
-        .find(|h| h.get_key().eq_ignore_ascii_case(name))
-        .map(|h| h.get_value())?;
-    let address = match (value.find('<'), value.rfind('>')) {
-        (Some(open), Some(close)) if close > open => value[open + 1..close].to_string(),
-        _ => value.trim().to_string(),
+        .filter(|h| is_named(h, name))
+        .collect::<Vec<_>>()[..]
+    else {
+        return None;
     };
-    let address = address.trim().to_ascii_lowercase();
-    (!address.is_empty()).then_some(address)
+    let address = mailparse::addrparse_header(header)
+        .ok()?
+        .extract_single_info()?
+        .addr;
+    let address = address.trim();
+    let (local, domain) = address.rsplit_once('@')?;
+    (!local.is_empty()
+        && !domain.is_empty()
+        && !address.contains(|c: char| c.is_whitespace() || c.is_control()))
+    .then(|| address.to_ascii_lowercase())
+}
+
+/// Header names as OpenDKIM reads them: space before the colon is not
+/// part of the name.
+fn is_named(header: &mailparse::MailHeader<'_>, name: &str) -> bool {
+    header.get_key_ref().trim().eq_ignore_ascii_case(name)
 }
 
 fn domain_of(address: &str) -> Option<String> {
@@ -757,17 +775,30 @@ fn domain_of(address: &str) -> Option<String> {
         .filter(|d| !d.is_empty())
 }
 
-/// The `d=` tag of the message's DKIM signature.
-fn dkim_domain(parsed: &mailparse::ParsedMail<'_>) -> Option<String> {
-    let value = parsed
+/// Whether every DKIM signature names the From domain, once.
+///
+/// OpenDKIM accepts a message when any one signature verifies, and reads
+/// the last of a repeated tag, so each signature's single `d=` must be the
+/// From domain. Read raw and without white space, as OpenDKIM reads it: a
+/// decoded value could hide a `d=` inside an encoded word.
+fn signatures_align(parsed: &mailparse::ParsedMail<'_>, from_domain: &str) -> bool {
+    parsed
         .headers
         .iter()
-        .find(|h| h.get_key().eq_ignore_ascii_case("dkim-signature"))
-        .map(|h| h.get_value())?;
-    value.split(';').find_map(|tag| {
-        let (key, val) = tag.split_once('=')?;
-        (key.trim() == "d").then(|| val.trim().to_ascii_lowercase())
-    })
+        .filter(|h| is_named(h, "dkim-signature"))
+        .all(|h| {
+            let value = String::from_utf8_lossy(h.get_value_raw());
+            let mut domains = value
+                .split(';')
+                .filter_map(|tag| tag.split_once('='))
+                .filter(|(key, _)| key.trim().eq_ignore_ascii_case("d"))
+                .map(|(_, d)| {
+                    d.split_whitespace()
+                        .collect::<String>()
+                        .to_ascii_lowercase()
+                });
+            domains.next().is_some_and(|d| d == from_domain) && domains.next().is_none()
+        })
 }
 
 /// Whether an error is just the other end having gone away.
@@ -1668,6 +1699,128 @@ z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=
     }
 
     #[test]
+    fn a_from_without_exactly_one_address_is_refused_both_ways() {
+        let refused =
+            Verdict::Refuse("550 5.7.1 the From header must name exactly one address".to_string());
+        for from in ["", "From: <user@chat.example>, <victim@dom.example>\r\n"] {
+            let raw = message(from, true);
+            assert_eq!(
+                inspect(Mode::Outgoing, &raw, "user@chat.example", &[]),
+                refused,
+                "{from}"
+            );
+        }
+        // The victim first: today's client shows the first address, and
+        // the old alignment read the domain after the last `@`.
+        for from in ["", "From: <victim@dom.example>, <someone@peer.example>\r\n"] {
+            let raw = message(
+                &format!(
+                    "{from}DKIM-Signature: v=1; a=rsa-sha256; d=peer.example; s=sel; b=xx\r\n"
+                ),
+                true,
+            );
+            assert_eq!(
+                inspect(Mode::Incoming, &raw, "someone@peer.example", &[]),
+                refused,
+                "{from}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_display_name_is_neither_checked_nor_aligned() {
+        let accepted = Verdict::Accept {
+            strip_sender: false,
+        };
+        let raw = message("From: \"<x@y.example>\" <user@chat.example>\r\n", true);
+        assert_eq!(
+            inspect(Mode::Outgoing, &raw, "user@chat.example", &[]),
+            accepted
+        );
+        let raw = message(
+            "From: \"<victim@dom.example>\" <attacker@atk.example>\r\n\
+             DKIM-Signature: v=1; a=rsa-sha256; d=atk.example; s=sel; b=xx\r\n",
+            true,
+        );
+        assert_eq!(
+            inspect(Mode::Incoming, &raw, "attacker@atk.example", &[]),
+            accepted
+        );
+    }
+
+    #[test]
+    fn a_bounce_from_with_a_comment_aligns() {
+        let raw = message(
+            "From: MAILER-DAEMON@peer.example (Mail Delivery System)\r\n\
+             DKIM-Signature: v=1; a=rsa-sha256; d=peer.example; s=sel; b=xx\r\n",
+            true,
+        );
+        assert_eq!(
+            inspect(Mode::Incoming, &raw, "", &[]),
+            Verdict::Accept {
+                strip_sender: false
+            }
+        );
+    }
+
+    #[test]
+    fn every_signature_must_name_the_from_domain_once() {
+        let from = "From: <someone@victim.example>\r\n";
+        let sig = |d: &str| format!("DKIM-Signature: v=1; a=rsa-sha256; d={d}; s=sel; b=xx\r\n");
+        let (ours, theirs) = (sig("victim.example"), sig("atk.example"));
+        for sigs in [
+            // OpenDKIM accepts when any one signature verifies, in either order.
+            format!("{ours}{theirs}"),
+            format!("{theirs}{ours}"),
+            // It reads the last of a repeated tag.
+            "DKIM-Signature: v=1; d=victim.example; s=sel; d=atk.example; b=xx\r\n".to_owned(),
+            // It trims the space before the colon.
+            format!("{ours}DKIM-Signature : v=1; d=atk.example; s=sel; b=yy\r\n"),
+            // It does not decode encoded words, which can hide a second d=.
+            "DKIM-Signature: v=1; d=victim.example; z= =?iso-8859-1?q?x;d=ab.example;y?= ; b=xx\r\n"
+                .to_owned(),
+        ] {
+            let raw = message(&format!("{from}{sigs}"), true);
+            assert!(
+                matches!(
+                    inspect(Mode::Incoming, &raw, "someone@victim.example", &[]),
+                    Verdict::Refuse(reply) if reply.contains("does not match the From domain")
+                ),
+                "{sigs}"
+            );
+        }
+        let raw = message(&format!("{from}{ours}{ours}"), true);
+        assert_eq!(
+            inspect(Mode::Incoming, &raw, "someone@victim.example", &[]),
+            Verdict::Accept {
+                strip_sender: false
+            }
+        );
+    }
+
+    #[test]
+    fn from_is_read_as_the_web_client_reads_it() {
+        let address =
+            |raw: &str| header_address(&mailparse::parse_mail(raw.as_bytes()).unwrap(), "from");
+        assert_eq!(
+            address(
+                "From: =?utf-8?q?=3Cvictim=40dom=2Eexample=3E?= <attacker@atk.example>\r\n\r\nx"
+            )
+            .as_deref(),
+            Some("attacker@atk.example")
+        );
+        for raw in [
+            "From: <victim@dom.example>\r\nFrom: <attacker@atk.example>\r\n\r\nx",
+            "From : <victim@dom.example>\r\nFrom: <attacker@atk.example>\r\n\r\nx",
+            "From: <victim@>\r\n\r\nx",
+            "From: <@dom.example>\r\n\r\nx",
+            "From: victim@dom.example x@atk.example\r\n\r\nx",
+        ] {
+            assert_eq!(address(raw), None, "{raw}");
+        }
+    }
+
+    #[test]
     fn an_address_is_read_out_of_a_header() {
         let parsed = mailparse::parse_mail(b"From: \"N\" <a@B.example>\r\n\r\nx").unwrap();
         assert_eq!(
@@ -1782,7 +1935,10 @@ z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=
         let (fake, delivered) = fake_reinjection_listener();
         let proxy = start_proxy(fake);
 
-        let (verdict, stream) = submit_through_proxy(&proxy, &pgp_mime("\n"));
+        let (verdict, stream) = submit_through_proxy(
+            &proxy,
+            &format!("From: <sender@chat.example>\n{}", pgp_mime("\n")),
+        );
 
         assert!(verdict.starts_with("250"), "verdict was {verdict}");
         // The queue id from the listener behind the filter, not one
