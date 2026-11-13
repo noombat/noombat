@@ -460,7 +460,7 @@ jobs:
       - name: Build frontend assets
         working-directory: frontend
         run: |
-          corepack enable
+          ../scripts/install-pnpm.sh package.json
           pnpm install --frozen-lockfile
           pnpm build
 

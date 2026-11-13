@@ -141,7 +141,7 @@ jobs:
       - name: Build Noombat server
         run: cargo build --release --bin noombat
 
-      # Node from .nvmrc, not the image's, whose Node no longer ships corepack.
+      # Node from .nvmrc, not the image's, so the front end builds on the Node it pins.
       - name: Install Node (version from .nvmrc)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -150,7 +150,7 @@ jobs:
       - name: Build frontend assets
         working-directory: frontend
         run: |
-          corepack enable
+          ../scripts/install-pnpm.sh package.json
           pnpm install --frozen-lockfile
           pnpm build
 
@@ -329,7 +329,7 @@ jobs:
       - name: Install Playwright test dependencies
         working-directory: tests/e2e
         run: |
-          corepack enable
+          ../../scripts/install-pnpm.sh package.json
           pnpm install --frozen-lockfile
 
       # Run the security-header and CSP suite first and on its own.

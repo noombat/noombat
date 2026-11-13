@@ -63,8 +63,8 @@ jobs:
           # `git describe` needs tags to label the manifests.
           fetch-depth: 0
 
-      - name: Enable corepack (pnpm)
-        run: corepack enable
+      - name: Install pnpm (the release frontend/package.json pins)
+        run: scripts/install-pnpm.sh frontend/package.json
 
       - name: Install dependencies
         working-directory: frontend

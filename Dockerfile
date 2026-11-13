@@ -19,12 +19,13 @@ WORKDIR /build
 COPY frontend/ frontend/
 COPY crates/noombat-api/templates/ crates/noombat-api/templates/
 COPY scripts/asset-manifest.sh scripts/asset-manifest.sh
+COPY scripts/install-pnpm.sh scripts/install-pnpm.sh
 
 WORKDIR /build/frontend
 # `--frozen-lockfile` makes a package.json/pnpm-lock.yaml mismatch
 # fail the build rather than being resolved silently into a
 # dependency set that no lockfile records.
-RUN corepack enable && pnpm install --frozen-lockfile && pnpm build
+RUN sh /build/scripts/install-pnpm.sh package.json && pnpm install --frozen-lockfile && pnpm build
 
 # Label the asset manifest with the release it was built from. The
 # repository history is excluded by .dockerignore, so these cannot be

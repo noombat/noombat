@@ -173,7 +173,7 @@ cd noombat
 git checkout "$TAG"
 
 cd frontend
-corepack enable
+../scripts/install-pnpm.sh package.json
 pnpm install --frozen-lockfile
 pnpm build
 cd ..

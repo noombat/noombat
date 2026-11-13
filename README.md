@@ -54,7 +54,8 @@ their predecessors' data directories.
 - Redis ≥ 8
 - Meilisearch ≥ 1.52
 - Node.js 24 (pinned in `.nvmrc`; `frontend/package.json` declares `>=24 <25`)
-- pnpm 11 (provisioned by Corepack from the `packageManager` field)
+- pnpm 11, the release the `packageManager` field pins: `scripts/install-pnpm.sh` installs it
+  and checks it against the hash pinned there
 - Podman with `podman-compose` or Docker with Docker Compose
 
 ## Quick Start
