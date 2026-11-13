@@ -1143,6 +1143,11 @@ fn chatmail_secret_problem(secret: Option<&str>) -> Option<String> {
 }
 
 /// Wait for SIGINT or SIGTERM for graceful shutdown.
+// SPDX-SnippetBegin
+// SPDX-License-Identifier: MIT
+// SPDX-SnippetCopyrightText: 2019-2025 axum Contributors
+// SPDX-SnippetCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+// From axum's examples/graceful-shutdown/src/main.rs at 57e24559051bd0df2104c70c9a63732ab2ec71bd
 async fn shutdown_signal() {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
@@ -1166,6 +1171,7 @@ async fn shutdown_signal() {
         _ = terminate => info!("received SIGTERM"),
     }
 }
+// SPDX-SnippetEnd
 
 #[cfg(test)]
 mod tests {
