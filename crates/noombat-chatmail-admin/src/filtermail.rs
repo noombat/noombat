@@ -704,6 +704,17 @@ fn inspect(mode: Mode, raw: &[u8], mail_from: &str, recipients: &[String]) -> Ve
             }
         }
         Mode::Incoming => {
+            // OpenDKIM accepts, unverified, a message whose From its own
+            // parser cannot read, whatever it is told to do with unsigned
+            // mail, so such a From never reaches it.
+            if !parsed
+                .headers
+                .iter()
+                .filter(|h| is_named(h, "from"))
+                .all(|h| opendkim_can_read(h.get_value_raw()))
+            {
+                return Verdict::Refuse("550 5.7.1 the From header cannot be read".to_string());
+            }
             // Alignment only: every signature present must claim the From
             // domain.
             //
@@ -756,10 +767,42 @@ fn header_address(parsed: &mailparse::ParsedMail<'_>, name: &str) -> Option<Stri
         .addr;
     let address = address.trim();
     let (local, domain) = address.rsplit_once('@')?;
+    // A plain address only: a quote, bracket or second `@` in it is one
+    // OpenDKIM may read differently, or not at all.
     (!local.is_empty()
         && !domain.is_empty()
-        && !address.contains(|c: char| c.is_whitespace() || c.is_control()))
+        && !local.contains('@')
+        && !address
+            .contains(|c: char| c.is_whitespace() || c.is_control() || "\"()[]\\<>,;:".contains(c)))
     .then(|| address.to_ascii_lowercase())
+}
+
+/// Whether OpenDKIM's address parser can read a `From` value: every quoted
+/// string, comment and domain literal closed, and no list separator
+/// outside them, since OpenDKIM reads only what comes before one. When it
+/// cannot, OpenDKIM accepts the message without verifying anything. Checked
+/// against OpenDKIM's own parser on every value of up to five characters
+/// from the characters that matter, around an address.
+fn opendkim_can_read(value: &[u8]) -> bool {
+    let (mut comment, mut quoted, mut literal, mut escaped) = (0usize, false, false, false);
+    for &byte in value {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        match byte {
+            // A backslash escapes only inside a quote, comment or literal.
+            b'\\' if quoted || literal || comment > 0 => escaped = true,
+            b'"' if comment == 0 && !literal => quoted = !quoted,
+            b'(' if !quoted && !literal => comment += 1,
+            b')' if !quoted && !literal && comment > 0 => comment -= 1,
+            b'[' if !quoted && comment == 0 => literal = true,
+            b']' if !quoted && comment == 0 => literal = false,
+            b',' | b';' if !quoted && comment == 0 && !literal => return false,
+            _ => {}
+        }
+    }
+    comment == 0 && !quoted && !literal
 }
 
 /// Header names as OpenDKIM reads them: space before the colon is not
@@ -1796,6 +1839,65 @@ z4kgkIr9mFRf1cyPyxaFkcBr7LOiGrzzkNxh5AutO3g=
                 strip_sender: false
             }
         );
+    }
+
+    #[test]
+    fn a_from_opendkim_cannot_read_is_refused_on_arrival() {
+        // OpenDKIM accepts these unverified: its parser fails on them,
+        // while the address this filter reads is the victim's.
+        for value in [
+            "x\" <victim@dom.example>",
+            "[ <victim@dom.example>",
+            "(a(b) <victim@dom.example>",
+            "\"\"@, <victim@dom.example>",
+            // Outside a quote a backslash escapes nothing to OpenDKIM.
+            "Bob\\\" <victim@dom.example>",
+        ] {
+            let raw = message(&format!("From: {value}\r\n"), true);
+            assert_eq!(
+                inspect(Mode::Incoming, &raw, "victim@dom.example", &[]),
+                Verdict::Refuse("550 5.7.1 the From header cannot be read".to_string()),
+                "{value}"
+            );
+        }
+        // What clients and Postfix write passes.
+        for value in [
+            "\"Smith, Alice\" <alice@peer.example>",
+            "\"Alice (work)\" <alice@peer.example>",
+            "alice@peer.example (Alice)",
+            "\"Quote \\\" inside\" <alice@peer.example>",
+            "=?utf-8?q?B=C3=B6b?= <alice@peer.example>",
+        ] {
+            let raw = message(
+                &format!(
+                    "From: {value}\r\n\
+                     DKIM-Signature: v=1; a=rsa-sha256; d=peer.example; s=sel; b=xx\r\n"
+                ),
+                true,
+            );
+            assert_eq!(
+                inspect(Mode::Incoming, &raw, "alice@peer.example", &[]),
+                Verdict::Accept {
+                    strip_sender: false
+                },
+                "{value}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_from_address_must_be_plain() {
+        let address =
+            |raw: &str| header_address(&mailparse::parse_mail(raw.as_bytes()).unwrap(), "from");
+        for value in [
+            "victim@dom.example\\\"",
+            "\"@\"",
+            "[@]",
+            "\"victim\"@dom.example",
+            "victim@x@dom.example",
+        ] {
+            assert_eq!(address(&format!("From: {value}\r\n\r\nx")), None, "{value}");
+        }
     }
 
     #[test]

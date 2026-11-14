@@ -468,6 +468,51 @@ else
     fail "an unsigned peer message was accepted: ${verdict:-nothing}"
 fi
 
+# OpenDKIM accepts a message when any one signature verifies. Shown here
+# on the shipped binary, with a bogus aligned signature before the real
+# one: accepted. That is why the filter holds every signature to the From
+# domain, so the real one beside a signature claiming another domain is
+# refused.
+bogus_sig="DKIM-Signature: v=1; a=rsa-sha256; c=relaxed/simple; d=$MAIL_DOMAIN; s=$SELECTOR;"
+bogus_sig+=" h=from; bh=AAAA; b=AAAA"
+other_sig="DKIM-Signature: v=1; a=rsa-sha256; d=other.example; s=x; h=from; bh=AAAA; b=AAAA"
+in_relay sh -c "sed '1i $bogus_sig' /tmp/replay.eml > /tmp/bogus-first.eml
+                sed '1i $other_sig' /tmp/replay.eml > /tmp/two-domains.eml"
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --message /tmp/bogus-first.eml)"
+if [[ "$verdict" == *" 250 "* ]]; then
+    say "OpenDKIM accepts when any one signature verifies, a bogus one beside it"
+else
+    fail "a bogus signature beside a valid one was refused; OpenDKIM changed: ${verdict:-nothing}"
+fi
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --message /tmp/two-domains.eml)"
+if [[ "$verdict" == *" 550 "*"does not match the From domain"* ]]; then
+    say "a second signature claiming another domain is refused"
+else
+    fail "a signature for another domain beside the valid one passed: ${verdict:-nothing}"
+fi
+
+# OpenDKIM accepts, unverified, a message whose From its parser cannot
+# read, whatever it is told to do with unsigned mail: shown by sending one
+# straight to its listener, behind the filter. The filter refuses such a
+# From before OpenDKIM sees it.
+bad_from="(a(b) <user@$MAIL_DOMAIN>"
+verdict="$(filter --port 10028 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag BADFROM-DIRECT --raw-from "$bad_from")"
+if [[ "$verdict" == *" 250 "* ]]; then
+    say "OpenDKIM alone accepts an unsigned message whose From it cannot read"
+else
+    fail "OpenDKIM refused an unreadable From by itself, so it changed: ${verdict:-nothing}"
+fi
+verdict="$(filter --port 25 --from "user@$MAIL_DOMAIN" --to "dest@$MAIL_DOMAIN" \
+    --body encrypted --tag BADFROM --raw-from "$bad_from")"
+if [[ "$verdict" == *" 550 "*"cannot be read"* ]]; then
+    say "the filter refuses that From on arrival"
+else
+    fail "a From OpenDKIM cannot read was not refused: ${verdict:-nothing}"
+fi
+
 # Without this the three above would pass just as well against a
 # verifier refusing everything for an unrelated reason.
 if in_relay grep -q "answered" /tmp/dns-stub.log; then

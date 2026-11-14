@@ -30,6 +30,8 @@
 # members' mail.
 #   --header-from A    put A in the From header instead of the envelope
 #                      sender, so the two disagree
+#   --raw-from V       write V as the whole From value, unbracketed, so
+#                      a malformed one can be sent
 #   --message FILE     send FILE verbatim as the message, headers and
 #                      all, so a signed message can be replayed
 #
@@ -51,6 +53,8 @@ my %opt = (
     # The From header, when it must disagree with the envelope sender.
     # Defaults to matching, which is the ordinary case.
     'header-from' => '',
+    # The whole From value, verbatim, for a malformed one.
+    'raw-from' => '',
     # Send an existing message verbatim instead of generating one, for
     # replaying something the relay itself signed.
     message => '',
@@ -179,8 +183,9 @@ if ($opt{message} ne '') {
     }
 } else {
     my $header_from = $opt{'header-from'} || $opt{from};
+    my $from_value = $opt{'raw-from'} || "<$header_from>";
     print $sock "Subject: $opt{tag}\r\nX-Mailer: smtp-submit\r\n"
-        . "From: <$header_from>\r\nTo: <$opt{to}>\r\n$body\r\n";
+        . "From: $from_value\r\nTo: <$opt{to}>\r\n$body\r\n";
 }
 
 print $sock ".\r\n";
