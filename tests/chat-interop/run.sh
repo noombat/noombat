@@ -419,11 +419,20 @@ if command -v gpg >/dev/null 2>&1; then
     WORK=$(mktemp -d)
     export GNUPGHOME="$WORK/gnupg"
     mkdir -m 700 "$GNUPGHOME"
-    gpg --batch --quiet --pinentry-mode loopback --passphrase '' \
+    # --rfc4880 throughout, so the data is the encrypted packet every
+    # Chatmail relay takes (type 18): GnuPG 2.4 can give its own new keys
+    # the OCB feature and then write the OCB packet (type 20), depending on
+    # how it was built, and those relays and this server refuse that, as
+    # Delta Chat never writes it. The key it makes this way is RSA.
+    gpg --batch --quiet --rfc4880 --pinentry-mode loopback --passphrase '' \
       --quick-gen-key "bob@${CHATMAIL_DOMAIN}" default default never 2>/dev/null
     printf 'noombat chat interop: delivered and encrypted' > "$WORK/plain"
-    gpg --batch --quiet --trust-model always --output "$WORK/cipher" \
+    gpg --batch --quiet --trust-model always --rfc4880 --output "$WORK/cipher" \
       --encrypt --recipient "bob@${CHATMAIL_DOMAIN}" "$WORK/plain" 2>/dev/null
+    if gpg --list-packets "$WORK/cipher" 2>/dev/null | grep -q '^:aead encrypted packet'; then
+        fail "gpg wrote an OCB packet (type 20), which Chatmail relays refuse"
+        rm -f "$WORK/cipher"
+    fi
 fi
 
 # 12. Sending, which is the only assertion that leaves over SMTP.
