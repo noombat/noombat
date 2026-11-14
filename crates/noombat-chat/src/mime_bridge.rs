@@ -45,16 +45,14 @@ pub fn extract_ciphertext_body(raw_message: &[u8]) -> Result<Vec<u8>> {
     let parsed = mailparse::parse_mail(raw_message)
         .map_err(|e| NoombatError::Internal(format!("MIME parse error: {e}")))?;
 
-    // Check for PGP/MIME (multipart/encrypted).
-    let content_type = parsed
-        .headers
-        .iter()
-        .find(|h| h.get_key().eq_ignore_ascii_case("content-type"))
-        .map(|h| h.get_value())
-        .unwrap_or_default();
-
-    // The encrypted payload is the second subpart; otherwise the body.
-    let part = if content_type.contains("multipart/encrypted") && parsed.subparts.len() >= 2 {
+    // The encrypted payload is the second subpart of PGP/MIME, whose type
+    // may be written in any case; otherwise the body.
+    let part = if parsed
+        .ctype
+        .mimetype
+        .eq_ignore_ascii_case("multipart/encrypted")
+        && parsed.subparts.len() >= 2
+    {
         &parsed.subparts[1]
     } else {
         &parsed
@@ -142,6 +140,14 @@ mod tests {
         );
         let raw = pgp_mime("", &armoured);
         assert_eq!(extract_ciphertext_body(&raw).unwrap(), packets());
+    }
+
+    #[test]
+    fn the_payload_is_found_whatever_the_case_of_its_type() {
+        let raw = String::from_utf8(pgp_mime("", &noombat_openpgp::armour(&packets())))
+            .unwrap()
+            .replace("multipart/encrypted", "Multipart/Encrypted");
+        assert_eq!(extract_ciphertext_body(raw.as_bytes()).unwrap(), packets());
     }
 
     #[test]
