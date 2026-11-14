@@ -159,10 +159,15 @@ milter_protocol = 6
 smtpd_milters = inet:127.0.0.1:8891
 
 # Mail submitted with sendmail(1) rather than over SMTP, such as
-# anything an operator sends by hand. The normal path does not reach it,
-# and nor do Postfix's own bounces (internal_mail_filter_classes is
-# empty), which leave unsigned.
+# anything an operator sends by hand, and Postfix's own bounces. The
+# normal path does not reach it.
 non_smtpd_milters = inet:127.0.0.1:8891
+
+# Bounces reach that milter only when this lists them, and unsigned they
+# could be refused by a peer that checks DKIM. Postfix warns that
+# inspecting its own mail is generally unsafe; upstream's relay does the
+# same. The signer here only signs, so it needs no daemon-name macro.
+internal_mail_filter_classes = bounce
 
 # ..... ENCRYPTION-ONLY ENFORCEMENT .....
 

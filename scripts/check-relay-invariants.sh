@@ -345,6 +345,37 @@ else
     fail "the relay did not recover after the signer restarted: ${verdict:-no reply}"
 fi
 
+# Postfix's own bounces go out signed too, as upstream's relay signs them:
+# a peer that checks DKIM would refuse them otherwise. One recipient is
+# routed to Postfix's error transport, so the relay accepts and signs the
+# message, delivery fails at once, and the bounce to the sender lands in
+# the capture file.
+in_relay sh -c 'postconf -e "transport_maps=inline:{bounce-me@'"$MAIL_DOMAIN"'=error:5.1.1}"
+                postfix reload
+                : > /tmp/captured.eml; chmod 666 /tmp/captured.eml' >/dev/null 2>&1
+sleep 2
+verdict="$(filter --port 10026 --from "user@$MAIL_DOMAIN" --to "bounce-me@$MAIL_DOMAIN" \
+    --body encrypted --tag BOUNCE)"
+for _ in $(seq 1 15); do
+    in_relay grep -q '^Content-Type: multipart/report' /tmp/captured.eml 2>/dev/null && break
+    sleep 1
+done
+docker cp "$CONTAINER:/tmp/captured.eml" "$WORKDIR/bounce.eml" >/dev/null 2>&1
+if [[ "$verdict" != *" 250 "* ]]; then
+    fail "the message meant to bounce was not accepted: ${verdict:-nothing}"
+elif ! grep -q '^Content-Type: multipart/report' "$WORKDIR/bounce.eml" 2>/dev/null; then
+    fail "no bounce reached the capture file"
+elif python3 scripts/verify-dkim.py \
+    --message "$WORKDIR/bounce.eml" \
+    --key-txt "$WORKDIR/$SELECTOR.txt" \
+    --expect-domain "$MAIL_DOMAIN" \
+    --expect-selector "$SELECTOR" >/dev/null 2>&1; then
+    say "the relay's own bounce is signed, and the signature verifies"
+else
+    fail "the relay's own bounce carries no valid signature"
+fi
+in_relay sh -c 'postconf -X transport_maps; postfix reload' >/dev/null 2>&1
+
 # ..... THREE: THE SUBMISSION CHECKS .....
 
 sleep 5   # the sections above spend from the same rate-limit bucket
