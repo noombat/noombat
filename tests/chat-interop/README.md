@@ -10,6 +10,7 @@ This directory contains the test environment and runner for verifying Noombat's 
 | `run.sh`               | Test runner: 15 assertions over HTTP and the sidecar |
 | `build-local.sh`       | Build the binary for the local loop                  |
 | `compose.localbin.yml` | Overlay for the local loop                           |
+| `fixtures/`            | Bob's throwaway key and one message encrypted to it  |
 
 ## Running
 

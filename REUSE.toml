@@ -48,6 +48,8 @@ path = [
     "tests/e2e/package.json",
     "tests/e2e/tsconfig.json",
     "tests/e2e/pnpm-lock.yaml",
+    # The chat interop suite's throwaway key and message for bob.
+    "tests/chat-interop/fixtures/*.asc",
     # Documentation (all Markdown files).
     "**/*.md",
     "docs/**",

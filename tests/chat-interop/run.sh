@@ -410,8 +410,8 @@ else
     fi
 fi
 
-# 12 and 13 send a real OpenPGP message, encrypted with gpg to a key made
-# for bob, so that sending does not depend on what the relay's filter
+# 12 and 13 send a real OpenPGP message, encrypted to a key for bob (in
+# fixtures/), so that sending does not depend on what the relay's filter
 # lets through, and read bob's mailbox over IMAP as his mail client would.
 # 14 sends plain text, which must be refused.
 WORK=""
@@ -419,18 +419,18 @@ if command -v gpg >/dev/null 2>&1; then
     WORK=$(mktemp -d)
     export GNUPGHOME="$WORK/gnupg"
     mkdir -m 700 "$GNUPGHOME"
-    # --rfc4880 throughout, so the data is the encrypted packet every
-    # Chatmail relay takes (type 18): GnuPG 2.4 can give its own new keys
-    # the OCB feature and then write the OCB packet (type 20), depending on
-    # how it was built, and those relays and this server refuse that, as
-    # Delta Chat never writes it. The key it makes this way is RSA.
-    gpg --batch --quiet --rfc4880 --pinentry-mode loopback --passphrase '' \
-      --quick-gen-key "bob@${CHATMAIL_DOMAIN}" default default never 2>/dev/null
+    # A fixed key for bob and one message to it, both made once with a
+    # GnuPG that writes the encrypted packet every Chatmail relay takes
+    # (type 18). Made here they would depend on the runner's GnuPG: Ubuntu's
+    # 2.4 gives its new keys the OCB feature and then writes the OCB packet
+    # (type 20), even with --rfc4880, and those relays and this server
+    # refuse that, as Delta Chat never writes it. This GnuPG only decrypts,
+    # which every version can. A throwaway key, for this suite only.
+    gpg --batch --quiet --import "$HERE/fixtures/bob-secret.asc" 2>/dev/null
+    gpg --batch --quiet --dearmor --output "$WORK/cipher" "$HERE/fixtures/to-bob.asc" 2>/dev/null
     printf 'noombat chat interop: delivered and encrypted' > "$WORK/plain"
-    gpg --batch --quiet --trust-model always --rfc4880 --output "$WORK/cipher" \
-      --encrypt --recipient "bob@${CHATMAIL_DOMAIN}" "$WORK/plain" 2>/dev/null
     if gpg --list-packets "$WORK/cipher" 2>/dev/null | grep -q '^:aead encrypted packet'; then
-        fail "gpg wrote an OCB packet (type 20), which Chatmail relays refuse"
+        fail "the fixture message is an OCB packet (type 20), which Chatmail relays refuse"
         rm -f "$WORK/cipher"
     fi
 fi
@@ -454,7 +454,7 @@ if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "${ALICE_CHATMAIL_PASSWO
     if ! command -v python3 >/dev/null 2>&1; then
         skip "Chat send: python3 is needed to drive the relay WebSocket"
     elif [ -z "$WORK" ] || [ ! -s "$WORK/cipher" ]; then
-        skip "Chat send: gpg is needed to encrypt the message"
+        skip "Chat send: gpg is needed to read the fixture message"
     else
         SEND_OUT=$("$(dirname "$0")/send-probe.py" \
           "$NOOMBAT" "$ALICE_TOKEN" "$ALICE_CHATMAIL_PASSWORD" \
