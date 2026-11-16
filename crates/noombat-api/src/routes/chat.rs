@@ -1,14 +1,19 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! Chat report API route.
+//! Chat API routes: reports, Chatmail blocks and published chat keys.
 
 use axum::Json;
 use axum::Router;
-use axum::extract::State;
+use axum::extract::{DefaultBodyLimit, Path, State};
 use axum::http::StatusCode;
+use axum::http::header::CACHE_CONTROL;
 use axum::response::IntoResponse;
-use axum::routing::post;
+use axum::routing::{get, post, put};
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use noombat_core::actor::{Actor, ActorStatus};
 use noombat_core::error::NoombatError;
+use serde_json::json;
 
 use crate::error::ApiError;
 use crate::middleware::Viewer;
@@ -17,6 +22,15 @@ use crate::state::AppState;
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/v1/chat/reports", post(submit_chat_report))
+        // No larger than a key may be, so nothing bigger is buffered
+        // before the session is even checked.
+        .route(
+            "/api/v1/me/chat_key",
+            put(put_chat_key).layer(DefaultBodyLimit::max(
+                noombat_chat::keys::MAX_PUBLIC_KEY_LEN,
+            )),
+        )
+        .route("/api/v1/chat/keys/{address}", get(get_chat_key))
         .route(
             "/users/{username}/chat/blocks/{address}",
             axum::routing::delete(unblock_chat_sender),
@@ -63,6 +77,87 @@ async fn unblock_chat_sender(
     }
 
     Ok(StatusCode::NO_CONTENT)
+}
+
+// ..... Published chat keys .....
+
+/// The signed-in member, refused unless they may chat: a suspended member's
+/// session can outlive the suspension.
+async fn chat_member(
+    state: &AppState,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<Actor, ApiError> {
+    let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let actor = noombat_identity::repo::find_by_id(&state.pool, viewer.actor_id).await?;
+    if !matches!(
+        actor.actor_status,
+        ActorStatus::Active | ActorStatus::Silenced
+    ) {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+    Ok(actor)
+}
+
+/// `PUT /api/v1/me/chat_key`
+///
+/// The member's OpenPGP public key for chat, binary, as their client made
+/// it. Refused unless it is one public key naming their chat address.
+async fn put_chat_key(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+    body: axum::body::Bytes,
+) -> Result<StatusCode, ApiError> {
+    let actor = chat_member(&state, viewer).await?;
+    // Set when a suspension ends: chat is set up again, with a new key,
+    // before one is published.
+    if actor.chat_requires_reprovisioning {
+        return Err(ApiError(NoombatError::BadRequest(
+            "chat must be set up again for this account".into(),
+        )));
+    }
+    let address = actor.chatmail_addr.as_deref().ok_or_else(|| {
+        ApiError(NoombatError::BadRequest(
+            "chat is not set up for this account".into(),
+        ))
+    })?;
+    noombat_chat::keys::publish(&state.pool, actor.id, address, &body).await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `GET /api/v1/chat/keys/{address}`
+///
+/// A local member's published key, for a signed-in member who may see
+/// their chat address and whom they have not blocked. Every refusal about
+/// the member looked up is the same 404 as no key at all, so a hidden key
+/// cannot be told from a missing one.
+async fn get_chat_key(
+    State(state): State<AppState>,
+    Path(address): Path<String>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let viewer = chat_member(&state, viewer).await?;
+    noombat_core::email_address::qualify(&address, "address")?;
+    let published = noombat_chat::keys::find_visible_local(&state.pool, &address, viewer.id)
+        .await?
+        .ok_or_else(no_chat_key)?;
+    Ok(key_answer(&published.address, &published.key))
+}
+
+/// The one refusal every chat key lookup gives.
+fn no_chat_key() -> ApiError {
+    ApiError(NoombatError::ActorNotFound("no chat key".into()))
+}
+
+fn key_answer(address: &str, key: &[u8]) -> axum::response::Response {
+    (
+        // The answer depends on who asks.
+        [(CACHE_CONTROL, "private, no-store")],
+        Json(json!({
+            "address": address,
+            "key": STANDARD.encode(key),
+        })),
+    )
+        .into_response()
 }
 
 async fn submit_chat_report(

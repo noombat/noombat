@@ -11,6 +11,7 @@
 //!
 //! ## Modules
 //!
+//! - [`keys`]: members' published chat keys.
 //! - [`provision`]: Chatmail account provisioning via IMAP first-login.
 //! - [`relay`]: WebSocket <--> IMAP/SMTP relay.
 //! - [`mime_bridge`]: Autocrypt header extraction/injection for MIME
@@ -18,6 +19,7 @@
 //! - [`report`]: Chat moderation report submission.
 
 pub mod admin_client;
+pub mod keys;
 pub mod mime_bridge;
 pub mod provision;
 pub mod relay;

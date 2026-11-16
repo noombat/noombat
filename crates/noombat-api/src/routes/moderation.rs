@@ -177,9 +177,11 @@ async fn suspend_actor(
 
 /// Unsuspension procedure:
 ///
-/// 1. Set `actor_status` to `active`.
-/// 2. Unblock the recipient address via the sidecar.
-/// 3. Set `chat_requires_reprovisioning` flag.
+/// 1. Set the `chat_requires_reprovisioning` flag, before anything else:
+///    the chat key published before the suspension is dead, and the flag
+///    is what keeps it from being served once the account is active.
+/// 2. Set `actor_status` to `active`.
+/// 3. Unblock the recipient address via the sidecar.
 async fn unsuspend_actor(
     State(state): State<AppState>,
     Path(actor_id): Path<Uuid>,
@@ -187,29 +189,7 @@ async fn unsuspend_actor(
 ) -> Result<impl IntoResponse, ApiError> {
     let moderator = require_moderator(&viewer)?;
 
-    // Step 1: set actor_status to active.
-    let actor =
-        noombat_identity::repo::set_actor_status(&state.pool, actor_id, ActorStatus::Active)
-            .await?;
-
-    info!(
-        actor_id = %actor_id,
-        moderator = ?moderator.username,
-        "actor unsuspended (step 1: status set to active)"
-    );
-
-    // Step 2: unblock the recipient address.
-    if let Some(chatmail_addr) = &actor.chatmail_addr
-        && let Some(client) = state.chatmail_admin_client.as_ref()
-    {
-        if let Err(e) = client.unblock_recipient(chatmail_addr).await {
-            warn!(address = %chatmail_addr, error = %e, "recipient unblock failed");
-        } else {
-            info!(address = %chatmail_addr, "recipient unblocked (step 2)");
-        }
-    }
-
-    // Step 3: set chat_requires_reprovisioning flag.
+    // Step 1: set chat_requires_reprovisioning flag.
     sqlx::query(
         "UPDATE actors SET chat_requires_reprovisioning = TRUE, updated_at = now() WHERE id = $1",
     )
@@ -218,22 +198,37 @@ async fn unsuspend_actor(
     .await
     .map_err(NoombatError::from)?;
 
-    info!(actor_id = %actor_id, "chat_requires_reprovisioning flag set (step 3)");
+    info!(actor_id = %actor_id, "chat_requires_reprovisioning flag set (step 1)");
 
-    // Re-index if the actor is discoverable. Re-fetch the actor to
-    // capture the updated chat_requires_reprovisioning flag and
-    // actor_status.
+    // Step 2: set actor_status to active.
+    let actor =
+        noombat_identity::repo::set_actor_status(&state.pool, actor_id, ActorStatus::Active)
+            .await?;
+
+    info!(
+        actor_id = %actor_id,
+        moderator = ?moderator.username,
+        "actor unsuspended (step 2: status set to active)"
+    );
+
+    // Step 3: unblock the recipient address.
+    if let Some(chatmail_addr) = &actor.chatmail_addr
+        && let Some(client) = state.chatmail_admin_client.as_ref()
+    {
+        if let Err(e) = client.unblock_recipient(chatmail_addr).await {
+            warn!(address = %chatmail_addr, error = %e, "recipient unblock failed");
+        } else {
+            info!(address = %chatmail_addr, "recipient unblocked (step 3)");
+        }
+    }
+
+    // Re-index if the actor is discoverable, from the profile's search
+    // document: the actor record holds the chat address, and the index
+    // serves what it holds to anyone who searches.
     if actor.is_discoverable()
-        && let Some(ref search) = state.search
         && let Ok(fresh_actor) = noombat_identity::repo::find_by_id(&state.pool, actor_id).await
     {
-        let _ = search
-            .upsert(
-                "profiles",
-                &actor_id.to_string(),
-                serde_json::to_value(&fresh_actor).unwrap_or_default(),
-            )
-            .await;
+        crate::search_sync::reindex_profile_from_db(&state.pool, &state.search, &fresh_actor).await;
     }
 
     Ok((

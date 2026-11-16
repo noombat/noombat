@@ -1110,6 +1110,10 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
         .bind(actor_id)
         .execute(&mut *tx)
         .await?;
+    sqlx::query("DELETE FROM chat_keys WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM job_applications WHERE applicant_id = $1")
         .bind(actor_id)
         .execute(&mut *tx)

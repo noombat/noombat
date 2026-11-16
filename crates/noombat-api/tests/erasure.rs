@@ -201,6 +201,36 @@ async fn erasure_removes_career_history_not_just_the_actor_row(pool: PgPool) {
     );
 }
 
+/// The published chat key goes too: its User ID is the member's chat
+/// address, and erasure keeps the actor row, so nothing cascades.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn erasure_removes_the_published_chat_key(pool: PgPool) {
+    let actor_id = insert_actor(&pool, "leaver", Some(GRACE_DAYS + 1)).await;
+    sqlx::query(
+        "INSERT INTO chat_keys (actor_id, address, key_data) \
+         VALUES ($1, 'leaver@chat.noombat.example', '\\x99'::bytea)",
+    )
+    .bind(actor_id)
+    .execute(&pool)
+    .await
+    .expect("key fixture inserted");
+
+    noombat_api::erasure::sweep(&pool, &no_search(), &test_media(), GRACE_DAYS).await;
+
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_keys WHERE actor_id = $1")
+        .bind(actor_id)
+        .fetch_one(&pool)
+        .await
+        .expect("countable");
+    assert_eq!(keys, 0, "the chat key survived erasure");
+    assert_eq!(
+        display_name(&pool, actor_id).await,
+        None,
+        "the actor was erased"
+    );
+}
+
 /// A second sweep is a no-op.
 ///
 /// `tombstone_actor` does not clear `deletion_requested_at`, so without

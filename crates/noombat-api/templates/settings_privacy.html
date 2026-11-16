@@ -54,9 +54,13 @@
                 <label class="flex items-center gap-3">
                     <input type="checkbox" name="chatmail_visible" value="true"
                            {% if chatmail_visible %}checked{% endif %}
+                           aria-describedby="chatmail-visible-help"
                            class="rounded border-border-default">
                     <span class="text-sm">{{ i18n.t("privacy_chatmail_visible") }}</span>
                 </label>
+                <p id="chatmail-visible-help" class="text-sm text-text-secondary -mt-2 ms-7">
+                    {{ i18n.t("privacy_chatmail_visible_help") }}
+                </p>
 
                 {# Whether hiding looks like a blur or a plain panel. It does not
                    decide whether sensitive media is hidden, which is the author's

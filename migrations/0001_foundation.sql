@@ -182,7 +182,10 @@ CREATE INDEX idx_actors_erased ON actors (erased_at) WHERE erased_at IS NOT NULL
 CREATE INDEX idx_actors_domain ON actors (domain);
 CREATE INDEX idx_actors_shared_inbox ON actors (shared_inbox_url) WHERE shared_inbox_url IS NOT NULL;
 CREATE INDEX idx_actors_orcid ON actors (orcid) WHERE orcid IS NOT NULL;
-CREATE INDEX idx_actors_chatmail ON actors (chatmail_addr) WHERE chatmail_addr IS NOT NULL;
+-- A member's published chat key is found by their address, in any case, and
+-- must belong to one local member.
+CREATE UNIQUE INDEX idx_actors_chatmail ON actors (lower(chatmail_addr))
+    WHERE is_local AND chatmail_addr IS NOT NULL;
 
 -- The backfill's work list. Partial because the rows behind the current
 -- policy are the minority; see the note at the head of this file for why it
@@ -1114,6 +1117,23 @@ CREATE TABLE chatmail_blocks (
     blocked_addr TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (actor_id, blocked_addr)
+);
+
+-- ..... CHAT KEYS .....
+
+-- A member's OpenPGP public key for chat, published so that others can
+-- write to them first. Kept as uploaded: their mail's Autocrypt header
+-- carries the same bytes, and a re-encoded copy would read as a changed
+-- key. `address` is the chat address the key was checked against; a key
+-- is served only while it equals the member's current one.
+--
+-- Its own table, so that a member could one day publish one key per
+-- device. Erasure keeps the actor row, so it deletes from here itself.
+CREATE TABLE chat_keys (
+    actor_id    UUID PRIMARY KEY REFERENCES actors(id) ON DELETE CASCADE,
+    address     TEXT NOT NULL,
+    key_data    BYTEA NOT NULL CHECK (octet_length(key_data) BETWEEN 1 AND 8192),
+    updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- ..... RELAY SUBSCRIPTIONS .....
