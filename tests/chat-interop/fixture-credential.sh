@@ -18,7 +18,7 @@
 #
 # The keys are 64 hex characters because that is what the server accepts,
 # and readable on purpose: finding one near a real deployment should be
-# self-evidently wrong. They authenticate two throwaway accounts on a
+# self-evidently wrong. They authenticate four throwaway accounts on a
 # throwaway stack.
 #
 # The hashes are committed because neither script can run Argon2.
@@ -30,3 +30,7 @@ CHAT_ALICE_AUTH_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
 CHAT_ALICE_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$g8hhtkSUN9WveG+7LxCLEw$6gSprdlVzTyv5sVm+egpOkkeq8flK63U+0BMfNDY+2U'
 CHAT_BOB_AUTH_KEY="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 CHAT_BOB_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$QXggrOPjcsG1/SAxIjNJgw$t4P4lyYQX1KIWOer1E+uyyTGiK2HJ82XN1rG21FbOGM'
+CHAT_CAROL_AUTH_KEY="cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+CHAT_CAROL_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$lfL/uVBZwANJXzcUSCblrQ$ys3zjjD6DwgRUGdIKCoLHw0AmFsEWi1S44QWfwEj3d8'
+CHAT_DAVE_AUTH_KEY="dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+CHAT_DAVE_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$+61jYA8rkRbcmypL9A+X2Q$WeZdqVrZ5T8eLFp/GhYBM3EwNNvTfCEyW8VWogstwtM'

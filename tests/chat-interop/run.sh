@@ -14,6 +14,9 @@
 #   11 - 12. Chatmail provisioning and sending.
 #        13. Delivery, read back over IMAP.
 #        14. Plain text through the relay's filter.
+#        15. The sender is the login.
+#        16. First contact through the instance: publish, read back, refuse.
+#        17. First contact between two web-client members, under Node.
 #
 # Usage:
 #   tests/chat-interop/seed.sh tests/chat-interop/compose.yml
@@ -129,7 +132,7 @@ CREDS_BOB="{\"username\":\"bob\",\"auth_key\":\"$CHAT_BOB_AUTH_KEY\"}"
 
 # 1. Password sign-up is refused, because this instance has no mailer.
 #
-# alice and bob are seeded by seed.sh instead. The refusal is asserted
+# The fixture members are seeded by seed.sh instead. The refusal is asserted
 # rather than stepped around: that path mints a credential the server can
 # never reset, so it is offered only where a recovery challenge can be
 # sent, and the Chatmail relay here is not the instance's mailer. If one
@@ -140,8 +143,8 @@ CREDS_BOB="{\"username\":\"bob\",\"auth_key\":\"$CHAT_BOB_AUTH_KEY\"}"
 # noombat-identity's registration tests, which is where it can run.
 STATUS=$(curl $CURL_OPTS -s -o /dev/null -w "%{http_code}" -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"carol\",\"auth_key\":\"$(mock_auth_key c)\",\
-\"email\":\"carol@interop.invalid\"}" \
+    -d "{\"username\":\"erin\",\"auth_key\":\"$(mock_auth_key e)\",\
+\"email\":\"erin@interop.invalid\"}" \
     "$NOOMBAT/api/v1/auth/register" 2>/dev/null)
 
 if [ "$STATUS" = "503" ]; then
@@ -551,10 +554,110 @@ else
     fi
 fi
 
+# 16. First contact through the instance. bob publishes the public half of
+# his fixture key; alice reads back exactly those bytes by his address, by
+# his handle and in his actor document; and a key naming another address
+# is refused. 12 and 13 already send and deliver a message encrypted to
+# that key.
+NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-test.local}"
+if [ -z "$WORK" ] || [ -z "$ALICE_TOKEN" ] || [ -z "$BOB_TOKEN" ]; then
+    skip "First contact: needs gpg and both sessions"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "First contact: python3 is needed to read the answers"
+else
+    gpg --batch --quiet --export "bob@${CHATMAIL_DOMAIN}" > "$WORK/bob.pub"
+    PUT_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' -X PUT \
+      -H "Authorization: Bearer $BOB_TOKEN" -H 'Content-Type: application/octet-stream' \
+      --data-binary @"$WORK/bob.pub" "$NOOMBAT/api/v1/me/chat_key" 2>/dev/null) || PUT_CODE="000"
+    if [ "$PUT_CODE" = "204" ]; then
+        pass "First contact: bob publishes his key (HTTP 204)"
+    else
+        fail "First contact: bob's key was not published (HTTP $PUT_CODE)"
+    fi
+
+    # The bytes alice is given, by each way of asking, against bob's export.
+    served_matches() {
+        python3 -c '
+import base64, json, sys
+doc = json.load(sys.stdin)
+key = doc.get("key") or doc.get("noombat:chatKey", {}).get("noombat:keyData")
+sys.exit(0 if key and base64.b64decode(key, validate=True) == open(sys.argv[1], "rb").read() else 1)
+' "$WORK/bob.pub"
+    }
+    # The address too: the page sends to the one a handle's answer names.
+    served_address() {
+        python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("address") == sys.argv[1] else 1)' "$1"
+    }
+    if curl $CURL_OPTS -s -H "Authorization: Bearer $ALICE_TOKEN" \
+        "$NOOMBAT/api/v1/chat/keys/by-handle/%40bob%40${NOOMBAT_DOMAIN}" 2>/dev/null \
+        | served_address "bob@${CHATMAIL_DOMAIN}"; then
+        pass "First contact: bob's handle answers with his chat address"
+    else
+        fail "First contact: bob's handle did not answer with bob@${CHATMAIL_DOMAIN}"
+    fi
+    for way in "address:api/v1/chat/keys/bob%40${CHATMAIL_DOMAIN}" \
+               "handle:api/v1/chat/keys/by-handle/%40bob%40${NOOMBAT_DOMAIN}"; do
+        if curl $CURL_OPTS -s -H "Authorization: Bearer $ALICE_TOKEN" \
+            "$NOOMBAT/${way#*:}" 2>/dev/null | served_matches; then
+            pass "First contact: alice reads bob's key by ${way%%:*}, byte for byte"
+        else
+            fail "First contact: alice did not read bob's key by ${way%%:*}"
+        fi
+    done
+    if curl $CURL_OPTS -s -H 'Accept: application/activity+json' \
+        "$NOOMBAT/users/bob" 2>/dev/null | served_matches; then
+        pass "First contact: bob's actor document carries the same key"
+    else
+        fail "First contact: bob's actor document does not carry his key"
+    fi
+
+    AS_ALICE=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X PUT \
+      -H "Authorization: Bearer $ALICE_TOKEN" -H 'Content-Type: application/octet-stream' \
+      --data-binary @"$WORK/bob.pub" "$NOOMBAT/api/v1/me/chat_key" 2>/dev/null) || AS_ALICE="000"
+    # Refused for the address, not for some other reason.
+    if [ "$(printf '%s' "$AS_ALICE" | tail -n1)" = "400" ] \
+        && printf '%s' "$AS_ALICE" | grep -q "names another address"; then
+        pass "First contact: alice cannot publish bob's key as hers (HTTP 400)"
+    else
+        fail "First contact: alice's upload of bob's key was not refused for its address: $AS_ALICE"
+    fi
+fi
+
+# 12 to 16 are done with bob's GnuPG home.
 if [ -n "$WORK" ]; then
     gpgconf --kill gpg-agent 2>/dev/null || true
     rm -rf "$WORK"
     unset GNUPGHOME
+fi
+
+# 17. First contact between two members who use only the web client. The
+# client's own modules, run under Node, provision carol and dave and
+# publish their keys; carol names dave by handle, the page's resolver finds
+# his address and key, and her first message reaches dave, who decrypts it
+# and verifies her signature. The page's wiring around those modules is not
+# run here.
+VITEST="$HERE/../../frontend/node_modules/.bin/vitest"
+token_for() {
+    curl $CURL_OPTS -sf -X POST -H "Content-Type: application/json" \
+      -d "{\"username\":\"$1\",\"auth_key\":\"$2\"}" \
+      "$NOOMBAT/api/v1/auth/login" 2>/dev/null \
+      | grep -o '"access_token":"[^"]*"' | cut -d'"' -f4
+}
+if [ ! -x "$VITEST" ]; then
+    skip "Web client first contact: the frontend's packages are not installed"
+else
+    CAROL_TOKEN=$(token_for carol "$CHAT_CAROL_AUTH_KEY")
+    DAVE_TOKEN=$(token_for dave "$CHAT_DAVE_AUTH_KEY")
+    if [ -z "$CAROL_TOKEN" ] || [ -z "$DAVE_TOKEN" ]; then
+        fail "Web client first contact: carol or dave could not sign in (did seed.sh run?)"
+    elif FIRST_CONTACT=$(cd "$HERE/../../frontend" && NOOMBAT_URL="$NOOMBAT" \
+          NOOMBAT_DOMAIN="$NOOMBAT_DOMAIN" \
+          CHAT_DOMAIN="$CHATMAIL_DOMAIN" CAROL_TOKEN="$CAROL_TOKEN" DAVE_TOKEN="$DAVE_TOKEN" \
+          "$VITEST" run --config vitest.interop.config.ts 2>&1); then
+        pass "Web client first contact: carol writes first on dave's published key, he reads it"
+    else
+        fail "Web client first contact failed: $(printf '%s' "$FIRST_CONTACT" | tail -n 30)"
+    fi
 fi
 
 # ..... Summary .....

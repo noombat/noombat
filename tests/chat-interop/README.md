@@ -7,7 +7,7 @@ This directory contains the test environment and runner for verifying Noombat's 
 | File                   | Purpose                                              |
 |------------------------|------------------------------------------------------|
 | `compose.yml`          | Compose stack: Noombat, the relay, PostgreSQL, Redis |
-| `run.sh`               | Test runner: 15 assertions over HTTP and the sidecar |
+| `run.sh`               | Test runner: 29 assertions (see below)               |
 | `build-local.sh`       | Build the binary for the local loop                  |
 | `compose.localbin.yml` | Overlay for the local loop                           |
 | `fixtures/`            | Bob's throwaway key and one message encrypted to it  |
@@ -18,6 +18,12 @@ This directory contains the test environment and runner for verifying Noombat's 
 # Build and start the test environment.
 docker compose -p chat-interop -f tests/chat-interop/compose.yml up -d --build --wait
 
+# Seed the accounts the suite signs in as.
+tests/chat-interop/seed.sh tests/chat-interop/compose.yml
+
+# Check 17 runs the frontend's modules, so install its packages.
+(cd frontend && pnpm install --frozen-lockfile)
+
 # Run the tests.
 tests/chat-interop/run.sh http://localhost:8443
 
@@ -25,7 +31,7 @@ tests/chat-interop/run.sh http://localhost:8443
 docker compose -p chat-interop -f tests/chat-interop/compose.yml down -v
 ```
 
-CI runs the same three steps in the `chat-interop` job of `.github/workflows/ci-e2e.yml`. Pin `-p chat-interop` as above: the project name decides the network and volume names, and the job depends on them.
+CI runs the same steps, installing the frontend's packages before `run.sh` for check 17, in the `chat-interop` job of `.github/workflows/ci-e2e.yml`. Pin `-p chat-interop` as above: the project name decides the network and volume names, and the job depends on them.
 
 ## Local loop
 
@@ -62,22 +68,36 @@ A skipped assertion exits non-zero when `CI` is set. Locally a skip is a conveni
 
 ## Test Cases
 
-Sections 11 and 12 carry two assertions each, so thirteen sections produce fifteen assertions.
+Sections 10, 11, 13 and 16 carry several assertions each, so eighteen sections produce twenty-nine assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
 
-| #  | Section           | Assertion                                   |
-|----|-------------------|---------------------------------------------|
-| 0  | Chatmail admin    | Sidecar is serving (401 without the secret) |
-| 1  | Registration      | Register alice                              |
-| 2  | Registration      | Register bob                                |
-| 3  | Registration      | Duplicate registration rejected             |
-| 4  | Login             | Login with correct credentials              |
-| 5  | Login             | Login with wrong credentials (401 or 403)   |
-| 6  | Chat WebSocket    | WebSocket route exists (non-404 response)   |
-| 7  | Chat WebSocket    | Chat report endpoint exists                 |
-| 8  | Auth pages        | Login page renders (200)                    |
-| 9  | Auth pages        | Register page renders (200)                 |
-| 10 | Closed federation | Chat page loads for authenticated user      |
-| 11 | NodeInfo          | Chatmail advertised as available            |
-| 11 | NodeInfo          | Configured Chatmail domain named            |
-| 12 | Provisioning      | Chat provisioned against the relay (200)    |
-| 12 | Provisioning      | Credential page names the domain afterwards |
+| #  | Section           | Assertion                                       |
+|----|-------------------|-------------------------------------------------|
+| 0  | Chatmail admin    | Sidecar is serving (401 without the secret)     |
+| 1  | Registration      | Password sign-up refused without a mailer (503) |
+| 2  | Login             | alice signs in                                  |
+| 3  | Login             | bob signs in                                    |
+| 4  | Login             | Wrong credentials refused (401 or 403)          |
+| 5  | Chat WebSocket    | WebSocket route exists (non-404 response)       |
+| 6  | Chat reports      | Report endpoint exists                          |
+| 7  | Auth pages        | Login page renders (200)                        |
+| 8  | Auth pages        | Register page renders (200)                     |
+| 9  | Closed federation | Chat page loads for a signed-in member          |
+| 10 | NodeInfo          | Chatmail advertised as available                |
+| 10 | NodeInfo          | Configured Chatmail domain named                |
+| 11 | Provisioning      | Chat provisioned against the relay (200)        |
+| 11 | Provisioning      | Credential page names the domain afterwards     |
+| 11 | Provisioning      | An IMAP login for an unknown address is refused |
+| 11 | Provisioning      | An IMAP login does not create an address        |
+| 11 | Provisioning      | A squat attempt does not stop provisioning      |
+| 12 | Sending           | alice's message to bob leaves over SMTP         |
+| 13 | Delivery          | The message reaches bob's mailbox               |
+| 13 | Delivery          | It is OpenPGP that bob's key opens              |
+| 14 | Plain text        | A plain-text body is refused before sending     |
+| 15 | Sender binding    | alice cannot send as bob                        |
+| 16 | First contact     | bob publishes his key (204)                     |
+| 16 | First contact     | bob's handle answers with his chat address      |
+| 16 | First contact     | alice reads it by address, byte for byte        |
+| 16 | First contact     | alice reads it by handle, byte for byte         |
+| 16 | First contact     | bob's actor document carries the same key       |
+| 16 | First contact     | alice cannot publish bob's key as hers (400)    |
+| 17 | Web client        | carol writes first on dave's key; he reads it   |

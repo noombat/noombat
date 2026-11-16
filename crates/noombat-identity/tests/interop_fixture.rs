@@ -74,6 +74,24 @@ fn fixtures() -> Vec<(&'static str, String, String)> {
             "CHAT_BOB_AUTH_KEY",
             "CHAT_BOB_AUTH_KEY_HASH",
         ),
+        (
+            "tests/chat-interop/fixture-credential.sh (carol)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_CAROL_AUTH_KEY",
+            "CHAT_CAROL_AUTH_KEY_HASH",
+        ),
+        (
+            "tests/chat-interop/fixture-credential.sh (dave)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_DAVE_AUTH_KEY",
+            "CHAT_DAVE_AUTH_KEY_HASH",
+        ),
     ];
 
     files
@@ -134,7 +152,7 @@ fn another_key_does_not_verify() {
 
 #[test]
 fn no_two_fixtures_share_a_key() {
-    // They authenticate different accounts, two of them on the same
+    // They authenticate different accounts, several of them on one
     // stack. Sharing a key would make a change to one silently rebind
     // another, and on one stack it would also make two accounts the same
     // account for the purpose of signing in.

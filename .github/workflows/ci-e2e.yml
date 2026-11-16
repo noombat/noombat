@@ -572,11 +572,24 @@ jobs:
       # while instance mail is a plaintext the server composed, and the
       # two are kept apart. run.sh asserts that refusal and signs in to
       # the accounts seeded here.
-      - name: Seed the two accounts the suite signs in as
+      - name: Seed the accounts the suite signs in as
         run: tests/chat-interop/seed.sh tests/chat-interop/compose.yml
 
+      # Check 17 runs the web client's own modules under Node.
+      - name: Install Node (version from .nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Install the frontend's packages
+        working-directory: frontend
+        run: |
+          ../scripts/install-pnpm.sh package.json
+          pnpm install --frozen-lockfile
+
       # GitHub sets CI, and run.sh treats a skip as a failure when it is
-      # set. Its skips are all "no token", i.e. assertions that never ran.
+      # set. Its skips are assertions that never ran, for want of a token,
+      # a tool, or the frontend's packages installed above.
       - name: Run chat interop tests
         run: tests/chat-interop/run.sh http://localhost:8443
 
