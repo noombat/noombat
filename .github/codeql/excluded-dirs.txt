@@ -7,6 +7,8 @@
 # commit as the pattern that caused it.
 
 crates/noombat-api/tests
+crates/noombat-federation/tests
 crates/noombat-identity/tests
 tests/chat-interop
 tests/e2e
+tests/e2e/chat
