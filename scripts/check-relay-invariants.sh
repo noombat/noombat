@@ -565,6 +565,21 @@ else
     fail "an incoming mismatch was not stripped: ${verdict:-nothing}"
 fi
 
+# ..... FIVE: SENDING TO ANOTHER RELAY .....
+
+printf '\n== sending to another relay ==\n'
+
+# On the path a member's mail takes: the filter, then the re-injection
+# listener, which has to relay it without a SASL login. Where it goes
+# next does not matter here; the re-injection listener's answer does.
+verdict="$(filter --port 10026 --from "outbound@$MAIL_DOMAIN" --to someone@peer.localhost \
+    --body encrypted --tag OUTBOUND)"
+if [[ "$verdict" == *" 250 "* ]]; then
+    say "a message to another relay is accepted for delivery: $verdict"
+else
+    fail "a message to another relay was refused: ${verdict:-nothing}"
+fi
+
 
 # ..... VERDICT .....
 

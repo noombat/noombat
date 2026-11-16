@@ -52,6 +52,10 @@
 #
 # `smtpd_proxy_filter` is emptied explicitly, because a global one would
 # point this listener back at the filter the message just came from.
+#
+# `smtpd_relay_restrictions` as upstream's relay sets it here. The global
+# list lets only a SASL login relay, and the filter re-injects without
+# one, so without this every recipient on another relay would be refused.
 127.0.0.1:10025 inet  n  -       n       -       -       smtpd
   -o syslog_name=postfix/reinject
   -o smtpd_proxy_filter=
@@ -61,6 +65,7 @@
   -o smtpd_client_restrictions=
   -o smtpd_sender_restrictions=
   -o smtpd_recipient_restrictions=permit_mynetworks,reject
+  -o smtpd_relay_restrictions=permit_mynetworks,reject
   -o mynetworks=127.0.0.0/8
   -o smtpd_authorized_xforward_hosts=127.0.0.0/8
 
