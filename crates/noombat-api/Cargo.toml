@@ -2,6 +2,7 @@
 name = "noombat-api"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Axum routes, server-side HTML Askama templates, and internationalisation."

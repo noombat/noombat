@@ -2510,9 +2510,6 @@ dependencies = [
 [[package]]
 name = "noombat-events"
 version = "0.1.0"
-dependencies = [
- "noombat-core",
-]
 
 [[package]]
 name = "noombat-federation"
@@ -2546,9 +2543,6 @@ dependencies = [
 [[package]]
 name = "noombat-groups"
 version = "0.1.0"
-dependencies = [
- "noombat-core",
-]
 
 [[package]]
 name = "noombat-identity"

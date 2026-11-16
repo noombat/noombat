@@ -4,8 +4,8 @@
 #
 # Report dependencies that a manifest declares and the code never names.
 #
-# Cargo does not warn about this and neither does npm, so a declaration
-# outlives the code that needed it silently. On 2026-08-16 that had
+# Cargo warns about it only from 1.100 on, and npm not at all, so a
+# declaration can outlive the code that needed it silently. On 2026-08-16 that had
 # accumulated five of them: noombat-chat declared tokio-tungstenite and
 # serde_json, noombat-federation declared http-signature-normalization
 # while using only its reqwest wrapper, noombat-server declared reqwest,
@@ -63,16 +63,10 @@ done
 
 CANARY="noombat-canary-that-cannot-exist"
 
-# Declarations that are intentional. Both entries are placeholder crates:
-# a licence header, `#![forbid(unsafe_code)]` and one doc line describing
-# scope that is not built yet. They declare noombat-core so that the
-# manifest is ready, and use nothing because there is nothing to use.
-# Remove an entry here when its crate grows an implementation.
+# Declarations that are intentional, as `crate:dependency` or
+# `workspace:dependency`, one a line. None today: the placeholder crates,
+# noombat-events and noombat-groups, declare nothing until they use it.
 ALLOWLIST="
-noombat-events:noombat-core
-noombat-groups:noombat-core
-workspace:noombat-events
-workspace:noombat-groups
 "
 
 WORK="$(mktemp -d)"

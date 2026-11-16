@@ -2,6 +2,7 @@
 name = "noombat-federation"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, and HTTP Signature verification."

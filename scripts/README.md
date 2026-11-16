@@ -119,9 +119,8 @@ This workspace has already hit the first of those, when `meilisearch-sdk`'s defa
 Confirm each candidate by deleting the line and running `cargo check --workspace --all-targets`, then comparing `cargo tree --workspace -f '{p} {f}'` before and after.
 The check has to be at workspace scope, because Cargo unifies features across the whole workspace and a package-scoped run is a different build rather than a smaller one.
 
-Two declarations are allowlisted in the script, both `noombat-core` in the `noombat-events` and `noombat-groups` placeholder crates.
-Those crates are a licence header and one doc line each, so they declare what they will need and use nothing.
-Delete the allowlist entry when either grows an implementation.
+Nothing is allowlisted in the script today.
+The placeholder crates, `noombat-events` and `noombat-groups`, declare no dependency until they use one, which Cargo itself would warn about from 1.100 on.
 
 The scan injects a canary dependency name into every manifest it reads and requires all of them back in the output.
 A canary that goes missing means the search matched something it should not have, so a clean result would prove nothing, and the script exits `2` rather than reporting success.

@@ -2,6 +2,7 @@
 name = "noombat-markup"
 version = "0.1.0"
 edition.workspace = true
+rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "(Markdown and LaTeX maths) to HTML pipeline and Markdown to Typst converter."
