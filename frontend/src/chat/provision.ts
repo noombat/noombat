@@ -12,6 +12,8 @@
  * 3. Build the credential blob and encrypt it with the blob key
  *    derived from the user's password.
  * 4. Store the encrypted blob server-side.
+ * 5. Publish the public key, once the blob holding its private half is
+ *    stored, so that others can write to the member first.
  *
  * It is shared by the registration flow (`src/auth.ts`) and the
  * OAuth account-upgrade flow (`src/upgrade.ts`).
@@ -21,7 +23,7 @@ import { authHeaders } from "./session";
 
 /**
  * Provision the Chatmail account, generate an OpenPGP key pair,
- * and store the encrypted credential blob.
+ * store the encrypted credential blob, then publish the public key.
  *
  * Requires the blob encryption key (derived from the user's
  * password) and an authenticated session. The session may be
@@ -29,9 +31,11 @@ import { authHeaders } from "./session";
  * registration flow) or by the `noombat_session` cookie (the
  * upgrade flow); {@link authHeaders} selects whichever is present.
  *
- * Failure is signalled by a rejected promise. Callers treat
- * provisioning as best-effort: the account remains usable and
- * provisioning can be retried later from the chat page.
+ * A failed request rejects the promise; a refusal to provision or to store
+ * the blob returns early, so nothing is published unless the blob was
+ * stored, and a refused publish is left to the repair at unlock.
+ * Callers treat provisioning as best-effort: the account remains
+ * usable and provisioning can be retried later from the chat page.
  *
  * The OpenPGP and blob modules are loaded with dynamic `import()`
  * so that they form separate chunks.
@@ -67,7 +71,12 @@ export async function provisionChat(blobKey: CryptoKey): Promise<void> {
   const encrypted = await encryptBlob(blobKey, blob, chatmail_addr);
 
   // 4. Store the encrypted blob on the server.
-  await storeBlob(encrypted);
+  if (!(await storeBlob(encrypted))) return;
+
+  // 5. Publish the public key. Never before step 4: a key whose private
+  //    half was lost would invite messages nobody can read.
+  const { publishOwnKey } = await import("./directory");
+  await publishOwnKey(keyPair.publicKey);
 }
 
 /**

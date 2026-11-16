@@ -24,6 +24,7 @@ import {
 } from "./crypto";
 import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
 import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
+import { repairOwnKey } from "./directory";
 import { deriveBlobKey } from "../auth";
 
 // ..... Base64 helpers .....
@@ -313,6 +314,9 @@ export default function Chat(props: ChatProps): JSX.Element {
   async function handleUnlock(): Promise<void> {
     const ok = await unlockBlob(unlockPassword());
     if (ok) {
+      // Repairs a key that failed to publish at setup: one lookup, and an
+      // upload when the instance serves another key or none.
+      if (credentials) void repairOwnKey(props.chatmailAddr, credentials);
       setNeedsUnlock(false);
       setUnlockPassword("");
       connect();
