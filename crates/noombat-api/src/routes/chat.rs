@@ -101,7 +101,8 @@ async fn chat_member(
 /// `PUT /api/v1/me/chat_key`
 ///
 /// The member's OpenPGP public key for chat, binary, as their client made
-/// it. Refused unless it is one public key naming their chat address.
+/// it. Refused unless it is one public key naming their chat address. A
+/// changed key is pushed to followers on other instances.
 async fn put_chat_key(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
@@ -120,7 +121,9 @@ async fn put_chat_key(
             "chat is not set up for this account".into(),
         ))
     })?;
-    noombat_chat::keys::publish(&state.pool, actor.id, address, &body).await?;
+    if noombat_chat::keys::publish(&state.pool, actor.id, address, &body).await? {
+        noombat_federation::update::enqueue_actor_update(&state.pool, &actor, &state.domain).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -20,8 +20,9 @@ pub struct PublishedKey {
 /// Store `key` as `actor_id`'s chat key, once it has passed the structural
 /// check for `address`, their chat address. Refused when that is no longer
 /// their address, so an erasure that clears it during the request does not
-/// have the key written back.
-pub async fn publish(pool: &PgPool, actor_id: Uuid, address: &str, key: &[u8]) -> Result<()> {
+/// have the key written back. Returns whether anything changed: the same
+/// key sent again writes nothing.
+pub async fn publish(pool: &PgPool, actor_id: Uuid, address: &str, key: &[u8]) -> Result<bool> {
     noombat_openpgp::check_public_key(key, address)
         .map_err(|refusal| NoombatError::BadRequest(refusal.to_string()))?;
     let mut tx = pool.begin().await?;
@@ -36,18 +37,21 @@ pub async fn publish(pool: &PgPool, actor_id: Uuid, address: &str, key: &[u8]) -
             "chat is not set up for this account".into(),
         ));
     }
-    sqlx::query(
+    let written: Option<bool> = sqlx::query_scalar(
         "INSERT INTO chat_keys (actor_id, address, key_data) VALUES ($1, $2, $3) \
          ON CONFLICT (actor_id) DO UPDATE \
-         SET address = EXCLUDED.address, key_data = EXCLUDED.key_data, updated_at = now()",
+         SET address = EXCLUDED.address, key_data = EXCLUDED.key_data, updated_at = now() \
+         WHERE (chat_keys.address, chat_keys.key_data) \
+               IS DISTINCT FROM (EXCLUDED.address, EXCLUDED.key_data) \
+         RETURNING TRUE",
     )
     .bind(actor_id)
     .bind(address)
     .bind(key)
-    .execute(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await?;
     tx.commit().await?;
-    Ok(())
+    Ok(written.is_some())
 }
 
 /// The key published by the local member whose chat address is `address`,
@@ -55,7 +59,9 @@ pub async fn publish(pool: &PgPool, actor_id: Uuid, address: &str, key: &[u8]) -
 /// member's address and they may chat, if the member lets anyone find
 /// their chat address or `viewer` is them, a follower or a connection
 /// (the rule of `Actor::chatmail_visible_to`), and unless the member has
-/// blocked `viewer`.
+/// blocked `viewer`. The block holds only here: a member who lets anyone
+/// find their chat address publishes the key in their actor document, which
+/// a blocked viewer can read like anyone else.
 ///
 /// One statement whatever the reason for refusing, each of its lookups on
 /// an index, so a hidden key is refused with the same answer as a missing

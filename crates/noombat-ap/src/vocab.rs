@@ -21,3 +21,10 @@ pub const EVENT_EXTENSIONS: &str = "noombat:eventExtensions";
 pub const CANONICAL_URI: &str = "noombat:canonicalUri";
 /// Custom property: profile data TTL hint (seconds) for remote caching.
 pub const TTL: &str = "noombat:ttl";
+/// Custom property: a member's OpenPGP public key for chat, published
+/// beside their chat address so that others can write to them first.
+pub const CHAT_KEY: &str = "noombat:chatKey";
+/// Within [`CHAT_KEY`]: the chat address the key belongs to.
+pub const CHAT_KEY_ADDRESS: &str = "noombat:address";
+/// Within [`CHAT_KEY`]: the binary transferable public key, in base64.
+pub const CHAT_KEY_DATA: &str = "noombat:keyData";

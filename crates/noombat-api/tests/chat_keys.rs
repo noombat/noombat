@@ -472,6 +472,130 @@ async fn a_remote_actors_key_is_never_served_by_address(pool: PgPool) {
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
 }
 
+/// `username`'s actor document, as a peer dereferences it.
+async fn actor_document(pool: &PgPool, username: &str) -> serde_json::Value {
+    let request = Request::builder()
+        .uri(format!("/users/{username}"))
+        .header("accept", "application/activity+json")
+        .body(Body::empty())
+        .expect("request");
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(request)
+        .await
+        .expect("the router is infallible");
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(response.into_body(), 256 * 1024)
+        .await
+        .expect("body within limit");
+    serde_json::from_slice(&body).expect("a JSON document")
+}
+
+/// The key in an actor document or an `Update`'s object, if any.
+fn published_key(document: &serde_json::Value) -> Option<Vec<u8>> {
+    let data = document["noombat:chatKey"]["noombat:keyData"].as_str()?;
+    Some(STANDARD.decode(data).expect("base64"))
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_actor_document_carries_the_key_while_it_names_the_address(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let document = actor_document(&pool, "bob").await;
+    assert_eq!(published_key(&document), Some(key(BOB_KEY)));
+    assert_eq!(
+        document["noombat:chatKey"]["noombat:address"],
+        "bob@chat.noombat.example"
+    );
+
+    // Not while the account may not sign in, which the local lookup refuses
+    // too; a silenced one keeps it.
+    for (status, published) in [("suspended", false), ("pending", false), ("silenced", true)] {
+        sqlx::query("UPDATE actors SET actor_status = $2 WHERE id = $1")
+            .bind(pair.bob)
+            .bind(status)
+            .execute(&pool)
+            .await
+            .expect("status");
+        let served = published_key(&actor_document(&pool, "bob").await);
+        assert_eq!(served.is_some(), published, "{status}");
+    }
+
+    // Not while the member must set chat up again, nor once the key names
+    // an address that is no longer theirs.
+    sqlx::query("UPDATE actors SET chat_requires_reprovisioning = TRUE WHERE id = $1")
+        .bind(pair.bob)
+        .execute(&pool)
+        .await
+        .expect("flag");
+    assert_eq!(published_key(&actor_document(&pool, "bob").await), None);
+    sqlx::query(
+        "UPDATE actors SET chat_requires_reprovisioning = FALSE, \
+         chatmail_addr = 'robert@chat.noombat.example' WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .execute(&pool)
+    .await
+    .expect("readdress");
+    assert_eq!(published_key(&actor_document(&pool, "bob").await), None);
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_changed_key_is_pushed_to_followers_and_the_same_key_is_not(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let bob_token = token_for(&pool, bob, "bob").await;
+    let follower: Uuid = sqlx::query_scalar(
+        "INSERT INTO actors \
+             (actor_type, ap_id, username, domain, public_key_pem, is_local, inbox_url) \
+         VALUES ('individual', 'https://elsewhere.example/users/carol', 'carol', \
+                 'elsewhere.example', 'KEY', FALSE, 'https://elsewhere.example/users/carol/inbox') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("remote follower");
+    sqlx::query("INSERT INTO follows (follower_id, following_id, accepted) VALUES ($1, $2, TRUE)")
+        .bind(follower)
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("follow");
+
+    let queued = || async {
+        sqlx::query_scalar::<_, serde_json::Value>(
+            "SELECT payload FROM delivery_queue \
+             WHERE actor_id = $1 AND target_inbox = 'https://elsewhere.example/users/carol/inbox' \
+             ORDER BY id",
+        )
+        .bind(bob)
+        .fetch_all(&pool)
+        .await
+        .expect("queue")
+    };
+
+    for (sent, expected) in [
+        (BOB_KEY, vec![BOB_KEY]),
+        (BOB_KEY, vec![BOB_KEY]),
+        (BOB_NEW_KEY, vec![BOB_KEY, BOB_NEW_KEY]),
+    ] {
+        assert_eq!(
+            publish(&pool, &bob_token, &key(sent)).await.status,
+            StatusCode::NO_CONTENT
+        );
+        let updates = queued().await;
+        let keys: Vec<Option<Vec<u8>>> = updates
+            .iter()
+            .map(|update| {
+                assert_eq!(update["type"], "Update");
+                published_key(&update["object"])
+            })
+            .collect();
+        let expected: Vec<Option<Vec<u8>>> =
+            expected.into_iter().map(|b64| Some(key(b64))).collect();
+        assert_eq!(keys, expected);
+    }
+}
+
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn looking_up_needs_a_session(pool: PgPool) {

@@ -79,6 +79,32 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
     .flatten()
     .flatten();
 
+    // Read here as the avatar's description is: only a key for the
+    // member's current address, while their account may sign in and they
+    // need not set chat up again, as the local lookup serves it. Whether the
+    // address, and with it the key, is published at all is decided in
+    // `build_federated_actor`. A failure omits the key from the document
+    // rather than leaving the actor unserved.
+    let chat_key: Option<Vec<u8>> = match &actor.chatmail_addr {
+        Some(address) if actor.actor_status.is_active() && !actor.chat_requires_reprovisioning => {
+            match sqlx::query_scalar(
+                "SELECT key_data FROM chat_keys WHERE actor_id = $1 AND address = $2",
+            )
+            .bind(actor.id)
+            .bind(address)
+            .fetch_optional(pool)
+            .await
+            {
+                Ok(key) => key,
+                Err(error) => {
+                    warn!(actor = %actor.ap_id, %error, "failed to read the chat key; omitting it");
+                    None
+                }
+            }
+        }
+        _ => None,
+    };
+
     downgrade::build_federated_actor(
         actor,
         domain,
@@ -88,6 +114,7 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
         None,
         connections.as_deref(),
         avatar_alt.as_deref(),
+        chat_key.as_deref(),
     )
 }
 

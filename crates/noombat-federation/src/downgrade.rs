@@ -14,6 +14,8 @@
 
 use std::borrow::Cow;
 
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
 use noombat_ap::context::{Extension, context_with};
 use noombat_ap::vocab;
 use noombat_core::actor::Actor;
@@ -208,8 +210,10 @@ pub struct VerifiedLinkRef<'a> {
 /// Identity and key material (`publicKey`, `assertionMethod`, `icon`,
 /// `image`, `movedTo`, `alsoKnownAs`, `noombat:ttl`) is emitted for
 /// every actor. When `federate_profile` is `false` the document stops
-/// there. When `true` it also carries the `attachment` array and the
-/// sections whose visibility is [`SectionVisibility::Public`].
+/// there. When `true` it also carries the `attachment` array, the chat
+/// key beside a visible chat address (profile data, unlike the signing
+/// keys above), and the sections whose visibility is
+/// [`SectionVisibility::Public`].
 #[allow(clippy::too_many_arguments)]
 pub fn build_federated_actor(
     actor: &Actor,
@@ -220,6 +224,7 @@ pub fn build_federated_actor(
     ttl_secs: Option<u64>,
     connections: Option<&str>,
     avatar_alt: Option<&str>,
+    chat_key: Option<&[u8]>,
 ) -> Value {
     let profile_url = format!("https://{domain}/@{}", actor.username);
 
@@ -361,6 +366,14 @@ pub fn build_federated_actor(
             "name": "Chat",
             "value": addr,
         }));
+        // The key's User ID is the address, so the key goes where the
+        // address goes and nowhere else.
+        if let Some(key) = chat_key {
+            let mut published = serde_json::Map::new();
+            published.insert(vocab::CHAT_KEY_ADDRESS.into(), json!(addr));
+            published.insert(vocab::CHAT_KEY_DATA.into(), json!(STANDARD.encode(key)));
+            obj[vocab::CHAT_KEY] = Value::Object(published);
+        }
     }
 
     // Domain-verified links, following the Mastodon convention.
@@ -512,6 +525,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(obj.get("noombat:experience").is_none());
         assert!(obj.get(vocab::TTL).is_some());
@@ -534,8 +548,17 @@ mod tests {
             url: "https://example.org/alice",
         }];
 
-        let obj =
-            build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &links,
+            None,
+            None,
+            None,
+            None,
+        );
 
         let rendered = obj.to_string();
         assert!(
@@ -556,6 +579,67 @@ mod tests {
             !rendered.contains("example.org/alice"),
             "verified link leaked"
         );
+    }
+
+    /// The actor document a peer reads for `actor` with `key` as their
+    /// published chat key.
+    fn with_chat_key(actor: &Actor, key: Option<&[u8]>) -> Value {
+        build_federated_actor(
+            actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            key,
+        )
+    }
+
+    #[test]
+    fn the_chat_key_is_published_beside_a_visible_chat_address() {
+        let mut actor = test_actor();
+        actor.chatmail_addr = Some("alice@chat.noombat.social".into());
+        let key = [0x98, 0x33, 0x04, 0x6A];
+        let doc = with_chat_key(&actor, Some(&key));
+        let published = &doc[vocab::CHAT_KEY];
+        assert_eq!(
+            published[vocab::CHAT_KEY_ADDRESS],
+            "alice@chat.noombat.social"
+        );
+        let data = published[vocab::CHAT_KEY_DATA].as_str().expect("key data");
+        assert_eq!(STANDARD.decode(data).expect("base64"), key);
+    }
+
+    #[test]
+    fn no_chat_key_where_the_chat_address_is_withheld() {
+        let key = [0x98, 0x33, 0x04, 0x6A];
+        let encoded = STANDARD.encode(key);
+        let mut actor = test_actor();
+        actor.chatmail_addr = Some("alice@chat.noombat.social".into());
+
+        let mut hidden = actor.clone();
+        hidden.actor_privacy.chatmail_visible = false;
+        let mut unfederated = actor.clone();
+        unfederated.actor_privacy.federate_profile = false;
+        let mut no_address = actor.clone();
+        no_address.chatmail_addr = None;
+        for (case, doc) in [
+            ("address hidden", with_chat_key(&hidden, Some(&key))),
+            (
+                "profile not federated",
+                with_chat_key(&unfederated, Some(&key)),
+            ),
+            ("no address", with_chat_key(&no_address, Some(&key))),
+            ("no key", with_chat_key(&actor, None)),
+        ] {
+            assert!(doc.get(vocab::CHAT_KEY).is_none(), "{case}");
+            assert!(
+                !doc.to_string().contains(&encoded),
+                "{case}: the key leaked"
+            );
+        }
     }
 
     #[test]
@@ -588,6 +672,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
 
         // Only the public experience section should be present.
@@ -611,6 +696,7 @@ mod tests {
             Some(3600),
             None,
             None,
+            None,
         );
         assert_eq!(obj[vocab::TTL], 3600);
     }
@@ -619,7 +705,17 @@ mod tests {
     fn federated_actor_includes_moved_to() {
         let mut actor = test_actor();
         actor.moved_to = Some("https://new.example/users/alice".into());
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
         assert_eq!(obj["movedTo"], "https://new.example/users/alice");
     }
 
@@ -640,6 +736,7 @@ mod tests {
             None,
             None,
             Some("Standing by a river"),
+            None,
         );
 
         assert_eq!(obj["icon"]["type"], "Image");
@@ -654,7 +751,17 @@ mod tests {
     fn an_undescribed_avatar_carries_no_name() {
         let mut actor = test_actor();
         actor.avatar_url = Some("https://noombat.social/media/abc".to_owned());
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
 
         assert_eq!(obj["icon"]["url"], "https://noombat.social/media/abc");
         assert!(
@@ -676,6 +783,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         let aka = obj["alsoKnownAs"].as_array().unwrap();
         assert_eq!(aka.len(), 1);
@@ -685,7 +793,17 @@ mod tests {
     #[test]
     fn federated_actor_publishes_the_ed25519_key() {
         let actor = test_actor();
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
 
         let methods = obj["assertionMethod"].as_array().unwrap();
         assert_eq!(methods.len(), 1);
@@ -713,7 +831,17 @@ mod tests {
         let mut actor = test_actor();
         actor.actor_privacy.federate_profile = false;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(obj.get("assertionMethod").is_some());
         assert!(obj.get("publicKey").is_some());
     }
@@ -807,21 +935,31 @@ mod tests {
         }
 
         // An actor exercising every conditional branch: a key, a migration
-        // pointer, and two attachment sources.
+        // pointer, three attachment sources and a chat key.
         let mut actor = test_actor();
         actor.orcid = Some("0000-0002-1825-0097".into());
         actor.moved_to = Some("https://elsewhere.example/users/alice".into());
+        actor.chatmail_addr = Some("alice@chat.noombat.social".into());
         let links = [VerifiedLinkRef {
             url: "https://alice.example",
         }];
-        let doc =
-            build_federated_actor(&actor, "noombat.social", &[], &[], &links, None, None, None);
+        let doc = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &links,
+            None,
+            None,
+            None,
+            Some(&[0x98, 0x33]),
+        );
 
         let mut used = BTreeSet::new();
         used_terms(&doc, &mut used);
 
         // A fixture that produced none of these would pass vacuously.
-        for expected in ["PropertyValue", "movedTo", "Multikey"] {
+        for expected in ["PropertyValue", "movedTo", "Multikey", vocab::CHAT_KEY] {
             assert!(
                 used.contains(expected),
                 "fixture never emitted {expected}, so this test would prove nothing"
@@ -829,6 +967,13 @@ mod tests {
         }
 
         let declared = declared_inline(&doc["@context"]);
+        // Prefixed terms are skipped below, so their prefixes are checked here.
+        for (prefix, _) in used.iter().filter_map(|term| term.split_once(':')) {
+            assert!(
+                declared.contains(prefix),
+                "`{prefix}:` is used but not declared"
+            );
+        }
         for term in &used {
             if term.starts_with('@') || term.contains(':') {
                 continue;
@@ -856,8 +1001,17 @@ mod tests {
 
         let mut keyless = test_actor();
         keyless.ed25519_public_key = None;
-        let without_key =
-            build_federated_actor(&keyless, "noombat.social", &[], &[], &[], None, None, None);
+        let without_key = build_federated_actor(
+            &keyless,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
         let declared_urls: Vec<&str> = without_key["@context"]
             .as_array()
             .unwrap()
@@ -873,7 +1027,17 @@ mod tests {
         actor.display_name = None;
         actor.summary_html = None;
 
-        let obj = build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+        let obj = build_federated_actor(
+            &actor,
+            "noombat.social",
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            None,
+            None,
+        );
         assert!(obj.get("name").is_none(), "name sent as {}", obj["name"]);
         assert!(obj.get("summary").is_none());
 
@@ -883,6 +1047,7 @@ mod tests {
             &[],
             &[],
             &[],
+            None,
             None,
             None,
             None,
@@ -902,8 +1067,17 @@ mod tests {
         ] {
             let mut actor = test_actor();
             actor.actor_type = actor_type;
-            let obj =
-                build_federated_actor(&actor, "noombat.social", &[], &[], &[], None, None, None);
+            let obj = build_federated_actor(
+                &actor,
+                "noombat.social",
+                &[],
+                &[],
+                &[],
+                None,
+                None,
+                None,
+                None,
+            );
             assert_eq!(obj["type"], expected);
         }
     }
