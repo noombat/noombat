@@ -16,7 +16,7 @@
 #        14. Plain text through the relay's filter.
 #        15. The sender is the login.
 #        16. First contact through the instance: publish, read back, refuse.
-#        17. First contact between two web-client members, under Node.
+#        17. First contact between two web-client members, under Node; the push.
 #        18. Setting chat up again, with a new Chatmail password.
 #
 # Usage:
@@ -645,8 +645,9 @@ fi
 # client's own modules, run under Node, provision carol and dave and
 # publish their keys; carol names dave by handle, the page's resolver finds
 # his address and key, and her first message reaches dave, who decrypts it
-# and verifies her signature. The page's wiring around those modules is not
-# run here.
+# and verifies her signature. Her second reaches his open session unasked,
+# and a fetch after a message he holds returns only newer ones. The page's
+# wiring around those modules is not run here.
 VITEST="$HERE/../../frontend/node_modules/.bin/vitest"
 token_for() {
     curl $CURL_OPTS -sf -X POST -H "Content-Type: application/json" \

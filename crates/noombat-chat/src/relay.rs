@@ -35,10 +35,11 @@ pub enum ClientMessage {
         /// Base64-encoded Autocrypt header value to inject.
         autocrypt_header_b64: Option<String>,
     },
-    /// Request to fetch new messages from the IMAP mailbox.
+    /// Ask for the messages in the mailbox newer than `since_uid`; from
+    /// then on, each new one is sent as it arrives.
     #[serde(rename = "fetch")]
     Fetch {
-        /// IMAP sequence number to start from (0 = all unseen).
+        /// The IMAP UID of the newest message the page holds, 0 for none.
         since_uid: u32,
     },
     /// Acknowledge receipt of a message (mark as seen in IMAP).
@@ -78,8 +79,11 @@ impl std::fmt::Debug for ClientMessage {
 #[serde(tag = "type")]
 pub enum ServerMessage {
     /// Session established: IMAP login succeeded.
+    ///
+    /// The mailbox's UIDVALIDITY: UIDs from an earlier session name the
+    /// same messages only while it is unchanged.
     #[serde(rename = "ready")]
-    Ready,
+    Ready { uid_validity: Option<u32> },
     /// A new incoming encrypted message.
     #[serde(rename = "message")]
     Message {

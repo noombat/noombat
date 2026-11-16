@@ -28,6 +28,7 @@ import { repairOwnKey, type PublishedKeyResult } from "./directory";
 import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipient";
 import { deriveBlobKey, deriveBothKeys } from "../auth";
 import { provisionChat, type ProvisionResult } from "./provision";
+import { Received } from "./received";
 import { describeServerError } from "./server-error";
 
 // ..... Base64 helpers .....
@@ -341,6 +342,8 @@ interface ServerMsg {
   /** For an error, what went wrong; `message` is the detail. */
   code?: string;
   uid?: number;
+  /** For `ready`, the mailbox's UIDVALIDITY. */
+  uid_validity?: number | null;
   from?: string;
   body_b64?: string;
   autocrypt_header_b64?: string;
@@ -392,6 +395,8 @@ export default function Chat(props: ChatProps): JSX.Element {
   let ws: WebSocket | null = null;
   let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   let msgCounter = 0;
+  /** The messages this page holds, across connections. */
+  const received = new Received();
 
   // ..... Reconnection backoff .....
 
@@ -590,12 +595,18 @@ export default function Chat(props: ChatProps): JSX.Element {
         setStatus("");
         // Reset backoff on successful connection.
         reconnectDelay = 0;
-        // Fetch unseen messages now that the session is established.
-        ws?.send(JSON.stringify({ type: "fetch", since_uid: 0 }));
+        // A mailbox whose UIDs were assigned again holds the same messages
+        // under new ones: those shown are dropped, to come back fetched.
+        if (received.inMailbox(msg.uid_validity)) {
+          setMessages((prev) => prev.filter((m) => m.outgoing || m.system));
+        }
+        // Every message newer than those held, all of them the first time;
+        // the server pushes each later one as it arrives.
+        ws?.send(JSON.stringify({ type: "fetch", since_uid: received.newest }));
         return;
       }
 
-      if (msg.type === "message" && msg.from && msg.body_b64) {
+      if (msg.type === "message" && msg.from && msg.body_b64 && received.take(msg.uid ?? 0)) {
         // Decrypt asynchronously via OpenPGP.js.
         void handleIncomingMessage(msg);
       }

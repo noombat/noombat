@@ -10,8 +10,10 @@
  * keys. carol writes first: she names dave by handle, and the page's own
  * resolver finds his address and the key his instance publishes. She sends
  * over the chat WebSocket; dave fetches the message there, takes her key
- * from its Autocrypt header, decrypts it and verifies her signature. The
- * page's wiring around these modules is not run here.
+ * from its Autocrypt header, decrypts it and verifies her signature. Her
+ * second message reaches his open session with nothing asked, and asking
+ * after it returns nothing. The page's wiring around these modules is not
+ * run here.
  *
  * Needs NOOMBAT_URL, NOOMBAT_DOMAIN (the instance's, for handles),
  * CHAT_DOMAIN, and for carol and dave a session token
@@ -45,6 +47,7 @@ interface Member {
 
 interface ServerMsg {
   type: string;
+  uid?: number;
   from?: string;
   body_b64?: string;
   autocrypt_header_b64?: string;
@@ -126,41 +129,54 @@ it("carol writes to dave first, on the key his instance publishes, and he reads 
   expect(resolved.adopted).not.toBeNull();
   expect(carolPeers.getPublicKey(dave.address)).toEqual(resolved.key);
 
-  const plaintext = `first contact through the instance, ${Date.now()}`;
-  const cipher = await encryptMessage(
-    resolved.key,
-    bytes(carol.blob.privateKeyB64),
-    new TextEncoder().encode(plaintext),
-  );
+  const daveKey = resolved.key;
   const carolSocket = await chatSocket(carol);
   const header = `addr=${carol.address}; prefer-encrypt=mutual; keydata=${carol.blob.publicKeyB64}`;
-  carolSocket.send({
-    type: "send",
-    to: dave.address,
-    body_b64: uint8ToBase64(cipher),
-    autocrypt_header_b64: btoa(header),
-  });
-  await carolSocket.waitFor((m) => m.type === "sent");
+  async function sendToDave(text: string): Promise<void> {
+    const cipher = await encryptMessage(
+      daveKey,
+      bytes(carol.blob.privateKeyB64),
+      new TextEncoder().encode(text),
+    );
+    carolSocket.send({
+      type: "send",
+      to: dave.address,
+      body_b64: uint8ToBase64(cipher),
+      autocrypt_header_b64: btoa(header),
+    });
+    await carolSocket.waitFor((m) => m.type === "sent");
+  }
+  const plaintext = `first contact through the instance, ${Date.now()}`;
+  await sendToDave(plaintext);
+
+  // dave asks for what his mailbox holds, as the chat page does when it
+  // connects, and the server pushes what arrives after.
+  const daveSocket = await chatSocket(dave);
+  const fromCarol = (m: ServerMsg): boolean => m.type === "message" && m.from === carol.address;
+  const first = daveSocket.waitFor(fromCarol, 30_000);
+  daveSocket.send({ type: "fetch", since_uid: 0 });
+  const message = await first;
+  const pushed = daveSocket.waitFor(fromCarol, 30_000);
+  await sendToDave("a second message, pushed");
+  const second = await pushed;
+  expect(second.uid).toBeGreaterThan(message.uid ?? 0);
+  // Asked while the session idles, a fetch is answered: after the first
+  // message, with the second alone; after the second, with nothing.
+  const again = daveSocket.waitFor((m) => m.type === "message", 15_000);
+  daveSocket.send({ type: "fetch", since_uid: message.uid });
+  expect((await again).uid).toBe(second.uid);
+  daveSocket.send({ type: "fetch", since_uid: second.uid });
+  await expect(daveSocket.waitFor((m) => m.type === "message", 2_000)).rejects.toThrow(
+    "nothing arrived",
+  );
+  daveSocket.close();
   carolSocket.close();
+  if (!message.body_b64 || !message.autocrypt_header_b64) {
+    throw new Error(`carol's message reached dave incomplete: ${JSON.stringify(message)}`);
+  }
 
   // dave reads it as the chat page does: carol's key from her Autocrypt
   // header, then the message decrypted and her signature verified.
-  const daveSocket = await chatSocket(dave);
-  let message: ServerMsg | undefined;
-  let lastError: unknown;
-  for (let attempt = 0; attempt < 15 && !message; attempt++) {
-    daveSocket.send({ type: "fetch", since_uid: 0 });
-    message = await daveSocket
-      .waitFor((m) => m.type === "message" && m.from === carol.address, 2_000)
-      .catch((error: unknown) => {
-        lastError = error;
-        return undefined;
-      });
-  }
-  daveSocket.close();
-  if (!message?.body_b64 || !message.autocrypt_header_b64) {
-    throw new Error(`dave received nothing from carol; last: ${String(lastError)}`);
-  }
   const davePeers = new PeerStateTable();
   const parsed = parseAutocryptHeader(
     new TextDecoder().decode(bytes(message.autocrypt_header_b64)),

@@ -9,8 +9,13 @@
 //! that the API layer delegates to `noombat-chat` rather than
 //! depending on the IMAP/TLS/SMTP crates directly.
 
+use std::future::Future;
 use std::sync::Arc;
+use std::time::Duration;
 
+use async_imap::extensions::idle::IdleResponse;
+use async_imap::imap_proto::{MailboxDatum, Response};
+use async_imap::types::UnsolicitedResponse;
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use rustls::ClientConfig;
@@ -158,13 +163,13 @@ impl std::fmt::Display for ConnectError {
 }
 
 /// Establish an IMAP session with the Chatmail relay and select
-/// INBOX.
+/// INBOX, whose UIDVALIDITY comes back with it: see [`select_inbox`].
 pub async fn connect_imap(
     tls_connector: &TlsConnector,
     config: &RelayConfig,
     address: &str,
     password: &str,
-) -> Result<ImapSession, ConnectError> {
+) -> Result<(ImapSession, Option<u32>), ConnectError> {
     let unreachable = |detail: String| ConnectError::Unreachable(detail);
     let tcp = tokio::net::TcpStream::connect((&*config.imap_host, config.imap_port))
         .await
@@ -185,12 +190,31 @@ pub async fn connect_imap(
         .await
         .map_err(|(e, _)| ConnectError::Refused(format!("IMAP login failed: {e}")))?;
 
-    session
+    let uid_validity = select_inbox(&mut session).await.map_err(unreachable)?;
+    Ok((session, uid_validity))
+}
+
+/// Select INBOX, and return its UIDVALIDITY: UIDs name the same messages
+/// only while it is unchanged, which a mailbox whose index is rebuilt is
+/// not.
+pub async fn select_inbox<S>(session: &mut async_imap::Session<S>) -> Result<Option<u32>, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    let inbox = session
         .select("INBOX")
         .await
-        .map_err(|e| unreachable(format!("INBOX select failed: {e}")))?;
+        .map_err(|e| format!("INBOX select failed: {e}"))?;
+    Ok(inbox.uid_validity)
+}
 
-    Ok(session)
+/// What [`fetch_messages`] found.
+pub struct Fetched {
+    pub messages: Vec<ServerMessage>,
+    /// The newest UID looked at, or `since_uid` when none was newer. A
+    /// message that is not a chat message counts too, so it is not fetched
+    /// again.
+    pub newest: u32,
 }
 
 /// Fetch messages from the IMAP mailbox and return them as
@@ -198,14 +222,17 @@ pub async fn connect_imap(
 ///
 /// `since_uid` of 0 means "all messages"; otherwise, messages with
 /// UIDs strictly greater than `since_uid` are returned.
-pub async fn fetch_messages(
-    session: &mut ImapSession,
+pub async fn fetch_messages<S>(
+    session: &mut async_imap::Session<S>,
     since_uid: u32,
-) -> Result<Vec<ServerMessage>, String> {
+) -> Result<Fetched, String>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
     let query = if since_uid == 0 {
         "1:*".to_owned()
     } else {
-        format!("{}:*", since_uid + 1)
+        format!("{}:*", since_uid.saturating_add(1))
     };
 
     let messages = session
@@ -214,6 +241,7 @@ pub async fn fetch_messages(
         .map_err(|e| format!("IMAP FETCH failed: {e}"))?;
 
     let mut result = Vec::new();
+    let mut newest = since_uid;
 
     use futures_lite::StreamExt;
     let mut stream = messages;
@@ -230,6 +258,12 @@ pub async fn fetch_messages(
             Some(u) => u,
             None => continue,
         };
+        // A range past the newest UID still names the newest message
+        // (RFC 3501, 6.4.8), which the page already holds.
+        if uid <= since_uid {
+            continue;
+        }
+        newest = newest.max(uid);
 
         let body = match fetch.body() {
             Some(b) => b,
@@ -266,7 +300,128 @@ pub async fn fetch_messages(
         });
     }
 
-    Ok(result)
+    Ok(Fetched {
+        messages: result,
+        newest,
+    })
+}
+
+/// How long [`idle_until`] waits on the server.
+#[derive(Clone, Copy, Debug)]
+pub struct Patience {
+    /// For each reply it owes: to IDLE, and to DONE.
+    pub reply: Duration,
+    /// For any sign of life while idling: Dovecot says it is still there
+    /// every two minutes, so a longer silence means the connection died.
+    pub silence: Duration,
+}
+
+/// The patience the chat socket has.
+pub const PATIENCE: Patience = Patience {
+    reply: Duration::from_secs(30),
+    silence: Duration::from_secs(5 * 60),
+};
+
+/// What ended a wait in [`idle_until`]; neither, after a silence.
+#[derive(Debug, PartialEq)]
+pub struct Woken<T> {
+    /// New mail arrived.
+    pub mail: bool,
+    /// The other future finished, with this.
+    pub other: Option<T>,
+}
+
+/// Wait in IMAP IDLE (RFC 2177) until new mail arrives or `other`
+/// finishes, then leave IDLE and hand the session back. After an error the
+/// session's state is unknown, and it is dropped; what `other` finished
+/// with, if it had, comes back with the error.
+///
+/// New mail the server reported outside IDLE, during a fetch, as IDLE
+/// began or while leaving it, waits among the session's unsolicited
+/// responses: any there counts at once, so none waits for the next.
+pub async fn idle_until<S, T>(
+    session: async_imap::Session<S>,
+    other: impl Future<Output = T>,
+    patience: Patience,
+) -> Result<(async_imap::Session<S>, Woken<T>), (String, Option<T>)>
+where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + std::fmt::Debug + Send,
+{
+    tokio::pin!(other);
+    let reported = session.unsolicited_responses.clone();
+    let mail_reported = || {
+        let mut arrived = false;
+        while let Ok(response) = reported.try_recv() {
+            arrived |= matches!(
+                response,
+                UnsolicitedResponse::Exists(_) | UnsolicitedResponse::Recent(_)
+            );
+        }
+        arrived
+    };
+    if mail_reported() {
+        // Whatever the page sent is not left behind the mail.
+        let other = futures_lite::future::poll_once(other.as_mut()).await;
+        return Ok((session, Woken { mail: true, other }));
+    }
+
+    let mut idle = session.idle();
+    match tokio::time::timeout(patience.reply, idle.init()).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => {
+            let other = futures_lite::future::poll_once(other.as_mut()).await;
+            return Err((format!("IMAP IDLE failed: {e}"), other));
+        }
+        Err(_) => {
+            let other = futures_lite::future::poll_once(other.as_mut()).await;
+            return Err(("IMAP IDLE was not answered".to_owned(), other));
+        }
+    }
+
+    let mut finished = None;
+    let mail = mail_reported()
+        || loop {
+            let (wait, stop) = idle.wait_with_timeout(patience.silence);
+            tokio::pin!(wait);
+            tokio::select! {
+                idled = &mut wait => match idled {
+                    Ok(IdleResponse::NewData(data))
+                        if matches!(
+                            data.parsed(),
+                            Response::MailboxData(MailboxDatum::Exists(_) | MailboxDatum::Recent(_))
+                        ) =>
+                    {
+                        break true;
+                    }
+                    // Flags another session set, say: nothing to fetch.
+                    Ok(IdleResponse::NewData(_)) => continue,
+                    // A silence: leaving IDLE shows whether the server is there.
+                    Ok(_) => break false,
+                    Err(e) => return Err((format!("IMAP IDLE failed: {e}"), None)),
+                },
+                done = &mut other => {
+                    // Out of IDLE before the session is used again. What the
+                    // server sends meanwhile reaches the unsolicited responses.
+                    drop(stop);
+                    let _ = (&mut wait).await;
+                    finished = Some(done);
+                    break false;
+                }
+            }
+        };
+
+    let session = match tokio::time::timeout(patience.reply, idle.done()).await {
+        Ok(Ok(session)) => session,
+        Ok(Err(e)) => return Err((format!("IMAP DONE failed: {e}"), finished)),
+        Err(_) => return Err(("IMAP DONE was not answered".to_owned(), finished)),
+    };
+    Ok((
+        session,
+        Woken {
+            mail: mail || mail_reported(),
+            other: finished,
+        },
+    ))
 }
 
 /// The body of the message [`send_message`] sends (RFC 3156): the
@@ -645,6 +800,417 @@ OiIwENmeuWDbN7XsIs/6lqOs7RM0nFKjmA==
         let outcome = send(CIPHERTEXT_B64).await;
         assert!(outcome.is_err(), "relay.invalid accepted a message");
         assert_ne!(outcome, Err(NOT_ENCRYPTED.to_owned()));
+    }
+
+    // ..... Fetching and IDLE, against a scripted server .....
+
+    use std::sync::Mutex;
+    use std::time::Duration;
+    use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _};
+
+    enum Step {
+        Say(String),
+        Pause(Duration),
+    }
+    use Step::{Pause, Say};
+
+    /// What a scripted server answers by default: OK, under the tag.
+    fn ok(tag: &str) -> Vec<Step> {
+        vec![Say(format!("{tag} OK done\r\n"))]
+    }
+
+    /// A session logged in to a server that answers each line it is sent
+    /// as `script` says, given the line's tag (the IDLE's, for `DONE`)
+    /// and its command, and that records every line.
+    async fn scripted(
+        script: impl Fn(&str, &str) -> Vec<Step> + Send + 'static,
+    ) -> (
+        async_imap::Session<tokio::io::DuplexStream>,
+        Arc<Mutex<Vec<String>>>,
+    ) {
+        let (client, server) = tokio::io::duplex(64 * 1024);
+        let heard = Arc::new(Mutex::new(Vec::new()));
+        let log = Arc::clone(&heard);
+        tokio::spawn(async move {
+            let (read, mut write) = tokio::io::split(server);
+            let mut lines = tokio::io::BufReader::new(read).lines();
+            let _ = write.write_all(b"* OK ready\r\n").await;
+            let mut idling = String::new();
+            while let Ok(Some(line)) = lines.next_line().await {
+                log.lock().expect("the log").push(line.clone());
+                let (tag, command) = match line.split_once(' ') {
+                    Some((tag, command)) => (tag.to_owned(), command.to_owned()),
+                    None => (idling.clone(), line.clone()),
+                };
+                if command == "IDLE" {
+                    idling = tag.clone();
+                }
+                for step in script(&tag, &command) {
+                    match step {
+                        Say(text) => {
+                            if write.write_all(text.as_bytes()).await.is_err() {
+                                return;
+                            }
+                        }
+                        Pause(pause) => tokio::time::sleep(pause).await,
+                    }
+                }
+            }
+        });
+        let session = async_imap::Client::new(client)
+            .login("u", "p")
+            .await
+            .map_err(|(e, _)| e)
+            .expect("a login");
+        (session, heard)
+    }
+
+    fn began_idle(heard: &Mutex<Vec<String>>) -> bool {
+        heard
+            .lock()
+            .expect("the log")
+            .iter()
+            .any(|l| l.ends_with(" IDLE"))
+    }
+
+    fn left_idle(heard: &Mutex<Vec<String>>) -> bool {
+        heard.lock().expect("the log").iter().any(|l| l == "DONE")
+    }
+
+    /// Patience a test can wait out.
+    const QUICK: Patience = Patience {
+        reply: Duration::from_millis(300),
+        silence: Duration::from_millis(300),
+    };
+
+    /// `idle_until` with [`QUICK`] patience, given at most five seconds.
+    async fn try_idle<T>(
+        session: async_imap::Session<tokio::io::DuplexStream>,
+        other: impl Future<Output = T>,
+    ) -> Result<(async_imap::Session<tokio::io::DuplexStream>, Woken<T>), (String, Option<T>)> {
+        try_idle_with(session, other, QUICK).await
+    }
+
+    async fn try_idle_with<T>(
+        session: async_imap::Session<tokio::io::DuplexStream>,
+        other: impl Future<Output = T>,
+        patience: Patience,
+    ) -> Result<(async_imap::Session<tokio::io::DuplexStream>, Woken<T>), (String, Option<T>)> {
+        tokio::time::timeout(Duration::from_secs(5), idle_until(session, other, patience))
+            .await
+            .expect("the wait ends")
+    }
+
+    async fn idle<T>(
+        session: async_imap::Session<tokio::io::DuplexStream>,
+        other: impl Future<Output = T>,
+    ) -> (async_imap::Session<tokio::io::DuplexStream>, Woken<T>) {
+        try_idle(session, other)
+            .await
+            .map_err(|(error, _)| error)
+            .expect("no error")
+    }
+
+    /// The page's message, 7, after a moment.
+    async fn page() -> i32 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        7
+    }
+
+    #[tokio::test]
+    async fn new_mail_during_idle_ends_the_wait_and_idle() {
+        let (session, heard) = scripted(|tag, command| match command {
+            "IDLE" => vec![
+                Say("+ idling\r\n".into()),
+                Pause(Duration::from_millis(50)),
+                Say("* 3 EXISTS\r\n".into()),
+            ],
+            _ => ok(tag),
+        })
+        .await;
+
+        let (mut session, woken) = idle(session, std::future::pending::<()>()).await;
+        assert_eq!(
+            woken,
+            Woken {
+                mail: true,
+                other: None
+            }
+        );
+        assert!(left_idle(&heard));
+        session.noop().await.expect("the session works after IDLE");
+    }
+
+    #[tokio::test]
+    async fn the_page_ends_the_wait_and_idle() {
+        let (session, heard) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("+ idling\r\n".into())],
+            _ => ok(tag),
+        })
+        .await;
+        // Silence would end the wait only long after the five seconds given.
+        let patient = Patience {
+            silence: Duration::from_secs(60),
+            ..QUICK
+        };
+
+        let (mut session, woken) = try_idle_with(session, page(), patient)
+            .await
+            .map_err(|(error, _)| error)
+            .expect("no error");
+        assert_eq!(
+            woken,
+            Woken {
+                mail: false,
+                other: Some(7)
+            }
+        );
+        assert!(left_idle(&heard));
+        session.noop().await.expect("the session works after IDLE");
+    }
+
+    #[tokio::test]
+    async fn mail_reported_as_idle_begins_is_not_waited_past() {
+        let (session, _) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("* 4 EXISTS\r\n+ idling\r\n".into())],
+            _ => ok(tag),
+        })
+        .await;
+
+        // Not after a silence: one would end the wait only long after the
+        // five seconds given.
+        let patient = Patience {
+            silence: Duration::from_secs(60),
+            ..QUICK
+        };
+        let (_, woken) = try_idle_with(session, std::future::pending::<()>(), patient)
+            .await
+            .map_err(|(error, _)| error)
+            .expect("no error");
+        assert!(woken.mail);
+    }
+
+    #[tokio::test]
+    async fn mail_reported_during_another_command_is_fetched_without_idling() {
+        let (mut session, heard) = scripted(|tag, command| match command {
+            "NOOP" => vec![Say(format!("* 5 EXISTS\r\n{tag} OK done\r\n"))],
+            "IDLE" => vec![Say("+ idling\r\n".into())],
+            _ => ok(tag),
+        })
+        .await;
+        session.noop().await.expect("a NOOP");
+
+        let (_, woken) = idle(session, std::future::pending::<()>()).await;
+        assert!(woken.mail);
+        assert!(!began_idle(&heard), "it waited first");
+    }
+
+    #[tokio::test]
+    async fn selecting_the_inbox_reads_its_uidvalidity() {
+        let (mut session, _) = scripted(|tag, command| {
+            if command.starts_with("SELECT") {
+                vec![Say(format!(
+                    "* 2 EXISTS\r\n* OK [UIDVALIDITY 1763000000] UIDs valid\r\n\
+                     {tag} OK [READ-WRITE] Select completed\r\n"
+                ))]
+            } else {
+                ok(tag)
+            }
+        })
+        .await;
+
+        assert_eq!(
+            select_inbox(&mut session).await.expect("a select"),
+            Some(1_763_000_000)
+        );
+    }
+
+    #[tokio::test]
+    async fn flags_another_session_changes_do_not_count_as_mail() {
+        let (session, _) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("+ idling\r\n* 3 FETCH (FLAGS (\\Seen))\r\n".into())],
+            _ => ok(tag),
+        })
+        .await;
+
+        let (_, woken) = idle(session, page()).await;
+        assert_eq!(
+            woken,
+            Woken {
+                mail: false,
+                other: Some(7)
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn a_silence_ends_the_wait_to_see_whether_the_server_is_there() {
+        let (session, heard) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("+ idling\r\n".into())],
+            _ => ok(tag),
+        })
+        .await;
+
+        let (_, woken) = idle(session, std::future::pending::<()>()).await;
+        assert_eq!(
+            woken,
+            Woken {
+                mail: false,
+                other: None
+            }
+        );
+        assert!(left_idle(&heard));
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_idle_is_an_error() {
+        let (session, _) = scripted(|tag, command| match command {
+            "IDLE" => vec![],
+            _ => ok(tag),
+        })
+        .await;
+
+        let failed = try_idle(session, std::future::pending::<()>()).await;
+        assert!(failed.is_err());
+    }
+
+    #[tokio::test]
+    async fn an_unanswered_done_is_an_error_that_keeps_the_pages_message() {
+        let (session, _) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("+ idling\r\n".into())],
+            "DONE" => vec![],
+            _ => ok(tag),
+        })
+        .await;
+
+        match try_idle(session, page()).await {
+            Err((_, other)) => assert_eq!(other, Some(7)),
+            Ok(_) => panic!("an unanswered DONE was taken for an answer"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_page_is_not_left_behind_mail_reported_earlier() {
+        let (mut session, heard) = scripted(|tag, command| match command {
+            "NOOP" => vec![Say(format!("* 5 EXISTS\r\n{tag} OK done\r\n"))],
+            _ => ok(tag),
+        })
+        .await;
+        session.noop().await.expect("a NOOP");
+
+        let (_, woken) = idle(session, std::future::ready(7)).await;
+        assert_eq!(
+            woken,
+            Woken {
+                mail: true,
+                other: Some(7)
+            }
+        );
+        assert!(!began_idle(&heard));
+    }
+
+    #[tokio::test]
+    async fn mail_reported_while_leaving_idle_is_not_lost() {
+        let (session, _) = scripted(|tag, command| match command {
+            "IDLE" => vec![Say("+ idling\r\n".into())],
+            "DONE" => vec![Say(format!("* 6 EXISTS\r\n{tag} OK done\r\n"))],
+            _ => ok(tag),
+        })
+        .await;
+        let page = async {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            7
+        };
+
+        let (_, woken) = idle(session, page).await;
+        assert_eq!(
+            woken,
+            Woken {
+                mail: true,
+                other: Some(7)
+            }
+        );
+    }
+
+    /// A message as the relay stores it, answering a `UID FETCH`.
+    fn fetched(uid: u32) -> String {
+        let packets = B64.decode(CIPHERTEXT_B64).expect("a fixture");
+        let message = format!(
+            "From: a@chat.example\r\n\
+             Content-Type: multipart/encrypted; protocol=\"application/pgp-encrypted\"; \
+             boundary=\"b\"\r\n\r\n{}",
+            pgp_mime_body("b", &packets)
+        );
+        format!(
+            "* {uid} FETCH (UID {uid} RFC822 {{{}}}\r\n{message} \
+             INTERNALDATE \"17-Nov-2026 08:00:00 +0000\")\r\n",
+            message.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn a_fetch_from_a_uid_returns_only_newer_messages() {
+        // `5:*` names message 5 too, and so would `9:*` with nothing past 6.
+        let (mut session, _) = scripted(|tag, command| {
+            if command.starts_with("UID FETCH") {
+                vec![Say(format!(
+                    "{}{}{tag} OK done\r\n",
+                    fetched(5),
+                    fetched(6)
+                ))]
+            } else {
+                ok(tag)
+            }
+        })
+        .await;
+
+        let uids: Vec<u32> = fetch_messages(&mut session, 5)
+            .await
+            .expect("a fetch")
+            .messages
+            .into_iter()
+            .filter_map(|m| match m {
+                ServerMessage::Message { uid, .. } => Some(uid),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(uids, [6]);
+    }
+
+    /// A mail that is no chat message, which the fetch skips.
+    fn fetched_plain(uid: u32) -> String {
+        let message = "Subject: hello\r\n\r\nplain text\r\n";
+        format!(
+            "* {uid} FETCH (UID {uid} RFC822 {{{}}}\r\n{message} \
+             INTERNALDATE \"17-Nov-2026 08:00:00 +0000\")\r\n",
+            message.len()
+        )
+    }
+
+    #[tokio::test]
+    async fn the_newest_uid_fetched_counts_a_message_skipped() {
+        let (mut session, _) = scripted(|tag, command| {
+            if command.starts_with("UID FETCH") {
+                vec![Say(format!(
+                    "{}{}{tag} OK done\r\n",
+                    fetched(5),
+                    fetched_plain(6)
+                ))]
+            } else {
+                ok(tag)
+            }
+        })
+        .await;
+
+        let fetched = fetch_messages(&mut session, 4).await.expect("a fetch");
+        assert_eq!(fetched.messages.len(), 1);
+        assert_eq!(fetched.newest, 6);
+        let none = fetch_messages(&mut session, 9).await.expect("a fetch");
+        assert_eq!(none.newest, 9, "asking after the newest held keeps it");
+        let last = fetch_messages(&mut session, u32::MAX)
+            .await
+            .expect("a fetch");
+        assert_eq!(last.newest, u32::MAX);
     }
 
     #[test]

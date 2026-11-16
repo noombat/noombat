@@ -108,7 +108,7 @@ async fn handle_ws(
 
     let tls_connector = session::build_tls_connector();
 
-    let imap_session =
+    let (imap_session, uid_validity) =
         match session::connect_imap(&tls_connector, &relay_config, &chatmail_addr, &password).await
         {
             Ok(s) => s,
@@ -120,43 +120,100 @@ async fn handle_ws(
         };
 
     let mut imap_session = Some(imap_session);
-    let _ = send_json(&mut socket, &ServerMessage::Ready).await;
+    let _ = send_json(&mut socket, &ServerMessage::Ready { uid_validity }).await;
     info!(actor = %actor_id, "IMAP session established");
 
     // ..... Phase 3: relay loop with idle timeout .....
+    //
+    // Once the page has fetched, the IMAP session waits in IDLE between its
+    // messages, and each new message is pushed as it arrives. Neither a push
+    // nor the page's acknowledgement of one is the member's doing: the idle
+    // timeout still ends a session nobody uses.
 
     let mut idle_timer = IdleTimer::new(relay_config.idle_timeout_secs);
+    // The newest message the page holds, once it has asked for any.
+    let mut held: Option<u32> = None;
+    // Set once the IMAP session is lost: the message in hand is handled,
+    // then the page connects again.
+    let mut imap_lost = false;
 
     loop {
+        if imap_lost {
+            break;
+        }
         let remaining = idle_timer.remaining();
-
-        let msg = tokio::select! {
-            recv = socket.recv() => {
-                match recv {
-                    Some(Ok(msg)) => msg,
-                    Some(Err(e)) => {
-                        warn!(actor = %actor_id, error = %e, "WebSocket recv error");
-                        break;
-                    }
-                    None => break,
-                }
-            }
-            _ = tokio::time::sleep(remaining) => {
-                info!(actor = %actor_id, "idle timeout reached; closing WebSocket");
-                let _ = send_json(
-                    &mut socket,
-                    &ServerMessage::Error {
-                        code: ErrorCode::IdleTimeout,
-                        message: "session timed out due to inactivity".into(),
-                    },
-                )
-                .await;
-                break;
+        // The page's next message, or `None` once the member's time is up.
+        let next = async {
+            tokio::select! {
+                recv = socket.recv() => Some(recv),
+                _ = tokio::time::sleep(remaining) => None,
             }
         };
 
-        // Record activity on every inbound client message.
-        idle_timer.touch();
+        let next = match (imap_session.take(), held) {
+            (Some(mut s), Some(newest)) => {
+                match session::idle_until(s, next, session::PATIENCE).await {
+                    Ok((idled, woken)) => {
+                        s = idled;
+                        if woken.mail {
+                            match session::fetch_messages(&mut s, newest).await {
+                                Ok(arrived) => {
+                                    held = Some(arrived.newest);
+                                    if !send_all(&mut socket, &arrived.messages).await {
+                                        break;
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!(addr = %chatmail_addr, error = %e, "IMAP fetch failed");
+                                    let _ = send_json(&mut socket, &fetch_failed(&e)).await;
+                                    imap_lost = true;
+                                }
+                            }
+                        }
+                        imap_session = Some(s);
+                        match woken.other {
+                            Some(next) => next,
+                            None => continue,
+                        }
+                    }
+                    Err((e, other)) => {
+                        // The session's state is unknown.
+                        warn!(addr = %chatmail_addr, error = %e, "IMAP IDLE failed");
+                        let _ = send_json(&mut socket, &fetch_failed(&e)).await;
+                        imap_lost = true;
+                        match other {
+                            Some(next) => next,
+                            None => continue,
+                        }
+                    }
+                }
+            }
+            (s, _) => {
+                imap_session = s;
+                next.await
+            }
+        };
+
+        let Some(recv) = next else {
+            info!(actor = %actor_id, "idle timeout reached; closing WebSocket");
+            let _ = send_json(
+                &mut socket,
+                &ServerMessage::Error {
+                    code: ErrorCode::IdleTimeout,
+                    message: "session timed out due to inactivity".into(),
+                },
+            )
+            .await;
+            break;
+        };
+        let msg = match recv {
+            Some(Ok(msg)) => msg,
+            Some(Err(e)) => {
+                warn!(actor = %actor_id, error = %e, "WebSocket recv error");
+                break;
+            }
+            None => break,
+        };
 
         let text = match msg {
             Message::Text(t) => t,
@@ -182,6 +239,9 @@ async fn handle_ws(
                 continue;
             }
         };
+        if is_members_doing(&client_msg) {
+            idle_timer.touch();
+        }
 
         match client_msg {
             ClientMessage::Auth { .. } => {
@@ -242,23 +302,18 @@ async fn handle_ws(
             ClientMessage::Fetch { since_uid } => {
                 if let Some(ref mut s) = imap_session {
                     match session::fetch_messages(s, since_uid).await {
-                        Ok(msgs) => {
-                            for server_msg in msgs {
-                                if send_json(&mut socket, &server_msg).await.is_err() {
-                                    break;
-                                }
+                        Ok(fetched) => {
+                            held = Some(fetched.newest);
+                            if !send_all(&mut socket, &fetched.messages).await {
+                                break;
                             }
                         }
                         Err(e) => {
+                            // Pushing starts only after a fetch: the page
+                            // connects again and asks again.
                             warn!(addr = %chatmail_addr, error = %e, "IMAP fetch failed");
-                            let _ = send_json(
-                                &mut socket,
-                                &ServerMessage::Error {
-                                    code: ErrorCode::FetchFailed,
-                                    message: format!("fetch failed: {e}"),
-                                },
-                            )
-                            .await;
+                            let _ = send_json(&mut socket, &fetch_failed(&e)).await;
+                            imap_lost = true;
                         }
                     }
                 }
@@ -279,6 +334,29 @@ async fn handle_ws(
     }
     drop(password);
     info!(actor = %actor_id, "chat WebSocket disconnected");
+}
+
+/// Whether a message from the page is the member's doing, which keeps the
+/// session from timing out: the page acknowledges each message on its own.
+fn is_members_doing(message: &ClientMessage) -> bool {
+    !matches!(message, ClientMessage::Ack { .. })
+}
+
+/// Send each of `messages`; false once the socket is gone.
+async fn send_all(socket: &mut WebSocket, messages: &[ServerMessage]) -> bool {
+    for message in messages {
+        if send_json(socket, message).await.is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+fn fetch_failed(error: &str) -> ServerMessage {
+    ServerMessage::Error {
+        code: ErrorCode::FetchFailed,
+        message: format!("fetch failed: {error}"),
+    }
 }
 
 /// Wait for the first message, which must be an `Auth`.
@@ -358,6 +436,17 @@ fn connect_error(error: &session::ConnectError) -> ServerMessage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_acknowledgement_is_not_the_members_doing() {
+        assert!(!is_members_doing(&ClientMessage::Ack { uid: 3 }));
+        assert!(is_members_doing(&ClientMessage::Fetch { since_uid: 0 }));
+        assert!(is_members_doing(&ClientMessage::Send {
+            to: "b@chat.example".into(),
+            body_b64: String::new(),
+            autocrypt_header_b64: None,
+        }));
+    }
 
     #[test]
     fn a_refused_password_is_told_from_an_unreachable_relay() {
