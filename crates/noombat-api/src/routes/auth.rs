@@ -621,13 +621,7 @@ async fn set_password(
             ))
         })?;
 
-        // Verify the old key.
-        let login_req = noombat_identity::login::LoginRequest {
-            username: viewer.username.clone(),
-            auth_key: old_key.to_owned(),
-            totp_code: None,
-        };
-        noombat_identity::login::verify_credentials(&state.pool, &login_req).await?;
+        noombat_identity::login::verify_auth_key(&state.pool, actor_id, old_key).await?;
     }
 
     // Hash and store the new key.
@@ -670,6 +664,11 @@ async fn set_password(
 
 // ..... Chatmail provisioning .....
 
+#[derive(Deserialize, Default)]
+struct ProvisionChatRequest {
+    auth_key: Option<String>,
+}
+
 #[derive(Serialize)]
 struct ProvisionChatResponse {
     chatmail_addr: String,
@@ -678,9 +677,12 @@ struct ProvisionChatResponse {
 
 /// `POST /api/v1/me/provision_chat`
 ///
-/// Provision a Chatmail account for the authenticated user. This
-/// creates the Chatmail account via IMAP first-login and stores
-/// the address on the actor record.
+/// Provision a Chatmail account for the authenticated user: the sidecar
+/// creates the account, one IMAP login proves it, and the address is
+/// stored on the actor record. The member sends their password's auth key,
+/// `{"auth_key": ...}`, so neither a stolen session nor a mistyped
+/// password can set chat up; an account without a password sets one
+/// first, since chat's credentials are kept under it.
 ///
 /// The response includes the Chatmail address and password. The
 /// browser is responsible for generating an OpenPGP key pair,
@@ -688,27 +690,68 @@ struct ProvisionChatResponse {
 /// (derived from the user's password), and storing it via
 /// `PUT /api/v1/me/chatmail_cred`.
 ///
-/// Returns 400 if chat is already provisioned.
+/// Returns 400 if chat is already set up and usable.
 /// Returns 503 if Chatmail is not configured on this instance.
 async fn provision_chat(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
+    body: axum::body::Bytes,
 ) -> Result<Json<ProvisionChatResponse>, ApiError> {
     let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
+    let req: ProvisionChatRequest = if body.is_empty() {
+        ProvisionChatRequest::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|e| ApiError(NoombatError::BadRequest(format!("invalid request: {e}"))))?
+    };
+    // Only a member who may chat, proving it with their password: the
+    // check refuses any account that may not sign in, and one with no
+    // password.
+    let may_chat: bool = sqlx::query_scalar(
+        "SELECT actor_status IN ('active', 'silenced') FROM actors WHERE id = $1",
+    )
+    .bind(viewer.actor_id)
+    .fetch_one(&state.pool)
+    .await?;
+    if !may_chat {
+        return Err(ApiError(NoombatError::Forbidden));
+    }
+    let auth_key = req
+        .auth_key
+        .ok_or_else(|| ApiError(NoombatError::BadRequest("auth_key required".into())))?;
+    noombat_identity::login::verify_auth_key(&state.pool, viewer.actor_id, &auth_key).await?;
     let actor_id = viewer.actor_id;
     let username = viewer.username.as_str();
 
-    // Check that chat is not already provisioned.
-    let existing: Option<Option<String>> =
-        sqlx::query_scalar("SELECT chatmail_addr FROM actors WHERE id = $1")
-            .bind(actor_id)
-            .fetch_optional(&state.pool)
-            .await?;
-
-    if let Some(Some(_)) = existing {
-        return Err(ApiError(NoombatError::BadRequest(
-            "chat already provisioned".into(),
-        )));
+    // A member with an address sets chat up again only when it is unusable:
+    // their credential blob never arrived, or a suspension rotated the
+    // Chatmail password it holds. The mailbox is kept and given a new
+    // password; the old key, whose private half went with the old setup,
+    // is no longer published.
+    let (address, has_blob, flagged): (Option<String>, bool, bool) = sqlx::query_as(
+        "SELECT chatmail_addr, chatmail_cred IS NOT NULL, chat_requires_reprovisioning \
+         FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await?;
+    if let Some(address) = address {
+        if has_blob && !flagged {
+            return Err(ApiError(NoombatError::BadRequest(
+                "chat already provisioned".into(),
+            )));
+        }
+        let admin = state.chatmail_admin_client.as_ref().ok_or_else(|| {
+            ApiError(NoombatError::ServiceUnavailable(
+                "chatmail admin sidecar not configured on this instance".into(),
+            ))
+        })?;
+        let rotated = admin.rotate_password(&address).await?;
+        noombat_chat::keys::reset_setup(&state.pool, actor_id).await?;
+        return Ok(Json(ProvisionChatResponse {
+            chatmail_addr: address,
+            chatmail_password: rotated.password,
+        }));
     }
 
     let chatmail_domain = state.chatmail_domain.as_deref().ok_or_else(|| {
@@ -772,7 +815,7 @@ async fn get_chatmail_cred(
             );
             Ok(response)
         }
-        None => Err(ApiError(NoombatError::BadRequest(
+        None => Err(ApiError(NoombatError::ActorNotFound(
             "chatmail_cred not set".into(),
         ))),
     }

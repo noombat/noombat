@@ -180,6 +180,26 @@ async fn insert_member(pool: &PgPool, username: &str, chat: bool, visible: bool)
     .expect("member fixture")
 }
 
+/// The auth key the password of a member set up with [`give_password`]
+/// gives.
+const AUTH_KEY: &str = "b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0";
+
+/// Give `id` a password, whose auth key is [`AUTH_KEY`].
+async fn give_password(pool: &PgPool, id: Uuid) {
+    let hash = noombat_identity::registration::hash_auth_key(AUTH_KEY).expect("hash");
+    sqlx::query("UPDATE actors SET auth_key_hash = $1 WHERE id = $2")
+        .bind(hash)
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("a password");
+}
+
+/// The body that sets chat up with [`AUTH_KEY`].
+fn with_password() -> Vec<u8> {
+    format!(r#"{{"auth_key":"{AUTH_KEY}"}}"#).into_bytes()
+}
+
 async fn token_for(pool: &PgPool, actor_id: Uuid, username: &str) -> String {
     noombat_identity::session::create_session(
         pool,
@@ -1011,4 +1031,273 @@ async fn a_member_elsewhere_is_not_offered_without_the_relay(pool: PgPool) {
     let missing = lookup_handle(&pool, Some(&alice_token), "@nobody@noombat.example").await;
     assert_eq!(reply.status, StatusCode::NOT_FOUND);
     assert_eq!(reply.body, missing.body);
+}
+
+// ..... Setting chat up again .....
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn no_blob_reads_as_chat_to_set_up(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let bob_token = token_for(&pool, bob, "bob").await;
+    let reply = send(
+        &pool,
+        "GET",
+        "/api/v1/me/chatmail_cred",
+        Some(&bob_token),
+        &[],
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::NOT_FOUND);
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn only_an_unusable_setup_is_set_up_again(pool: PgPool) {
+    // This instance has no relay sidecar, so a setup the server would
+    // redo stops at 503, where a working one stops earlier, at 400.
+    let bob = insert_member(&pool, "bob", true, true).await;
+    give_password(&pool, bob).await;
+    let bob_token = token_for(&pool, bob, "bob").await;
+    let body = with_password();
+    let provision = || {
+        send(
+            &pool,
+            "POST",
+            "/api/v1/me/provision_chat",
+            Some(&bob_token),
+            &body,
+        )
+    };
+
+    assert_eq!(
+        provision().await.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "no blob"
+    );
+
+    sqlx::query("UPDATE actors SET chatmail_cred = '\\x01' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a blob");
+    let reply = provision().await;
+    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "a working setup");
+    assert!(String::from_utf8_lossy(&reply.body).contains("already provisioned"));
+
+    sqlx::query("UPDATE actors SET chat_requires_reprovisioning = TRUE WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("flag");
+    assert_eq!(
+        provision().await.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "after a suspension"
+    );
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn setting_up_needs_the_password_and_a_member_who_may_chat(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let auth_key = "b0".repeat(32);
+    let hash = noombat_identity::registration::hash_auth_key(&auth_key).expect("hash");
+    sqlx::query("UPDATE actors SET auth_key_hash = $1 WHERE id = $2")
+        .bind(hash)
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a password");
+    let bob_token = token_for(&pool, bob, "bob").await;
+    let provision = |key: Option<&str>| {
+        let body = key
+            .map(|k| format!(r#"{{"auth_key":"{k}"}}"#))
+            .unwrap_or_default();
+        let pool = pool.clone();
+        let token = bob_token.clone();
+        async move {
+            send(
+                &pool,
+                "POST",
+                "/api/v1/me/provision_chat",
+                Some(&token),
+                body.as_bytes(),
+            )
+            .await
+        }
+    };
+
+    let without = provision(None).await;
+    assert_eq!(without.status, StatusCode::BAD_REQUEST);
+    assert!(String::from_utf8_lossy(&without.body).contains("auth_key required"));
+    let wrong = provision(Some(&"0f".repeat(32))).await;
+    assert!(
+        wrong.status.is_client_error(),
+        "a wrong password: {}",
+        wrong.status
+    );
+    assert_ne!(wrong.status, StatusCode::SERVICE_UNAVAILABLE);
+    // The right one gets as far as the missing sidecar.
+    let right = provision(Some(&auth_key)).await;
+    assert_eq!(right.status, StatusCode::SERVICE_UNAVAILABLE);
+
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("suspend");
+    assert_eq!(
+        provision(Some(&auth_key)).await.status,
+        StatusCode::FORBIDDEN
+    );
+
+    // An account without a password has none to prove, whatever key it
+    // sends: it sets one first, since chat's credentials are kept under it.
+    let carol = insert_member(&pool, "carol", true, true).await;
+    let carol_token = token_for(&pool, carol, "carol").await;
+    let reply = send(
+        &pool,
+        "POST",
+        "/api/v1/me/provision_chat",
+        Some(&carol_token),
+        &with_password(),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::FORBIDDEN);
+}
+
+/// The session met the second factor at sign-in, so setting chat up, and
+/// changing the password, ask for the password alone.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_member_with_a_second_factor_needs_only_the_password_again(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    give_password(&pool, bob).await;
+    noombat_identity::totp::enrol_totp(&pool, bob, "bob", DOMAIN)
+        .await
+        .expect("TOTP enrolment");
+    sqlx::query("UPDATE totp_secrets SET verified = TRUE WHERE actor_id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("TOTP confirmed");
+    let token = token_for(&pool, bob, "bob").await;
+
+    let reply = send(
+        &pool,
+        "POST",
+        "/api/v1/me/provision_chat",
+        Some(&token),
+        &with_password(),
+    )
+    .await;
+    // As far as the missing sidecar.
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+
+    let new_key = "c0".repeat(32);
+    let change = Request::builder()
+        .method("POST")
+        .uri("/api/v1/auth/password")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(format!(
+            r#"{{"old_auth_key":"{AUTH_KEY}","auth_key":"{new_key}"}}"#
+        )))
+        .expect("request");
+    let changed = build_router(test_state(pool.clone()))
+        .oneshot(change)
+        .await
+        .expect("the router is infallible");
+    assert_eq!(changed.status(), StatusCode::NO_CONTENT);
+}
+
+/// What the chat page tells its island: whether chat must be set up
+/// again and whether there is a password to do it with; and on an
+/// instance without Chatmail, that there is no chat at all.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_chat_page_says_what_setting_up_needs(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let token = token_for(&pool, bob, "bob").await;
+    let page = |chat: bool| {
+        let state = AppState {
+            chatmail_domain: chat.then(|| "chat.noombat.example".to_owned()),
+            ..test_state(pool.clone())
+        };
+        let request = Request::builder()
+            .uri("/chat")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .expect("request");
+        async move {
+            let response = build_router(state)
+                .oneshot(request)
+                .await
+                .expect("the router is infallible");
+            assert_eq!(response.status(), StatusCode::OK);
+            let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+                .await
+                .expect("page");
+            String::from_utf8(body.to_vec()).expect("UTF-8")
+        }
+    };
+
+    let no_blob = page(true).await;
+    assert!(no_blob.contains(r#"data-needs-setup="true""#), "no blob");
+    assert!(no_blob.contains(r#"data-has-password="false""#));
+    sqlx::query("UPDATE actors SET chatmail_cred = '\\x01' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a blob");
+    give_password(&pool, bob).await;
+    let usable = page(true).await;
+    assert!(usable.contains(r#"data-needs-setup="false""#), "usable");
+    assert!(usable.contains(r#"data-has-password="true""#));
+    sqlx::query("UPDATE actors SET chat_requires_reprovisioning = TRUE WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("flag");
+    assert!(
+        page(true).await.contains(r#"data-needs-setup="true""#),
+        "after a suspension"
+    );
+
+    let none = page(false).await;
+    assert!(none.contains("Chat is not available on this instance."));
+    assert!(!none.contains("data-needs-setup"));
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn resetting_a_setup_keeps_the_address_and_forgets_the_rest(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    sqlx::query(
+        "UPDATE actors SET chatmail_cred = '\\x01', chat_requires_reprovisioning = TRUE WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .execute(&pool)
+    .await
+    .expect("a blob and the flag");
+    noombat_chat::keys::reset_setup(&pool, pair.bob)
+        .await
+        .expect("reset");
+    let (address, blob, flagged): (Option<String>, Option<Vec<u8>>, bool) = sqlx::query_as(
+        "SELECT chatmail_addr, chatmail_cred, chat_requires_reprovisioning FROM actors WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .fetch_one(&pool)
+    .await
+    .expect("row");
+    assert_eq!(address.as_deref(), Some("bob@chat.noombat.example"));
+    assert_eq!(blob, None);
+    assert!(!flagged);
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_keys WHERE actor_id = $1")
+        .bind(pair.bob)
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    assert_eq!(keys, 0);
 }

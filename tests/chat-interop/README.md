@@ -7,7 +7,7 @@ This directory contains the test environment and runner for verifying Noombat's 
 | File                   | Purpose                                              |
 |------------------------|------------------------------------------------------|
 | `compose.yml`          | Compose stack: Noombat, the relay, PostgreSQL, Redis |
-| `run.sh`               | Test runner: 29 assertions (see below)               |
+| `run.sh`               | Test runner: 31 assertions (see below)               |
 | `build-local.sh`       | Build the binary for the local loop                  |
 | `compose.localbin.yml` | Overlay for the local loop                           |
 | `fixtures/`            | Bob's throwaway key and one message encrypted to it  |
@@ -68,7 +68,7 @@ A skipped assertion exits non-zero when `CI` is set. Locally a skip is a conveni
 
 ## Test Cases
 
-Sections 10, 11, 13 and 16 carry several assertions each, so eighteen sections produce twenty-nine assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
+Sections 10, 11, 13, 16 and 18 carry several assertions each, so nineteen sections produce thirty-one assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
 
 | #  | Section           | Assertion                                       |
 |----|-------------------|-------------------------------------------------|
@@ -101,3 +101,5 @@ Sections 10, 11, 13 and 16 carry several assertions each, so eighteen sections p
 | 16 | First contact     | bob's actor document carries the same key       |
 | 16 | First contact     | alice cannot publish bob's key as hers (400)    |
 | 17 | Web client        | carol writes first on dave's key; he reads it   |
+| 18 | Set up again      | alice's mailbox gets a new password             |
+| 18 | Set up again      | The relay takes the new one, refuses the old    |

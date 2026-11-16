@@ -264,8 +264,8 @@ function setupRegisterForm(): void {
         // Provision the Chatmail account and generate the
         // credential blob. This is best-effort: if it fails
         // (Chatmail not configured, network error), the user
-        // can provision later via the chat settings page.
-        await provisionChat(blobKey).catch(() => {
+        // can set chat up later from the chat page.
+        await provisionChat(blobKey, authKey).catch(() => {
           // Non-fatal: account is created, chat is deferred.
         });
 

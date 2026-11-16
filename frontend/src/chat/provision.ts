@@ -15,8 +15,9 @@
  * 5. Publish the public key, once the blob holding its private half is
  *    stored, so that others can write to the member first.
  *
- * It is shared by the registration flow (`src/auth.ts`) and the
- * OAuth account-upgrade flow (`src/upgrade.ts`).
+ * It is shared by the registration flow (`src/auth.ts`), the OAuth
+ * account-upgrade flow (`src/upgrade.ts`), and the chat page's own
+ * setup form.
  */
 
 import { authHeaders } from "./session";
@@ -31,23 +32,27 @@ import { authHeaders } from "./session";
  * registration flow) or by the `noombat_session` cookie (the
  * upgrade flow); {@link authHeaders} selects whichever is present.
  *
- * A failed request rejects the promise; a refusal to provision or to store
- * the blob returns early, so nothing is published unless the blob was
- * stored, and a refused publish is left to the repair at unlock.
+ * Resolves to the chat address once the blob is stored, and to `null`
+ * when the server refused or the blob was not stored, in which case
+ * nothing is published. A failed request rejects the promise. Also sets
+ * chat up again for a member whose setup is unusable, which the server
+ * allows with a new Chatmail password.
  * Callers treat provisioning as best-effort: the account remains
  * usable and provisioning can be retried later from the chat page.
  *
  * The OpenPGP and blob modules are loaded with dynamic `import()`
  * so that they form separate chunks.
  */
-export async function provisionChat(blobKey: CryptoKey): Promise<void> {
+export async function provisionChat(blobKey: CryptoKey, authKey: string): Promise<string | null> {
   // 1. Ask the server to provision the Chatmail account.
   const provResp = await fetch("/api/v1/me/provision_chat", {
     method: "POST",
-    headers: authHeaders(),
+    headers: authHeaders({ "Content-Type": "application/json" }),
+    // The password's auth key, which the server checks before setting up.
+    body: JSON.stringify({ auth_key: authKey }),
   });
 
-  if (!provResp.ok) return;
+  if (!provResp.ok) return null;
 
   const { chatmail_addr, chatmail_password } = (await provResp.json()) as {
     chatmail_addr: string;
@@ -71,12 +76,14 @@ export async function provisionChat(blobKey: CryptoKey): Promise<void> {
   const encrypted = await encryptBlob(blobKey, blob, chatmail_addr);
 
   // 4. Store the encrypted blob on the server.
-  if (!(await storeBlob(encrypted))) return;
+  if (!(await storeBlob(encrypted))) return null;
 
   // 5. Publish the public key. Never before step 4: a key whose private
   //    half was lost would invite messages nobody can read.
+  // Best-effort: the chat page publishes it at unlock if this fails.
   const { publishOwnKey } = await import("./directory");
-  await publishOwnKey(keyPair.publicKey);
+  await publishOwnKey(keyPair.publicKey).catch(() => false);
+  return chatmail_addr;
 }
 
 /**

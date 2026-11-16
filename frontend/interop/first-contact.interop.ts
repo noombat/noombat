@@ -14,7 +14,9 @@
  * page's wiring around these modules is not run here.
  *
  * Needs NOOMBAT_URL, NOOMBAT_DOMAIN (the instance's, for handles),
- * CHAT_DOMAIN, CAROL_TOKEN and DAVE_TOKEN.
+ * CHAT_DOMAIN, and for carol and dave a session token
+ * and the auth key their password gives: CAROL_TOKEN, CAROL_AUTH_KEY,
+ * DAVE_TOKEN and DAVE_AUTH_KEY.
  */
 
 import { expect, it, vi } from "vitest";
@@ -59,15 +61,15 @@ function signInAs(token: string): void {
   vi.stubGlobal("fetch", (url: string, init?: RequestInit) => realFetch(new URL(url, BASE), init));
 }
 
-/** Provision `name` as registration does, with a blob key of its
- *  own, and read back what was stored. */
-async function provision(name: string, token: string): Promise<Member> {
+/** Provision `name` as the chat page's setup does, with a blob key of its
+ *  own and the member's auth key, and read back what was stored. */
+async function provision(name: string, token: string, authKey: string): Promise<Member> {
   signInAs(token);
   const blobKey = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, false, [
     "encrypt",
     "decrypt",
   ]);
-  await provisionChat(blobKey);
+  await provisionChat(blobKey, authKey);
   const address = `${name}@${CHAT_DOMAIN}`;
   const stored = await fetchBlob();
   if (stored.status !== "ok") throw new Error(`${name}'s blob was not stored: ${stored.status}`);
@@ -107,8 +109,8 @@ async function chatSocket(member: Member) {
 }
 
 it("carol writes to dave first, on the key his instance publishes, and he reads it", async () => {
-  const carol = await provision("carol", need("CAROL_TOKEN"));
-  const dave = await provision("dave", need("DAVE_TOKEN"));
+  const carol = await provision("carol", need("CAROL_TOKEN"), need("CAROL_AUTH_KEY"));
+  const dave = await provision("dave", need("DAVE_TOKEN"), need("DAVE_AUTH_KEY"));
 
   // carol has never heard from dave and names him by handle, as on the
   // page: the instance gives her his address and his key, the very bytes

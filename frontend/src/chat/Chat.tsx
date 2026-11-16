@@ -26,7 +26,8 @@ import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
 import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
 import { repairOwnKey, type PublishedKeyResult } from "./directory";
 import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipient";
-import { deriveBlobKey } from "../auth";
+import { deriveBlobKey, deriveBothKeys } from "../auth";
+import { provisionChat } from "./provision";
 
 // ..... Base64 helpers .....
 
@@ -66,6 +67,9 @@ interface ChatStrings {
   disconnected: string;
   notProvisioned: string;
   setupChat: string;
+  setUpWithPassword: string;
+  password: string;
+  setupFailed: string;
   enterPassword: string;
   unlock: string;
   keyChanged: (address: string, date: string) => string;
@@ -99,6 +103,9 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     disconnected: "Disconnected. Reconnecting\u2026",
     notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
+    password: "Password",
+    setUpWithPassword: "Enter your Noombat password to set up encrypted chat on this account.",
+    setupFailed: "Chat could not be set up. Check the password and try again.",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
     keyChanged: (address, date) =>
@@ -136,6 +143,9 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     disconnected: "Disconnected. Reconnecting\u2026",
     notProvisioned: "To send encrypted messages, set a password for your Noombat account.",
     setupChat: "Set up chat",
+    password: "Password",
+    setUpWithPassword: "Enter your Noombat password to set up encrypted chat on this account.",
+    setupFailed: "Chat could not be set up. Check the password and try again.",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
     keyChanged: (address, date) =>
@@ -174,6 +184,10 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     notProvisioned:
       "Para enviar mensagens criptografadas, defina uma senha para sua conta Noombat.",
     setupChat: "Configurar chat",
+    password: "Senha",
+    setUpWithPassword:
+      "Digite sua senha do Noombat para configurar o chat criptografado nesta conta.",
+    setupFailed: "Não foi possível configurar o chat. Verifique a senha e tente novamente.",
     enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
     unlock: "Desbloquear",
     keyChanged: (address, date) =>
@@ -251,6 +265,10 @@ export interface ChatProps {
    *  Chatmail address local part. */
   username: string;
   locale?: string;
+  /** An address with no usable setup: chat is to be set up again. */
+  needsSetup?: boolean;
+  /** Whether the account has a password to derive the blob key from. */
+  hasPassword?: boolean;
 }
 
 export default function Chat(props: ChatProps): JSX.Element {
@@ -264,6 +282,11 @@ export default function Chat(props: ChatProps): JSX.Element {
   const [showContacts, setShowContacts] = createSignal(false);
   const [status, setStatus] = createSignal<string>("");
   const [needsUnlock, setNeedsUnlock] = createSignal(false);
+  /** The member's chat address, known once chat is set up. */
+  // The address the page was given; setting chat up on this page sets it.
+  // eslint-disable-next-line solid/reactivity
+  const [address, setAddress] = createSignal(props.needsSetup ? "" : props.chatmailAddr);
+  const [setupPassword, setSetupPassword] = createSignal("");
   const [unlockPassword, setUnlockPassword] = createSignal("");
   const [showVerify, setShowVerify] = createSignal(false);
   const [ownFingerprint, setOwnFingerprint] = createSignal("");
@@ -311,6 +334,9 @@ export default function Chat(props: ChatProps): JSX.Element {
   /** Whether a send is under way, a key lookup inside it included. */
   let sending = false;
 
+  /** Whether setting chat up is under way, which disables the button. */
+  const [settingUp, setSettingUp] = createSignal(false);
+
   // ..... Blob decryption .....
 
   /** Attempt to decrypt the credential blob. Returns `true` on
@@ -336,7 +362,7 @@ export default function Chat(props: ChatProps): JSX.Element {
 
     try {
       const key = await deriveBlobKey(password, props.username, domain);
-      const blob = await decryptBlob(key, encryptedBlob, props.chatmailAddr);
+      const blob = await decryptBlob(key, encryptedBlob, address());
       credentials = blob;
       blobKey = key;
 
@@ -361,13 +387,45 @@ export default function Chat(props: ChatProps): JSX.Element {
     }
   }
 
+  /** Set chat up, or up again, with the member's password, then unlock it. */
+  async function handleSetup(): Promise<void> {
+    // Deriving the keys takes a while; a second click must not set up twice.
+    if (settingUp()) return;
+    setSettingUp(true);
+    const password = setupPassword();
+    setStatus("");
+    let provisioned: string | null;
+    try {
+      const { authKey, blobKey } = await deriveBothKeys(
+        password,
+        props.username,
+        window.location.hostname,
+      );
+      provisioned = await provisionChat(blobKey, authKey);
+    } catch {
+      provisioned = null;
+    } finally {
+      setSettingUp(false);
+    }
+    if (!provisioned) {
+      setStatus(strings().setupFailed);
+      return;
+    }
+    setSetupPassword("");
+    setAddress(provisioned);
+    // The unlock prompt shows should unlocking fail.
+    setNeedsUnlock(true);
+    setUnlockPassword(password);
+    await handleUnlock();
+  }
+
   /** Handle the unlock form submission. */
   async function handleUnlock(): Promise<void> {
     const ok = await unlockBlob(unlockPassword());
     if (ok) {
       // Repairs a key that failed to publish at setup: one lookup, and an
       // upload when the instance serves another key or none.
-      if (credentials) void repairOwnKey(props.chatmailAddr, credentials);
+      if (credentials) void repairOwnKey(address(), credentials);
       setNeedsUnlock(false);
       setUnlockPassword("");
       connect();
@@ -517,7 +575,7 @@ export default function Chat(props: ChatProps): JSX.Element {
       id: `msg-${++msgCounter}`,
       uid: msg.uid ?? 0,
       from: sender,
-      to: props.chatmailAddr,
+      to: address(),
       body,
       timestamp: msg.timestamp ?? Math.floor(Date.now() / 1000),
       outgoing: false,
@@ -544,15 +602,15 @@ export default function Chat(props: ChatProps): JSX.Element {
     appendSystemNotice(address, strings().keyChanged(address, date), timestamp);
   }
 
-  /** Insert a system notice into the conversation with `address`. */
-  function appendSystemNotice(address: string, body: string, timestamp: number): void {
+  /** Insert a system notice into the conversation with `peer`. */
+  function appendSystemNotice(peer: string, body: string, timestamp: number): void {
     setMessages((prev) => [
       ...prev,
       {
         id: `sys-${++msgCounter}`,
         uid: 0,
-        from: address,
-        to: props.chatmailAddr,
+        from: peer,
+        to: address(),
         body,
         timestamp,
         outgoing: false,
@@ -663,7 +721,7 @@ export default function Chat(props: ChatProps): JSX.Element {
         ...credentials,
         peerStateJson,
       };
-      const encrypted = await encryptBlob(blobKey, updatedBlob, props.chatmailAddr);
+      const encrypted = await encryptBlob(blobKey, updatedBlob, address());
       await storeBlob(encrypted);
       peerStateDirty = false;
     } catch {
@@ -683,7 +741,7 @@ export default function Chat(props: ChatProps): JSX.Element {
   }
 
   onMount(async () => {
-    if (!props.chatmailAddr) return;
+    if (!address()) return;
 
     // Prompt the user for their password to derive the blob key.
     setNeedsUnlock(true);
@@ -756,7 +814,7 @@ export default function Chat(props: ChatProps): JSX.Element {
     // Build the Autocrypt header with our public key for key exchange.
     let autocrypt_header_b64: string | null = null;
     if (publicKeyBytes && publicKeyBytes.length > 0) {
-      const headerValue = `addr=${props.chatmailAddr}; prefer-encrypt=mutual; keydata=${uint8ToBase64(publicKeyBytes)}`;
+      const headerValue = `addr=${address()}; prefer-encrypt=mutual; keydata=${uint8ToBase64(publicKeyBytes)}`;
       autocrypt_header_b64 = btoa(headerValue);
     }
 
@@ -779,7 +837,7 @@ export default function Chat(props: ChatProps): JSX.Element {
       {
         id: `msg-${++msgCounter}`,
         uid: 0,
-        from: props.chatmailAddr,
+        from: address(),
         to,
         body,
         timestamp: Math.floor(Date.now() / 1000),
@@ -833,12 +891,12 @@ export default function Chat(props: ChatProps): JSX.Element {
     });
   }
 
-  const needsProvisioning = () => !props.chatmailAddr;
+  const needsProvisioning = () => !address();
 
   return (
     <div class="noombat-chat">
-      {/* Not provisioned: prompt to set a password. */}
-      <Show when={needsProvisioning()}>
+      {/* Not set up, without a password to derive the blob key from. */}
+      <Show when={needsProvisioning() && !props.hasPassword}>
         <div class="max-w-md mx-auto py-12 text-center">
           <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
           <p class="text-sm text-text-secondary mb-6">{strings().notProvisioned}</p>
@@ -848,6 +906,40 @@ export default function Chat(props: ChatProps): JSX.Element {
           >
             {strings().setupChat}
           </a>
+        </div>
+      </Show>
+
+      {/* Not set up, or set up unusably: set it up with the password. */}
+      <Show when={needsProvisioning() && props.hasPassword}>
+        <div class="max-w-md mx-auto py-12 text-center">
+          <h2 class="text-lg font-semibold mb-4">{strings().heading}</h2>
+          <p class="text-sm text-text-secondary mb-6">{strings().setUpWithPassword}</p>
+          <Show when={status()}>
+            <p class="text-sm text-text-danger mb-4">{status()}</p>
+          </Show>
+          <div class="flex gap-2 justify-center">
+            <input
+              type="password"
+              class="border border-border-strong rounded px-3 py-2 text-sm"
+              placeholder={strings().password}
+              value={setupPassword()}
+              onInput={(e) => setSetupPassword(e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  void handleSetup();
+                }
+              }}
+            />
+            <button
+              type="button"
+              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm disabled:opacity-50"
+              disabled={settingUp()}
+              onClick={() => void handleSetup()}
+            >
+              {strings().setupChat}
+            </button>
+          </div>
         </div>
       </Show>
 
@@ -863,7 +955,7 @@ export default function Chat(props: ChatProps): JSX.Element {
             <input
               type="password"
               class="border border-border-strong rounded px-3 py-2 text-sm"
-              placeholder="Password"
+              placeholder={strings().password}
               value={unlockPassword()}
               onInput={(e) => setUnlockPassword(e.currentTarget.value)}
               onKeyDown={(e) => {

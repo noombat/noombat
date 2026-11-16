@@ -88,7 +88,7 @@ function setupUpgradeForm(): void {
     // Step 2: provision the Chatmail account and store the encrypted
     // credential blob. Best-effort: the password is already set, and
     // provisioning can be retried from the chat page.
-    await provisionChat(blobKey).catch(() => {
+    await provisionChat(blobKey, authKey).catch(() => {
       // Non-fatal; chat setup is deferred.
     });
 

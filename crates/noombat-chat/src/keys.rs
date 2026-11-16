@@ -54,6 +54,26 @@ pub async fn publish(pool: &PgPool, actor_id: Uuid, address: &str, key: &[u8]) -
     Ok(written.is_some())
 }
 
+/// Forget a member's unusable chat setup before they set it up again: the
+/// credential blob, the flag a suspension's end left, and the published
+/// key, whose private half went with the old setup. The mailbox is kept.
+pub async fn reset_setup(pool: &PgPool, actor_id: Uuid) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    sqlx::query(
+        "UPDATE actors SET chatmail_cred = NULL, chat_requires_reprovisioning = FALSE \
+         WHERE id = $1",
+    )
+    .bind(actor_id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM chat_keys WHERE actor_id = $1")
+        .bind(actor_id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// The key published by the local member whose chat address is `address`,
 /// in ASCII case, when `viewer` may have it: while it is still that
 /// member's address and they may chat, if the member lets anyone find

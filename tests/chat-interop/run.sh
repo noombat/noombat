@@ -17,6 +17,7 @@
 #        15. The sender is the login.
 #        16. First contact through the instance: publish, read back, refuse.
 #        17. First contact between two web-client members, under Node.
+#        18. Setting chat up again, with a new Chatmail password.
 #
 # Usage:
 #   tests/chat-interop/seed.sh tests/chat-interop/compose.yml
@@ -321,6 +322,7 @@ fi
 if [ -n "$ALICE_TOKEN" ]; then
     PROV_BODY=$(curl $CURL_OPTS -s -w '\n%{http_code}' \
       -X POST -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+      -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROV_BODY=""
     PROV_CODE=$(printf '%s' "$PROV_BODY" | tail -n1)
     ALICE_CHATMAIL_PASSWORD=$(printf '%s' "$PROV_BODY" \
@@ -401,6 +403,7 @@ else
 
     BOB_PROV=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
       -H "Cookie: noombat_session=${BOB_TOKEN}" \
+      -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_BOB_AUTH_KEY\"}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || BOB_PROV=""
     PROVISION_CODE=$(printf '%s' "$BOB_PROV" | tail -n1)
     [ -n "$PROVISION_CODE" ] || PROVISION_CODE="000"
@@ -446,14 +449,10 @@ fi
 # for a full day with submission broken, because nothing sent.
 #
 # bob's mailbox already exists: the account-creation section above
-# provisions him, after squatting his address, so this call is a no-op
-# that returns "chat already provisioned" and is ignored.
+# provisions him, after squatting his address. Asking again would set his
+# chat up again with a new password, as 18 shows for alice.
 SENT=no
 if [ -n "$ALICE_TOKEN" ] && [ -n "$BOB_TOKEN" ] && [ -n "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
-    curl $CURL_OPTS -s -o /dev/null -X POST \
-      -H "Cookie: noombat_session=${BOB_TOKEN}" \
-      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null || true
-
     if ! command -v python3 >/dev/null 2>&1; then
         skip "Chat send: python3 is needed to drive the relay WebSocket"
     elif [ -z "$WORK" ] || [ ! -s "$WORK/cipher" ]; then
@@ -653,10 +652,46 @@ else
     elif FIRST_CONTACT=$(cd "$HERE/../../frontend" && NOOMBAT_URL="$NOOMBAT" \
           NOOMBAT_DOMAIN="$NOOMBAT_DOMAIN" \
           CHAT_DOMAIN="$CHATMAIL_DOMAIN" CAROL_TOKEN="$CAROL_TOKEN" DAVE_TOKEN="$DAVE_TOKEN" \
+          CAROL_AUTH_KEY="$CHAT_CAROL_AUTH_KEY" DAVE_AUTH_KEY="$CHAT_DAVE_AUTH_KEY" \
           "$VITEST" run --config vitest.interop.config.ts 2>&1); then
         pass "Web client first contact: carol writes first on dave's published key, he reads it"
     else
         fail "Web client first contact failed: $(printf '%s' "$FIRST_CONTACT" | tail -n 30)"
+    fi
+fi
+
+# 18. Setting chat up again. alice was provisioned without a credential
+# blob, as a member whose upload failed is: asking again gives her mailbox
+# a new password, which the relay takes, and the old one stops working.
+if [ -z "$ALICE_TOKEN" ] || [ -z "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
+    skip "Set up again: alice has no session or no Chatmail password"
+elif ! command -v python3 >/dev/null 2>&1; then
+    skip "Set up again: python3 is needed to drive an IMAP session"
+else
+    AGAIN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
+      -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+      -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
+      "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || AGAIN=""
+    NEW_PASSWORD=$(printf '%s' "$AGAIN" | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
+    if [ "$(printf '%s' "$AGAIN" | tail -n1)" = "200" ] && [ -n "$NEW_PASSWORD" ] \
+        && [ "$NEW_PASSWORD" != "$ALICE_CHATMAIL_PASSWORD" ]; then
+        pass "Set up again: alice's mailbox gets a new password (HTTP 200)"
+    else
+        fail "Set up again: provisioning alice a second time did not give a new password"
+    fi
+    # squat-probe.py exits 0 when the login is refused and 1 when it succeeds.
+    login_with() {
+        "$HERE/squat-probe.py" localhost 993 "alice@${CHATMAIL_DOMAIN}" "$1" > /dev/null 2>&1
+        case $? in 0) echo refused ;; 1) echo accepted ;; *) echo "not tried" ;; esac
+    }
+    if [ -n "$NEW_PASSWORD" ]; then
+        NEW_LOGIN=$(login_with "$NEW_PASSWORD")
+        OLD_LOGIN=$(login_with "$ALICE_CHATMAIL_PASSWORD")
+        if [ "$NEW_LOGIN" = accepted ] && [ "$OLD_LOGIN" = refused ]; then
+            pass "Set up again: the relay takes the new password and refuses the old"
+        else
+            fail "Set up again: the new password was $NEW_LOGIN and the old $OLD_LOGIN"
+        fi
     fi
 fi
 

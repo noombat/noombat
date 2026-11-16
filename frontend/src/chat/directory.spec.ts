@@ -33,7 +33,12 @@ function stubFetch(routes: [string, string, () => Response][]): void {
   vi.stubGlobal("fetch", async (url: string, init: RequestInit = {}) => {
     const method = init.method ?? "GET";
     const headers = (init.headers ?? {}) as Record<string, string>;
-    const body = init.body instanceof Blob ? new Uint8Array(await init.body.arrayBuffer()) : null;
+    const body =
+      init.body instanceof Blob
+        ? new Uint8Array(await init.body.arrayBuffer())
+        : typeof init.body === "string"
+          ? new TextEncoder().encode(init.body)
+          : null;
     calls.push({
       url,
       method,
@@ -159,8 +164,10 @@ describe("provisionChat", () => {
       ["PUT", "/api/v1/me/chat_key", () => new Response(null, { status: 204 })],
     ]);
     const key = await blobKey();
-    await provisionChat(key);
+    expect(await provisionChat(key, "an-auth-key")).toBe("alice@chat.example");
     const order = calls.map((c) => c.url);
+    // The password's auth key travels with the request to provision.
+    expect(new TextDecoder().decode(calls[0].body!)).toBe('{"auth_key":"an-auth-key"}');
     expect(order).toEqual([
       "/api/v1/me/provision_chat",
       "/api/v1/me/chatmail_cred",
@@ -180,8 +187,29 @@ describe("provisionChat", () => {
       ["POST", "/api/v1/me/provision_chat", provisioned],
       ["PUT", "/api/v1/me/chatmail_cred", () => new Response(null, { status: 500 })],
     ]);
-    await provisionChat(await blobKey());
+    expect(await provisionChat(await blobKey(), "an-auth-key")).toBeNull();
     expect(puts()).toHaveLength(0);
+  }, 30_000);
+
+  it("reports chat set up even when publishing the key fails, which unlock repairs", async () => {
+    stubFetch([
+      ["POST", "/api/v1/me/provision_chat", provisioned],
+      ["PUT", "/api/v1/me/chatmail_cred", () => new Response(null, { status: 204 })],
+      [
+        "PUT",
+        "/api/v1/me/chat_key",
+        () => {
+          throw new TypeError("offline");
+        },
+      ],
+    ]);
+    expect(await provisionChat(await blobKey(), "an-auth-key")).toBe("alice@chat.example");
+  }, 30_000);
+
+  it("reports a refusal to provision, and stores nothing", async () => {
+    stubFetch([["POST", "/api/v1/me/provision_chat", () => new Response("no", { status: 400 })]]);
+    expect(await provisionChat(await blobKey(), "an-auth-key")).toBeNull();
+    expect(calls).toHaveLength(1);
   }, 30_000);
 });
 

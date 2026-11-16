@@ -292,9 +292,17 @@ struct ChatPage {
     ws_url: String,
     chatmail_addr: String,
     username: String,
-    /// True when the actor's chat has been suspended by a moderator
-    /// and requires reprovisioning.
+    /// True while the account is suspended.
     chat_suspended: bool,
+    /// False on an instance without Chatmail, where there is nothing to
+    /// set up.
+    chat_available: bool,
+    /// True when the member has an address but no usable setup: no blob,
+    /// or a suspension rotated the Chatmail password it holds.
+    needs_setup: bool,
+    /// True when the account has a password, from which the chat page
+    /// derives the key that encrypts the credential blob.
+    has_password: bool,
 }
 
 #[derive(Template, WebTemplate)]
@@ -730,14 +738,22 @@ async fn chat_page(
     let Some(actor_id) = actor_uuid(&viewer) else {
         return Redirect::temporary("/auth/login").into_response();
     };
-    let (chatmail_addr, chat_suspended): (Option<String>, bool) =
-        sqlx::query_as::<_, (Option<String>, bool)>(
-            "SELECT chatmail_addr, chat_requires_reprovisioning FROM actors WHERE id = $1",
-        )
-        .bind(actor_id)
-        .fetch_one(&state.pool)
-        .await
-        .unwrap_or((None, false));
+    let (chatmail_addr, chat_suspended, needs_setup, has_password): (
+        Option<String>,
+        bool,
+        bool,
+        bool,
+    ) = sqlx::query_as(
+        "SELECT chatmail_addr, actor_status = 'suspended', \
+                    chatmail_addr IS NOT NULL \
+                        AND (chatmail_cred IS NULL OR chat_requires_reprovisioning), \
+                    auth_key_hash IS NOT NULL \
+             FROM actors WHERE id = $1",
+    )
+    .bind(actor_id)
+    .fetch_one(&state.pool)
+    .await
+    .unwrap_or((None, false, false, false));
     let chatmail_addr = chatmail_addr.unwrap_or_default();
     // The scheme must match the one pinned in the Content-Security-
     // Policy `connect-src` directive, and must be plain `ws` for a
@@ -756,6 +772,9 @@ async fn chat_page(
         chatmail_addr,
         username,
         chat_suspended,
+        chat_available: state.chatmail_domain.is_some(),
+        needs_setup,
+        has_password,
     }
     .into_response()
 }

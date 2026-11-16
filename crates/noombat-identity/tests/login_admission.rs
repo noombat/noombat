@@ -9,7 +9,8 @@
 //! every status added after it was written, and `pending` is such a
 //! status: an account that owns its username and has never been admitted.
 
-use noombat_identity::login::{LoginRequest, verify_credentials};
+use noombat_core::error::NoombatError;
+use noombat_identity::login::{LoginRequest, verify_auth_key, verify_credentials};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -50,6 +51,52 @@ fn login(username: &str) -> LoginRequest {
         auth_key: AUTH_KEY.to_owned(),
         totp_code: None,
     }
+}
+
+/// Asking for the password again inside a session checks the key alone:
+/// the session met any second factor when it signed in.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_password_asked_again_is_checked_without_a_second_factor(pool: PgPool) {
+    let id = insert_actor(&pool, "with_totp", "active").await;
+    noombat_identity::totp::enrol_totp(&pool, id, "with_totp", DOMAIN)
+        .await
+        .expect("TOTP enrolment");
+    sqlx::query("UPDATE totp_secrets SET verified = TRUE WHERE actor_id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("TOTP confirmed");
+    assert!(
+        matches!(
+            verify_credentials(&pool, &login("with_totp")).await,
+            Err(NoombatError::BadRequest(_))
+        ),
+        "signing in does ask for the code"
+    );
+    verify_auth_key(&pool, id, AUTH_KEY)
+        .await
+        .expect("the key alone, asked again");
+    let wrong = AUTH_KEY.replace('a', "b");
+    assert!(matches!(
+        verify_auth_key(&pool, id, &wrong).await,
+        Err(NoombatError::Forbidden)
+    ));
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_account_without_a_password_has_none_to_ask_again(pool: PgPool) {
+    let id = insert_actor(&pool, "oauth_only", "active").await;
+    sqlx::query("UPDATE actors SET auth_key_hash = NULL WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("no password");
+    assert!(matches!(
+        verify_auth_key(&pool, id, AUTH_KEY).await,
+        Err(NoombatError::Forbidden)
+    ));
 }
 
 #[ignore = "requires a database; run with --include-ignored"]

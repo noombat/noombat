@@ -7,12 +7,20 @@
 
 {% block content %}
         {% if chat_suspended %}
-        <!-- Chat has been suspended by a moderator. The island is not
-             mounted; display a static message instead. -->
+        <!-- The account is suspended. The island is not mounted;
+             display a static message instead. -->
         <div class="max-w-md mx-auto py-12 text-center">
             <h2 class="text-lg font-semibold mb-4">{{ i18n.t("chat_title") }}</h2>
             <p class="text-sm text-text-danger mb-6">
                 {{ i18n.t("chat_suspended") }}
+            </p>
+        </div>
+        {% else if !chat_available %}
+        <!-- This instance has no Chatmail relay. -->
+        <div class="max-w-md mx-auto py-12 text-center">
+            <h2 class="text-lg font-semibold mb-4">{{ i18n.t("chat_title") }}</h2>
+            <p class="text-sm text-text-secondary mb-6">
+                {{ i18n.t("chat_unavailable") }}
             </p>
         </div>
         {% else %}
@@ -22,6 +30,8 @@
              data-ws-url="{{ ws_url }}"
              data-chatmail-addr="{{ chatmail_addr }}"
              data-username="{{ username }}"
+             data-needs-setup="{{ needs_setup }}"
+             data-has-password="{{ has_password }}"
              data-locale="{{ i18n.lang_attr() }}"
              aria-label="{{ i18n.t("aria_chat") }}">
             <!-- Fallback content for no-JS or while the island loads. -->

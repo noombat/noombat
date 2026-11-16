@@ -63,20 +63,7 @@ pub async fn verify_credentials(
     .await
     .unwrap_or(false);
 
-    // Verify the authentication key against the Argon2id hash.
-    // Offload to a blocking thread to avoid starving the Tokio runtime.
-    let auth_key = req.auth_key.clone();
-    let hash_clone = auth_key_hash.clone();
-    let valid = tokio::task::spawn_blocking(move || {
-        let parsed = PasswordHash::new(&hash_clone).map_err(|_| NoombatError::Forbidden)?;
-        Argon2::default()
-            .verify_password(auth_key.as_bytes(), &parsed)
-            .map_err(|_| NoombatError::Forbidden)
-    })
-    .await
-    .map_err(|e| NoombatError::Internal(format!("verify task failed: {e}")))?;
-
-    valid?;
+    hash_matches(auth_key_hash, req.auth_key.clone()).await?;
 
     // If TOTP is enrolled, verify the code.
     if has_totp {
@@ -88,4 +75,31 @@ pub async fn verify_credentials(
     }
 
     Ok((actor_id, username, role, has_totp))
+}
+
+/// Check that `auth_key` is the signed-in account's own, for a step that
+/// asks for the password again. The session met any second factor at sign
+/// in, so only the key is checked. `Forbidden` for a key that does not
+/// match and for an account with no password.
+pub async fn verify_auth_key(pool: &PgPool, actor_id: Uuid, auth_key: &str) -> Result<()> {
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT auth_key_hash FROM actors WHERE id = $1 AND is_local = TRUE")
+            .bind(actor_id)
+            .fetch_optional(pool)
+            .await?
+            .flatten();
+    hash_matches(hash.ok_or(NoombatError::Forbidden)?, auth_key.to_owned()).await
+}
+
+/// `Forbidden` unless `auth_key` is the key `hash` was made from. On a
+/// blocking thread, so the Argon2id work does not starve the runtime.
+async fn hash_matches(hash: String, auth_key: String) -> Result<()> {
+    tokio::task::spawn_blocking(move || {
+        let parsed = PasswordHash::new(&hash).map_err(|_| NoombatError::Forbidden)?;
+        Argon2::default()
+            .verify_password(auth_key.as_bytes(), &parsed)
+            .map_err(|_| NoombatError::Forbidden)
+    })
+    .await
+    .map_err(|e| NoombatError::Internal(format!("verify task failed: {e}")))?
 }
