@@ -169,9 +169,18 @@ docker compose -f tests/interop/compose.yml down -v
 ### Chat interoperability
 
 ```sh
-docker compose -f tests/chat-interop/compose.yml up -d --build
+# Start the test environment and seed the accounts it signs in as.
+docker compose -p chat-interop -f tests/chat-interop/compose.yml up -d --build --wait
+# Noombat migrates before it serves: seed once it answers.
+until curl -sf http://localhost:8443/healthz >/dev/null; do sleep 2; done
+tests/chat-interop/seed.sh tests/chat-interop/compose.yml
+
+# Run the tests. Checks 17 and 19 need packages installed first: see
+# tests/chat-interop/README.md.
 tests/chat-interop/run.sh http://localhost:8443
-docker compose -f tests/chat-interop/compose.yml down -v
+
+# Tear down.
+docker compose -p chat-interop -f tests/chat-interop/compose.yml down -v
 ```
 
 ### End-to-end browser tests

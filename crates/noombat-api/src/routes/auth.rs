@@ -807,43 +807,54 @@ async fn provision_chat(
     let admin = state.chatmail_admin_client.clone();
     let chatmail_domain = state.chatmail_domain.clone();
     let username = username.to_owned();
-    let setup = noombat_chat::keys::set_up(
-        &state.pool,
-        actor_id,
-        noombat_chat::keys::RELAY_TIMEOUT,
-        |address| async move {
-            let admin = admin.ok_or_else(|| {
-                NoombatError::ServiceUnavailable(
-                    "chatmail admin sidecar not configured on this instance".into(),
-                )
-            })?;
-            if let Some(address) = address {
-                let rotated = admin.rotate_password(&address).await?;
-                return Ok((address, rotated.password));
-            }
-            let chatmail_domain = chatmail_domain.ok_or_else(|| {
-                NoombatError::ServiceUnavailable("chatmail not configured on this instance".into())
-            })?;
-            let provisioned = noombat_chat::provision::provision_chatmail_account(
-                &admin,
-                &chatmail_domain,
-                &username,
+    let setup = set_up_chat(&state.pool, &state.domain, actor_id, |address| async move {
+        let admin = admin.ok_or_else(|| {
+            NoombatError::ServiceUnavailable(
+                "chatmail admin sidecar not configured on this instance".into(),
             )
-            .await?;
-            Ok((provisioned.address, provisioned.password))
-        },
-    )
-    .await;
-    // Pushed whatever the outcome: a setup that failed after its claim had
-    // already forgotten the key the member published.
-    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
-    let setup = setup?;
+        })?;
+        if let Some(address) = address {
+            let rotated = admin.rotate_password(&address).await?;
+            return Ok((address, rotated.password));
+        }
+        let chatmail_domain = chatmail_domain.ok_or_else(|| {
+            NoombatError::ServiceUnavailable("chatmail not configured on this instance".into())
+        })?;
+        let provisioned = noombat_chat::provision::provision_chatmail_account(
+            &admin,
+            &chatmail_domain,
+            &username,
+        )
+        .await?;
+        Ok((provisioned.address, provisioned.password))
+    })
+    .await?;
 
     Ok(Json(ProvisionChatResponse {
         chatmail_addr: setup.address,
         chatmail_password: setup.password,
         chat_setup: setup.generation,
     }))
+}
+
+/// Set chat up for `actor_id` through `relay`, as
+/// [`noombat_chat::keys::set_up`] does, then push their actor document
+/// whatever the outcome: a setup that failed after its claim had already
+/// forgotten the key the member published.
+pub async fn set_up_chat<F, Fut>(
+    pool: &sqlx::PgPool,
+    domain: &str,
+    actor_id: uuid::Uuid,
+    relay: F,
+) -> noombat_core::error::Result<noombat_chat::keys::Setup>
+where
+    F: FnOnce(Option<String>) -> Fut,
+    Fut: std::future::Future<Output = noombat_core::error::Result<(String, String)>>,
+{
+    let setup =
+        noombat_chat::keys::set_up(pool, actor_id, noombat_chat::keys::RELAY_TIMEOUT, relay).await;
+    noombat_federation::update::push_actor_document(pool, actor_id, domain).await;
+    setup
 }
 
 // ..... Chatmail credential blob .....

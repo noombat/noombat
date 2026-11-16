@@ -18,6 +18,7 @@
 #        16. First contact through the instance: publish, read back, refuse.
 #        17. First contact between two web-client members, under Node; the push.
 #        18. Setting chat up again, with a new Chatmail password.
+#        19. First contact between two members in two browser contexts.
 #
 # Usage:
 #   tests/chat-interop/seed.sh tests/chat-interop/compose.yml
@@ -568,7 +569,10 @@ fi
 # his handle and in his actor document; and a key naming another address
 # is refused. 12 and 13 already send and deliver a message encrypted to
 # that key.
-NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-test.local}"
+# compose.yml's, which Caddy serves and the browser members' keys are
+# derived for; not NOOMBAT_DOMAIN, which a shell may export for another
+# instance.
+NOOMBAT_DOMAIN="${CHAT_INTEROP_DOMAIN:-test.local}"
 if [ -z "$WORK" ] || [ -z "$ALICE_TOKEN" ] || [ -z "$BOB_TOKEN" ]; then
     skip "First contact: needs gpg and both sessions"
 elif ! command -v python3 >/dev/null 2>&1; then
@@ -714,7 +718,9 @@ else
     # A first setup that the relay acted on but that stopped before the
     # address was recorded: the next setup gives that account a new
     # password, rather than failing on the account that exists.
-    if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, chat_set_up_at = NULL WHERE username = 'alice'" > /dev/null; then
+    # Its digest of the document last pushed is forgotten too, so the
+    # setup's push records a new one whatever the document holds.
+    if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, chat_set_up_at = NULL, federated_digest = NULL WHERE username = 'alice'" > /dev/null; then
         TAKEN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
           -H "Cookie: noombat_session=${ALICE_TOKEN}" \
           -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
@@ -725,9 +731,34 @@ else
         else
             fail "Set up again: a first setup stranded after the relay made its account was refused: $(printf '%s' "$TAKEN" | tail -n1)"
         fi
+        if [ "$(db_sql "SELECT federated_digest IS NOT NULL FROM actors WHERE username = 'alice'")" = "t" ]; then
+            pass "Set up again: the setup pushed alice's actor document"
+        else
+            fail "Set up again: the setup pushed nothing (no digest recorded)"
+        fi
     else
         fail "Set up again: alice could not be reset through the stack's database"
     fi
+fi
+
+# 19. First contact between two members in two browser contexts, through
+# the chat page itself: grace sets chat up while her key cannot be
+# published, and her next unlock publishes it; frank writes to her first,
+# by handle, on that key, is told so with its fingerprint, and reads her
+# reply; reconnecting, her page asks only for what is new, or for all of
+# it once told the mailbox's UIDs changed, and shows each message once.
+# Playwright drives Firefox from tests/e2e, at https://$NOOMBAT_DOMAIN
+# through the stack's Caddy.
+PLAYWRIGHT="$HERE/../e2e/node_modules/.bin/playwright"
+if [ ! -x "$PLAYWRIGHT" ]; then
+    skip "Two browsers: Playwright is not installed in tests/e2e"
+elif TWO_BROWSERS=$(cd "$HERE/../e2e" && NOOMBAT_DOMAIN="$NOOMBAT_DOMAIN" \
+      CHAT_DOMAIN="$CHATMAIL_DOMAIN" CHAT_FRANK_PASSWORD="$CHAT_FRANK_PASSWORD" \
+      CHAT_GRACE_PASSWORD="$CHAT_GRACE_PASSWORD" \
+      "$PLAYWRIGHT" test --config playwright.chat.config.ts 2>&1); then
+    pass "Two browsers: frank writes first on grace's published key, sees its fingerprint, and reads her reply"
+else
+    fail "Two browsers failed: $(printf '%s' "$TWO_BROWSERS" | tail -n 40)"
 fi
 
 # ..... Summary .....

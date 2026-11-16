@@ -4,14 +4,16 @@ Playwright suite driving real browsers against a running Noombat stack. It cover
 
 ## Components
 
-| File                       | Purpose                                              |
-| -------------------------- | ---------------------------------------------------- |
-| `smoke.spec.ts`            | Pages render and permalinks resolve                  |
-| `accessibility.spec.ts`    | WCAG 2.2 AA, asserted with axe-core                  |
-| `security-headers.spec.ts` | Response headers and the CSP                         |
-| `session.ts`               | Registers and signs in the accounts the specs use    |
-| `axe-fixture.ts`           | Wires axe-core into the Playwright fixture           |
-| `playwright.config.ts`     | Six browser projects, three desktop and three mobile |
+| File                        | Purpose                                              |
+| --------------------------- | ---------------------------------------------------- |
+| `smoke.spec.ts`             | Pages render and permalinks resolve                  |
+| `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                  |
+| `security-headers.spec.ts`  | Response headers and the CSP                         |
+| `session.ts`                | Registers and signs in the accounts the specs use    |
+| `axe-fixture.ts`            | Wires axe-core into the Playwright fixture           |
+| `playwright.config.ts`      | Six browser projects, three desktop and three mobile |
+| `playwright.chat.config.ts` | The chat stack's config, for `chat/` alone           |
+| `chat/two-browsers.chat.ts` | Chat in two contexts: chat-interop check 19          |
 
 This directory is its own pnpm project, `noombat-e2e`, separate from `frontend/` and with its own lockfile, `tsconfig.json` and ESLint config. Run `pnpm lint` and `pnpm typecheck` here; the frontend's do not cover it.
 

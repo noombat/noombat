@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# HTTPS in front of Noombat for the browser check (run.sh, check 19), which
+# loads the chat page at https://test.local. Caddy's own CA signs the
+# certificate, and the browser is told to accept it.
+
+{
+	local_certs
+}
+
+https://test.local {
+	reverse_proxy noombat:8443
+}

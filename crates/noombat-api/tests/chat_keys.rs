@@ -1714,6 +1714,68 @@ async fn only_an_unusable_setup_is_set_up_again(pool: PgPool) {
     );
 }
 
+/// A setup the relay failed still pushes: its claim had already forgotten
+/// the key followers were last sent.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_setup_the_relay_failed_still_withdraws_the_key_from_followers(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+
+    let failed = noombat_api::routes::auth::set_up_chat(&pool, DOMAIN, pair.bob, |_| async {
+        Err(noombat_core::error::NoombatError::ServiceUnavailable(
+            "the relay is down".into(),
+        ))
+    })
+    .await;
+    assert!(failed.is_err());
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1, "followers were not told");
+    assert_eq!(published_key(&updates[0]), None);
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn setting_chat_up_again_withdraws_the_old_key_from_followers(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+
+    let setup = noombat_api::routes::auth::set_up_chat(&pool, DOMAIN, pair.bob, |address| async {
+        Ok((address.expect("bob's address"), "a new password".to_owned()))
+    })
+    .await
+    .expect("set up again");
+    assert_eq!(setup.address, "bob@chat.noombat.example");
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1, "followers were not told");
+    assert_eq!(published_key(&updates[0]), None);
+}
+
+/// The route sets chat up through [`noombat_api::routes::auth::set_up_chat`]:
+/// with no relay sidecar here, its setup fails after the claim, and
+/// followers still lose the key.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_setup_route_pushes_even_a_failed_setup(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    give_password(&pool, pair.bob).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+
+    let reply = send(
+        &pool,
+        "POST",
+        "/api/v1/me/provision_chat",
+        Some(&bob_token),
+        &with_password(),
+    )
+    .await;
+    assert_eq!(reply.status, StatusCode::SERVICE_UNAVAILABLE);
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1, "followers were not told");
+    assert_eq!(published_key(&updates[0]), None);
+}
+
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn setting_up_needs_the_password_and_a_member_who_may_chat(pool: PgPool) {

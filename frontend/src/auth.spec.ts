@@ -12,6 +12,7 @@
  * this module, with Node's own PBKDF2, HKDF and AES-GCM.
  */
 
+import { readFileSync } from "node:fs";
 import { describe, it, expect, vi } from "vitest";
 
 // auth.ts registers a DOMContentLoaded listener when it loads, and these
@@ -57,5 +58,27 @@ describe("password key derivation", () => {
     const { authKey, blobKey } = await deriveBothKeys(PASSWORD, USERNAME, DOMAIN);
     expect(authKey).toBe(LOGIN_KEY_HEX);
     expect(await sealedUnder(blobKey)).toBe(SEALED_HEX);
+  });
+});
+
+describe("the chat interop stack's browser members", () => {
+  // Their keys are committed beside their passwords, for the stack's seed;
+  // the login page derives the keys it sends from the passwords.
+  const fixture = readFileSync(
+    new URL("../../tests/chat-interop/fixture-credential.sh", import.meta.url),
+    "utf8",
+  );
+  const value = (name: string): string => {
+    const found = new RegExp(`^${name}="([^"]*)"$`, "m").exec(fixture);
+    if (!found) throw new Error(`${name} is not in fixture-credential.sh`);
+    return found[1];
+  };
+
+  it.each(["frank", "grace"])("%s signs in with the key the login page derives", async (name) => {
+    const upper = name.toUpperCase();
+    const derived = await deriveAuthKey(value(`CHAT_${upper}_PASSWORD`), name, "test.local");
+    expect(derived, `commit CHAT_${upper}_AUTH_KEY="${derived}"`).toBe(
+      value(`CHAT_${upper}_AUTH_KEY`),
+    );
   });
 });

@@ -121,9 +121,9 @@ noombat/
 ├── migrations/                   # SQL migrations (sqlx).
 ├── templates/                    # Typst CV templates.
 ├── tests/
-│   ├── chat-interop/             # Chat and Delta Chat interoperability tests.
-│   ├── e2e/                      # Playwright end-to-end smoke tests.
-│   └── interop/                  # Federation interoperability tests (Mastodon, Lemmy, etc.).
+│   ├── chat-interop/             # Chat tests against a Chatmail relay.
+│   ├── e2e/                      # Playwright end-to-end tests.
+│   └── interop/                  # Federation tests against GoToSocial.
 ├── compose.yml
 ├── noombat.toml                  # Default configuration.
 ├── Dockerfile                    # Server container image.
@@ -316,17 +316,18 @@ pnpm build
 ### Chat interoperability tests
 
 ```sh
-# Start the test environment.
-docker compose -f tests/chat-interop/compose.yml up -d --build
+# Start the test environment and seed the accounts it signs in as.
+docker compose -p chat-interop -f tests/chat-interop/compose.yml up -d --build --wait
+# Noombat migrates before it serves: seed once it answers.
+until curl -sf http://localhost:8443/healthz >/dev/null; do sleep 2; done
+tests/chat-interop/seed.sh tests/chat-interop/compose.yml
 
-# Run the tests.
+# Run the tests. Checks 17 and 19 need packages installed first: see
+# tests/chat-interop/README.md.
 tests/chat-interop/run.sh http://localhost:8443
 
 # Tear down.
-docker compose -f tests/chat-interop/compose.yml down -v
-
-# With Delta Chat interop (requires deltachat-rpc-server):
-DELTACHAT_RPC=http://localhost:20808 tests/chat-interop/run.sh
+docker compose -p chat-interop -f tests/chat-interop/compose.yml down -v
 ```
 
 ### Federation interoperability tests

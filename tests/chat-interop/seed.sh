@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Seed the four accounts the chat interop suite signs in as.
+# Seed the six accounts the chat interop suite signs in as.
 #
 # Seeded in SQL rather than through `POST /api/v1/auth/register`, which
 # refuses with 503 unless the instance has an SMTP relay: that path mints
@@ -111,6 +111,9 @@ seed_actor bob "$CHAT_BOB_AUTH_KEY_HASH"
 # so nothing provisions them before it.
 seed_actor carol "$CHAT_CAROL_AUTH_KEY_HASH"
 seed_actor dave "$CHAT_DAVE_AUTH_KEY_HASH"
+# frank and grace set chat up in a browser, through the chat page (check 19).
+seed_actor frank "$CHAT_FRANK_AUTH_KEY_HASH"
+seed_actor grace "$CHAT_GRACE_AUTH_KEY_HASH"
 
 # Assert rather than trust: a statement reports success against zero
 # rows, and a missing credential leaves an account that exists and cannot
@@ -121,11 +124,11 @@ seeded=$(psql_noombat -tAc \
       WHERE is_local
         AND actor_status = 'active'
         AND auth_key_hash IS NOT NULL
-        AND username IN ('alice', 'bob', 'carol', 'dave');" | tr -d '[:space:]')
+        AND username IN ('alice', 'bob', 'carol', 'dave', 'frank', 'grace');" | tr -d '[:space:]')
 
-if [ "$seeded" != "4" ]; then
-    echo "::error::expected 4 seeded accounts with a credential, found ${seeded:-none}" >&2
+if [ "$seeded" != "6" ]; then
+    echo "::error::expected 6 seeded accounts with a credential, found ${seeded:-none}" >&2
     exit 1
 fi
 
-echo "Seeded alice, bob, carol and dave."
+echo "Seeded alice, bob, carol, dave, frank and grace."

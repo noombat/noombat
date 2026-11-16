@@ -6,8 +6,9 @@ This directory contains the test environment and runner for verifying Noombat's 
 
 | File                   | Purpose                                              |
 |------------------------|------------------------------------------------------|
-| `compose.yml`          | Compose stack: Noombat, the relay, PostgreSQL, Redis |
-| `run.sh`               | Test runner: 32 assertions (see below)               |
+| `compose.yml`          | Compose stack: Noombat, relay, databases, Caddy      |
+| `Caddyfile`            | HTTPS at `test.local` for the browser check          |
+| `run.sh`               | Test runner: 34 assertions (see below)               |
 | `build-local.sh`       | Build the binary for the local loop                  |
 | `compose.localbin.yml` | Overlay for the local loop                           |
 | `fixtures/`            | Bob's throwaway key and one message encrypted to it  |
@@ -17,12 +18,17 @@ This directory contains the test environment and runner for verifying Noombat's 
 ```sh
 # Build and start the test environment.
 docker compose -p chat-interop -f tests/chat-interop/compose.yml up -d --build --wait
+# Noombat migrates before it serves: seed once it answers.
+until curl -sf http://localhost:8443/healthz >/dev/null; do sleep 2; done
 
 # Seed the accounts the suite signs in as.
 tests/chat-interop/seed.sh tests/chat-interop/compose.yml
 
 # Check 17 runs the frontend's modules, so install its packages.
 (cd frontend && pnpm install --frozen-lockfile)
+
+# Check 19 drives Firefox through Playwright, from tests/e2e.
+(cd tests/e2e && pnpm install --frozen-lockfile && pnpm exec playwright install --with-deps firefox)
 
 # Run the tests.
 tests/chat-interop/run.sh http://localhost:8443
@@ -31,7 +37,7 @@ tests/chat-interop/run.sh http://localhost:8443
 docker compose -p chat-interop -f tests/chat-interop/compose.yml down -v
 ```
 
-CI runs the same steps, installing the frontend's packages before `run.sh` for check 17, in the `chat-interop` job of `.github/workflows/ci-e2e.yml`. Pin `-p chat-interop` as above: the project name decides the network and volume names, and the job depends on them.
+CI runs the same steps, installing the frontend's packages before `run.sh` for check 17, and `tests/e2e`'s with Firefox for check 19, in the `chat-interop` job of `.github/workflows/ci-e2e.yml`. Pin `-p chat-interop` as above: the project name decides the network and volume names, and the job depends on them.
 
 ## Local loop
 
@@ -49,6 +55,8 @@ Its limits are worth knowing before trusting a result. Templates, migrations and
 ## Configuration
 
 The instance domain is `test.local`, which is not `localhost`, so the server's production guard rails run in full and abort the process on any documented default. `compose.yml` therefore has to supply four values: a JWT secret of at least 32 bytes, a database credential that is not `noombat:noombat`, a KEK, and a Chatmail admin secret that is not the documented one. Miss any of them and the container exits before it binds a listener, which reads as a readiness timeout rather than as a configuration error. They are fixtures for a stack that lives for the length of one `docker compose up`, not secrets.
+
+Check 19 loads the chat page at `https://test.local`, on port 443, through Caddy, because the page derives each member's keys from their password and the host it is served from, and opens its WebSocket at `wss://` on the instance's domain. Firefox is told to map `test.local` to this machine and to accept any certificate, as Caddy's own CA signs this one. The other checks reach Noombat on 8443 directly.
 
 ## Chatmail Relay Container
 
@@ -68,7 +76,7 @@ A skipped assertion exits non-zero when `CI` is set. Locally a skip is a conveni
 
 ## Test Cases
 
-Sections 10, 11, 13, 16 and 18 carry several assertions each, so nineteen sections produce thirty-two assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
+Sections 10, 11, 13, 16 and 18 carry several assertions each, so twenty sections produce thirty-four assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed. Check 19 runs the page itself in two Firefox browser contexts (`tests/e2e/chat/`), so it needs `tests/e2e`'s packages and Playwright's Firefox.
 
 | #  | Section           | Assertion                                           |
 |----|-------------------|-----------------------------------------------------|
@@ -104,3 +112,5 @@ Sections 10, 11, 13, 16 and 18 carry several assertions each, so nineteen sectio
 | 18 | Set up again      | alice's mailbox gets a new password                 |
 | 18 | Set up again      | The relay takes the new one, refuses the old        |
 | 18 | Set up again      | An account the relay made, never recorded, taken up |
+| 18 | Set up again      | The setup pushes alice's actor document             |
+| 19 | Two browsers      | frank writes first on grace's key; she replies      |

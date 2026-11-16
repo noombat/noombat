@@ -587,9 +587,20 @@ jobs:
           ../scripts/install-pnpm.sh package.json
           pnpm install --frozen-lockfile
 
+      # Check 19 drives Firefox through Playwright, from tests/e2e. This
+      # job is not in Playwright's container, so the browser and the
+      # libraries it needs come from Playwright, at the version tests/e2e
+      # pins.
+      - name: Install Playwright and Firefox for the browser check
+        working-directory: tests/e2e
+        run: |
+          ../../scripts/install-pnpm.sh package.json
+          pnpm install --frozen-lockfile
+          pnpm exec playwright install --with-deps firefox
+
       # GitHub sets CI, and run.sh treats a skip as a failure when it is
       # set. Its skips are assertions that never ran, for want of a token,
-      # a tool, or the frontend's packages installed above.
+      # a tool, or the packages installed above.
       - name: Run chat interop tests
         run: tests/chat-interop/run.sh http://localhost:8443
 
@@ -598,6 +609,16 @@ jobs:
         run: |
           docker compose -p chat-interop -f tests/chat-interop/compose.yml \
             logs --no-color
+
+      # Check 19's trace of a failed run: the page, its frames and its
+      # requests, step by step.
+      - name: Upload the browser check's trace on failure
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chat-interop-browser-trace
+          path: tests/e2e/test-results/
+          retention-days: 14
 
       - name: Tear down
         if: always()

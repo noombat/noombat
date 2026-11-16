@@ -92,6 +92,24 @@ fn fixtures() -> Vec<(&'static str, String, String)> {
             "CHAT_DAVE_AUTH_KEY",
             "CHAT_DAVE_AUTH_KEY_HASH",
         ),
+        (
+            "tests/chat-interop/fixture-credential.sh (frank)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_FRANK_AUTH_KEY",
+            "CHAT_FRANK_AUTH_KEY_HASH",
+        ),
+        (
+            "tests/chat-interop/fixture-credential.sh (grace)",
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../../tests/chat-interop/fixture-credential.sh"
+            ),
+            "CHAT_GRACE_AUTH_KEY",
+            "CHAT_GRACE_AUTH_KEY_HASH",
+        ),
     ];
 
     files

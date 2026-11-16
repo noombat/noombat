@@ -4,17 +4,15 @@
 # Chat interoperability test environment.
 #
 # Spins up Noombat, the Chatmail relay container and PostgreSQL/Redis on
-# a shared network. Tests verify:
+# a shared network, with Caddy serving Noombat over HTTPS for a browser.
+# Tests verify:
 #   1. The Chatmail admin sidecar is serving.
 #   2. Account registration and login via the HTTP API.
 #   3. Chat WebSocket route existence and chat report endpoint.
 #   4. Auth page rendering.
 #   5. Closed federation configuration.
 #
-# Usage:
-#   1. docker compose -f tests/chat-interop/compose.yml up -d --build
-#   2. tests/chat-interop/run.sh
-#   3. docker compose -f tests/chat-interop/compose.yml down -v
+# Usage: tests/chat-interop/README.md, "Running".
 
 services:
   # ..... DATABASES .....
@@ -122,6 +120,22 @@ services:
       # reports healthy only once its entrypoint has finished, which is
       # after the certificate is written.
       chatmail: { condition: service_healthy }
+    networks: [chattest]
+
+  # ..... HTTPS FOR A BROWSER .....
+  #
+  # The chat page derives a member's keys from their password and the host
+  # it is served from, and opens its WebSocket at `wss://` on the
+  # instance's domain. So the browser check (run.sh, check 19) loads it at
+  # https://test.local, port 443, through Caddy. The other checks reach
+  # Noombat on 8443 directly.
+
+  caddy:
+    image: docker.io/library/caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    ports:
+      - "443:443"
     networks: [chattest]
 
 volumes:

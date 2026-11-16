@@ -6,5 +6,5 @@
     "strict": true,
     "types": ["node"]
   },
-  "include": ["*.ts", "**/*.spec.ts"]
+  "include": ["*.ts", "**/*.spec.ts", "chat/**/*.chat.ts"]
 }
