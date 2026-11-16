@@ -225,7 +225,8 @@ async fn require_admin_secret(
 /// `POST /admin/v1/accounts/{address}/rotate-password`
 ///
 /// Replaces the account's line in the passwd-file with a new randomly
-/// generated password. Returns the new password.
+/// generated password. Returns the new password once Dovecot takes it,
+/// and no longer the old.
 async fn rotate_password(
     State(state): State<Arc<AppState>>,
     UrlPath(address): UrlPath<String>,
@@ -236,7 +237,7 @@ async fn rotate_password(
 
     let new_password = generate_password();
     match state.passwd.replace(&address, new_password.as_bytes()) {
-        Ok(()) => {}
+        Ok(()) => state.passwd.seen().await,
         Err(passwd_file::Error::NotFound) => {
             return reply(StatusCode::NOT_FOUND, json!({"error": "account not found"}));
         }
@@ -260,8 +261,8 @@ async fn rotate_password(
 /// `PUT /admin/v1/accounts/{address}`
 ///
 /// Create a Chatmail account: the Maildir and a line in the passwd-file
-/// for a freshly generated password, which is returned so the caller can
-/// log in as the account it just made.
+/// for a freshly generated password, which is returned, once Dovecot sees
+/// the line, so the caller can log in as the account it just made.
 ///
 /// Creation happens here and nowhere else, behind the bearer secret the
 /// `require_admin_secret` layer checks on every route in this router:
@@ -345,7 +346,7 @@ async fn create_account(
     // gets the account and the other a conflict.
     let password = generate_password();
     match state.passwd.add(&address, password.as_bytes()) {
-        Ok(()) => {}
+        Ok(()) => state.passwd.seen().await,
         Err(passwd_file::Error::Exists) => {
             return reply(StatusCode::CONFLICT, json!({"error": "account exists"}));
         }
@@ -430,8 +431,9 @@ async fn delete_account(
         return invalid_address();
     };
 
-    // No address in these lines: they record an erasure. The line goes
-    // first, so no login succeeds while the mail is being removed.
+    // No address in these lines: they record an erasure. The line goes,
+    // and Dovecot sees it gone, first, so no login succeeds while the mail
+    // is being removed.
     if let Err(e) = state.passwd.remove(&address) {
         warn!(error = %e, "the passwd-file could not be written");
         return reply(
@@ -439,8 +441,25 @@ async fn delete_account(
             json!({"error": "account deletion failed"}),
         );
     }
+    // The rest runs to the end even if the caller goes away during the
+    // wait, so no deletion is left half done.
+    let finish = tokio::spawn(async move {
+        state.passwd.seen().await;
+        remove_mail_and_block(&state, address, &account_dir)
+    });
+    finish.await.unwrap_or_else(|e| {
+        warn!(error = %e, "account deletion stopped");
+        reply(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({"error": "account deletion failed"}),
+        )
+    })
+}
+
+/// The rest of [`delete_account`], once Dovecot sees the line gone.
+fn remove_mail_and_block(state: &AppState, address: String, account_dir: &Path) -> Reply {
     if account_dir.exists() {
-        if let Err(e) = std::fs::remove_dir_all(&account_dir) {
+        if let Err(e) = std::fs::remove_dir_all(account_dir) {
             warn!(error = %e, "account directory could not be removed");
             return reply(
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -461,7 +480,7 @@ async fn delete_account(
         }
         maps.write_postfix_maps(&state.config);
     }
-    trigger_postfix_reload_debounced(&state);
+    trigger_postfix_reload_debounced(state);
 
     reply(StatusCode::OK, json!({"address": address, "deleted": true}))
 }
@@ -914,12 +933,23 @@ mod tests {
             .is_ok()
     }
 
+    /// Whether Dovecot, looking at the passwd-file at most once a second,
+    /// now sees its last change.
+    fn dovecot_sees_the_last_change(home: &std::path::Path) -> bool {
+        let changed = crate::passwd_file::changed_at(&home.join(".noombat-admin/passwd"));
+        std::time::SystemTime::now() >= crate::passwd_file::seen_from(changed)
+    }
+
     #[tokio::test]
     async fn creating_an_account_writes_a_maildir_and_a_passwd_line() {
         let home = tempfile::tempdir().expect("a temporary directory");
         let (status, body) = request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
 
         assert_eq!(status, StatusCode::CREATED);
+        assert!(
+            dovecot_sees_the_last_change(home.path()),
+            "answered before Dovecot could see the account"
+        );
         let password = body["password"].as_str().expect("a password is returned");
         assert!(
             !password.is_empty(),
@@ -988,6 +1018,10 @@ mod tests {
         )
         .await;
         assert_eq!(status, StatusCode::OK);
+        assert!(
+            dovecot_sees_the_last_change(home.path()),
+            "answered while Dovecot still took the old password"
+        );
         let new = body["password"].as_str().expect("a new password");
         let line = passwd_line(home.path(), "a@b.test").expect("a passwd-file line");
         assert!(opens(&line, new), "the new password must log in");
@@ -1012,6 +1046,10 @@ mod tests {
         let (status, _) = request_on(home.path(), "DELETE", "/admin/v1/accounts/a@b.test").await;
         assert_eq!(status, StatusCode::OK);
         assert!(
+            dovecot_sees_the_last_change(home.path()),
+            "answered while Dovecot could still log the account in"
+        );
+        assert!(
             passwd_line(home.path(), "a@b.test").is_none(),
             "a deleted account still logs in"
         );
@@ -1020,6 +1058,37 @@ mod tests {
             passwd_line(home.path(), "c@b.test").is_some(),
             "another account was removed"
         );
+    }
+
+    /// A deletion runs to the end even if its caller goes away while it
+    /// waits for Dovecot, which takes at least a quarter second.
+    #[tokio::test]
+    async fn a_deletion_whose_caller_goes_away_still_finishes() {
+        use tower::ServiceExt;
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        request_on(home.path(), "PUT", "/admin/v1/accounts/a@b.test").await;
+        let request = axum::http::Request::builder()
+            .method("DELETE")
+            .uri("/admin/v1/accounts/a@b.test")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {SECRET}"),
+            )
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let gone = tokio::time::timeout(
+            std::time::Duration::from_millis(10),
+            router(test_state(home.path())).oneshot(request),
+        )
+        .await;
+        assert!(gone.is_err(), "the caller was meant to go away first");
+
+        tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+        assert!(!home.path().join("a@b.test").exists(), "the mail was left");
+        let maps =
+            std::fs::read_to_string(home.path().join("access-maps.json")).expect("the access maps");
+        assert!(maps.contains("a@b.test"), "the address was not blocked");
     }
 
     #[tokio::test]

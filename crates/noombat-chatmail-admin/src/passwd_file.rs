@@ -15,7 +15,7 @@ use std::io::Write as _;
 use std::os::unix::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use argon2::Argon2;
 use argon2::password_hash::PasswordHasher as _;
@@ -60,7 +60,8 @@ pub struct Migration {
 pub struct PasswdFile {
     path: PathBuf,
     gid: u32,
-    lock: Mutex<()>,
+    /// Serialises the rewrites, and holds when the last one was made.
+    lock: Mutex<Option<SystemTime>>,
 }
 
 impl PasswdFile {
@@ -69,7 +70,7 @@ impl PasswdFile {
         Self {
             path,
             gid,
-            lock: Mutex::new(()),
+            lock: Mutex::new(None),
         }
     }
 
@@ -110,6 +111,31 @@ impl PasswdFile {
             Ok(())
         })?;
         Ok(removed)
+    }
+
+    /// Returns once Dovecot sees every change written so far.
+    ///
+    /// Dovecot, beside this process and on its clock, reads the file again
+    /// only when its size or its modification time in whole seconds has
+    /// changed, which every write here makes sure of. It checks for that at
+    /// most once in each whole second: after one lookup, for a login or a
+    /// delivery, the rest in that second are answered from the copy it read.
+    /// So a change is seen from the [`seen_from`] after it; until then the
+    /// old lines still answer.
+    pub async fn seen(&self) {
+        let last_write = *self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(at) = last_write else {
+            return;
+        };
+        let from = seen_from(at);
+        // Measured against the wall clock, which Dovecot reads, not the
+        // monotonic one a sleep runs on, in case it is set meanwhile.
+        while let Ok(left) = from.duration_since(SystemTime::now()) {
+            if left.is_zero() {
+                break;
+            }
+            tokio::time::sleep(left).await;
+        }
     }
 
     /// Moves accounts kept as `{vmail_home}/{address}/password`, a
@@ -159,12 +185,14 @@ impl PasswdFile {
         &self,
         change: impl FnOnce(&mut Vec<String>) -> Result<(), Error>,
     ) -> Result<(), Error> {
-        let _guard = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let mut last_write = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut lines = self.lines()?;
         let before = lines.clone();
         change(&mut lines)?;
         if lines != before {
             self.write(&lines)?;
+            // Read after the rename, so no earlier than the change.
+            *last_write = Some(SystemTime::now());
         }
         Ok(())
     }
@@ -250,6 +278,33 @@ fn without_trailing_newlines(bytes: &[u8]) -> &[u8] {
 
 fn user_of(line: &str) -> &str {
     line.split(':').next().unwrap_or("")
+}
+
+/// How far into a second Dovecot may still count a lookup as the
+/// second before: it reads the clock once per pass of its event loop,
+/// before handling what the pass found, so a lookup read late in a pass
+/// that began before the second turned counts as that earlier second.
+/// Room for a pass that verifies several passwords.
+const LATE_IN_A_PASS: Duration = Duration::from_millis(250);
+
+/// When Dovecot sees a change written at `at`: a little after the start
+/// of the next whole second.
+pub(crate) fn seen_from(at: SystemTime) -> SystemTime {
+    let second = at.duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs());
+    UNIX_EPOCH + Duration::from_secs(second + 1) + LATE_IN_A_PASS
+}
+
+/// When the file at `path` last changed: its change time, not its
+/// modification time, which a write may move ahead of the clock.
+#[cfg(test)]
+pub(crate) fn changed_at(path: &Path) -> SystemTime {
+    use std::os::unix::fs::MetadataExt as _;
+    let meta = std::fs::metadata(path).expect("the passwd-file");
+    UNIX_EPOCH
+        + Duration::new(
+            u64::try_from(meta.ctime()).expect("a change time after 1970"),
+            u32::try_from(meta.ctime_nsec()).expect("nanoseconds"),
+        )
 }
 
 #[cfg(test)]
@@ -389,6 +444,38 @@ mod tests {
         assert!(!file.contains("a@b.test").unwrap());
         assert!(file.contains("c@b.test").unwrap());
         assert!(!file.remove("a@b.test").unwrap());
+    }
+
+    #[test]
+    fn a_change_is_seen_a_quarter_second_into_the_next_second() {
+        let at = |secs, nanos| UNIX_EPOCH + Duration::new(secs, nanos);
+        assert_eq!(seen_from(at(100, 0)), at(101, 250_000_000));
+        assert_eq!(seen_from(at(100, 999_999_999)), at(101, 250_000_000));
+    }
+
+    #[tokio::test]
+    async fn a_change_is_waited_for_until_dovecot_sees_it() {
+        let home = tempfile::tempdir().unwrap();
+        let file = file_in(home.path());
+        file.add("a@b.test", b"secret-one").unwrap();
+        let written = file.lock.lock().unwrap().expect("the write is recorded");
+
+        file.seen().await;
+        assert!(SystemTime::now() >= seen_from(written));
+    }
+
+    /// One file serves every request, so the wait is for its latest change.
+    #[tokio::test]
+    async fn the_wait_is_for_the_latest_change() {
+        let home = tempfile::tempdir().unwrap();
+        let file = file_in(home.path());
+        file.add("a@b.test", b"secret-one").unwrap();
+        file.seen().await;
+        file.add("c@b.test", b"secret-c").unwrap();
+        let changed = changed_at(&file.path);
+
+        file.seen().await;
+        assert!(SystemTime::now() >= seen_from(changed));
     }
 
     #[test]
