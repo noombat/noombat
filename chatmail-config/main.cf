@@ -46,8 +46,26 @@ maillog_file = /dev/stdout
 smtpd_tls_cert_file = /etc/ssl/certs/chatmail.pem
 smtpd_tls_key_file = /etc/ssl/private/chatmail.key
 smtpd_tls_security_level = may
-smtp_tls_security_level = may
 smtpd_tls_auth_only = yes
+
+# Sending to other relays: their certificate must verify for the name
+# this relay connects to, or the mail waits in the queue, as upstream's
+# relay requires. With `may`, anyone on the path could strip TLS from the
+# hop and read who writes to whom. Every peer is a `smtp:[domain]` entry
+# in the transport map, so the name checked is the domain itself, not one
+# read from an MX record. Upstream's policy map, which exempts IP
+# literals, underscore domains and one provider, has no peer to exempt
+# here, and its rule for bracketed next hops would exempt every one.
+#
+# The roots are the image's own copy of the system bundle, not
+# /etc/ssl/certs, where the compose files mount the relay's certificate:
+# a volume there keeps the roots of the day it was made, and a directory
+# mounted from the host holds none.
+smtp_tls_security_level = verify
+smtp_tls_CAfile = /etc/postfix/peer-roots.pem
+smtp_tls_servername = hostname
+smtp_tls_protocols = >=TLSv1.2
+smtp_tls_mandatory_protocols = >=TLSv1.2
 
 # ..... SASL (Dovecot) .....
 

@@ -84,6 +84,11 @@ RUN apt-get update && \
     && tar -C / -Jxpf /tmp/s6-overlay-x86_64.tar.xz \
     && rm /tmp/s6-overlay-*.tar.xz
 
+# The roots this relay verifies other relays against, copied out of
+# /etc/ssl/certs: the compose files mount the relay's own certificate
+# there, and a volume over it would keep the roots it was made with.
+RUN cp /etc/ssl/certs/ca-certificates.crt /etc/postfix/peer-roots.pem
+
 # Create vmail user and directories.
 RUN groupadd -g 5000 vmail && \
     useradd -u 5000 -g vmail -d /home/vmail -m vmail && \

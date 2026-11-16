@@ -84,6 +84,7 @@ if ! docker run -d --name "$CONTAINER" \
     -e FILTERMAIL_RATE_BURST=3 \
     -e CHATMAIL_DKIM_RESOLVER_CONF=/etc/opendkim-resolver-test.conf \
     -v "$WORKDIR/resolver.conf:/etc/opendkim-resolver-test.conf:ro" \
+    --add-host "$MAIL_DOMAIN:127.0.0.1" \
     "$IMAGE" >/dev/null; then
     fail "could not start $IMAGE"
     exit 1
@@ -569,15 +570,91 @@ fi
 
 printf '\n== sending to another relay ==\n'
 
+# The roots the relay verifies peers against are the image's own, read
+# from a file no volume covers.
+roots="$(in_relay sh -c 'postconf -h smtp_tls_CAfile; grep -c "BEGIN CERTIFICATE" "$(postconf -h smtp_tls_CAfile)"' 2>/dev/null)"
+if [[ "$(head -1 <<<"$roots")" == "/etc/postfix/peer-roots.pem" ]] && [ "$(tail -1 <<<"$roots")" -gt 100 ] 2>/dev/null; then
+    say "peers are verified against the image's roots: $(tail -1 <<<"$roots") certificates"
+else
+    fail "the roots peers are verified against are not the image's: ${roots:-nothing}"
+fi
+
+# The peer is this relay again, on a second listener greeting under
+# another name, since Postfix will not deliver to itself. It serves the
+# relay's own certificate, signed by the CA the entrypoint generated,
+# which the roots do not hold, and is reached as `[chat.localhost]:2525`
+# so the name checked is the one the certificate carries; as
+# `[localhost]:2525`, a name it does not carry. Host lookup is native
+# alone: no DNS answers for these names, and a failing resolver would
+# read as a TLS fault. `--add-host` maps the first.
+in_relay sh -c '
+    postconf -M "2525/inet=2525 inet n - n - - smtpd -o myhostname=relay-peer.localhost"
+    postconf -e "transport_maps=inline:{peer.localhost=smtp:['"$MAIL_DOMAIN"']:2525, wrongname.localhost=smtp:[localhost]:2525}" \
+                "smtp_host_lookup=native"
+    postsuper -d ALL
+    postfix reload' >/dev/null 2>&1
+sleep 2
+
+# The last delivery attempt logged for recipient $1, read from a file for
+# the reason given in section ONE.
+peer_status() {
+    docker logs "$CONTAINER" >"$WORKDIR/relay.log" 2>&1
+    grep "to=<$1>.*status=" "$WORKDIR/relay.log" | tail -1
+}
+
 # On the path a member's mail takes: the filter, then the re-injection
-# listener, which has to relay it without a SASL login. Where it goes
-# next does not matter here; the re-injection listener's answer does.
+# listener, which has to relay it without a SASL login.
 verdict="$(filter --port 10026 --from "outbound@$MAIL_DOMAIN" --to someone@peer.localhost \
     --body encrypted --tag OUTBOUND)"
 if [[ "$verdict" == *" 250 "* ]]; then
     say "a message to another relay is accepted for delivery: $verdict"
 else
     fail "a message to another relay was refused: ${verdict:-nothing}"
+fi
+
+status=""
+for _ in $(seq 1 15); do
+    status="$(peer_status someone@peer.localhost)"
+    [ -n "$status" ] && break
+    sleep 1
+done
+if [[ "$status" == *"status=deferred (Server certificate not verified)"* ]]; then
+    say "a peer whose certificate does not verify is not sent the message; it waits"
+else
+    fail "a peer with an unverifiable certificate was not refused: ${status:-no attempt logged}"
+fi
+
+# With the CA among the roots `smtp_tls_CAfile` reads, the same peer is
+# reached: its refusal of a recipient it does not host comes back from
+# RCPT TO, which only a verified connection gets to send.
+in_relay sh -c 'cat /etc/ssl/chatmail-ca/ca.crt >> /etc/postfix/peer-roots.pem
+                postfix reload
+                postqueue -f' >/dev/null 2>&1
+for _ in $(seq 1 15); do
+    status="$(peer_status someone@peer.localhost)"
+    [[ "$status" == *"status=bounced"* ]] && break
+    sleep 1
+done
+if [[ "$status" == *"status=bounced (host $MAIL_DOMAIN[127.0.0.1] said: "*"(in reply to RCPT TO command))"* ]]; then
+    say "a peer whose certificate verifies is reached"
+else
+    fail "a peer with a verifiable certificate was not reached: ${status:-no attempt logged}"
+fi
+
+# The same peer and CA under a name its certificate does not carry: the
+# certificate is valid, but not for the host this relay meant to reach.
+verdict="$(filter --port 10026 --from "outbound@$MAIL_DOMAIN" --to someone@wrongname.localhost \
+    --body encrypted --tag WRONGNAME)"
+status=""
+for _ in $(seq 1 15); do
+    status="$(peer_status someone@wrongname.localhost)"
+    [ -n "$status" ] && break
+    sleep 1
+done
+if [[ "$status" == *"status=deferred (Server certificate not verified)"* ]]; then
+    say "a peer whose certificate names another host is not sent the message"
+else
+    fail "a peer was sent mail under a name its certificate lacks: ${status:-no attempt logged} (${verdict:-not accepted})"
 fi
 
 
@@ -590,4 +667,4 @@ if [ "$FAILURES" -gt 0 ]; then
     exit 1
 fi
 
-say "the relay carries only encrypted mail, and signs what it carries"
+say "the relay carries only encrypted mail, signs what it carries, and sends it only over verified TLS"
