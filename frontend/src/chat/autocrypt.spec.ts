@@ -230,3 +230,62 @@ describe("PeerStateTable serialisation", () => {
     expect(restored.update(message(KEY_B, 2000)).keyChanged).toBe(true);
   });
 });
+
+// ..... Keys an instance published .....
+
+describe("adoptPublishedKey", () => {
+  it("fills an empty entry and marks where the key came from", () => {
+    const table = new PeerStateTable();
+    expect(table.adoptPublishedKey("Alice@Chat.Example.com", KEY_A)).toBe(true);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+    expect(table.get(ALICE)!.keyOrigin).toBe("instance");
+    expect(table.get(ALICE)!.lastSeenAutocrypt).toBe(0);
+    expect(table.get(ALICE)!.preferEncrypt).toBe("nopreference");
+  });
+
+  it("never replaces a key an earlier answer gave", () => {
+    const table = new PeerStateTable();
+    table.adoptPublishedKey(ALICE, KEY_A);
+    expect(table.adoptPublishedKey(ALICE, KEY_B)).toBe(false);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+  });
+
+  it("never replaces a key the peer's own header gave", () => {
+    const table = new PeerStateTable();
+    table.update(message(KEY_A, 1000));
+    expect(table.adoptPublishedKey(ALICE, KEY_B)).toBe(false);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_A));
+    expect(table.get(ALICE)!.keyOrigin).toBe("autocrypt");
+  });
+
+  it("gives way to the peer's first header, which confirms the same bytes quietly", () => {
+    const table = new PeerStateTable();
+    table.adoptPublishedKey(ALICE, KEY_A);
+    const result = table.update(message(KEY_A_COPY, 1000));
+    expect(result.keyChanged).toBe(false);
+    expect(table.get(ALICE)!.keyOrigin).toBe("autocrypt");
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBeNull();
+  });
+
+  it("raises the key-change notice when the peer's header carries other bytes", () => {
+    const table = new PeerStateTable();
+    table.adoptPublishedKey(ALICE, KEY_A);
+    const result = table.update(message(KEY_B, 1000));
+    expect(result.keyChanged).toBe(true);
+    expect(table.get(ALICE)!.lastKeyChangeAt).toBe(1000);
+    expect(Array.from(table.getPublicKey(ALICE)!)).toEqual(Array.from(KEY_B));
+  });
+
+  it("keeps the origin across serialisation, and reads older entries as Autocrypt's", () => {
+    const table = new PeerStateTable();
+    table.adoptPublishedKey(ALICE, KEY_A);
+    expect(PeerStateTable.fromJson(table.toJson()).get(ALICE)!.keyOrigin).toBe("instance");
+    const older = JSON.stringify({
+      [ALICE]: { lastSeen: 5, lastSeenAutocrypt: 5, publicKey: [1, 2], preferEncrypt: "mutual" },
+      "bob@chat.example.com": { lastSeen: 5, lastSeenAutocrypt: 0, publicKey: [] },
+    });
+    const read = PeerStateTable.fromJson(older);
+    expect(read.get(ALICE)!.keyOrigin).toBe("autocrypt");
+    expect(read.get("bob@chat.example.com")!.keyOrigin).toBeNull();
+  });
+});

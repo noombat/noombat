@@ -6,8 +6,15 @@
  * what is sent, and when nothing is.
  */
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ensureOwnKeyPublished, publishOwnKey, repairOwnKey } from "./directory";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  ensureOwnKeyPublished,
+  fetchPublishedKey,
+  fetchPublishedKeyByHandle,
+  publishOwnKey,
+  repairOwnKey,
+} from "./directory";
+import { generateKeyPair, keyFingerprint, type KeyPair } from "./crypto";
 import { provisionChat } from "./provision";
 import { decryptBlob } from "./blob";
 
@@ -176,4 +183,63 @@ describe("provisionChat", () => {
     await provisionChat(await blobKey());
     expect(puts()).toHaveLength(0);
   }, 30_000);
+});
+
+describe("looking a key up", () => {
+  let bob: KeyPair;
+  beforeAll(async () => {
+    bob = await generateKeyPair("bob@chat.example");
+  });
+  const served = (address: string, key: Uint8Array) => (): Response =>
+    Response.json({ address, key: btoa(String.fromCharCode(...key)) });
+
+  it("finds a checked key, with its fingerprint", async () => {
+    stubFetch([["GET", "/api/v1/chat/keys/", served("bob@chat.example", bob.publicKey)]]);
+    const found = await fetchPublishedKey("bob@chat.example");
+    expect(found).toEqual({
+      status: "found",
+      address: "bob@chat.example",
+      key: bob.publicKey,
+      fingerprint: await keyFingerprint(bob.publicKey),
+    });
+    expect(calls[0].url).toBe("/api/v1/chat/keys/bob%40chat.example");
+    expect(calls[0].authorization).toBe("Bearer a-token");
+  });
+
+  it("checks the key against the address asked for, not the one answered", async () => {
+    stubFetch([["GET", "/api/v1/chat/keys/", served("bob@chat.example", bob.publicKey)]]);
+    expect(await fetchPublishedKey("alice@chat.example")).toEqual({ status: "invalid" });
+    // Asked in another case, it is still the address asked for.
+    const found = await fetchPublishedKey("Bob@Chat.Example");
+    expect(found.status === "found" && found.address).toBe("Bob@Chat.Example");
+  });
+
+  it("tells absent, refused and broken answers apart", async () => {
+    stubFetch([["GET", "/api/v1/chat/keys/", () => new Response(null, { status: 404 })]]);
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "absent" });
+    stubFetch([["GET", "/api/v1/chat/keys/", () => new Response(null, { status: 500 })]]);
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "error" });
+    stubFetch([["GET", "/api/v1/chat/keys/", () => new Response(null, { status: 403 })]]);
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "error" });
+    stubFetch([["GET", "/api/v1/chat/keys/", () => new Response(null, { status: 400 })]]);
+    expect(await fetchPublishedKey("bob")).toEqual({ status: "malformed" });
+    stubFetch([["GET", "/api/v1/chat/keys/", () => new Response("not json")]]);
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "invalid" });
+    stubFetch([["GET", "/api/v1/chat/keys/", served("bob@chat.example", bob.privateKey)]]);
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "invalid" });
+    vi.stubGlobal("fetch", () => Promise.reject(new TypeError("offline")));
+    expect(await fetchPublishedKey("bob@chat.example")).toEqual({ status: "error" });
+  });
+
+  it("takes a handle's address from the answer, and checks the key against it", async () => {
+    stubFetch([["GET", "/api/v1/chat/keys/by-handle/", served("bob@chat.example", bob.publicKey)]]);
+    const found = await fetchPublishedKeyByHandle("@bob@other.example");
+    expect(found.status).toBe("found");
+    expect(found.status === "found" && found.address).toBe("bob@chat.example");
+    expect(calls[0].url).toBe("/api/v1/chat/keys/by-handle/%40bob%40other.example");
+    stubFetch([
+      ["GET", "/api/v1/chat/keys/by-handle/", served("carol@chat.example", bob.publicKey)],
+    ]);
+    expect(await fetchPublishedKeyByHandle("@bob@other.example")).toEqual({ status: "invalid" });
+  });
 });

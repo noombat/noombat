@@ -85,6 +85,13 @@ The client reports what it can observe:
 when a key already held for a peer is replaced by different key material, a notice appears in that conversation and the event is recorded in the encrypted blob, so it survives the session and synchronises across devices.
 The chat interface also shows the user's own fingerprint alongside the selected peer's, for comparison over a channel the server does not control.
 
+Before a peer has written, the web client can write to them with the key published for them: each member's client publishes its public key to their instance, which serves it to members allowed to see their chat address and, beside the address, in the actor document other noombat instances read.
+That first contact trusts the instance.
+An instance that substitutes a member's key at that point can read what is sent to them, and since the same server relays the peer's later mail, it can go on substituting their Autocrypt headers too; a header whose key differs from the one used raises the key-change notice above, but a server that never lets one through raises nothing.
+Comparing fingerprints is what settles it: the verification panel shows the fingerprint of the key a message would go to, the one a first message then uses, and marks a key the instance provided until a header relayed from the peer carries a key; the conversation also shows a notice with that fingerprint when the client first takes a published key, on that device.
+The server checks a published key's structure only; the client verifies its signatures before encrypting to it.
+A key published by another noombat instance is used only when its address is on the chat domain that instance names in its NodeInfo, that domain is the instance's own host or under it, and this instance's relay delivers there.
+
 Comparing fingerprints out of band is currently the only way to establish that a key belongs to the person you think it does.
 SecureJoin, which performs this verification through a QR code exchange rather than manual comparison, is planned but not yet implemented.
 

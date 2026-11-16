@@ -61,6 +61,36 @@ export async function keyFingerprint(keyBytes: Uint8Array): Promise<string> {
   return key.getFingerprint().toUpperCase();
 }
 
+/** The most bytes a published key may take, as the server allows. */
+const MAX_PUBLISHED_KEY_BYTES = 8192;
+
+/**
+ * Whether `bytes`, a key an instance published, can be written to as
+ * `address`: exactly one version 4 public key of at most 8 KiB whose
+ * primary User ID verifies and names `address`, with a valid encryption
+ * subkey (not an encryption-capable primary, which OpenPGP.js would fall
+ * back to). Resolves to its fingerprint, or `null` when it cannot.
+ */
+export async function checkPublishedKey(
+  bytes: Uint8Array,
+  address: string,
+): Promise<string | null> {
+  if (bytes.length > MAX_PUBLISHED_KEY_BYTES || !address.includes("@")) return null;
+  try {
+    const keys = await openpgp.readKeys({ binaryKeys: bytes });
+    if (keys.length !== 1) return null;
+    const [key] = keys;
+    if (key.isPrivate() || key.keyPacket.version !== 4) return null;
+    const { user } = await key.getPrimaryUser();
+    if (user.userID?.email.toLowerCase() !== address.toLowerCase()) return null;
+    const encryption = await key.getEncryptionKey();
+    if (encryption.getKeyID().equals(key.getKeyID())) return null;
+    return key.getFingerprint().toUpperCase();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Group a fingerprint into blocks of four characters.
  *

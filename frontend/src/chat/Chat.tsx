@@ -24,7 +24,8 @@ import {
 } from "./crypto";
 import { PeerStateTable, parseAutocryptHeader } from "./autocrypt";
 import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } from "./blob";
-import { repairOwnKey } from "./directory";
+import { repairOwnKey, type PublishedKeyResult } from "./directory";
+import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipient";
 import { deriveBlobKey } from "../auth";
 
 // ..... Base64 helpers .....
@@ -75,6 +76,14 @@ interface ChatStrings {
   copy: string;
   copied: string;
   noPeerKey: string;
+  usingInstanceKey: (address: string, fingerprint: string) => string;
+  noPublishedKey: (who: string) => string;
+  noPublishedKeyForHandle: (who: string) => string;
+  notAddressOrHandle: (who: string) => string;
+  recipientPlaceholder: string;
+  invalidPublishedKey: (who: string) => string;
+  lookupFailed: string;
+  instanceKeyNote: string;
   close: string;
 }
 
@@ -101,7 +110,19 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       "Compare these over a channel this server does not control, such as in person or by telephone. Matching fingerprints mean no one has substituted a key.",
     copy: "Copy",
     copied: "Copied",
-    noPeerKey: "No key has been received for this contact yet.",
+    noPeerKey: "No key is known for this contact yet.",
+    usingInstanceKey: (address, fingerprint) =>
+      `Using the key published for ${address}, fingerprint ${fingerprint}. Compare it with them over another channel.`,
+    noPublishedKeyForHandle: (who) =>
+      `No key for ${who}: they have not set up chat, do not share their key with you, or chat here cannot reach their instance. If they have chat, ask them to write to you first.`,
+    notAddressOrHandle: (who) => `${who} is neither a chat address nor a handle (@name@instance).`,
+    recipientPlaceholder: "recipient@chat.example.com or @name@instance.example",
+    noPublishedKey: (who) =>
+      `No key for ${who}: they have not set up chat, do not share their key with you, or are on another instance, where their handle (@name@instance) finds them. Ask them to write to you first.`,
+    invalidPublishedKey: (who) =>
+      `The key this instance gave for ${who} is not valid. Nothing was sent.`,
+    lookupFailed: "The key could not be looked up. Nothing was sent; try again.",
+    instanceKeyNote: "Provided by this instance; not yet seen in a message from them.",
     close: "Close",
   },
   "en-AU": {
@@ -126,7 +147,19 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       "Compare these over a channel this server does not control, such as in person or by telephone. Matching fingerprints mean no one has substituted a key.",
     copy: "Copy",
     copied: "Copied",
-    noPeerKey: "No key has been received for this contact yet.",
+    noPeerKey: "No key is known for this contact yet.",
+    usingInstanceKey: (address, fingerprint) =>
+      `Using the key published for ${address}, fingerprint ${fingerprint}. Compare it with them over another channel.`,
+    noPublishedKeyForHandle: (who) =>
+      `No key for ${who}: they have not set up chat, do not share their key with you, or chat here cannot reach their instance. If they have chat, ask them to write to you first.`,
+    notAddressOrHandle: (who) => `${who} is neither a chat address nor a handle (@name@instance).`,
+    recipientPlaceholder: "recipient@chat.example.com or @name@instance.example",
+    noPublishedKey: (who) =>
+      `No key for ${who}: they have not set up chat, do not share their key with you, or are on another instance, where their handle (@name@instance) finds them. Ask them to write to you first.`,
+    invalidPublishedKey: (who) =>
+      `The key this instance gave for ${who} is not valid. Nothing was sent.`,
+    lookupFailed: "The key could not be looked up. Nothing was sent; try again.",
+    instanceKeyNote: "Provided by this instance; not yet seen in a message from them.",
     close: "Close",
   },
   "pt-BR": {
@@ -152,7 +185,20 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       "Compare estes valores por um canal que este servidor não controla, como pessoalmente ou por telefone. Impressões digitais iguais significam que ninguém substituiu uma chave.",
     copy: "Copiar",
     copied: "Copiado",
-    noPeerKey: "Nenhuma chave foi recebida deste contato ainda.",
+    noPeerKey: "Nenhuma chave é conhecida para este contato ainda.",
+    usingInstanceKey: (address, fingerprint) =>
+      `Usando a chave publicada para ${address}, impressão digital ${fingerprint}. Compare-a com a pessoa por outro canal.`,
+    noPublishedKeyForHandle: (who) =>
+      `Nenhuma chave para ${who}: a pessoa não configurou o chat, não compartilha a chave com você ou o chat daqui não alcança a instância dela. Se ela tiver chat, peça que escreva primeiro.`,
+    notAddressOrHandle: (who) =>
+      `${who} não é um endereço de chat nem um identificador (@nome@instância).`,
+    recipientPlaceholder: "destinatario@chat.example.com ou @nome@instancia.example",
+    noPublishedKey: (who) =>
+      `Nenhuma chave para ${who}: a pessoa não configurou o chat, não compartilha a chave com você ou está em outra instância, onde o identificador dela (@nome@instância) a encontra. Peça que ela escreva primeiro.`,
+    invalidPublishedKey: (who) =>
+      `A chave que esta instância forneceu para ${who} não é válida. Nada foi enviado.`,
+    lookupFailed: "Não foi possível consultar a chave. Nada foi enviado; tente novamente.",
+    instanceKeyNote: "Fornecida por esta instância; ainda não vista em uma mensagem da pessoa.",
     close: "Fechar",
   },
 };
@@ -222,6 +268,8 @@ export default function Chat(props: ChatProps): JSX.Element {
   const [showVerify, setShowVerify] = createSignal(false);
   const [ownFingerprint, setOwnFingerprint] = createSignal("");
   const [peerFingerprint, setPeerFingerprint] = createSignal("");
+  /** Whether the fingerprint shown is of a key only the instance vouches for. */
+  const [peerKeyFromInstance, setPeerKeyFromInstance] = createSignal(false);
   const [copied, setCopied] = createSignal("");
 
   let ws: WebSocket | null = null;
@@ -259,6 +307,9 @@ export default function Chat(props: ChatProps): JSX.Element {
    *  after a successful sync. Prevents unnecessary re-encryption
    *  and PUT requests when peer state has not changed. */
   let peerStateDirty = false;
+
+  /** Whether a send is under way, a key lookup inside it included. */
+  let sending = false;
 
   // ..... Blob decryption .....
 
@@ -416,6 +467,9 @@ export default function Chat(props: ChatProps): JSX.Element {
           });
           if (mutated) {
             peerStateDirty = true;
+            // The fingerprint shown, or where its key came from, may
+            // now be out of date.
+            if (showVerify()) void refreshPeerFingerprint();
           }
           if (keyChanged) {
             // An already-known key was replaced. This is what an
@@ -423,10 +477,6 @@ export default function Chat(props: ChatProps): JSX.Element {
             // client, so it is surfaced in the conversation rather
             // than absorbed silently.
             appendKeyChangeNotice(sender, ts);
-            // The cached fingerprint now describes the old key.
-            if (recipient() === sender) {
-              void refreshPeerFingerprint();
-            }
           }
         }
       } catch {
@@ -489,9 +539,13 @@ export default function Chat(props: ChatProps): JSX.Element {
 
   // ..... Key verification .....
 
-  /** Insert a system notice into the conversation with `address`. */
   function appendKeyChangeNotice(address: string, timestamp: number): void {
     const date = new Date(timestamp * 1000).toLocaleDateString(props.locale);
+    appendSystemNotice(address, strings().keyChanged(address, date), timestamp);
+  }
+
+  /** Insert a system notice into the conversation with `address`. */
+  function appendSystemNotice(address: string, body: string, timestamp: number): void {
     setMessages((prev) => [
       ...prev,
       {
@@ -499,7 +553,7 @@ export default function Chat(props: ChatProps): JSX.Element {
         uid: 0,
         from: address,
         to: props.chatmailAddr,
-        body: strings().keyChanged(address, date),
+        body,
         timestamp,
         outgoing: false,
         signatureVerified: null,
@@ -508,24 +562,71 @@ export default function Chat(props: ChatProps): JSX.Element {
     ]);
   }
 
-  /** Recompute the fingerprint shown for the selected contact. */
-  async function refreshPeerFingerprint(): Promise<void> {
-    const addr = recipient().trim().toLowerCase();
-    const key = addr ? (peerState?.getPublicKey(addr) ?? null) : null;
-    if (!key || key.length === 0) {
-      setPeerFingerprint("");
-      return;
+  /** The status for a key lookup that found nothing to send to. */
+  function lookupStatus(result: PublishedKeyResult, who: string): string {
+    if (result.status === "absent") {
+      return who.startsWith("@")
+        ? strings().noPublishedKeyForHandle(who)
+        : strings().noPublishedKey(who);
     }
-    try {
-      setPeerFingerprint(formatFingerprint(await keyFingerprint(key)));
-    } catch {
+    if (result.status === "malformed") return strings().notAddressOrHandle(who);
+    if (result.status === "invalid") return strings().invalidPublishedKey(who);
+    return strings().lookupFailed;
+  }
+
+  /** Say in the conversation that a key the instance published is now
+   *  held, with its fingerprint. */
+  function noteAdoptedKey(found: FoundKey): void {
+    peerStateDirty = true;
+    appendSystemNotice(
+      found.address,
+      strings().usingInstanceKey(found.address, formatFingerprint(found.fingerprint)),
+      Math.floor(Date.now() / 1000),
+    );
+  }
+
+  /** The instance's answers while the page is open, shared by the panel
+   *  and sending, so a message goes to the key whose fingerprint was shown. */
+  const lookups = new KeyLookups();
+
+  /** Counts panel refreshes, so a slow lookup cannot paint over a newer one. */
+  let fingerprintRefresh = 0;
+  /** The contact whose key the panel last showed. */
+  let fingerprintFor = "";
+
+  /** Recompute the fingerprint shown for the selected contact. The
+   *  instance is asked for a key none is held for only on request, never
+   *  per keystroke, since each would reach the server. */
+  async function refreshPeerFingerprint(lookUpMissing = false): Promise<void> {
+    const run = ++fingerprintRefresh;
+    const typed = recipient().trim();
+    // Nothing of the previous contact stays up while this one is looked up.
+    if (typed !== fingerprintFor) {
+      fingerprintFor = typed;
+      setPeerKeyFromInstance(false);
       setPeerFingerprint("");
     }
+    const shown =
+      typed && peerState ? await keyShown(typed, peerState, lookups, lookUpMissing) : null;
+    // Painted only by the newest refresh, for the contact still selected.
+    const current = (): boolean => run === fingerprintRefresh && recipient().trim() === typed;
+    if (!current()) return;
+    let fingerprint = "";
+    if (shown) {
+      try {
+        fingerprint = formatFingerprint(await keyFingerprint(shown.key));
+      } catch {
+        fingerprint = "";
+      }
+      if (!current()) return;
+    }
+    setPeerKeyFromInstance(fingerprint !== "" && !!shown?.fromInstance);
+    setPeerFingerprint(fingerprint);
   }
 
   /** Open the verification panel, refreshing the peer fingerprint. */
   function openVerify(): void {
-    void refreshPeerFingerprint();
+    void refreshPeerFingerprint(true);
     setShowVerify(true);
   }
 
@@ -600,29 +701,49 @@ export default function Chat(props: ChatProps): JSX.Element {
   // ..... Actions .....
 
   async function sendMessage(): Promise<void> {
-    const body = draft().trim();
-    const to = recipient().trim();
-    if (!body || !to || !ws || ws.readyState !== WebSocket.OPEN) return;
+    const draftText = draft();
+    const body = draftText.trim();
+    const typed = recipient().trim();
+    const to = typed;
+    if (sending || !body || !to || !ws || ws.readyState !== WebSocket.OPEN || !privateKeyBytes) {
+      return;
+    }
+    // A lookup is awaited below; a second click meanwhile must not send twice.
+    sending = true;
+    try {
+      await sendTo(to, typed, draftText, body);
+    } finally {
+      sending = false;
+    }
+  }
+
+  async function sendTo(to: string, typed: string, draftText: string, body: string): Promise<void> {
+    // The key held for the recipient, else the one their instance
+    // publishes, which first contact trusts; a handle names someone, here
+    // or on another instance, whose address the instance looks up too.
+    // Without a key nothing is sent: the relay refuses plaintext, and must
+    // never see it.
+    if (!peerState) return;
+    const resolved = await resolveRecipient(to, peerState, lookups);
+    if (resolved.status === "failed") {
+      setStatus(lookupStatus(resolved.result, resolved.who));
+      return;
+    }
+    if (resolved.adopted) noteAdoptedKey(resolved.adopted);
+    // A member who moved on to someone else during a lookup did not mean
+    // this one: nothing is sent, and the draft stays.
+    if (recipient().trim() !== typed) return;
+    to = resolved.address;
+    if (to !== typed) setRecipient(to);
+    if ((resolved.adopted || to !== typed) && showVerify()) void refreshPeerFingerprint();
+    const recipientKey = resolved.key;
 
     // Encrypt the message body via OpenPGP.js.
     const plainBytes = new TextEncoder().encode(body);
     let cipherBytes: Uint8Array;
 
-    // Look up the recipient's public key from peer state.
-    const recipientKey = peerState?.getPublicKey(to.trim().toLowerCase()) ?? null;
-
-    if (!recipientKey || recipientKey.length === 0 || !privateKeyBytes) {
-      // No recipient key available. Refuse to transmit plaintext:
-      // the Chatmail filtermail daemon would reject it regardless,
-      // and the relay should never see unencrypted message bodies.
-      setStatus(
-        "Cannot send: no encryption key for this recipient. " +
-          "Ask them to send you a message first so keys can be exchanged.",
-      );
-      return;
-    }
-
     try {
+      if (!privateKeyBytes) return;
       cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
@@ -639,6 +760,11 @@ export default function Chat(props: ChatProps): JSX.Element {
       autocrypt_header_b64 = btoa(headerValue);
     }
 
+    // The socket may have closed during a lookup.
+    if (!ws || ws.readyState !== WebSocket.OPEN || !privateKeyBytes) {
+      setStatus(strings().disconnected);
+      return;
+    }
     ws.send(
       JSON.stringify({
         type: "send",
@@ -662,7 +788,8 @@ export default function Chat(props: ChatProps): JSX.Element {
       },
     ]);
 
-    setDraft("");
+    // Unless more was typed during a lookup.
+    if (draft() === draftText) setDraft("");
     // Clear any transient error (e.g. a prior "no key" message)
     // now that a send has succeeded.
     if (status()) {
@@ -691,10 +818,13 @@ export default function Chat(props: ChatProps): JSX.Element {
 
   // ..... Render .....
 
-  const filteredMessages = () =>
-    recipient()
-      ? messages().filter((m) => m.from === recipient() || (m.outgoing && m.to === recipient()))
+  const filteredMessages = () => {
+    // Trimmed, as sending reads it, so a stray space hides nothing sent.
+    const shown = recipient().trim();
+    return shown
+      ? messages().filter((m) => m.from === shown || (m.outgoing && m.to === shown))
       : messages();
+  };
 
   function formatTime(ts: number): string {
     return new Date(ts * 1000).toLocaleTimeString(props.locale, {
@@ -870,6 +1000,9 @@ export default function Chat(props: ChatProps): JSX.Element {
                     </button>
                   </Show>
                 </div>
+                <Show when={peerKeyFromInstance()}>
+                  <p class="text-xs text-text-secondary">{strings().instanceKeyNote}</p>
+                </Show>
 
                 <button
                   type="button"
@@ -953,7 +1086,7 @@ export default function Chat(props: ChatProps): JSX.Element {
               <input
                 type="text"
                 class="noombat-chat__recipient"
-                placeholder="recipient@chat.example.com"
+                placeholder={strings().recipientPlaceholder}
                 value={recipient()}
                 onInput={(e) => {
                   setRecipient(e.currentTarget.value);

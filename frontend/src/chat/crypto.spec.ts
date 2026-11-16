@@ -23,6 +23,7 @@ import {
   decryptAndVerify,
   keyFingerprint,
   formatFingerprint,
+  checkPublishedKey,
   MAX_DECOMPRESSED_BYTES,
   type KeyPair,
 } from "./crypto";
@@ -314,5 +315,115 @@ describe("inbound decompression is bounded", () => {
     await expect(
       decryptAndVerify(bob.privateKey, alice.publicKey, ciphertext, 64 * 1024),
     ).rejects.toThrow();
+  });
+});
+
+// ..... Keys an instance published .....
+
+describe("checkPublishedKey", () => {
+  it("accepts a key made as the client makes it, for its address in any case", async () => {
+    const fingerprint = await checkPublishedKey(alice.publicKey, "Alice@Chat.Example.com");
+    expect(fingerprint).toBe(await keyFingerprint(alice.publicKey));
+  });
+
+  it("refuses a key for another address, a private key and garbage", async () => {
+    expect(await checkPublishedKey(alice.publicKey, "bob@chat.example.com")).toBeNull();
+    expect(await checkPublishedKey(alice.privateKey, "alice@chat.example.com")).toBeNull();
+    expect(await checkPublishedKey(new Uint8Array([1, 2, 3]), "alice@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a key with no encryption subkey", async () => {
+    const { publicKey } = await openpgp.generateKey({
+      type: "ecc",
+      curve: "curve25519Legacy",
+      userIDs: [{ email: "carol@chat.example.com" }],
+      subkeys: [],
+      format: "binary",
+    });
+    expect(await checkPublishedKey(publicKey, "carol@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a version 6 key", async () => {
+    const { publicKey } = await openpgp.generateKey({
+      type: "curve25519",
+      userIDs: [{ email: "carol@chat.example.com" }],
+      format: "binary",
+      config: { v6Keys: true },
+    });
+    expect(await checkPublishedKey(publicKey, "carol@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a valid key larger than the server would store", async () => {
+    const email = "carol@chat.example.com";
+    const { publicKey } = await openpgp.generateKey({
+      type: "ecc",
+      curve: "curve25519Legacy",
+      userIDs: Array.from({ length: 40 }, (_, i) => ({ name: `Carol ${i}`, email })),
+      format: "binary",
+    });
+    expect(publicKey.length).toBeGreaterThan(8192);
+    expect(await checkPublishedKey(publicKey, email)).toBeNull();
+  });
+
+  it("reads only a User ID that verifies, not an unsigned one naming the address", async () => {
+    const { publicKey } = await openpgp.generateKey({
+      type: "ecc",
+      curve: "curve25519Legacy",
+      userIDs: [{ email: "target@chat.example.com" }, { email: "other@chat.example.com" }],
+      format: "binary",
+    });
+    const key = await openpgp.readKey({ binaryKey: publicKey });
+    key.users[0].selfCertifications = [];
+    const unsigned = key.write() as Uint8Array;
+    expect(await checkPublishedKey(unsigned, "target@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a User ID whose self-certification is gone, so it does not verify", async () => {
+    const key = await openpgp.readKey({ binaryKey: alice.publicKey });
+    key.users[0].selfCertifications = [];
+    const unsigned = key.write() as Uint8Array;
+    expect(await checkPublishedKey(unsigned, "alice@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a second key after the first", async () => {
+    const two = new Uint8Array([...alice.publicKey, ...bob.publicKey]);
+    expect(await checkPublishedKey(two, "alice@chat.example.com")).toBeNull();
+  });
+
+  it("refuses a key that could encrypt only with its primary", async () => {
+    // Made by GnuPG with an RSA primary marked to sign and encrypt, and no
+    // subkey: OpenPGP.js would encrypt to the primary.
+    const primaryOnly = Uint8Array.from(
+      atob(
+        [
+          "mQENBGr5FAUBCADSl/Rl8T24kjG0usDlgpDw3IuEKVQjI9ENt0T1oIs+BVDhBotUkx0xXCALI0nM",
+          "EuqH2Db/gzTYkAg3Xiq45/l1+pGjEnzlEKqntiJ4PI82y+bDdlp56ZaSM68GFEIaJsbsHL4LTGRV",
+          "ZxHL5T5HkVDl1uTXF4aOs4CEoxPlNdtTJakjCuIqQRbA1TBfY1D7MoRhcZMNRd9/UDNe00p5t8Fn",
+          "KlNEe14Vyt+4nHzpUs5tDiBKfftt4WJkIzrZYEKoSn1wfb73xXqK6Ro0VCSc9N61o1H0qW6Brxbf",
+          "0rBE6dAiknIAUOuVbNT9NZoxqqVQYzvXQn1VRtMQGBqHJ+4A9G61ABEBAAG0FmNhcm9sQGNoYXQu",
+          "ZXhhbXBsZS5jb22JAU4EEwEKADgWIQQqDDrg5k1agWfJcw22MSTsB53J1QUCavkUBQIbDwULCQgH",
+          "AgYVCgkICwIEFgIDAQIeAQIXgAAKCRC2MSTsB53J1Q5sB/9ZDV654/HSlv3ngjZGqbN90B4eN9x1",
+          "C5s8KFpGIj55tPaxfF1vkk/SVzHK9oUeXTMZrbzXFpY849AUFTh5TpEaOrtpBJy+lojgbWlwJ/26",
+          "ZlY89s8YrwXtHO/1wkzpD6IMHUqKWPfqLMZ3+tvCqx0WEKoSPU3manv8wz+5T09j7tTcrIVDQ3W3",
+          "w50cT4Cn74TOdlToH1M43oQDoPjlVpuJbnTtp83Jbg+1oHbOY61pDGCbKYNDGYh+grJhDRgQKenE",
+          "xQ7VQqB58kWo/ZENZffLdwmIFsEx9fvyoThl/K4T/H5o5HrzEA3BlHsXh+3pXxlaH74zDnYB+T0K",
+          "hs97MiQ4",
+        ].join(""),
+      ),
+      (c) => c.charCodeAt(0),
+    );
+    const key = await openpgp.readKey({ binaryKey: primaryOnly });
+    expect((await key.getEncryptionKey()).getKeyID().equals(key.getKeyID())).toBe(true);
+    expect(await checkPublishedKey(primaryOnly, "carol@chat.example.com")).toBeNull();
+  });
+
+  it("refuses an empty address, which a User ID without one would match", async () => {
+    const { publicKey } = await openpgp.generateKey({
+      type: "ecc",
+      curve: "curve25519Legacy",
+      userIDs: [{ name: "Carol" }],
+      format: "binary",
+    });
+    expect(await checkPublishedKey(publicKey, "")).toBeNull();
   });
 });

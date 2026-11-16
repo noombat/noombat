@@ -37,7 +37,13 @@ export interface PeerState {
    *  First acquisition of a key is not a replacement and does not
    *  set this field. */
   lastKeyChangeAt: number | null;
+  /** Where `publicKey` came from: the peer's own Autocrypt header, or an
+   *  instance's directory before the peer has written. `null` while no
+   *  key is held. */
+  keyOrigin: KeyOrigin;
 }
+
+export type KeyOrigin = "autocrypt" | "instance" | null;
 
 export interface AutocryptHeader {
   /** The canonicalised sender address. */
@@ -191,6 +197,7 @@ function emptyPeerState(): PeerState {
     gossipKey: null,
     gossipTimestamp: null,
     lastKeyChangeAt: null,
+    keyOrigin: null,
   };
 }
 
@@ -248,6 +255,7 @@ export class PeerStateTable {
       entry.lastSeenAutocrypt = msg.effectiveDate;
       entry.publicKey = Array.from(header.publicKey);
       entry.preferEncrypt = header.preferEncrypt;
+      entry.keyOrigin = "autocrypt";
       keyMutated = true;
 
       if (keyChanged) {
@@ -317,6 +325,21 @@ export class PeerStateTable {
     return { mutated: true, keyChanged };
   }
 
+  /** Hold `key`, which an instance published for `addr`, unless a key is
+   *  already held: a published key never replaces one. It states no
+   *  preference and leaves `lastSeenAutocrypt` at 0, so the peer's first
+   *  header applies, and different bytes there raise the key-change
+   *  notice. Returns whether the key was adopted. */
+  adoptPublishedKey(addr: string, key: Uint8Array): boolean {
+    const canonical = canonicalise(addr);
+    const entry = this.peers.get(canonical) ?? emptyPeerState();
+    if (entry.publicKey.length > 0) return false;
+    entry.publicKey = Array.from(key);
+    entry.keyOrigin = "instance";
+    this.peers.set(canonical, entry);
+    return true;
+  }
+
   /** Retrieve the peer state for the given address. */
   get(addr: string): PeerState | undefined {
     return this.peers.get(canonicalise(addr));
@@ -342,7 +365,8 @@ export class PeerStateTable {
    *
    *  Entries written before `lastKeyChangeAt` existed lack the field;
    *  it is normalised to `null` so that later reads do not observe
-   *  `undefined`. */
+   *  `undefined`. Entries written before `keyOrigin` existed held only
+   *  keys from Autocrypt. */
   static fromJson(json: string): PeerStateTable {
     const table = new PeerStateTable();
     const obj = JSON.parse(json) as Record<string, Partial<PeerState>>;
@@ -351,6 +375,7 @@ export class PeerStateTable {
         ...emptyPeerState(),
         ...v,
         lastKeyChangeAt: v.lastKeyChangeAt ?? null,
+        keyOrigin: v.keyOrigin ?? (v.publicKey && v.publicKey.length > 0 ? "autocrypt" : null),
       });
     }
     return table;

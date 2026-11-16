@@ -3,7 +3,8 @@
 
 /**
  * The instance's directory of chat keys: each member publishes their
- * public key there, so that others can write to them first.
+ * public key there, so that others can write to them first, and looks up
+ * the key of someone who has not written yet.
  */
 
 import type { CredentialBlob } from "./blob";
@@ -48,6 +49,58 @@ export async function ensureOwnKeyPublished(
  */
 export async function repairOwnKey(address: string, blob: CredentialBlob): Promise<void> {
   await ensureOwnKeyPublished(address, base64ToUint8(blob.publicKeyB64)).catch(() => false);
+}
+
+/** A published key as looked up: checked, and with the address it is for. */
+export type PublishedKeyResult =
+  | { status: "found"; address: string; key: Uint8Array; fingerprint: string }
+  | { status: "absent" }
+  | { status: "malformed" }
+  | { status: "invalid" }
+  | { status: "error" };
+
+/**
+ * The key the instance publishes for `address`, checked against the
+ * address asked for rather than the one the server answers with.
+ */
+export async function fetchPublishedKey(address: string): Promise<PublishedKeyResult> {
+  return lookUp(`/api/v1/chat/keys/${encodeURIComponent(address)}`, address);
+}
+
+/**
+ * The chat address and key of the member a handle names, `@user@domain`,
+ * on this instance or another noombat instance.
+ */
+export async function fetchPublishedKeyByHandle(handle: string): Promise<PublishedKeyResult> {
+  return lookUp(`/api/v1/chat/keys/by-handle/${encodeURIComponent(handle)}`, null);
+}
+
+async function lookUp(url: string, asked: string | null): Promise<PublishedKeyResult> {
+  let resp: Response;
+  try {
+    resp = await fetch(url, { headers: authHeaders() });
+  } catch {
+    return { status: "error" };
+  }
+  if (resp.status === 404) return { status: "absent" };
+  // Neither an address nor a handle: asking again changes nothing.
+  if (resp.status === 400) return { status: "malformed" };
+  if (!resp.ok) return { status: "error" };
+  let address: string;
+  let key: Uint8Array;
+  try {
+    const body = (await resp.json()) as { address: unknown; key: unknown };
+    if (typeof body.address !== "string" || typeof body.key !== "string") {
+      return { status: "invalid" };
+    }
+    address = asked ?? body.address;
+    key = base64ToUint8(body.key);
+  } catch {
+    return { status: "invalid" };
+  }
+  const { checkPublishedKey } = await import("./crypto");
+  const fingerprint = await checkPublishedKey(key, address);
+  return fingerprint ? { status: "found", address, key, fingerprint } : { status: "invalid" };
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
