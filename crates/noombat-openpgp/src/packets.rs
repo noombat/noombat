@@ -84,7 +84,7 @@ fn skip_body(mut input: &[u8]) -> Option<&[u8]> {
 
 /// The big-endian number in the first `octets` octets of `input`, at most
 /// four, and the input after them.
-fn read_be(input: &[u8], octets: usize) -> Option<(u32, &[u8])> {
+pub(crate) fn read_be(input: &[u8], octets: usize) -> Option<(u32, &[u8])> {
     let (number, rest) = input.split_at_checked(octets)?;
     let value = number
         .iter()

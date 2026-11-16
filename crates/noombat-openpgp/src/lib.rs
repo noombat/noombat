@@ -3,15 +3,18 @@
 
 #![forbid(unsafe_code)]
 //! Whether a message is OpenPGP-encrypted and nothing else, and its
-//! ASCII armour.
+//! ASCII armour; and whether a key is one public key for a chat address.
 //!
-//! The rule is the Chatmail relay's: session key packets, then one
+//! The message rule is the Chatmail relay's: session key packets, then one
 //! encrypted data packet, with nothing before, between or after them. The
 //! relay's filter applies it to the armour it carries, and the server to
 //! the packets a member sends before armouring them, so the two cannot
 //! disagree.
 
+mod key;
 mod packets;
+
+pub use key::{KeyRefusal, MAX_PUBLIC_KEY_LEN, check_public_key};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD;
