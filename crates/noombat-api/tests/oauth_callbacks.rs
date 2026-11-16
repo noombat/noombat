@@ -333,6 +333,53 @@ async fn the_browser_that_starts_an_orcid_link_finishes_it(pool: PgPool) {
     );
 }
 
+/// Linking an iD adds it to the actor document, so followers are sent it.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn linking_an_orcid_id_pushes_it_to_followers(pool: PgPool) {
+    let alice = account(&pool, "alice", "active").await;
+    let follower: Uuid = sqlx::query_scalar(
+        "INSERT INTO actors \
+             (actor_type, ap_id, username, domain, public_key_pem, is_local, inbox_url) \
+         VALUES ('individual', 'https://elsewhere.example/users/dana', 'dana', \
+                 'elsewhere.example', 'KEY', FALSE, 'https://elsewhere.example/inbox') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("remote follower");
+    sqlx::query("INSERT INTO follows (follower_id, following_id, accepted) VALUES ($1, $2, TRUE)")
+        .bind(follower)
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .expect("follow");
+    // What followers hold before the link.
+    noombat_federation::update::push_actor_document(&pool, alice, DOMAIN).await;
+    sqlx::query("DELETE FROM delivery_queue")
+        .execute(&pool)
+        .await
+        .expect("sent");
+
+    let session = signed_in_as(&pool, alice, "alice").await;
+    let app = test_state(pool.clone()).await;
+    let (state_token, cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    finish(&app, &state_token, &cookies).await;
+
+    let pushed: Vec<serde_json::Value> =
+        sqlx::query_scalar("SELECT payload FROM delivery_queue WHERE actor_id = $1")
+            .bind(alice)
+            .fetch_all(&pool)
+            .await
+            .expect("queue");
+    assert_eq!(pushed.len(), 1, "one Update");
+    assert_eq!(pushed[0]["type"], "Update");
+    assert!(
+        pushed[0]["object"].to_string().contains(ORCID),
+        "carrying the iD"
+    );
+}
+
 // ..... A flow finished in another browser .....
 
 // Known defect: the state is bound to no cookie; remove `should_panic` once the callback checks

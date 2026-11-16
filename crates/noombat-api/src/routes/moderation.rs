@@ -79,10 +79,26 @@ pub struct SuspendRequest {
 /// in chat-report resolution, ensuring both code paths federate the
 /// `Delete` activity and perform all sidecar steps.
 async fn execute_suspension(state: &AppState, actor_id: Uuid) -> Result<(), ApiError> {
-    // Step 1: set actor_status to suspended.
-    let actor =
-        noombat_identity::repo::set_actor_status(&state.pool, actor_id, ActorStatus::Suspended)
-            .await?;
+    // Step 1: set actor_status to suspended, and in the same statement
+    // forget what followers were last sent: the `Delete` below takes the
+    // account from them, so the push after a lifted suspension sends the
+    // document whatever it last carried. Nothing is pushed meanwhile.
+    let suspended = sqlx::query(
+        "UPDATE actors SET actor_status = $2, federated_digest = NULL, updated_at = now() \
+         WHERE id = $1 AND is_local = TRUE",
+    )
+    .bind(actor_id)
+    .bind(ActorStatus::Suspended.as_str())
+    .execute(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
+    if suspended.rows_affected() == 0 {
+        return Err(ApiError(NoombatError::NotFound {
+            entity: "actor",
+            id: actor_id,
+        }));
+    }
+    let actor = noombat_identity::repo::find_by_id(&state.pool, actor_id).await?;
 
     // Remove from search index.
     if let Some(ref search) = state.search {
@@ -182,6 +198,8 @@ async fn suspend_actor(
 ///    is what keeps it from being served once the account is active.
 /// 2. Set `actor_status` to `active`.
 /// 3. Unblock the recipient address via the sidecar.
+/// 4. Push an `Update` with the document as it now is: the suspension sent
+///    followers a `Delete`, and the flag withdraws the chat key.
 async fn unsuspend_actor(
     State(state): State<AppState>,
     Path(actor_id): Path<Uuid>,
@@ -221,6 +239,9 @@ async fn unsuspend_actor(
             info!(address = %chatmail_addr, "recipient unblocked (step 3)");
         }
     }
+
+    // Step 4.
+    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
 
     // Re-index if the actor is discoverable, from the profile's search
     // document: the actor record holds the chat address, and the index

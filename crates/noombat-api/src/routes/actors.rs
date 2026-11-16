@@ -1147,6 +1147,8 @@ async fn create_alias(
     // conflict clause, so adding an alias twice failed the request, and
     // it was the same shape as the move route bypassing initiate_move.
     let id = noombat_federation::move_actor::add_alias(&state.pool, actor_id, &req.alias).await?;
+    // The document lists the aliases, as `alsoKnownAs`.
+    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
 
     // Return an HTML fragment for HTMX to append.
     let html = format!(
@@ -1170,6 +1172,7 @@ async fn delete_alias(
     let actor_id = require_owner(&viewer, &username)?;
 
     noombat_federation::move_actor::remove_alias_by_id(&state.pool, actor_id, alias_id).await?;
+    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
 
     Ok(StatusCode::OK)
 }

@@ -439,7 +439,10 @@ pub async fn create_local_post(pool: &PgPool, post: &NewPost) -> Result<PostSumm
 ///
 /// The `DISTINCT` clause ensures that duplicate inbox URIs (whether
 /// shared or individual) produce only one delivery.
-pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> {
+pub async fn get_follower_inboxes<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    actor_id: Uuid,
+) -> Result<Vec<String>> {
     let inboxes = sqlx::query_scalar::<_, String>(
         r#"SELECT DISTINCT
                COALESCE(a.shared_inbox_url, a.inbox_url, a.ap_id || '/inbox')
@@ -448,7 +451,7 @@ pub async fn get_follower_inboxes(pool: &PgPool, actor_id: Uuid) -> Result<Vec<S
            WHERE f.following_id = $1 AND f.accepted = TRUE"#,
     )
     .bind(actor_id)
-    .fetch_all(pool)
+    .fetch_all(executor)
     .await?;
 
     Ok(inboxes)

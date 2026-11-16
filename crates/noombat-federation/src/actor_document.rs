@@ -10,6 +10,7 @@
 use std::borrow::Cow;
 
 use noombat_core::actor::Actor;
+use noombat_core::error::{NoombatError, Result};
 use noombat_core::privacy::{ListVisibility, SectionVisibility};
 use serde_json::Value;
 use sqlx::PgPool;
@@ -20,29 +21,64 @@ use crate::move_actor;
 
 /// Gather an actor's federated inputs and serialise the document.
 ///
-/// A gather that fails degrades to a smaller document rather than to no
+/// A read that fails degrades to a smaller document rather than to no
 /// document: an actor that cannot be served is worse than one served
 /// without its sections, and the dereference path has no way to retry.
 pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
-    let sections = match fetch_public_sections(pool, actor.id).await {
-        Ok(sections) => sections,
-        Err(error) => {
-            warn!(
-                actor = %actor.ap_id,
-                %error,
-                "failed to fetch profile sections; serving a minimal actor"
-            );
-            Vec::new()
+    assemble(pool, actor, domain, Gather::Degrade)
+        .await
+        .expect("every read degrades, so the build cannot fail")
+}
+
+/// [`build`], failing where it degrades. For a push: followers keep the
+/// document they are sent, so one a failed read had left smaller would
+/// withdraw what nobody withdrew.
+pub async fn build_whole(pool: &PgPool, actor: &Actor, domain: &str) -> Result<Value> {
+    assemble(pool, actor, domain, Gather::Whole).await
+}
+
+/// What a failed read does to the document.
+#[derive(Clone, Copy)]
+enum Gather {
+    Degrade,
+    Whole,
+}
+
+/// `read`'s value, or for a failed read, `fallback` where `gather`
+/// degrades.
+fn kept<T>(read: Result<T>, gather: Gather, fallback: T, actor: &Actor, what: &str) -> Result<T> {
+    match (read, gather) {
+        (Ok(value), _) => Ok(value),
+        (Err(error), Gather::Degrade) => {
+            warn!(actor = %actor.ap_id, %error, "failed to read {what}; leaving it out");
+            Ok(fallback)
         }
-    };
+        (Err(error), Gather::Whole) => Err(error),
+    }
+}
 
-    let aliases = move_actor::list_aliases(pool, actor.id)
-        .await
-        .unwrap_or_default();
-
-    let links = noombat_identity::verification::list_links(pool, actor.id)
-        .await
-        .unwrap_or_default();
+async fn assemble(pool: &PgPool, actor: &Actor, domain: &str, gather: Gather) -> Result<Value> {
+    let sections = kept(
+        fetch_public_sections(pool, actor.id).await,
+        gather,
+        Vec::new(),
+        actor,
+        "the profile sections",
+    )?;
+    let aliases = kept(
+        move_actor::list_aliases(pool, actor.id).await,
+        gather,
+        Vec::new(),
+        actor,
+        "the aliases",
+    )?;
+    let links = kept(
+        noombat_identity::verification::list_links(pool, actor.id).await,
+        gather,
+        Vec::new(),
+        actor,
+        "the verified links",
+    )?;
     let link_refs: Vec<VerifiedLinkRef<'_>> = links
         .iter()
         .filter(|link| link.verified_at.is_some() && link.visibility == "public")
@@ -52,60 +88,62 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
     // Advertised only where the owner has made the list public. The
     // collection endpoint enforces the setting again, so this decides
     // what a peer is told exists, not what it may read.
-    let connections = match noombat_identity::connections::list_settings(pool, actor.id).await {
-        Ok(settings) => matches!(settings.connections, ListVisibility::Public)
-            .then(|| format!("{}/connections", actor.ap_id)),
-        Err(error) => {
-            warn!(
-                actor = %actor.ap_id,
-                %error,
-                "failed to read the list settings; omitting the connections collection"
-            );
-            None
-        }
-    };
+    let settings = kept(
+        noombat_identity::connections::list_settings(pool, actor.id)
+            .await
+            .map(Some),
+        gather,
+        None,
+        actor,
+        "the list settings",
+    )?;
+    let connections = settings
+        .filter(|settings| matches!(settings.connections, ListVisibility::Public))
+        .map(|_| format!("{}/connections", actor.ap_id));
 
     // The avatar's description lives with the upload, not on the actor
-    // row, so it is read here rather than carried on `Actor`. A failure
-    // omits the property instead of failing the document: a peer would
-    // rather have the picture undescribed than not have the actor.
-    let avatar_alt: Option<String> = sqlx::query_scalar(
-        "SELECT alt_text FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
-    )
-    .bind(actor.id)
-    .fetch_optional(pool)
-    .await
-    .ok()
-    .flatten()
-    .flatten();
+    // row, so it is read here rather than carried on `Actor`.
+    let avatar_alt: Option<String> = kept(
+        sqlx::query_scalar(
+            "SELECT alt_text FROM media_attachments WHERE actor_id = $1 AND purpose = 'avatar'",
+        )
+        .bind(actor.id)
+        .fetch_optional(pool)
+        .await
+        .map(Option::flatten)
+        .map_err(NoombatError::from),
+        gather,
+        None,
+        actor,
+        "the avatar's description",
+    )?;
 
     // Read here as the avatar's description is: only a key for the
     // member's current address, while their account may sign in and they
     // need not set chat up again, as the local lookup serves it. Whether the
     // address, and with it the key, is published at all is decided in
-    // `build_federated_actor`. A failure omits the key from the document
-    // rather than leaving the actor unserved.
+    // `build_federated_actor`.
     let chat_key: Option<Vec<u8>> = match &actor.chatmail_addr {
         Some(address) if actor.actor_status.is_active() && !actor.chat_requires_reprovisioning => {
-            match sqlx::query_scalar(
-                "SELECT key_data FROM chat_keys WHERE actor_id = $1 AND address = $2",
-            )
-            .bind(actor.id)
-            .bind(address)
-            .fetch_optional(pool)
-            .await
-            {
-                Ok(key) => key,
-                Err(error) => {
-                    warn!(actor = %actor.ap_id, %error, "failed to read the chat key; omitting it");
-                    None
-                }
-            }
+            kept(
+                sqlx::query_scalar(
+                    "SELECT key_data FROM chat_keys WHERE actor_id = $1 AND address = $2",
+                )
+                .bind(actor.id)
+                .bind(address)
+                .fetch_optional(pool)
+                .await
+                .map_err(NoombatError::from),
+                gather,
+                None,
+                actor,
+                "the chat key",
+            )?
         }
         _ => None,
     };
 
-    downgrade::build_federated_actor(
+    Ok(downgrade::build_federated_actor(
         actor,
         domain,
         &sections,
@@ -115,7 +153,7 @@ pub async fn build(pool: &PgPool, actor: &Actor, domain: &str) -> Value {
         connections.as_deref(),
         avatar_alt.as_deref(),
         chat_key.as_deref(),
-    )
+    ))
 }
 
 /// Fetch all public-visibility profile sections for an actor,

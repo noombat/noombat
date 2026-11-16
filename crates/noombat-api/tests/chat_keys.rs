@@ -226,9 +226,23 @@ struct Reply {
 }
 
 async fn send(pool: &PgPool, method: &str, uri: &str, bearer: Option<&str>, body: &[u8]) -> Reply {
+    send_with(pool, method, uri, bearer, &[], body).await
+}
+
+async fn send_with(
+    pool: &PgPool,
+    method: &str,
+    uri: &str,
+    bearer: Option<&str>,
+    headers: &[(&str, &str)],
+    body: &[u8],
+) -> Reply {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(token) = bearer {
         builder = builder.header("authorization", format!("Bearer {token}"));
+    }
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
     }
     let request = builder.body(Body::from(body.to_vec())).expect("request");
     let response = build_router(test_state(pool.clone()))
@@ -249,6 +263,22 @@ async fn send(pool: &PgPool, method: &str, uri: &str, bearer: Option<&str>, body
         cache_control,
         body,
     }
+}
+
+/// A signed-in form post's status.
+async fn send_form(pool: &PgPool, uri: &str, token: &str, body: &[u8]) -> StatusCode {
+    let request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(body.to_vec()))
+        .expect("request");
+    build_router(test_state(pool.clone()))
+        .oneshot(request)
+        .await
+        .expect("the router is infallible")
+        .status()
 }
 
 async fn publish(pool: &PgPool, token: &str, key: &[u8]) -> Reply {
@@ -630,6 +660,440 @@ async fn a_changed_key_is_pushed_to_followers_and_the_same_key_is_not(pool: PgPo
             expected.into_iter().map(|b64| Some(key(b64))).collect();
         assert_eq!(keys, expected);
     }
+}
+
+/// A remote actor following `followed`; their inbox.
+async fn follow_from_elsewhere(pool: &PgPool, followed: Uuid) -> &'static str {
+    const INBOX: &str = "https://elsewhere.example/users/dana/inbox";
+    let follower: Uuid = sqlx::query_scalar(
+        "INSERT INTO actors \
+             (actor_type, ap_id, username, domain, public_key_pem, is_local, inbox_url) \
+         VALUES ('individual', 'https://elsewhere.example/users/dana', 'dana', \
+                 'elsewhere.example', 'KEY', FALSE, $1) \
+         RETURNING id",
+    )
+    .bind(INBOX)
+    .fetch_one(pool)
+    .await
+    .expect("remote follower");
+    sqlx::query("INSERT INTO follows (follower_id, following_id, accepted) VALUES ($1, $2, TRUE)")
+        .bind(follower)
+        .bind(followed)
+        .execute(pool)
+        .await
+        .expect("follow");
+    INBOX
+}
+
+/// The objects of the `Update`s queued from `actor` to `inbox`, oldest first.
+async fn updates_to(pool: &PgPool, actor: Uuid, inbox: &str) -> Vec<serde_json::Value> {
+    let payloads: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload FROM delivery_queue WHERE actor_id = $1 AND target_inbox = $2 ORDER BY id",
+    )
+    .bind(actor)
+    .bind(inbox)
+    .fetch_all(pool)
+    .await
+    .expect("queue");
+    payloads
+        .into_iter()
+        .map(|payload| {
+            assert_eq!(payload["type"], "Update");
+            payload["object"].clone()
+        })
+        .collect()
+}
+
+/// Whether an actor document carries the chat address.
+fn names_a_chat_address(document: &serde_json::Value) -> bool {
+    document["attachment"]
+        .as_array()
+        .is_some_and(|items| items.iter().any(|item| item["name"] == "Chat"))
+}
+
+/// Followers drop a kept key on an `Update` without one, so turning the
+/// address off must send them one; saving again with nothing changed
+/// sends nothing.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn withdrawing_the_address_pushes_an_update_without_it_or_the_key(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    for _ in 0..2 {
+        let reply = send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+        assert_eq!(reply, StatusCode::NO_CONTENT);
+        let updates = updates_to(&pool, pair.bob, inbox).await;
+        assert_eq!(
+            updates.len(),
+            1,
+            "one Update, and none for the same settings"
+        );
+        assert_eq!(published_key(&updates[0]), None);
+        assert!(!names_a_chat_address(&updates[0]));
+    }
+}
+
+/// A lifted suspension leaves the member to set chat up again, which
+/// withdraws the key followers were last sent.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn lifting_a_suspension_pushes_an_update_without_the_key(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(pair.bob)
+        .execute(&pool)
+        .await
+        .expect("suspension");
+    let moderator = insert_member(&pool, "moderator", false, true).await;
+    sqlx::query("UPDATE actors SET instance_role = 'moderator' WHERE id = $1")
+        .bind(moderator)
+        .execute(&pool)
+        .await
+        .expect("role");
+    let token = token_for(&pool, moderator, "moderator").await;
+
+    let uri = format!("/api/v1/admin/actors/{}/unsuspend", pair.bob);
+    for _ in 0..2 {
+        let reply = send(&pool, "POST", &uri, Some(&token), &[]).await;
+        assert_eq!(reply.status, StatusCode::OK);
+        let updates = updates_to(&pool, pair.bob, inbox).await;
+        assert_eq!(
+            updates.len(),
+            1,
+            "one Update, and none when nothing changed"
+        );
+        assert_eq!(published_key(&updates[0]), None);
+        assert!(names_a_chat_address(&updates[0]), "the address stays");
+    }
+}
+
+/// Every default but the chat address, as a browser sends the form.
+const HIDDEN: &[u8] = b"discoverable=true&indexable=true&federate_profile=true\
+                        &show_followers_count=true&cv_download=public";
+
+/// What followers were last sent is compared, not the state before a
+/// request: a change whose push was lost reaches them at the next push,
+/// here a save that itself changes nothing.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_change_nobody_pushed_reaches_followers_at_the_next_push(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    sqlx::query(
+        "UPDATE actors SET actor_privacy = jsonb_set(actor_privacy, '{chatmail_visible}', 'false') \
+         WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .execute(&pool)
+    .await
+    .expect("hidden, and pushed by nobody");
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let reply = send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    assert_eq!(reply, StatusCode::NO_CONTENT);
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1);
+    assert!(!names_a_chat_address(&updates[0]));
+}
+
+/// A suspension sent followers a `Delete`; a session that outlives it
+/// must not have an `Update` signed in the account's name.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn nothing_is_pushed_for_a_suspended_account(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(pair.bob)
+        .execute(&pool)
+        .await
+        .expect("suspended");
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    assert!(updates_to(&pool, pair.bob, inbox).await.is_empty());
+}
+
+/// A refusal of the second half of the form leaves the first half saved,
+/// and pushed.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_save_refused_halfway_still_pushes_what_was_saved(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let half = [HIDDEN, b"&default_visibility=nonsense".as_slice()].concat();
+    let reply = send_form(&pool, "/settings/privacy", &bob_token, &half).await;
+    assert_eq!(reply, StatusCode::BAD_REQUEST);
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1);
+    assert!(!names_a_chat_address(&updates[0]));
+}
+
+/// The member's digest of the last document pushed.
+async fn digest_of(pool: &PgPool, id: Uuid) -> Option<Vec<u8>> {
+    sqlx::query_scalar("SELECT federated_digest FROM actors WHERE id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("digest")
+}
+
+/// A push whose `Update`s could not be queued records nothing, and forgets
+/// what was last pushed, so the next push sends whatever it builds.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_push_that_could_not_be_queued_is_made_up_by_the_next(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    for statement in [
+        "CREATE FUNCTION refuse_delivery() RETURNS trigger LANGUAGE plpgsql \
+         AS $$ BEGIN RAISE EXCEPTION 'the queue is down'; END $$",
+        "CREATE TRIGGER refuse_delivery BEFORE INSERT ON delivery_queue \
+         FOR EACH ROW EXECUTE FUNCTION refuse_delivery()",
+    ] {
+        sqlx::query(statement)
+            .execute(&pool)
+            .await
+            .expect("the queue down");
+    }
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    assert!(updates_to(&pool, pair.bob, inbox).await.is_empty());
+    assert_eq!(digest_of(&pool, pair.bob).await, None, "nothing recorded");
+
+    sqlx::query("DROP TRIGGER refuse_delivery ON delivery_queue")
+        .execute(&pool)
+        .await
+        .expect("the queue back");
+    // The same settings again: nothing changes, but the withdrawal goes out.
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1);
+    assert!(!names_a_chat_address(&updates[0]));
+}
+
+/// A document one of whose reads failed is not pushed: followers would
+/// take the smaller document as the member withdrawing what it left out.
+/// Dereferencing still serves it, smaller.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_document_that_could_not_be_read_whole_is_not_pushed(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    sqlx::query("UPDATE actors SET federated_digest = NULL WHERE id = $1")
+        .bind(pair.bob)
+        .execute(&pool)
+        .await
+        .expect("nothing pushed yet");
+    sqlx::query("ALTER TABLE chat_keys RENAME TO chat_keys_away")
+        .execute(&pool)
+        .await
+        .expect("the keys unreadable");
+    noombat_federation::update::push_actor_document(&pool, pair.bob, DOMAIN).await;
+    assert!(updates_to(&pool, pair.bob, inbox).await.is_empty());
+    assert_eq!(published_key(&actor_document(&pool, "bob").await), None);
+
+    sqlx::query("ALTER TABLE chat_keys_away RENAME TO chat_keys")
+        .execute(&pool)
+        .await
+        .expect("the keys back");
+    noombat_federation::update::push_actor_document(&pool, pair.bob, DOMAIN).await;
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1);
+    assert_eq!(published_key(&updates[0]), Some(key(BOB_KEY)));
+}
+
+/// Pushes at once hold no connection while building, so they cannot
+/// starve a pool between them, and only one sends: the others find the
+/// document already recorded, or look again after losing the race.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn pushes_at_once_neither_starve_the_pool_nor_send_twice(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    sqlx::query(
+        "UPDATE actors SET actor_privacy = jsonb_set(actor_privacy, '{chatmail_visible}', 'false') \
+         WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .execute(&pool)
+    .await
+    .expect("a change to push");
+    let small = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(2)
+        .acquire_timeout(std::time::Duration::from_secs(3))
+        .connect_with((*pool.connect_options()).clone())
+        .await
+        .expect("a small pool");
+    let mut pushes = tokio::task::JoinSet::new();
+    for _ in 0..8 {
+        let small = small.clone();
+        let bob = pair.bob;
+        pushes.spawn(async move {
+            noombat_federation::update::push_actor_document(&small, bob, DOMAIN).await;
+        });
+    }
+    while let Some(push) = pushes.join_next().await {
+        push.expect("a push");
+    }
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1, "one Update");
+    assert!(!names_a_chat_address(&updates[0]));
+    assert!(digest_of(&pool, pair.bob).await.is_some(), "and recorded");
+    // Queued once, not queued again over itself: nothing was queued before.
+    let next: i64 = sqlx::query_scalar("SELECT nextval('delivery_queue_id_seq')")
+        .fetch_one(&pool)
+        .await
+        .expect("sequence");
+    assert_eq!(next, 2, "one Update queued in all");
+}
+
+/// Sections that tie on how they are sorted keep one order, so a row
+/// stored somewhere else, the same in every value, does not reorder the
+/// document and push it again.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn sections_that_tie_keep_one_order(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let mut rows = Vec::new();
+    for title in ["first", "second", "third"] {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO work_experiences \
+                 (actor_id, title, organization, start_date, ap_object) \
+             VALUES ($1, $2, 'Acme', '2020-01-01', jsonb_build_object('name', $2::text)) \
+             RETURNING id",
+        )
+        .bind(pair.bob)
+        .bind(title)
+        .fetch_one(&pool)
+        .await
+        .expect("a section");
+        rows.push(id);
+    }
+    // The newest queued row, which any push raises, replacing or not.
+    let newest = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, Option<i64>>("SELECT max(id) FROM delivery_queue")
+            .fetch_one(&pool)
+            .await
+            .expect("queue")
+    };
+    noombat_federation::update::push_actor_document(&pool, pair.bob, DOMAIN).await;
+    assert!(!updates_to(&pool, pair.bob, inbox).await.is_empty());
+    let pushed = newest(pool.clone()).await;
+    for id in rows {
+        // Deleted and stored again, unchanged: an update in place can keep
+        // the row where it was, which proves nothing.
+        let row: serde_json::Value = sqlx::query_scalar(
+            "DELETE FROM work_experiences WHERE id = $1 RETURNING to_jsonb(work_experiences)",
+        )
+        .bind(id)
+        .fetch_one(&pool)
+        .await
+        .expect("taken out");
+        sqlx::query(
+            "INSERT INTO work_experiences \
+             SELECT * FROM jsonb_populate_record(NULL::work_experiences, $1)",
+        )
+        .bind(row)
+        .execute(&pool)
+        .await
+        .expect("stored again");
+        noombat_federation::update::push_actor_document(&pool, pair.bob, DOMAIN).await;
+        assert_eq!(newest(pool.clone()).await, pushed, "pushed again");
+    }
+}
+
+/// The document lists the member's aliases, as `alsoKnownAs`.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn adding_an_alias_pushes_it(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let request = Request::builder()
+        .method("POST")
+        .uri("/users/bob/aliases")
+        .header("authorization", format!("Bearer {bob_token}"))
+        .header("content-type", "application/json")
+        .body(Body::from(
+            r#"{"alias":"https://elsewhere.example/users/bob"}"#,
+        ))
+        .expect("request");
+    let reply = build_router(test_state(pool.clone()))
+        .oneshot(request)
+        .await
+        .expect("the router is infallible");
+    assert!(reply.status().is_success(), "{}", reply.status());
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    let newest = updates.last().expect("an Update");
+    assert_eq!(
+        newest["alsoKnownAs"],
+        serde_json::json!(["https://elsewhere.example/users/bob"])
+    );
+}
+
+/// A suspension sends followers a `Delete`, so lifting it pushes the
+/// document even where nothing in it changed.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_lifted_suspension_is_pushed_even_unchanged(pool: PgPool) {
+    let carol = insert_member(&pool, "carol", false, true).await;
+    let inbox = follow_from_elsewhere(&pool, carol).await;
+    let carol_token = token_for(&pool, carol, "carol").await;
+    let form = b"discoverable=true&indexable=true&federate_profile=true\
+                 &show_followers_count=true&chatmail_visible=true&cv_download=public";
+    send_form(&pool, "/settings/privacy", &carol_token, form).await;
+    assert_eq!(
+        updates_to(&pool, carol, inbox).await.len(),
+        1,
+        "the first push"
+    );
+    let moderator = insert_member(&pool, "moderator", false, true).await;
+    sqlx::query("UPDATE actors SET instance_role = 'moderator' WHERE id = $1")
+        .bind(moderator)
+        .execute(&pool)
+        .await
+        .expect("role");
+    let token = token_for(&pool, moderator, "moderator").await;
+    for action in ["suspend", "unsuspend"] {
+        let uri = format!("/api/v1/admin/actors/{carol}/{action}");
+        let body = if action == "suspend" {
+            br#"{"reason":"test"}"#.as_slice()
+        } else {
+            b""
+        };
+        let headers = [("content-type", "application/json")];
+        let reply = send_with(&pool, "POST", &uri, Some(&token), &headers, body).await;
+        assert_eq!(reply.status, StatusCode::OK, "{action}");
+    }
+    let kinds: Vec<serde_json::Value> = sqlx::query_scalar(
+        "SELECT payload->'type' FROM delivery_queue WHERE target_inbox = $1 ORDER BY id",
+    )
+    .bind(inbox)
+    .fetch_all(&pool)
+    .await
+    .expect("queue");
+    assert_eq!(kinds, ["Update", "Delete", "Update"]);
+}
+
+/// The relationship lists are saved after the privacy record, and a public
+/// one is in the document followers hold.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn making_the_connections_list_public_pushes_it(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let public = b"discoverable=true&indexable=true&federate_profile=true\
+                   &show_followers_count=true&chatmail_visible=true&cv_download=public\
+                   &connections_visibility=public";
+    let reply = send_form(&pool, "/settings/privacy", &bob_token, public).await;
+    assert_eq!(reply, StatusCode::NO_CONTENT);
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1);
+    assert!(updates[0].get("schema:knows").is_some(), "{}", updates[0]);
 }
 
 #[ignore = "requires a database; run with --include-ignored"]

@@ -51,8 +51,8 @@ struct SigningCredentials {
 ///
 /// `actor_id` is the local sender, which the delivery worker uses to look
 /// up the signing key.
-pub async fn enqueue(
-    pool: &PgPool,
+pub async fn enqueue<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
     actor_id: Uuid,
     payload: &Value,
     target_inbox: &str,
@@ -64,7 +64,7 @@ pub async fn enqueue(
     .bind(actor_id)
     .bind(payload)
     .bind(target_inbox)
-    .execute(pool)
+    .execute(executor)
     .await?;
 
     info!(target_inbox, "enqueued activity for delivery");

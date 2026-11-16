@@ -220,7 +220,11 @@ async fn save_privacy_settings(
             .into_response();
     }
 
-    if let Err(refusal) = save_visibility_columns(&state, actor_id, &form).await {
+    let columns = save_visibility_columns(&state, actor_id, &form).await;
+    // Whatever was saved reaches followers, refused or not: withdrawing
+    // the chat address or the profile changes what they hold.
+    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
+    if let Err(refusal) = columns {
         return refusal.into_response();
     }
 

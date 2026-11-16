@@ -518,8 +518,13 @@ async fn orcid_callback(
         state.open_registrations,
     )
     .await?;
+    // Linking an iD to an account adds it to the document; a sign-in
+    // changes nothing, and its push sends nothing.
+    noombat_federation::update::push_actor_document(&state.pool, result.actor_id, &state.domain)
+        .await;
 
-    // Optionally import publications in the background.
+    // Optionally import publications in the background, which the
+    // document lists once they are public.
     if result.is_new {
         let pool = state.pool.clone();
         let client = state.http_client.clone();
@@ -527,6 +532,7 @@ async fn orcid_callback(
         let actor_id = result.actor_id;
         let pub_api = orcid_config.pub_api_uri.clone();
         let mailto = state.contact_email.clone();
+        let domain = state.domain.clone();
         tokio::spawn(async move {
             if let Err(e) = noombat_identity::orcid_import::import_orcid_scholarly_articles(
                 &pool, &client, actor_id, &orcid, &pub_api, &mailto,
@@ -535,6 +541,7 @@ async fn orcid_callback(
             {
                 tracing::warn!(orcid = %orcid, error = %e, "background ORCID import failed");
             }
+            noombat_federation::update::push_actor_document(&pool, actor_id, &domain).await;
         });
     }
 
@@ -748,6 +755,7 @@ async fn provision_chat(
         })?;
         let rotated = admin.rotate_password(&address).await?;
         noombat_chat::keys::reset_setup(&state.pool, actor_id).await?;
+        noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
         return Ok(Json(ProvisionChatResponse {
             chatmail_addr: address,
             chatmail_password: rotated.password,
@@ -779,6 +787,7 @@ async fn provision_chat(
         .bind(actor_id)
         .execute(&state.pool)
         .await?;
+    noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
 
     Ok(Json(ProvisionChatResponse {
         chatmail_addr: provisioned.address,

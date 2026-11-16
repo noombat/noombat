@@ -156,7 +156,7 @@ pub async fn list_work_experiences(
         work_experience_columns!(),
         " FROM work_experiences \
           WHERE actor_id = $1 AND visibility = ANY($2) \
-          ORDER BY sort_order ASC, start_date DESC"
+          ORDER BY sort_order ASC, start_date DESC, id"
     ))
     .bind(actor_id)
     .bind(&allowed)
@@ -523,7 +523,7 @@ pub async fn list_education_entries(
                   sort_order, visibility
            FROM education_entries
            WHERE actor_id = $1 AND visibility = ANY($2)
-           ORDER BY sort_order ASC, start_date DESC"#,
+           ORDER BY sort_order ASC, start_date DESC, id"#,
     )
     .bind(actor_id)
     .bind(&allowed)
@@ -840,7 +840,7 @@ pub async fn list_scholarly_articles(
                   visibility, fetched_at
            FROM scholarly_articles
            WHERE actor_id = $1 AND visibility = ANY($2)
-           ORDER BY published_date DESC NULLS LAST"#,
+           ORDER BY published_date DESC NULLS LAST, id"#,
     )
     .bind(actor_id)
     .bind(&allowed)
@@ -968,7 +968,7 @@ pub async fn list_custom_sections(
                   content_html, data, sort_order, visibility, created_at
            FROM custom_profile_sections
            WHERE actor_id = $1 AND visibility = ANY($2)
-           ORDER BY sort_order ASC, created_at DESC"#,
+           ORDER BY sort_order ASC, created_at DESC, id"#,
     )
     .bind(actor_id)
     .bind(&allowed)

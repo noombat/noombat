@@ -94,6 +94,10 @@ CREATE TABLE actors (
     chat_requires_reprovisioning BOOLEAN NOT NULL DEFAULT FALSE,
     orcid                        TEXT,
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
+    -- A digest of the actor document the last `Update` carried to followers,
+    -- so one is pushed exactly when the document changed since, and a push
+    -- lost to a failure is made up by the next.
+    federated_digest             BYTEA,
     headline                     TEXT,
     location                     TEXT, -- free-text location (e.g. "Sydney, Australia")
     -- Organisations only: the corporate domain claimed. Publishing is gated

@@ -77,13 +77,16 @@ pub async fn remove_alias_by_id(pool: &PgPool, actor_id: Uuid, alias_id: Uuid) -
     Ok(())
 }
 
-/// Retrieve all aliases for a local actor.
+/// Retrieve all aliases for a local actor, in a fixed order: the actor
+/// document lists them, and a push is decided by a digest of that document,
+/// so the same aliases must always read the same.
 pub async fn list_aliases(pool: &PgPool, actor_id: Uuid) -> Result<Vec<String>> {
-    let aliases =
-        sqlx::query_scalar::<_, String>("SELECT alias FROM actor_aliases WHERE actor_id = $1")
-            .bind(actor_id)
-            .fetch_all(pool)
-            .await?;
+    let aliases = sqlx::query_scalar::<_, String>(
+        "SELECT alias FROM actor_aliases WHERE actor_id = $1 ORDER BY alias",
+    )
+    .bind(actor_id)
+    .fetch_all(pool)
+    .await?;
     Ok(aliases)
 }
 
@@ -412,6 +415,25 @@ mod tests {
         .fetch_one(pool)
         .await
         .expect("grant fixture inserted")
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn aliases_are_listed_in_one_order_whatever_order_they_were_added(pool: PgPool) {
+        let actor = insert_actor(&pool, "alice").await;
+        for alias in [
+            "https://b.example/users/alice",
+            "https://a.example/users/alice",
+        ] {
+            add_alias(&pool, actor, alias).await.expect("alias added");
+        }
+        assert_eq!(
+            list_aliases(&pool, actor).await.expect("aliases listed"),
+            [
+                "https://a.example/users/alice",
+                "https://b.example/users/alice"
+            ]
+        );
     }
 
     async fn grant_state(pool: &PgPool, id: Uuid) -> (String, Option<String>) {
