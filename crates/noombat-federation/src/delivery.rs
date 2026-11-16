@@ -71,6 +71,41 @@ pub async fn enqueue<'e>(
     Ok(())
 }
 
+/// [`enqueue`] an `Update` of `object_id`, removing in the same statement
+/// every `Update` of it still queued for `target_inbox`, a claimed one
+/// included, so a failed delivery finds no row to retry.
+///
+/// For an object sent whole each time, such as an actor's document: the
+/// newest supersedes the rest, and delivery is concurrent and retried, so
+/// an older one left queued could reach the inbox after it.
+pub async fn enqueue_superseding<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    actor_id: Uuid,
+    payload: &Value,
+    target_inbox: &str,
+    object_id: &str,
+) -> noombat_core::error::Result<()> {
+    sqlx::query(
+        r#"WITH superseded AS (
+               DELETE FROM delivery_queue
+               WHERE actor_id = $1 AND target_inbox = $3
+                 AND payload->>'type' = 'Update'
+                 AND payload->'object'->>'id' = $4
+           )
+           INSERT INTO delivery_queue (actor_id, payload, target_inbox)
+           VALUES ($1, $2, $3)"#,
+    )
+    .bind(actor_id)
+    .bind(payload)
+    .bind(target_inbox)
+    .bind(object_id)
+    .execute(executor)
+    .await?;
+
+    info!(target_inbox, "enqueued an Update superseding queued ones");
+    Ok(())
+}
+
 /// Process pending deliveries (called by a background Tokio task).
 ///
 /// Up to 50 rows are fetched per cycle. Deliveries are dispatched

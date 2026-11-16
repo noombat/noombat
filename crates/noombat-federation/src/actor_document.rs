@@ -58,6 +58,22 @@ fn kept<T>(read: Result<T>, gather: Gather, fallback: T, actor: &Actor, what: &s
 }
 
 async fn assemble(pool: &PgPool, actor: &Actor, domain: &str, gather: Gather) -> Result<Value> {
+    // When the document last changed, which a peer compares to keep the
+    // newer of two. None before the first push. Read first, so a document
+    // carries no stamp newer than what it was built from.
+    let updated: Option<chrono::DateTime<chrono::Utc>> = kept(
+        sqlx::query_scalar("SELECT document_updated FROM actors WHERE id = $1")
+            .bind(actor.id)
+            .fetch_optional(pool)
+            .await
+            .map(Option::flatten)
+            .map_err(NoombatError::from),
+        gather,
+        None,
+        actor,
+        "the document's stamp",
+    )?;
+
     let sections = kept(
         fetch_public_sections(pool, actor.id).await,
         gather,
@@ -143,7 +159,7 @@ async fn assemble(pool: &PgPool, actor: &Actor, domain: &str, gather: Gather) ->
         _ => None,
     };
 
-    Ok(downgrade::build_federated_actor(
+    let mut document = downgrade::build_federated_actor(
         actor,
         domain,
         &sections,
@@ -153,7 +169,17 @@ async fn assemble(pool: &PgPool, actor: &Actor, domain: &str, gather: Gather) ->
         connections.as_deref(),
         avatar_alt.as_deref(),
         chat_key.as_deref(),
-    ))
+    );
+    if let Some(updated) = updated {
+        document["updated"] = Value::String(stamp(updated));
+    }
+    Ok(document)
+}
+
+/// A document's `updated`, to the millisecond, which is as fine as the
+/// stored stamp is kept apart.
+pub(crate) fn stamp(updated: chrono::DateTime<chrono::Utc>) -> String {
+    updated.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Fetch all public-visibility profile sections for an actor,

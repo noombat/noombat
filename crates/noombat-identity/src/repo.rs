@@ -530,6 +530,8 @@ pub struct RemoteActor {
     pub discoverable: bool,
     /// The actor's own `indexable`, collapsed the same way.
     pub indexable: bool,
+    /// The document's `updated`, when it states one that parses.
+    pub updated: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 /// Insert or update a remote actor in the `actors` table.
@@ -553,7 +555,13 @@ pub struct RemoteActor {
 /// A local `ap_id` is [`NoombatError::Forbidden`]. Postgres skips a
 /// guarded `DO UPDATE` silently rather than erroring, so that is the only
 /// signal a caller gets that the write did not happen.
-pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Actor> {
+///
+/// **An older document is not stored over a newer one.** Two fetches at
+/// once can finish in either order, so when both documents state
+/// `updated` and this one's is earlier than the one stored, the row is
+/// left as it is and [`Upserted::stored`] is false. A document stating
+/// none is stored, and the stamp held stays.
+pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Upserted> {
     let id = Uuid::new_v4();
 
     // The two fields a remote actor actually decides. The rest of the
@@ -566,12 +574,13 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     };
     let privacy_json = serde_json::to_value(&privacy)?;
 
-    sqlx::query(
+    let written = sqlx::query(
         r#"INSERT INTO actors
                (id, actor_type, ap_id, username, display_name, summary_html,
                 sanitiser_version, domain, public_key_pem, public_key_id, inbox_url,
-                shared_inbox_url, ed25519_public_key, is_local, actor_privacy)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, FALSE, $14)
+                shared_inbox_url, ed25519_public_key, is_local, actor_privacy,
+                document_updated)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, FALSE, $14, $15)
            ON CONFLICT (ap_id) DO UPDATE SET
                public_key_pem = EXCLUDED.public_key_pem,
                public_key_id = EXCLUDED.public_key_id,
@@ -581,8 +590,11 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
                inbox_url = EXCLUDED.inbox_url,
                shared_inbox_url = EXCLUDED.shared_inbox_url,
                ed25519_public_key = EXCLUDED.ed25519_public_key,
-               actor_privacy = EXCLUDED.actor_privacy
-           WHERE actors.is_local = FALSE"#,
+               actor_privacy = EXCLUDED.actor_privacy,
+               document_updated = COALESCE(EXCLUDED.document_updated, actors.document_updated)
+           WHERE actors.is_local = FALSE
+             AND (EXCLUDED.document_updated IS NULL OR actors.document_updated IS NULL
+                  OR EXCLUDED.document_updated >= actors.document_updated)"#,
     )
     .bind(id)
     .bind(&remote.actor_type)
@@ -598,8 +610,10 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
     .bind(&remote.shared_inbox_url)
     .bind(&remote.ed25519_public_key)
     .bind(&privacy_json)
+    .bind(remote.updated)
     .execute(pool)
-    .await?;
+    .await?
+    .rows_affected();
 
     // Fetch the persisted row (may be the existing row on conflict).
     let actor = find_by_ap_id(pool, &remote.ap_id).await?.ok_or_else(|| {
@@ -623,7 +637,20 @@ pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<
         return Err(NoombatError::Forbidden);
     }
 
-    Ok(actor)
+    Ok(Upserted {
+        actor,
+        stored: written > 0,
+    })
+}
+
+/// What [`upsert_remote_actor`] did with a fetched document.
+#[derive(Debug)]
+pub struct Upserted {
+    /// The row as it now stands.
+    pub actor: Actor,
+    /// False when the row held a document stated to be newer, which was
+    /// kept: nothing else read from the older one should be stored either.
+    pub stored: bool,
 }
 
 // ..... FOLLOWS .....
@@ -1416,6 +1443,7 @@ mod tests {
             inbox_url: "https://remote.example/inbox".to_owned(),
             shared_inbox_url: None,
             ed25519_public_key: None,
+            updated: None,
         }
     }
 
@@ -1446,10 +1474,72 @@ mod tests {
 
         let actor = upsert_remote_actor(&pool, &remote_claiming(ap_id, "NEW-KEY"))
             .await
-            .expect("a genuine remote actor update must succeed");
+            .expect("a genuine remote actor update must succeed")
+            .actor;
 
         assert!(!actor.is_local);
         assert_eq!(stored_key(&pool, ap_id).await, "NEW-KEY");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn a_first_stamped_document_is_stored_over_an_unstamped_one(pool: PgPool) {
+        let ap_id = "https://remote.example/users/alice";
+        upsert_remote_actor(&pool, &remote_claiming(ap_id, "UNSTAMPED"))
+            .await
+            .expect("first sight");
+        let mut stamped = remote_claiming(ap_id, "STAMPED");
+        stamped.updated = chrono::DateTime::from_timestamp(1_000, 0);
+        let upserted = upsert_remote_actor(&pool, &stamped).await.expect("upsert");
+        assert!(upserted.stored);
+        assert_eq!(stored_key(&pool, ap_id).await, "STAMPED");
+    }
+
+    #[ignore = "requires a database; run with --include-ignored"]
+    #[sqlx::test(migrations = "../../migrations")]
+    async fn an_older_document_is_not_stored_over_a_newer_one(pool: PgPool) {
+        let ap_id = "https://remote.example/users/alice";
+        let at = |seconds| chrono::DateTime::from_timestamp(seconds, 0).expect("a time");
+        let stamp = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, Option<chrono::DateTime<chrono::Utc>>>(
+                "SELECT document_updated FROM actors WHERE ap_id = $1",
+            )
+            .bind(ap_id)
+            .fetch_one(&pool)
+            .await
+            .expect("stamp")
+        };
+        let upsert = |key: &'static str, updated| {
+            let pool = pool.clone();
+            async move {
+                let mut remote = remote_claiming(ap_id, key);
+                remote.updated = updated;
+                upsert_remote_actor(&pool, &remote)
+                    .await
+                    .expect("upsert")
+                    .stored
+            }
+        };
+
+        assert!(upsert("NEWER", Some(at(2_000))).await, "first sight");
+        assert!(!upsert("OLDER", Some(at(1_000))).await, "an older document");
+        assert_eq!(stored_key(&pool, ap_id).await, "NEWER");
+        assert!(
+            upsert("SAME", Some(at(2_000))).await,
+            "as new as the one held"
+        );
+        assert_eq!(stored_key(&pool, ap_id).await, "SAME");
+        assert!(upsert("UNSTAMPED", None).await, "a document stating none");
+        assert_eq!(stored_key(&pool, ap_id).await, "UNSTAMPED");
+        assert_eq!(
+            stamp(pool.clone()).await,
+            Some(at(2_000)),
+            "the stamp held stays"
+        );
+        assert!(
+            !upsert("OLDER", Some(at(1_000))).await,
+            "still older than the stamp held"
+        );
     }
 
     // ..... KEY ID LOOKUP .....
@@ -1661,7 +1751,8 @@ mod tests {
 
         let actor = upsert_remote_actor(&pool, &remote_claiming(ap_id, "BOB-KEY"))
             .await
-            .expect("first sighting of a remote actor must insert");
+            .expect("first sighting of a remote actor must insert")
+            .actor;
 
         assert_eq!(actor.ap_id, ap_id);
         assert!(!actor.is_local);

@@ -65,6 +65,11 @@ pub struct ApActor {
     /// it is bound to the member's instance before anything uses it.
     #[serde(rename = "noombat:chatKey", skip_serializing_if = "Option::is_none")]
     pub chat_key: Option<Value>,
+    /// When the actor's server says the document last changed, unread: a
+    /// value that is no time is ignored rather than refusing the document.
+    /// noombat stamps its own, and a reader keeps the newer of two.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub updated: Option<Value>,
 }
 
 impl ApActor {

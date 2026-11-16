@@ -647,10 +647,13 @@ async fn a_changed_key_is_pushed_to_followers_and_the_same_key_is_not(pool: PgPo
         .expect("queue")
     };
 
+    // A push replaces the `Update` still queued, so one pushed again would
+    // leave a row that looks the same: its id tells them apart.
+    let mut first_id = None;
     for (sent, expected) in [
         (BOB_KEY, vec![BOB_KEY]),
         (BOB_KEY, vec![BOB_KEY]),
-        (BOB_NEW_KEY, vec![BOB_KEY, BOB_NEW_KEY]),
+        (BOB_NEW_KEY, vec![BOB_NEW_KEY]),
     ] {
         assert_eq!(
             publish(&pool, &bob_token, &key(sent)).await.status,
@@ -667,6 +670,12 @@ async fn a_changed_key_is_pushed_to_followers_and_the_same_key_is_not(pool: PgPo
         let expected: Vec<Option<Vec<u8>>> =
             expected.into_iter().map(|b64| Some(key(b64))).collect();
         assert_eq!(keys, expected);
+        let id = updates[0]["id"].clone();
+        if sent == BOB_KEY {
+            assert_eq!(first_id.get_or_insert(id.clone()), &id, "pushed again");
+        } else {
+            assert_ne!(first_id.as_ref(), Some(&id), "the new key's own Update");
+        }
     }
 }
 
@@ -803,6 +812,129 @@ async fn a_change_nobody_pushed_reaches_followers_at_the_next_push(pool: PgPool)
     let updates = updates_to(&pool, pair.bob, inbox).await;
     assert_eq!(updates.len(), 1);
     assert!(!names_a_chat_address(&updates[0]));
+}
+
+/// Every default, the chat address shown, as a browser sends the form.
+const VISIBLE: &[u8] = b"discoverable=true&indexable=true&federate_profile=true\
+                         &show_followers_count=true&chatmail_visible=true&cv_download=public";
+
+/// Delivery is concurrent and retried, so an older document left queued
+/// could reach a follower after a newer one: each push replaces those
+/// still queued for the follower, a claimed one included, so its retry
+/// is never made.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_push_replaces_the_updates_still_queued_for_a_follower(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let first_id = |pool: PgPool| async move {
+        sqlx::query_scalar::<_, i64>("SELECT min(id) FROM delivery_queue WHERE target_inbox = $1")
+            .bind(inbox)
+            .fetch_one(&pool)
+            .await
+            .expect("a row")
+    };
+
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    // Claimed as the delivery worker claims a row, so in flight.
+    let claimed = first_id(pool.clone()).await;
+    sqlx::query("UPDATE delivery_queue SET next_retry = now() + interval '1 hour' WHERE id = $1")
+        .bind(claimed)
+        .execute(&pool)
+        .await
+        .expect("claimed");
+    send_form(&pool, "/settings/privacy", &bob_token, VISIBLE).await;
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    assert_eq!(updates.len(), 1, "only the newest stays queued");
+    assert!(!names_a_chat_address(&updates[0]), "and it is the newest");
+    assert!(
+        first_id(pool.clone()).await > claimed,
+        "the claimed one is gone, so a failed delivery of it finds nothing to retry"
+    );
+}
+
+/// Each follower's inbox has its own queue: a push replaces the `Update`s
+/// still queued for one inbox, never another's.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_push_replaces_only_its_own_followers_updates(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let first = follow_from_elsewhere(&pool, pair.bob).await;
+    let second_follower: Uuid = sqlx::query_scalar(
+        "INSERT INTO actors \
+             (actor_type, ap_id, username, domain, public_key_pem, is_local, inbox_url) \
+         VALUES ('individual', 'https://third.example/users/erin', 'erin', \
+                 'third.example', 'KEY', FALSE, 'https://third.example/inbox') \
+         RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("a second follower");
+    sqlx::query("INSERT INTO follows (follower_id, following_id, accepted) VALUES ($1, $2, TRUE)")
+        .bind(second_follower)
+        .bind(pair.bob)
+        .execute(&pool)
+        .await
+        .expect("follow");
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    for inbox in [first, "https://third.example/inbox"] {
+        let updates = updates_to(&pool, pair.bob, inbox).await;
+        assert_eq!(updates.len(), 1, "{inbox}");
+        assert!(!names_a_chat_address(&updates[0]));
+    }
+}
+
+/// The stamp only moves on, even where the clock is behind the last one.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_documents_stamp_never_goes_back(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let ahead: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
+        "UPDATE actors SET document_updated = date_trunc('milliseconds', now()) + interval '1 hour' \
+         WHERE id = $1 RETURNING document_updated",
+    )
+    .bind(pair.bob)
+    .fetch_one(&pool)
+    .await
+    .expect("a stamp ahead of the clock");
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    let updates = updates_to(&pool, pair.bob, inbox).await;
+    let stamp = updates[0]["updated"].as_str().expect("stamped");
+    let stamp = chrono::DateTime::parse_from_rfc3339(stamp).expect("RFC 3339");
+    assert_eq!(stamp, ahead + chrono::TimeDelta::milliseconds(1));
+}
+
+/// A peer keeps the newer of two documents by their `updated`: moved on
+/// with each change pushed, the same in the `Update` and when the actor is
+/// fetched, and left alone by a save that changes nothing.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn each_document_pushed_is_stamped_later_and_served_with_its_stamp(pool: PgPool) {
+    let pair = bob_publishes(&pool, true).await;
+    let inbox = follow_from_elsewhere(&pool, pair.bob).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    let pushed = |pool: PgPool| async move {
+        let updates = updates_to(&pool, pair.bob, inbox).await;
+        assert_eq!(updates.len(), 1);
+        let stamp = updates[0]["updated"].as_str().expect("stamped").to_owned();
+        let served = actor_document(&pool, "bob").await;
+        assert_eq!(served["updated"], stamp.as_str(), "served as pushed");
+        chrono::DateTime::parse_from_rfc3339(&stamp).expect("RFC 3339")
+    };
+
+    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    let first = pushed(pool.clone()).await;
+    send_form(&pool, "/settings/privacy", &bob_token, VISIBLE).await;
+    let second = pushed(pool.clone()).await;
+    assert!(second > first, "{second} after {first}");
+    send_form(&pool, "/settings/privacy", &bob_token, VISIBLE).await;
+    assert_eq!(pushed(pool.clone()).await, second, "nothing changed");
 }
 
 /// A suspension sent followers a `Delete`; a session that outlives it
@@ -1083,7 +1215,8 @@ async fn a_lifted_suspension_is_pushed_even_unchanged(pool: PgPool) {
     .fetch_all(&pool)
     .await
     .expect("queue");
-    assert_eq!(kinds, ["Update", "Delete", "Update"]);
+    // The lift's `Update` replaced the first, still queued.
+    assert_eq!(kinds, ["Delete", "Update"]);
 }
 
 /// The relationship lists are saved after the privacy record, and a public

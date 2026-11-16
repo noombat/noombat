@@ -8,7 +8,7 @@
 //! whole process.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, Ordering};
 use std::time::Duration;
 
 use noombat_federation::nodeinfo::{fetch_chatmail_domain, remote_chatmail_domain};
@@ -200,6 +200,25 @@ fn other_instance(
     }
 }
 
+/// [`other_instance`], Bob's document stating the time `updated` holds,
+/// in seconds, as when it last changed.
+fn stamped_instance(
+    publishes: Arc<AtomicBool>,
+    updated: Arc<AtomicI64>,
+) -> impl Fn(&str, &str) -> (u16, String) + Send + 'static {
+    let other = other_instance(publishes, None);
+    move |base, path| {
+        let (status, body) = other(base, path);
+        if path != "/users/bob" {
+            return (status, body);
+        }
+        let mut actor: serde_json::Value = serde_json::from_str(&body).expect("a document");
+        let at = chrono::DateTime::from_timestamp(updated.load(Ordering::SeqCst), 0);
+        actor["updated"] = at.expect("a time").to_rfc3339().into();
+        (status, actor.to_string())
+    }
+}
+
 async fn stored_address(pool: &PgPool, ap_id: &str) -> Option<String> {
     sqlx::query_scalar(
         "SELECT k.address FROM chat_keys k JOIN actors a ON a.id = k.actor_id WHERE a.ap_id = $1",
@@ -268,6 +287,215 @@ async fn an_update_keeps_a_members_key_and_a_plain_fetch_does_not(pool: PgPool) 
         .await
         .expect("resolved");
     assert_eq!(stored_address(&pool, &bob).await, None);
+}
+
+/// An `Update` from bob, number `n`, processed as the inbox would.
+async fn process_update(pool: &PgPool, client: &reqwest::Client, bob: &str, origin: &Url, n: u32) {
+    let update = serde_json::json!({
+        "id": format!("{origin}activities/{n}"),
+        "type": "Update",
+        "actor": bob,
+        "object": { "id": bob, "type": "Person" },
+    });
+    let activity = serde_json::from_value(update.clone()).expect("an activity");
+    noombat_federation::inbox::process_activity(pool, client, bob, &update, activity)
+        .await
+        .expect("processed");
+}
+
+/// A stamp from the future counts as none, so a peer's clock set wrong
+/// once does not keep every later document out.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_stamp_from_the_future_does_not_freeze_the_actor(pool: PgPool) {
+    insert_signing_actor(&pool).await;
+    let publishes = Arc::new(AtomicBool::new(true));
+    let updated = Arc::new(AtomicI64::new(4_102_444_800));
+    let origin = serve(stamped_instance(
+        Arc::clone(&publishes),
+        Arc::clone(&updated),
+    ))
+    .await;
+    let client = client();
+    let bob = format!("{origin}users/bob");
+    process_update(&pool, &client, &bob, &origin, 1).await;
+    assert_eq!(
+        stored_address(&pool, &bob).await.as_deref(),
+        Some("bob@chat.localhost")
+    );
+    publishes.store(false, Ordering::SeqCst);
+    updated.store(3_000, Ordering::SeqCst);
+    process_update(&pool, &client, &bob, &origin, 2).await;
+    assert_eq!(stored_address(&pool, &bob).await, None, "kept out");
+}
+
+/// An `updated` that is no time is ignored, not a reason to refuse the
+/// actor.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_updated_that_is_no_time_is_ignored(pool: PgPool) {
+    insert_signing_actor(&pool).await;
+    let other = other_instance(Arc::new(AtomicBool::new(true)), None);
+    let origin = serve(move |base, path| {
+        let (status, body) = other(base, path);
+        if path != "/users/bob" {
+            return (status, body);
+        }
+        let mut actor: serde_json::Value = serde_json::from_str(&body).expect("a document");
+        actor["updated"] = serde_json::json!(5);
+        (status, actor.to_string())
+    })
+    .await;
+    let bob = format!("{origin}users/bob");
+    noombat_federation::inbox::resolve_actor(&pool, &client(), &bob)
+        .await
+        .expect("resolved");
+}
+
+/// A key refresh reads the instance's NodeInfo first, so an older document's
+/// can finish after a newer one's: it then writes nothing, neither a key
+/// the newer one withdrew nor the withdrawal of one it kept.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_late_refresh_of_an_older_document_changes_no_key(pool: PgPool) {
+    insert_signing_actor(&pool).await;
+    let publishes = Arc::new(AtomicBool::new(true));
+    let updated = Arc::new(AtomicI64::new(2_000));
+    let origin = serve(stamped_instance(
+        Arc::clone(&publishes),
+        Arc::clone(&updated),
+    ))
+    .await;
+    let client = client();
+    let bob = format!("{origin}users/bob");
+    process_update(&pool, &client, &bob, &origin, 1).await;
+    let actor = noombat_identity::repo::find_by_ap_id(&pool, &bob)
+        .await
+        .expect("read")
+        .expect("held");
+    let older = |with_key: bool| {
+        let mut document = serde_json::json!({
+            "id": bob,
+            "type": "Person",
+            "preferredUsername": "bob",
+            "inbox": format!("{bob}/inbox"),
+            "outbox": format!("{bob}/outbox"),
+            "publicKey": { "id": format!("{bob}#main-key"), "owner": bob, "publicKeyPem": "KEY" },
+            "updated": "1970-01-01T00:16:40Z",
+        });
+        if with_key {
+            document["noombat:chatKey"] = serde_json::json!({
+                "noombat:address": "bob@chat.localhost",
+                "noombat:keyData": BOB_KEY,
+            });
+        }
+        serde_json::from_value::<noombat_ap::object::ApActor>(document).expect("a document")
+    };
+
+    noombat_federation::remote_chat_key::refresh(&pool, &client, &actor, &older(false)).await;
+    assert_eq!(
+        stored_address(&pool, &bob).await.as_deref(),
+        Some("bob@chat.localhost"),
+        "an older document withdrew the key"
+    );
+    sqlx::query("DELETE FROM chat_keys")
+        .execute(&pool)
+        .await
+        .expect("withdrawn by the newer");
+    noombat_federation::remote_chat_key::refresh(&pool, &client, &actor, &older(true)).await;
+    assert_eq!(
+        stored_address(&pool, &bob).await,
+        None,
+        "an older document put it back"
+    );
+}
+
+/// Two fetches of one actor can finish in either order, so a document older
+/// than the one stored changes nothing, the key it lacks included.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn an_update_fetching_an_older_document_changes_nothing(pool: PgPool) {
+    insert_signing_actor(&pool).await;
+    let publishes = Arc::new(AtomicBool::new(true));
+    let updated = Arc::new(AtomicI64::new(2_000));
+    let origin = serve(stamped_instance(
+        Arc::clone(&publishes),
+        Arc::clone(&updated),
+    ))
+    .await;
+    let client = client();
+    let bob = format!("{origin}users/bob");
+    let update = |n: u32| {
+        let update = serde_json::json!({
+            "id": format!("{origin}activities/{n}"),
+            "type": "Update",
+            "actor": bob,
+            "object": { "id": bob, "type": "Person" },
+        });
+        let (pool, client, bob) = (pool.clone(), client.clone(), bob.clone());
+        async move {
+            let activity = serde_json::from_value(update.clone()).expect("an activity");
+            noombat_federation::inbox::process_activity(&pool, &client, &bob, &update, activity)
+                .await
+                .expect("processed");
+        }
+    };
+
+    update(1).await;
+    assert_eq!(
+        stored_address(&pool, &bob).await.as_deref(),
+        Some("bob@chat.localhost")
+    );
+    publishes.store(false, Ordering::SeqCst);
+    updated.store(1_000, Ordering::SeqCst);
+    update(2).await;
+    assert_eq!(
+        stored_address(&pool, &bob).await.as_deref(),
+        Some("bob@chat.localhost"),
+        "an older document withdrew the key"
+    );
+    updated.store(3_000, Ordering::SeqCst);
+    update(3).await;
+    assert_eq!(stored_address(&pool, &bob).await, None, "a newer one does");
+}
+
+/// The same through a lookup by handle, which fetches the actor again once
+/// the kept key is a day old.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_lookup_fetching_an_older_document_keeps_the_key(pool: PgPool) {
+    insert_signing_actor(&pool).await;
+    let publishes = Arc::new(AtomicBool::new(true));
+    let updated = Arc::new(AtomicI64::new(2_000));
+    let origin = serve(stamped_instance(
+        Arc::clone(&publishes),
+        Arc::clone(&updated),
+    ))
+    .await;
+    let client = client();
+    let domain = authority(&origin);
+    let allowlist = allowlist();
+    let lookup = || find_by_handle(&pool, &client, "bob", &domain, &allowlist);
+    let age = || async {
+        sqlx::query("UPDATE chat_keys SET updated_at = now() - interval '25 hours'")
+            .execute(&pool)
+            .await
+            .expect("aged");
+    };
+
+    assert!(lookup().await.expect("looked up").is_some());
+    publishes.store(false, Ordering::SeqCst);
+    updated.store(1_000, Ordering::SeqCst);
+    age().await;
+    assert!(
+        lookup().await.expect("looked up").is_some(),
+        "an older document withdrew the key"
+    );
+    updated.store(3_000, Ordering::SeqCst);
+    assert!(
+        lookup().await.expect("looked up").is_none(),
+        "a newer one does"
+    );
 }
 
 #[ignore = "requires a database; run with --include-ignored"]

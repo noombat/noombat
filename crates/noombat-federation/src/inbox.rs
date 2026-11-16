@@ -140,12 +140,13 @@ pub async fn fetch_actor(
     Ok(fetch_actor_document(pool, http_client, actor_uri).await?.0)
 }
 
-/// [`fetch_actor`], and the document the actor was read from.
+/// [`fetch_actor`], and the document the actor was read from, unless the
+/// row already held a newer one, which is kept.
 pub async fn fetch_actor_document(
     pool: &PgPool,
     http_client: &reqwest::Client,
     actor_uri: &str,
-) -> Result<(Actor, ApActor)> {
+) -> Result<(Actor, Option<ApActor>)> {
     // Check whether this actor has been tombstoned (410 Gone) before
     // incurring an HTTP round-trip.
     let is_tombstoned: bool =
@@ -207,8 +208,8 @@ pub async fn fetch_actor_document(
 
     let remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri)?;
 
-    let actor = repo::upsert_remote_actor(pool, &remote).await?;
-    Ok((actor, ap_actor))
+    let upserted = repo::upsert_remote_actor(pool, &remote).await?;
+    Ok((upserted.actor, upserted.stored.then_some(ap_actor)))
 }
 
 /// Resolve the actor whose key signed an inbound request.
@@ -410,7 +411,12 @@ pub(crate) async fn refresh_assertion_key(
         remote.ed25519_public_key = Some(key.clone());
     }
     let cached = remote.ed25519_public_key.clone();
-    let _ = repo::upsert_remote_actor(pool, &remote).await;
+    // Where a newer document is held, its key is the actor's, not this one's.
+    if let Ok(upserted) = repo::upsert_remote_actor(pool, &remote).await
+        && !upserted.stored
+    {
+        return upserted.actor.ed25519_public_key;
+    }
 
     named.or(cached)
 }
@@ -539,7 +545,20 @@ fn ap_actor_to_remote(
         inbox_url: ap_actor.inbox.clone(),
         shared_inbox_url,
         ed25519_public_key,
+        updated: document_stamp(ap_actor),
     })
+}
+
+/// The `updated` a fetched actor document states, when it is a time no
+/// later than a few minutes from now: one from the future would keep every
+/// later document out until it came, and only the actor's own server says
+/// it, so a clock set wrong once would freeze the actor.
+pub(crate) fn document_stamp(ap_actor: &ApActor) -> Option<chrono::DateTime<chrono::Utc>> {
+    let stated = ap_actor.updated.as_ref()?.as_str()?;
+    let at = chrono::DateTime::parse_from_rfc3339(stated)
+        .ok()?
+        .with_timezone(&chrono::Utc);
+    (at <= chrono::Utc::now() + chrono::TimeDelta::minutes(5)).then_some(at)
 }
 
 /// The renderable content of a remote object, sanitised.
@@ -1335,8 +1354,12 @@ async fn handle_update_actor(
         }
     };
 
-    let actor = repo::upsert_remote_actor(pool, &remote).await?;
-    crate::remote_chat_key::refresh(pool, http_client, &actor, &ap_actor).await;
+    let upserted = repo::upsert_remote_actor(pool, &remote).await?;
+    if !upserted.stored {
+        info!(actor = %activity.actor, "a newer actor document is already held; keeping it");
+        return Ok(());
+    }
+    crate::remote_chat_key::refresh(pool, http_client, &upserted.actor, &ap_actor).await;
     info!(actor = %activity.actor, "remote actor profile refreshed via Update");
 
     Ok(())

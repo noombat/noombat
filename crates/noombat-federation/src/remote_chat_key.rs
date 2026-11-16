@@ -104,24 +104,36 @@ pub async fn refresh(pool: &PgPool, client: &reqwest::Client, actor: &Actor, doc
             Err(why) => debug!(actor = %actor.ap_id, %why, "not keeping a remote chat key"),
         }
     }
+    // Written only while the actor's row holds this document: reading
+    // NodeInfo takes a while, and an older document's slower refresh must
+    // not undo what a newer one's did.
+    let stamp = crate::inbox::document_stamp(document);
     let written = match kept {
         Some(published) => {
             sqlx::query(
-                "INSERT INTO chat_keys (actor_id, address, key_data) VALUES ($1, $2, $3) \
+                "INSERT INTO chat_keys (actor_id, address, key_data) \
+                 SELECT $1, $2, $3 FROM actors \
+                 WHERE id = $1 AND ($4::timestamptz IS NULL OR document_updated = $4) \
                  ON CONFLICT (actor_id) DO UPDATE \
                  SET address = EXCLUDED.address, key_data = EXCLUDED.key_data, updated_at = now()",
             )
             .bind(actor.id)
             .bind(&published.address)
             .bind(&published.key)
+            .bind(stamp)
             .execute(pool)
             .await
         }
         None => {
-            sqlx::query("DELETE FROM chat_keys WHERE actor_id = $1")
-                .bind(actor.id)
-                .execute(pool)
-                .await
+            sqlx::query(
+                "DELETE FROM chat_keys WHERE actor_id = $1 AND EXISTS ( \
+                     SELECT 1 FROM actors \
+                     WHERE id = $1 AND ($2::timestamptz IS NULL OR document_updated = $2))",
+            )
+            .bind(actor.id)
+            .bind(stamp)
+            .execute(pool)
+            .await
         }
     };
     if let Err(error) = written {
@@ -208,7 +220,9 @@ pub async fn find_by_handle(
         Some(actor) if fresh(pool, &actor).await? => actor,
         _ => {
             let (actor, document) = inbox::fetch_actor_document(pool, client, &actor_uri).await?;
-            refresh(pool, client, &actor, &document).await;
+            if let Some(document) = document {
+                refresh(pool, client, &actor, &document).await;
+            }
             actor
         }
     };

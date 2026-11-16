@@ -112,6 +112,11 @@ CREATE TABLE actors (
     -- so one is pushed exactly when the document changed since, and a push
     -- lost to a failure is made up by the next.
     federated_digest             BYTEA,
+    -- The actor document's `updated`. A local actor's is moved on with each
+    -- document pushed, with `federated_digest`, and served with it; a remote
+    -- actor's is that of the newest document stored, so a fetch slower than a
+    -- later one cannot store the older document over the newer.
+    document_updated             TIMESTAMPTZ,
     headline                     TEXT,
     location                     TEXT, -- free-text location (e.g. "Sydney, Australia")
     -- Organisations only: the corporate domain claimed. Publishing is gated
@@ -1294,6 +1299,9 @@ CREATE TABLE delivery_queue (
 );
 
 CREATE INDEX idx_delivery_queue_next_retry ON delivery_queue (next_retry) WHERE attempts < 10;
+-- A push replaces the actor's queued Updates for each follower, in the
+-- transaction that records it; without this, each scans the whole queue.
+CREATE INDEX idx_delivery_queue_actor ON delivery_queue (actor_id);
 
 -- NOTIFY trigger: wakes the delivery worker immediately when new
 -- activities are enqueued, eliminating polling latency.

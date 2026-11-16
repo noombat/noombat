@@ -8,6 +8,7 @@
 //! moderation) and by the background link re-verification worker (on
 //! verification state changes).
 
+use chrono::{DateTime, Utc};
 use noombat_core::actor::{Actor, ActorStatus};
 use noombat_core::error::{NoombatError, Result};
 use serde_json::Value;
@@ -43,6 +44,10 @@ pub async fn enqueue_actor_update(pool: &PgPool, actor: &Actor, domain: &str) {
 /// again. A push that fails forgets the digest, so the next one sends
 /// whatever it builds. Nothing is pushed for an account that is neither
 /// active nor silenced.
+///
+/// Each document pushed carries `updated`, moved on with every push, so a
+/// peer can keep the newer of two that arrive out of order, and replaces
+/// any still queued for the same follower.
 ///
 /// Errors are logged, not propagated: a federation delivery failure
 /// must not block the local mutation that triggered it.
@@ -84,7 +89,11 @@ async fn push(pool: &PgPool, actor_id: Uuid, domain: &str) -> Result<()> {
         ) {
             return Ok(());
         }
-        let document = actor_document::build_whole(pool, &actor, domain).await?;
+        let mut document = actor_document::build_whole(pool, &actor, domain).await?;
+        // The stamp is no part of what changed: it moves with every push.
+        if let Some(fields) = document.as_object_mut() {
+            fields.remove("updated");
+        }
         let canonical = serde_json_canonicalizer::to_vec(&document)
             .map_err(|e| NoombatError::Internal(format!("JCS canonicalisation failed: {e}")))?;
         let digest = sha2::Sha256::digest(&canonical).to_vec();
@@ -94,20 +103,27 @@ async fn push(pool: &PgPool, actor_id: Uuid, domain: &str) -> Result<()> {
         let mut tx = pool.begin().await?;
         // Over the digest read above, and while the account may still be
         // pushed for; otherwise another push or a status change came first.
-        let recorded = sqlx::query(
-            "UPDATE actors SET federated_digest = $2 \
+        // The stamp is later than every one before it, even with the clock
+        // set back or two pushes within a millisecond, so a peer keeping the
+        // newer document keeps this one.
+        let updated: Option<DateTime<Utc>> = sqlx::query_scalar(
+            "UPDATE actors SET federated_digest = $2, \
+                 document_updated = GREATEST(date_trunc('milliseconds', clock_timestamp()), \
+                                             document_updated + interval '1 millisecond') \
              WHERE id = $1 AND federated_digest IS NOT DISTINCT FROM $3 \
-               AND actor_status IN ('active', 'silenced')",
+               AND actor_status IN ('active', 'silenced') \
+             RETURNING document_updated",
         )
         .bind(actor_id)
         .bind(&digest)
         .bind(&pushed)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
-        if recorded.rows_affected() == 0 {
+        let Some(updated) = updated else {
             continue;
-        }
-        enqueue_document(&mut tx, &actor, document).await?;
+        };
+        document["updated"] = Value::String(actor_document::stamp(updated));
+        enqueue_document(&mut tx, &actor, document, updated).await?;
         tx.commit().await?;
         return Ok(());
     }
@@ -115,12 +131,14 @@ async fn push(pool: &PgPool, actor_id: Uuid, domain: &str) -> Result<()> {
     Ok(())
 }
 
-async fn enqueue_document(conn: &mut PgConnection, actor: &Actor, object: Value) -> Result<()> {
-    let update_id = format!(
-        "{}#update-{}",
-        actor.ap_id,
-        chrono::Utc::now().timestamp_millis()
-    );
+async fn enqueue_document(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    object: Value,
+    updated: DateTime<Utc>,
+) -> Result<()> {
+    // Named by the stamp, which no two pushes share.
+    let update_id = format!("{}#update-{}", actor.ap_id, updated.timestamp_millis());
 
     let update_activity = serde_json::json!({
         "@context": noombat_ap::context::default_context(),
@@ -133,7 +151,8 @@ async fn enqueue_document(conn: &mut PgConnection, actor: &Actor, object: Value)
 
     let inboxes = noombat_identity::repo::get_follower_inboxes(&mut *conn, actor.id).await?;
     for inbox in inboxes {
-        delivery::enqueue(&mut *conn, actor.id, &update_activity, &inbox).await?;
+        delivery::enqueue_superseding(&mut *conn, actor.id, &update_activity, &inbox, &actor.ap_id)
+            .await?;
     }
     Ok(())
 }
