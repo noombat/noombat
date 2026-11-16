@@ -92,6 +92,20 @@ CREATE TABLE actors (
     email                        TEXT,
     email_verified_at            TIMESTAMPTZ, -- non-NULL = control of the address proved
     chat_requires_reprovisioning BOOLEAN NOT NULL DEFAULT FALSE,
+    -- Counts chat setups. Each rotates the relay password, and the browser
+    -- must keep the newest setup's credentials, so every write of them or of
+    -- the published key names its setup and is refused for an older one: a
+    -- tab left behind cannot replace them with a password the relay refuses.
+    chat_setup_generation        BIGINT NOT NULL DEFAULT 0,
+    -- Until when a setup under way holds the account: the relay is asked for a
+    -- password outside any transaction, and a second setup meanwhile is
+    -- refused rather than allowed to rotate the password under it. Expires on
+    -- its own, so a setup abandoned midway blocks nothing for long.
+    chat_setup_until             TIMESTAMPTZ,
+    -- When a setup last got its password from the relay. Another waits a
+    -- minute after it, so a member cannot have the relay rotate their
+    -- password over and over.
+    chat_set_up_at               TIMESTAMPTZ,
     orcid                        TEXT,
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
     -- A digest of the actor document the last `Update` carried to followers,

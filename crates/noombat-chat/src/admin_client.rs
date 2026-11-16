@@ -235,7 +235,8 @@ impl ChatmailAdminClient {
     /// The relay only verifies logins; it never creates an account.
     /// This is the only way an account comes into existence, so a
     /// failure here means provisioning failed rather than that it can be
-    /// retried by logging in.
+    /// retried by logging in. An account that exists already is
+    /// [`NoombatError::Conflict`].
     pub async fn create_account(&self, address: &str) -> Result<CreateAccountResponse> {
         check_segment(address)?;
         let url = format!("{}/admin/v1/accounts/{}", self.base_url, address);
@@ -247,6 +248,12 @@ impl ChatmailAdminClient {
             .await
             .map_err(request_failed)?;
 
+        // Kept apart from other failures: the caller may own the account.
+        if resp.status() == reqwest::StatusCode::CONFLICT {
+            return Err(NoombatError::Conflict(format!(
+                "the relay already holds {address}"
+            )));
+        }
         if !resp.status().is_success() {
             let status = resp.status();
             let body = resp.text().await.unwrap_or_default();

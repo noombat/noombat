@@ -69,7 +69,9 @@ async function provision(name: string, token: string, authKey: string): Promise<
     "encrypt",
     "decrypt",
   ]);
-  await provisionChat(blobKey, authKey);
+  const provisioned = await provisionChat(blobKey, authKey);
+  if (provisioned.status !== "set_up")
+    throw new Error(`${name} was not set up: ${provisioned.status}`);
   const address = `${name}@${CHAT_DOMAIN}`;
   const stored = await fetchBlob();
   if (stored.status !== "ok") throw new Error(`${name}'s blob was not stored: ${stored.status}`);

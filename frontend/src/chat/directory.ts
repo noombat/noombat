@@ -7,14 +7,21 @@
  * the key of someone who has not written yet.
  */
 
-import type { CredentialBlob } from "./blob";
+import { CHAT_SETUP_HEADER, type CredentialBlob } from "./blob";
 import { authHeaders } from "./session";
 
-/** Publish `publicKey` as the member's chat key; resolves to whether the server stored it. */
-export async function publishOwnKey(publicKey: Uint8Array): Promise<boolean> {
+/**
+ * Publish `publicKey` as the member's chat key, for chat setup `setup`;
+ * resolves to whether the server stored it, which it does not once a
+ * newer setup has replaced that one.
+ */
+export async function publishOwnKey(publicKey: Uint8Array, setup: number): Promise<boolean> {
   const resp = await fetch("/api/v1/me/chat_key", {
     method: "PUT",
-    headers: authHeaders({ "Content-Type": "application/octet-stream" }),
+    headers: authHeaders({
+      "Content-Type": "application/octet-stream",
+      [CHAT_SETUP_HEADER]: String(setup),
+    }),
     // A copy, so a view into a larger buffer sends only its own bytes.
     body: new Blob([publicKey.slice().buffer as ArrayBuffer]),
   });
@@ -29,6 +36,7 @@ export async function publishOwnKey(publicKey: Uint8Array): Promise<boolean> {
 export async function ensureOwnKeyPublished(
   address: string,
   publicKey: Uint8Array,
+  setup: number,
 ): Promise<boolean> {
   const resp = await fetch(`/api/v1/chat/keys/${encodeURIComponent(address)}`, {
     headers: authHeaders(),
@@ -39,16 +47,21 @@ export async function ensureOwnKeyPublished(
   } else if (resp.status !== 404) {
     return false;
   }
-  return publishOwnKey(publicKey);
+  return publishOwnKey(publicKey, setup);
 }
 
 /**
  * At unlock, publish the public half of the decrypted credential blob as
- * the key for `address`, unless the instance already serves it. Never
- * rejects: an upload that fails is tried again at the next unlock.
+ * the key for `address`, for chat setup `setup`, unless the instance
+ * already serves it. Never rejects: an upload that fails is tried again at
+ * the next unlock.
  */
-export async function repairOwnKey(address: string, blob: CredentialBlob): Promise<void> {
-  await ensureOwnKeyPublished(address, base64ToUint8(blob.publicKeyB64)).catch(() => false);
+export async function repairOwnKey(
+  address: string,
+  blob: CredentialBlob,
+  setup: number,
+): Promise<void> {
+  await ensureOwnKeyPublished(address, base64ToUint8(blob.publicKeyB64), setup).catch(() => false);
 }
 
 /** A published key as looked up: checked, and with the address it is for. */

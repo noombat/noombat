@@ -217,11 +217,11 @@ async fn require_admin_secret(
 //
 // Each does a little blocking work: a file write, a `doveadm` or
 // `postfix` invocation, a lock on the shared maps. The sole client is
-// the co-located Noombat application server, issuing requests only on
-// moderator-initiated actions (suspension, unsuspension, account
-// deletion, per-pair sender blocks), so the rate is at most a few
-// requests per hour and holding a worker for the duration costs
-// nothing worth reclaiming.
+// the co-located Noombat application server, issuing requests on
+// moderator actions (suspension, unsuspension, account deletion,
+// per-pair sender blocks) and when a member sets chat up, which it
+// allows once a minute per account, so the rate stays low and holding a
+// worker for the duration costs nothing worth reclaiming.
 
 /// `POST /admin/v1/accounts/{address}/rotate-password`
 ///

@@ -222,6 +222,7 @@ async fn token_for(pool: &PgPool, actor_id: Uuid, username: &str) -> String {
 struct Reply {
     status: StatusCode,
     cache_control: Option<String>,
+    setup: Option<String>,
     body: Vec<u8>,
 }
 
@@ -250,10 +251,14 @@ async fn send_with(
         .await
         .expect("the router is infallible");
     let status = response.status();
-    let cache_control = response
-        .headers()
-        .get("cache-control")
-        .map(|value| value.to_str().expect("ASCII").to_owned());
+    let header = |name: &str| {
+        response
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().expect("ASCII").to_owned())
+    };
+    let cache_control = header("cache-control");
+    let setup = header("noombat-chat-setup");
     let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
         .await
         .expect("body within limit")
@@ -261,6 +266,7 @@ async fn send_with(
     Reply {
         status,
         cache_control,
+        setup,
         body,
     }
 }
@@ -281,8 +287,10 @@ async fn send_form(pool: &PgPool, uri: &str, token: &str, body: &[u8]) -> Status
         .status()
 }
 
+/// Publish as a member still on their first setup, number 0 for a fixture.
 async fn publish(pool: &PgPool, token: &str, key: &[u8]) -> Reply {
-    send(pool, "PUT", "/api/v1/me/chat_key", Some(token), key).await
+    let setup = [("noombat-chat-setup", "0")];
+    send_with(pool, "PUT", "/api/v1/me/chat_key", Some(token), &setup, key).await
 }
 
 async fn lookup(pool: &PgPool, token: Option<&str>, address: &str) -> Reply {
@@ -1233,7 +1241,7 @@ async fn a_key_is_not_stored_for_an_address_the_member_no_longer_has(pool: PgPoo
         .await
         .expect("cleared");
     let result =
-        noombat_chat::keys::publish(&pool, bob, "bob@chat.noombat.example", &key(BOB_KEY)).await;
+        noombat_chat::keys::publish(&pool, bob, "bob@chat.noombat.example", &key(BOB_KEY), 0).await;
     assert!(result.is_err());
     let stored: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_keys")
         .fetch_one(&pool)
@@ -1291,7 +1299,8 @@ async fn a_publish_racing_an_erasure_stores_nothing(pool: PgPool) {
     let publishing = tokio::spawn({
         let pool = pool.clone();
         async move {
-            noombat_chat::keys::publish(&pool, bob, "bob@chat.noombat.example", &key(BOB_KEY)).await
+            noombat_chat::keys::publish(&pool, bob, "bob@chat.noombat.example", &key(BOB_KEY), 0)
+                .await
         }
     });
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
@@ -1519,7 +1528,7 @@ async fn no_blob_reads_as_chat_to_set_up(pool: PgPool) {
 #[sqlx::test(migrations = "../../migrations")]
 async fn only_an_unusable_setup_is_set_up_again(pool: PgPool) {
     // This instance has no relay sidecar, so a setup the server would
-    // redo stops at 503, where a working one stops earlier, at 400.
+    // redo stops at 503, where a working one stops earlier, at 409.
     let bob = insert_member(&pool, "bob", true, true).await;
     give_password(&pool, bob).await;
     let bob_token = token_for(&pool, bob, "bob").await;
@@ -1546,8 +1555,8 @@ async fn only_an_unusable_setup_is_set_up_again(pool: PgPool) {
         .await
         .expect("a blob");
     let reply = provision().await;
-    assert_eq!(reply.status, StatusCode::BAD_REQUEST, "a working setup");
-    assert!(String::from_utf8_lossy(&reply.body).contains("already provisioned"));
+    assert_eq!(reply.status, StatusCode::CONFLICT, "a working setup");
+    assert!(String::from_utf8_lossy(&reply.body).contains("already set up"));
 
     sqlx::query("UPDATE actors SET chat_requires_reprovisioning = TRUE WHERE id = $1")
         .bind(bob)
@@ -1734,6 +1743,502 @@ async fn the_chat_page_says_what_setting_up_needs(pool: PgPool) {
     assert!(!none.contains("data-needs-setup"));
 }
 
+/// Short, so a test that waits out the relay does not wait long.
+const RELAY: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// The member's chat columns: address, credentials, setup number, lease.
+async fn chat_row(pool: &PgPool, id: Uuid) -> (Option<String>, Option<Vec<u8>>, i64, bool) {
+    sqlx::query_as(
+        "SELECT chatmail_addr, chatmail_cred, chat_setup_generation, \
+                COALESCE(chat_setup_until > now(), FALSE) \
+         FROM actors WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await
+    .expect("row")
+}
+
+/// Two tabs or devices set chat up at the same moment. The relay is asked
+/// once: the second is refused while the first is under way, so the relay
+/// keeps the password of the one setup whose credentials can be stored.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn two_setups_at_once_ask_the_relay_once(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let setting_up = || {
+        let pool = pool.clone();
+        let asked = asked.clone();
+        async move {
+            noombat_chat::keys::set_up(&pool, bob, RELAY, |address| async move {
+                asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                Ok((address.expect("an address"), "the password".to_owned()))
+            })
+            .await
+        }
+    };
+    let (first, second) = tokio::join!(setting_up(), setting_up());
+    assert_eq!(asked.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let (made, refused) = match (first, second) {
+        (Ok(made), Err(refused)) | (Err(refused), Ok(made)) => (made, refused),
+        other => panic!("not one setup and one refusal: {other:?}"),
+    };
+    assert!(
+        matches!(&refused, noombat_core::error::NoombatError::Conflict(detail) if detail.contains("being set up")),
+        "{refused:?}"
+    );
+    noombat_chat::keys::store_credentials(&pool, bob, made.generation, b"credentials")
+        .await
+        .expect("stored");
+    assert_eq!(
+        chat_row(&pool, bob).await,
+        (
+            Some("bob@chat.noombat.example".to_owned()),
+            Some(b"credentials".to_vec()),
+            1,
+            false
+        )
+    );
+}
+
+/// The minute after a setup that got its password from the relay, gone.
+async fn a_minute_on(pool: &PgPool, id: Uuid) {
+    sqlx::query("UPDATE actors SET chat_set_up_at = now() - interval '61 seconds' WHERE id = $1")
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("a minute on");
+}
+
+/// Each setup rotates the relay password, so a member sets chat up at
+/// most once a minute; a relay call that failed holds nothing, so a retry
+/// is free.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_member_sets_chat_up_at_most_once_a_minute(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let relay = |address: Option<String>| async move {
+        Ok((address.expect("an address"), "rotated".to_owned()))
+    };
+    noombat_chat::keys::set_up(&pool, bob, RELAY, relay)
+        .await
+        .expect("set up");
+    // Nothing stored, so still unusable, but held.
+    let again = noombat_chat::keys::set_up(&pool, bob, RELAY, relay).await;
+    assert!(
+        matches!(
+            again,
+            Err(noombat_core::error::NoombatError::QuotaExceeded(_))
+        ),
+        "{again:?}"
+    );
+    a_minute_on(&pool, bob).await;
+    let failed = noombat_chat::keys::set_up(&pool, bob, RELAY, |_| async move {
+        Err(noombat_core::error::NoombatError::ServiceUnavailable(
+            "the relay is down".into(),
+        ))
+    })
+    .await;
+    assert!(matches!(
+        failed,
+        Err(noombat_core::error::NoombatError::ServiceUnavailable(_))
+    ));
+    noombat_chat::keys::set_up(&pool, bob, RELAY, relay)
+        .await
+        .expect("a retry after a failure");
+}
+
+/// A first setup asks the relay for an account, and keeps its address.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_first_setup_keeps_the_address_the_relay_made(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", false, true).await;
+    let setup = noombat_chat::keys::set_up(&pool, bob, RELAY, |address| async move {
+        assert_eq!(address, None, "a first setup has no address yet");
+        Ok(("bob@chat.noombat.example".to_owned(), "new".to_owned()))
+    })
+    .await
+    .expect("set up");
+    assert_eq!(setup.generation, 1);
+    assert_eq!(
+        chat_row(&pool, bob).await,
+        (Some("bob@chat.noombat.example".to_owned()), None, 1, false)
+    );
+}
+
+/// The relay may have rotated before a setup fails, so a setup that fails
+/// must still leave every older one unable to store its credentials. It is
+/// released at once for a retry.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_failed_setup_still_replaces_older_ones_and_frees_a_retry(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let older = noombat_chat::keys::set_up(&pool, bob, RELAY, |address| async move {
+        Ok((address.expect("an address"), "older".to_owned()))
+    })
+    .await
+    .expect("set up");
+    a_minute_on(&pool, bob).await;
+    let failed = noombat_chat::keys::set_up(&pool, bob, RELAY, |_| async move {
+        Err(noombat_core::error::NoombatError::Internal(
+            "the relay answer was lost".into(),
+        ))
+    })
+    .await;
+    assert!(failed.is_err());
+    let stale = noombat_chat::keys::store_credentials(&pool, bob, older.generation, b"older").await;
+    assert!(matches!(
+        stale,
+        Err(noombat_core::error::NoombatError::Conflict(_))
+    ));
+    let retried = noombat_chat::keys::set_up(&pool, bob, RELAY, |address| async move {
+        Ok((address.expect("an address"), "retried".to_owned()))
+    })
+    .await
+    .expect("a retry at once");
+    assert_eq!(retried.generation, 3);
+}
+
+/// A relay that does not answer is given up on within the time it is
+/// given; the account is then held the minute a finished setup holds it.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_relay_that_does_not_answer_is_given_up_on(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let short = std::time::Duration::from_millis(200);
+    let started = std::time::Instant::now();
+    let silent = noombat_chat::keys::set_up(&pool, bob, short, |_| async move {
+        tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+        Ok(("never".to_owned(), "never".to_owned()))
+    })
+    .await;
+    assert!(matches!(
+        silent,
+        Err(noombat_core::error::NoombatError::ServiceUnavailable(_))
+    ));
+    assert!(started.elapsed() < std::time::Duration::from_secs(5));
+    assert!(!chat_row(&pool, bob).await.3, "still held after giving up");
+    // The relay may yet rotate the password, so a retry waits the minute
+    // a finished setup does, and no two rotations land out of order.
+    let relay = |address: Option<String>| async move {
+        Ok((address.expect("an address"), "rotated".to_owned()))
+    };
+    let again = noombat_chat::keys::set_up(&pool, bob, RELAY, relay).await;
+    assert!(
+        matches!(
+            again,
+            Err(noombat_core::error::NoombatError::QuotaExceeded(_))
+        ),
+        "{again:?}"
+    );
+    a_minute_on(&pool, bob).await;
+    noombat_chat::keys::set_up(&pool, bob, RELAY, relay)
+        .await
+        .expect("a minute on");
+}
+
+/// A setup under way holds the account until it ends or its time runs out.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_setup_under_way_holds_the_account_until_it_expires(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    sqlx::query("UPDATE actors SET chat_setup_until = now() + interval '1 minute' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("under way");
+    let refused = noombat_chat::keys::set_up(&pool, bob, RELAY, |_| async move {
+        panic!("the relay was asked during another setup")
+    })
+    .await;
+    assert!(matches!(
+        refused,
+        Err(noombat_core::error::NoombatError::Conflict(_))
+    ));
+    sqlx::query("UPDATE actors SET chat_setup_until = now() - interval '1 second' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("abandoned");
+    noombat_chat::keys::set_up(&pool, bob, RELAY, |address| async move {
+        Ok((address.expect("an address"), "after".to_owned()))
+    })
+    .await
+    .expect("set up once it expired");
+}
+
+/// An account that may not chat is refused before the relay is asked, and
+/// one suspended while the relay answers keeps no address.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_suspended_account_is_not_set_up(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("suspended");
+    let refused = noombat_chat::keys::set_up(&pool, bob, RELAY, |_| async move {
+        panic!("the relay was asked for a suspended account")
+    })
+    .await;
+    assert!(matches!(
+        refused,
+        Err(noombat_core::error::NoombatError::Forbidden)
+    ));
+
+    let carol = insert_member(&pool, "carol", false, true).await;
+    let suspending = pool.clone();
+    let refused = noombat_chat::keys::set_up(&pool, carol, RELAY, |_| async move {
+        sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+            .bind(carol)
+            .execute(&suspending)
+            .await
+            .expect("suspended meanwhile");
+        Ok(("carol@chat.noombat.example".to_owned(), "new".to_owned()))
+    })
+    .await;
+    assert!(matches!(
+        refused,
+        Err(noombat_core::error::NoombatError::Forbidden)
+    ));
+    assert_eq!(chat_row(&pool, carol).await.0, None);
+}
+
+/// An erasure clears the address and credentials; a tab still open must
+/// not write the credentials back.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn credentials_are_not_written_back_after_an_erasure(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    // As erasure leaves the account: suspended, address and credentials gone.
+    sqlx::query(
+        "UPDATE actors SET actor_status = 'suspended', chatmail_addr = NULL, chatmail_cred = NULL \
+         WHERE id = $1",
+    )
+    .bind(bob)
+    .execute(&pool)
+    .await
+    .expect("erased");
+    let refused = noombat_chat::keys::store_credentials(&pool, bob, 0, b"credentials").await;
+    assert!(refused.is_err());
+    assert_eq!(chat_row(&pool, bob).await.1, None);
+}
+
+/// Changing the password re-wraps the credentials, which must name their
+/// setup like any other write of them.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_password_change_writes_only_the_newest_setups_credentials(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    sqlx::query(
+        "UPDATE actors SET email_verified_at = now(), chat_setup_generation = 1 WHERE id = $1",
+    )
+    .bind(bob)
+    .execute(&pool)
+    .await
+    .expect("a proved address, and a second setup");
+    let token = token_for(&pool, bob, "bob").await;
+    let json = [("content-type", "application/json")];
+    let auth_key = "00".repeat(32);
+    let body = |setup: Option<i64>| {
+        let mut body = serde_json::json!({ "auth_key": auth_key, "chatmail_cred": "AQ==" });
+        if let Some(setup) = setup {
+            body["chat_setup"] = setup.into();
+        }
+        body.to_string().into_bytes()
+    };
+    let password = "/api/v1/auth/password";
+    let unnamed = send_with(&pool, "POST", password, Some(&token), &json, &body(None)).await;
+    assert_eq!(unnamed.status, StatusCode::BAD_REQUEST);
+    let stale = send_with(&pool, "POST", password, Some(&token), &json, &body(Some(0))).await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    assert_eq!(chat_row(&pool, bob).await.1, None, "nothing written");
+    let newest = send_with(&pool, "POST", password, Some(&token), &json, &body(Some(1))).await;
+    assert_eq!(newest.status, StatusCode::NO_CONTENT);
+    assert_eq!(chat_row(&pool, bob).await.1, Some(vec![1]));
+    // Re-encrypted credentials take a new number, so a tab still holding
+    // them under the old password has its writes refused.
+    assert_eq!(newest.setup.as_deref(), Some("2"));
+    assert_eq!(chat_row(&pool, bob).await.2, 2);
+    let old_tab = noombat_chat::keys::store_credentials(&pool, bob, 1, b"old").await;
+    assert!(matches!(
+        old_tab,
+        Err(noombat_core::error::NoombatError::Conflict(_))
+    ));
+
+    // Changing it again: the credentials held must come re-encrypted, and
+    // not while a setup is under way.
+    let change = |cred: Option<&str>| {
+        let mut body = serde_json::json!({ "auth_key": "11".repeat(32), "old_auth_key": auth_key });
+        if let Some(cred) = cred {
+            body["chatmail_cred"] = cred.into();
+            body["chat_setup"] = 2.into();
+        }
+        body.to_string().into_bytes()
+    };
+    let without = send_with(&pool, "POST", password, Some(&token), &json, &change(None)).await;
+    assert_eq!(without.status, StatusCode::BAD_REQUEST);
+    sqlx::query("UPDATE actors SET chat_setup_until = now() + interval '1 minute' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a setup under way");
+    let during = send_with(
+        &pool,
+        "POST",
+        password,
+        Some(&token),
+        &json,
+        &change(Some("Ag==")),
+    )
+    .await;
+    assert_eq!(during.status, StatusCode::CONFLICT);
+    assert_eq!(
+        chat_row(&pool, bob).await.1,
+        Some(vec![1]),
+        "nothing written"
+    );
+}
+
+/// The setup header is digits alone; a sign is refused, not read.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_setup_named_with_a_sign_is_refused(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let token = token_for(&pool, bob, "bob").await;
+    for setup in ["+0", "-1", ""] {
+        let header = [("noombat-chat-setup", setup)];
+        let reply = send_with(
+            &pool,
+            "PUT",
+            "/api/v1/me/chat_key",
+            Some(&token),
+            &header,
+            &key(BOB_KEY),
+        )
+        .await;
+        assert_eq!(reply.status, StatusCode::BAD_REQUEST, "{setup:?}");
+    }
+}
+
+/// A suspended account stores no credentials, whatever setup it names;
+/// the key route refuses it before its write is reached.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_suspended_account_stores_no_credentials_for_its_setup(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("suspended");
+    let credentials = noombat_chat::keys::store_credentials(&pool, bob, 0, b"credentials").await;
+    assert!(matches!(
+        credentials,
+        Err(noombat_core::error::NoombatError::Forbidden)
+    ));
+    assert_eq!(chat_row(&pool, bob).await.1, None);
+}
+
+/// A setup that a newer one replaced while the relay was asked keeps
+/// nothing: the newer setup's address and password are the ones to hold.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_setup_replaced_while_the_relay_was_asked_keeps_nothing(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", false, true).await;
+    let newer = pool.clone();
+    let outcome = noombat_chat::keys::set_up(&pool, bob, RELAY, move |_| async move {
+        sqlx::query(
+            "UPDATE actors SET chat_setup_generation = chat_setup_generation + 1 WHERE id = $1",
+        )
+        .bind(bob)
+        .execute(&newer)
+        .await
+        .expect("a newer setup's claim");
+        Ok(("bob@chat.noombat.example".to_owned(), "older".to_owned()))
+    })
+    .await;
+    assert!(
+        matches!(outcome, Err(noombat_core::error::NoombatError::Conflict(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(chat_row(&pool, bob).await.0, None, "no address kept");
+}
+
+/// A setup that works is not replaced, and the relay is not asked.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_usable_setup_is_not_set_up_again(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    sqlx::query("UPDATE actors SET chatmail_cred = '\\x01' WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a blob");
+    let refused = noombat_chat::keys::set_up(&pool, bob, RELAY, |_| async move {
+        panic!("the relay was asked to rotate a working setup")
+    })
+    .await;
+    assert!(matches!(
+        refused,
+        Err(noombat_core::error::NoombatError::Conflict(_))
+    ));
+}
+
+/// The credentials are served with their setup's number, and stored only
+/// by a write naming the newest; a key likewise.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn writes_name_the_newest_setup_or_are_refused(pool: PgPool) {
+    let bob = insert_member(&pool, "bob", true, true).await;
+    let token = token_for(&pool, bob, "bob").await;
+    let cred = "/api/v1/me/chatmail_cred";
+    let named = |setup: &'static str| [("noombat-chat-setup", setup)];
+
+    let unnamed = send(&pool, "PUT", cred, Some(&token), b"blob").await;
+    assert_eq!(unnamed.status, StatusCode::BAD_REQUEST);
+    let stored = send_with(&pool, "PUT", cred, Some(&token), &named("0"), b"blob").await;
+    assert_eq!(stored.status, StatusCode::NO_CONTENT);
+    let served = send(&pool, "GET", cred, Some(&token), b"").await;
+    assert_eq!(
+        (served.body.as_slice(), served.setup.as_deref()),
+        (b"blob".as_slice(), Some("0"))
+    );
+
+    // Another tab sets chat up again.
+    sqlx::query("UPDATE actors SET chat_setup_generation = 1 WHERE id = $1")
+        .bind(bob)
+        .execute(&pool)
+        .await
+        .expect("a newer setup");
+    let stale = send_with(&pool, "PUT", cred, Some(&token), &named("0"), b"stale").await;
+    assert_eq!(stale.status, StatusCode::CONFLICT);
+    let stale_key = publish(&pool, &token, &key(BOB_KEY)).await;
+    assert_eq!(stale_key.status, StatusCode::CONFLICT);
+    let keys: i64 = sqlx::query_scalar("SELECT count(*) FROM chat_keys")
+        .fetch_one(&pool)
+        .await
+        .expect("count");
+    assert_eq!(keys, 0);
+    let newest = send_with(&pool, "PUT", cred, Some(&token), &named("1"), b"newest").await;
+    assert_eq!(newest.status, StatusCode::NO_CONTENT);
+    let served = send(&pool, "GET", cred, Some(&token), b"").await;
+    assert_eq!(served.setup.as_deref(), Some("1"));
+    let key_reply = send_with(
+        &pool,
+        "PUT",
+        "/api/v1/me/chat_key",
+        Some(&token),
+        &named("1"),
+        &key(BOB_KEY),
+    )
+    .await;
+    assert_eq!(key_reply.status, StatusCode::NO_CONTENT);
+}
+
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn resetting_a_setup_keeps_the_address_and_forgets_the_rest(pool: PgPool) {
@@ -1745,9 +2250,13 @@ async fn resetting_a_setup_keeps_the_address_and_forgets_the_rest(pool: PgPool) 
     .execute(&pool)
     .await
     .expect("a blob and the flag");
-    noombat_chat::keys::reset_setup(&pool, pair.bob)
-        .await
-        .expect("reset");
+    let setup = noombat_chat::keys::set_up(&pool, pair.bob, RELAY, |address| async move {
+        Ok((address.expect("the address kept"), "rotated".to_owned()))
+    })
+    .await
+    .expect("set up again");
+    assert_eq!(setup.password, "rotated");
+    assert_eq!(setup.generation, 1);
     let (address, blob, flagged): (Option<String>, Option<Vec<u8>>, bool) = sqlx::query_as(
         "SELECT chatmail_addr, chatmail_cred, chat_requires_reprovisioning FROM actors WHERE id = $1",
     )

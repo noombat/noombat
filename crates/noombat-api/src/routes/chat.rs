@@ -102,14 +102,36 @@ async fn chat_member(
     Ok(actor)
 }
 
+/// The header naming the chat setup a write belongs to: the number
+/// `provision_chat` returns and the credentials are served with.
+pub(crate) const CHAT_SETUP: &str = "noombat-chat-setup";
+
+/// The chat setup a write names, from the [`CHAT_SETUP`] header.
+pub(crate) fn chat_setup(headers: &axum::http::HeaderMap) -> Result<i64, ApiError> {
+    headers
+        .get(CHAT_SETUP)
+        .and_then(|value| value.to_str().ok())
+        // Digits only: `parse` would also take a sign.
+        .filter(|value| !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()))
+        .and_then(|value| value.parse().ok())
+        .ok_or_else(|| {
+            ApiError(NoombatError::BadRequest(format!(
+                "the {CHAT_SETUP} header must name the chat setup"
+            )))
+        })
+}
+
 /// `PUT /api/v1/me/chat_key`
 ///
 /// The member's OpenPGP public key for chat, binary, as their client made
-/// it. Refused unless it is one public key naming their chat address. A
-/// changed key is pushed to followers on other instances.
+/// it, naming its chat setup in the [`CHAT_SETUP`] header. Refused unless
+/// it is one public key naming their chat address, and with 409 once a
+/// newer setup has replaced the one named. A changed key is pushed to
+/// followers on other instances.
 async fn put_chat_key(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<StatusCode, ApiError> {
     let actor = chat_member(&state, viewer).await?;
@@ -125,7 +147,8 @@ async fn put_chat_key(
             "chat is not set up for this account".into(),
         ))
     })?;
-    if noombat_chat::keys::publish(&state.pool, actor.id, address, &body).await? {
+    let generation = chat_setup(&headers)?;
+    if noombat_chat::keys::publish(&state.pool, actor.id, address, &body, generation).await? {
         noombat_federation::update::enqueue_actor_update(&state.pool, &actor, &state.domain).await;
     }
     Ok(StatusCode::NO_CONTENT)

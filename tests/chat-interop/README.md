@@ -7,7 +7,7 @@ This directory contains the test environment and runner for verifying Noombat's 
 | File                   | Purpose                                              |
 |------------------------|------------------------------------------------------|
 | `compose.yml`          | Compose stack: Noombat, the relay, PostgreSQL, Redis |
-| `run.sh`               | Test runner: 31 assertions (see below)               |
+| `run.sh`               | Test runner: 32 assertions (see below)               |
 | `build-local.sh`       | Build the binary for the local loop                  |
 | `compose.localbin.yml` | Overlay for the local loop                           |
 | `fixtures/`            | Bob's throwaway key and one message encrypted to it  |
@@ -68,38 +68,39 @@ A skipped assertion exits non-zero when `CI` is set. Locally a skip is a conveni
 
 ## Test Cases
 
-Sections 10, 11, 13, 16 and 18 carry several assertions each, so nineteen sections produce thirty-one assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
+Sections 10, 11, 13, 16 and 18 carry several assertions each, so nineteen sections produce thirty-two assertions. Check 17 runs the web client's own modules under Node (`frontend/interop/`), so it needs the frontend's packages installed.
 
-| #  | Section           | Assertion                                       |
-|----|-------------------|-------------------------------------------------|
-| 0  | Chatmail admin    | Sidecar is serving (401 without the secret)     |
-| 1  | Registration      | Password sign-up refused without a mailer (503) |
-| 2  | Login             | alice signs in                                  |
-| 3  | Login             | bob signs in                                    |
-| 4  | Login             | Wrong credentials refused (401 or 403)          |
-| 5  | Chat WebSocket    | WebSocket route exists (non-404 response)       |
-| 6  | Chat reports      | Report endpoint exists                          |
-| 7  | Auth pages        | Login page renders (200)                        |
-| 8  | Auth pages        | Register page renders (200)                     |
-| 9  | Closed federation | Chat page loads for a signed-in member          |
-| 10 | NodeInfo          | Chatmail advertised as available                |
-| 10 | NodeInfo          | Configured Chatmail domain named                |
-| 11 | Provisioning      | Chat provisioned against the relay (200)        |
-| 11 | Provisioning      | Credential page names the domain afterwards     |
-| 11 | Provisioning      | An IMAP login for an unknown address is refused |
-| 11 | Provisioning      | An IMAP login does not create an address        |
-| 11 | Provisioning      | A squat attempt does not stop provisioning      |
-| 12 | Sending           | alice's message to bob leaves over SMTP         |
-| 13 | Delivery          | The message reaches bob's mailbox               |
-| 13 | Delivery          | It is OpenPGP that bob's key opens              |
-| 14 | Plain text        | A plain-text body is refused before sending     |
-| 15 | Sender binding    | alice cannot send as bob                        |
-| 16 | First contact     | bob publishes his key (204)                     |
-| 16 | First contact     | bob's handle answers with his chat address      |
-| 16 | First contact     | alice reads it by address, byte for byte        |
-| 16 | First contact     | alice reads it by handle, byte for byte         |
-| 16 | First contact     | bob's actor document carries the same key       |
-| 16 | First contact     | alice cannot publish bob's key as hers (400)    |
-| 17 | Web client        | carol writes first on dave's key; he reads it   |
-| 18 | Set up again      | alice's mailbox gets a new password             |
-| 18 | Set up again      | The relay takes the new one, refuses the old    |
+| #  | Section           | Assertion                                           |
+|----|-------------------|-----------------------------------------------------|
+| 0  | Chatmail admin    | Sidecar is serving (401 without the secret)         |
+| 1  | Registration      | Password sign-up refused without a mailer (503)     |
+| 2  | Login             | alice signs in                                      |
+| 3  | Login             | bob signs in                                        |
+| 4  | Login             | Wrong credentials refused (401 or 403)              |
+| 5  | Chat WebSocket    | WebSocket route exists (non-404 response)           |
+| 6  | Chat reports      | Report endpoint exists                              |
+| 7  | Auth pages        | Login page renders (200)                            |
+| 8  | Auth pages        | Register page renders (200)                         |
+| 9  | Closed federation | Chat page loads for a signed-in member              |
+| 10 | NodeInfo          | Chatmail advertised as available                    |
+| 10 | NodeInfo          | Configured Chatmail domain named                    |
+| 11 | Provisioning      | Chat provisioned against the relay (200)            |
+| 11 | Provisioning      | Credential page names the domain afterwards         |
+| 11 | Provisioning      | An IMAP login for an unknown address is refused     |
+| 11 | Provisioning      | An IMAP login does not create an address            |
+| 11 | Provisioning      | A squat attempt does not stop provisioning          |
+| 12 | Sending           | alice's message to bob leaves over SMTP             |
+| 13 | Delivery          | The message reaches bob's mailbox                   |
+| 13 | Delivery          | It is OpenPGP that bob's key opens                  |
+| 14 | Plain text        | A plain-text body is refused before sending         |
+| 15 | Sender binding    | alice cannot send as bob                            |
+| 16 | First contact     | bob publishes his key (204)                         |
+| 16 | First contact     | bob's handle answers with his chat address          |
+| 16 | First contact     | alice reads it by address, byte for byte            |
+| 16 | First contact     | alice reads it by handle, byte for byte             |
+| 16 | First contact     | bob's actor document carries the same key           |
+| 16 | First contact     | alice cannot publish bob's key as hers (400)        |
+| 17 | Web client        | carol writes first on dave's key; he reads it       |
+| 18 | Set up again      | alice's mailbox gets a new password                 |
+| 18 | Set up again      | The relay takes the new one, refuses the old        |
+| 18 | Set up again      | An account the relay made, never recorded, taken up |

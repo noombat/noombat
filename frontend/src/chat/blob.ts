@@ -105,12 +105,23 @@ export async function decryptBlob(
 
 // ..... Server round-trips .....
 
+/** The header naming the chat setup a write belongs to: the number the
+ *  server gave the setup, and serves the credentials with. */
+export const CHAT_SETUP_HEADER = "Noombat-Chat-Setup";
+
 /**
- * Store the encrypted blob on the server.
+ * How storing the blob ended. `"superseded"`: a newer setup, in another
+ * tab or on another device, has replaced the one it belongs to, so it
+ * holds a relay password that no longer works.
+ */
+export type StoreBlobResult = "stored" | "superseded" | "failed";
+
+/**
+ * Store the encrypted blob on the server, for chat setup `setup`.
  *
  * `PUT /api/v1/me/chatmail_cred` with the raw bytes as the body.
  */
-export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
+export async function storeBlob(encrypted: Uint8Array, setup: number): Promise<StoreBlobResult> {
   // The `as ArrayBuffer` assertion is safe: the Uint8Array produced
   // by Web Crypto (AES-GCM) is always backed by an ArrayBuffer, not
   // a SharedArrayBuffer. TypeScript 5.7+ models Uint8Array as
@@ -118,16 +129,21 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
   // due to the SharedArrayBuffer half of the union.
   const resp = await fetch("/api/v1/me/chatmail_cred", {
     method: "PUT",
-    headers: authHeaders({ "Content-Type": "application/octet-stream" }),
+    headers: authHeaders({
+      "Content-Type": "application/octet-stream",
+      [CHAT_SETUP_HEADER]: String(setup),
+    }),
     body: new Blob([encrypted.buffer as ArrayBuffer]),
   });
-  return resp.ok;
+  if (resp.ok) return "stored";
+  return resp.status === 409 ? "superseded" : "failed";
 }
 
 /**
  * Discriminated result type for {@link fetchBlob}.
  *
- * - `"ok"`: the blob was retrieved successfully.
+ * - `"ok"`: the blob was retrieved successfully, with the number of the
+ *   setup it belongs to, which every later write must name.
  * - `"not_provisioned"`: HTTP 404; the blob does not exist (chat
  *   has not been provisioned).
  * - `"auth_error"`: HTTP 401 or 403; the access token has expired
@@ -135,7 +151,7 @@ export async function storeBlob(encrypted: Uint8Array): Promise<boolean> {
  * - `"error"`: any other non-success HTTP status.
  */
 export type FetchBlobResult =
-  | { status: "ok"; data: Uint8Array }
+  | { status: "ok"; data: Uint8Array; setup: number }
   | { status: "not_provisioned" }
   | { status: "auth_error" }
   | { status: "error"; httpStatus: number };
@@ -154,8 +170,12 @@ export async function fetchBlob(): Promise<FetchBlobResult> {
   });
 
   if (resp.ok) {
+    // Digits only: `Number` reads a missing or empty header as 0.
+    const header = resp.headers.get(CHAT_SETUP_HEADER) ?? "";
+    const setup = /^[0-9]{1,15}$/.test(header) ? Number(header) : NaN;
+    if (Number.isNaN(setup)) return { status: "error", httpStatus: resp.status };
     const buf = await resp.arrayBuffer();
-    return { status: "ok", data: new Uint8Array(buf) };
+    return { status: "ok", data: new Uint8Array(buf), setup };
   }
 
   if (resp.status === 404) {

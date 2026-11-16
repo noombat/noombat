@@ -18,9 +18,35 @@
  * It is shared by the registration flow (`src/auth.ts`), the OAuth
  * account-upgrade flow (`src/upgrade.ts`), and the chat page's own
  * setup form.
+ *
+ * Each setup gives the relay a new password, so two at once would leave
+ * the stored credentials holding one the relay no longer takes. Tabs of
+ * one browser take turns, under a Web Lock; the server's setup numbers
+ * cover two devices, refusing the credentials and key of any setup a
+ * newer one has replaced.
  */
 
 import { authHeaders } from "./session";
+
+/**
+ * How setting chat up ended: set up at `address`; set up meanwhile by
+ * another tab or device, whose setup this one must not replace; refused,
+ * the password not proving the member; refused for now, one having been
+ * set up a moment ago; or failed otherwise, the blob not stored among it.
+ */
+export type ProvisionResult =
+  | { status: "set_up"; address: string }
+  | { status: "superseded" }
+  | { status: "refused" }
+  | { status: "too_soon" }
+  | { status: "failed" };
+
+/** Runs `task` while no other tab of this browser sets chat up, or at
+ *  once where the browser has no Web Locks. */
+async function oneTabAtATime<T>(task: () => Promise<T>): Promise<T> {
+  const locks = globalThis.navigator?.locks;
+  return locks ? locks.request("noombat-chat-setup", task) : task();
+}
 
 /**
  * Provision the Chatmail account, generate an OpenPGP key pair,
@@ -32,18 +58,22 @@ import { authHeaders } from "./session";
  * registration flow) or by the `noombat_session` cookie (the
  * upgrade flow); {@link authHeaders} selects whichever is present.
  *
- * Resolves to the chat address once the blob is stored, and to `null`
- * when the server refused or the blob was not stored, in which case
- * nothing is published. A failed request rejects the promise. Also sets
- * chat up again for a member whose setup is unusable, which the server
- * allows with a new Chatmail password.
+ * Resolves to how setting up ended, the address once the blob is stored. Nothing is
+ * published when the server refused or the blob was not stored, nor when
+ * another tab or device set chat up meanwhile. A failed request rejects
+ * the promise. Also sets chat up again for a member whose setup is
+ * unusable, which the server allows with a new Chatmail password.
  * Callers treat provisioning as best-effort: the account remains
  * usable and provisioning can be retried later from the chat page.
  *
  * The OpenPGP and blob modules are loaded with dynamic `import()`
  * so that they form separate chunks.
  */
-export async function provisionChat(blobKey: CryptoKey, authKey: string): Promise<string | null> {
+export async function provisionChat(blobKey: CryptoKey, authKey: string): Promise<ProvisionResult> {
+  return oneTabAtATime(() => setUp(blobKey, authKey));
+}
+
+async function setUp(blobKey: CryptoKey, authKey: string): Promise<ProvisionResult> {
   // 1. Ask the server to provision the Chatmail account.
   const provResp = await fetch("/api/v1/me/provision_chat", {
     method: "POST",
@@ -52,11 +82,17 @@ export async function provisionChat(blobKey: CryptoKey, authKey: string): Promis
     body: JSON.stringify({ auth_key: authKey }),
   });
 
-  if (!provResp.ok) return null;
+  // A conflict: chat was set up meanwhile, perhaps by the tab this one
+  // waited for.
+  if (provResp.status === 409) return { status: "superseded" };
+  if (provResp.status === 403) return { status: "refused" };
+  if (provResp.status === 429) return { status: "too_soon" };
+  if (!provResp.ok) return { status: "failed" };
 
-  const { chatmail_addr, chatmail_password } = (await provResp.json()) as {
+  const { chatmail_addr, chatmail_password, chat_setup } = (await provResp.json()) as {
     chatmail_addr: string;
     chatmail_password: string;
+    chat_setup: number;
   };
 
   // 2. Generate an OpenPGP key pair for the Chatmail address.
@@ -75,15 +111,16 @@ export async function provisionChat(blobKey: CryptoKey, authKey: string): Promis
 
   const encrypted = await encryptBlob(blobKey, blob, chatmail_addr);
 
-  // 4. Store the encrypted blob on the server.
-  if (!(await storeBlob(encrypted))) return null;
+  // 4. Store the encrypted blob on the server, for this setup.
+  const stored = await storeBlob(encrypted, chat_setup);
+  if (stored !== "stored") return { status: stored === "superseded" ? "superseded" : "failed" };
 
   // 5. Publish the public key. Never before step 4: a key whose private
   //    half was lost would invite messages nobody can read.
   // Best-effort: the chat page publishes it at unlock if this fails.
   const { publishOwnKey } = await import("./directory");
-  await publishOwnKey(keyPair.publicKey).catch(() => false);
-  return chatmail_addr;
+  await publishOwnKey(keyPair.publicKey, chat_setup).catch(() => false);
+  return { status: "set_up", address: chatmail_addr };
 }
 
 /**

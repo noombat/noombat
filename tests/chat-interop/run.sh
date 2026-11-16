@@ -70,6 +70,13 @@ mock_auth_key() {
     printf '%064s' '' | tr ' ' "$char"
 }
 
+# SQL against the stack's own database, for state no API sets. The
+# project name is the one the README and CI bring the stack up under.
+db_sql() {
+    docker compose -p "${CHAT_INTEROP_PROJECT:-chat-interop}" -f "$HERE/compose.yml" \
+        exec -T db psql -U chatinterop -d chatinterop -tAq -v ON_ERROR_STOP=1 -c "$1"
+}
+
 # ..... WAIT FOR SERVICES .....
 
 wait_for() {
@@ -327,6 +334,8 @@ if [ -n "$ALICE_TOKEN" ]; then
     PROV_CODE=$(printf '%s' "$PROV_BODY" | tail -n1)
     ALICE_CHATMAIL_PASSWORD=$(printf '%s' "$PROV_BODY" \
       | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
+    # Every later write of the key names the setup it belongs to.
+    ALICE_SETUP=$(printf '%s' "$PROV_BODY" | grep -o '"chat_setup":[0-9]*' | cut -d: -f2)
     if [ "$PROV_CODE" = "200" ]; then
         pass "Chat provisioned against the relay (HTTP 200)"
     else
@@ -409,6 +418,7 @@ else
     [ -n "$PROVISION_CODE" ] || PROVISION_CODE="000"
     BOB_CHATMAIL_PASSWORD=$(printf '%s' "$BOB_PROV" \
       | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
+    BOB_SETUP=$(printf '%s' "$BOB_PROV" | grep -o '"chat_setup":[0-9]*' | cut -d: -f2)
     if [ "$PROVISION_CODE" = "200" ]; then
         pass "A squat attempt does not stop the real user provisioning"
     else
@@ -567,6 +577,7 @@ else
     gpg --batch --quiet --export "bob@${CHATMAIL_DOMAIN}" > "$WORK/bob.pub"
     PUT_CODE=$(curl $CURL_OPTS -s -o /dev/null -w '%{http_code}' -X PUT \
       -H "Authorization: Bearer $BOB_TOKEN" -H 'Content-Type: application/octet-stream' \
+      -H "Noombat-Chat-Setup: ${BOB_SETUP:-}" \
       --data-binary @"$WORK/bob.pub" "$NOOMBAT/api/v1/me/chat_key" 2>/dev/null) || PUT_CODE="000"
     if [ "$PUT_CODE" = "204" ]; then
         pass "First contact: bob publishes his key (HTTP 204)"
@@ -612,6 +623,7 @@ sys.exit(0 if key and base64.b64decode(key, validate=True) == open(sys.argv[1], 
 
     AS_ALICE=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X PUT \
       -H "Authorization: Bearer $ALICE_TOKEN" -H 'Content-Type: application/octet-stream' \
+      -H "Noombat-Chat-Setup: ${ALICE_SETUP:-}" \
       --data-binary @"$WORK/bob.pub" "$NOOMBAT/api/v1/me/chat_key" 2>/dev/null) || AS_ALICE="000"
     # Refused for the address, not for some other reason.
     if [ "$(printf '%s' "$AS_ALICE" | tail -n1)" = "400" ] \
@@ -668,6 +680,11 @@ if [ -z "$ALICE_TOKEN" ] || [ -z "${ALICE_CHATMAIL_PASSWORD:-}" ]; then
 elif ! command -v python3 >/dev/null 2>&1; then
     skip "Set up again: python3 is needed to drive an IMAP session"
 else
+    # alice was set up a moment ago, in check 11, and a setup holds the
+    # account for a minute after it; that hold is not what this checks.
+    if ! db_sql "UPDATE actors SET chat_set_up_at = NULL WHERE username = 'alice'" > /dev/null; then
+        fail "Set up again: alice's setup could not be released through the stack's database"
+    fi
     AGAIN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
       -H "Cookie: noombat_session=${ALICE_TOKEN}" \
       -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
@@ -692,6 +709,23 @@ else
         else
             fail "Set up again: the new password was $NEW_LOGIN and the old $OLD_LOGIN"
         fi
+    fi
+    # A first setup that the relay acted on but that stopped before the
+    # address was recorded: the next setup gives that account a new
+    # password, rather than failing on the account that exists.
+    if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, chat_set_up_at = NULL WHERE username = 'alice'" > /dev/null; then
+        TAKEN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
+          -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+          -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
+          "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || TAKEN=""
+        if [ "$(printf '%s' "$TAKEN" | tail -n1)" = "200" ] \
+            && printf '%s' "$TAKEN" | grep -q "\"chatmail_addr\":\"alice@${CHATMAIL_DOMAIN}\""; then
+            pass "Set up again: an account the relay made but noombat never recorded is taken up (HTTP 200)"
+        else
+            fail "Set up again: a first setup stranded after the relay made its account was refused: $(printf '%s' "$TAKEN" | tail -n1)"
+        fi
+    else
+        fail "Set up again: alice could not be reset through the stack's database"
     fi
 fi
 

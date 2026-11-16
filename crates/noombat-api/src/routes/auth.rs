@@ -229,9 +229,10 @@ async fn login(
     )
     .await?;
 
-    // Fetch the encrypted credential blob.
-    let blob: Option<Vec<u8>> =
-        sqlx::query_scalar("SELECT chatmail_cred FROM actors WHERE id = $1")
+    // Fetch the encrypted credential blob, and the setup it belongs to,
+    // which a write of it must name.
+    let (blob, chat_setup): (Option<Vec<u8>>, i64) =
+        sqlx::query_as("SELECT chatmail_cred, chat_setup_generation FROM actors WHERE id = $1")
             .bind(actor_id)
             .fetch_one(&state.pool)
             .await?;
@@ -246,6 +247,7 @@ async fn login(
         "refresh_token": tokens.refresh_token,
         "expires_in": tokens.expires_in,
         "chatmail_cred": blob_b64,
+        "chat_setup": chat_setup,
     });
 
     let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
@@ -585,6 +587,9 @@ struct SetPasswordRequest {
     /// the blob with the old key and re-encrypts with the new key
     /// before sending this field.
     chatmail_cred: Option<String>,
+    /// The chat setup those credentials belong to, required with them: a
+    /// newer setup's would otherwise be replaced by an older one's.
+    chat_setup: Option<i64>,
 }
 
 async fn set_password(
@@ -655,18 +660,64 @@ async fn set_password(
             )))
         })?;
 
-    // Atomic update: auth_key_hash and chatmail_cred in one statement.
-    sqlx::query(
-        "UPDATE actors SET auth_key_hash = $1, chatmail_cred = COALESCE($2, chatmail_cred) \
-         WHERE id = $3",
+    let chat_setup = match (&blob_bytes, req.chat_setup) {
+        (Some(_), None) => {
+            return Err(ApiError(NoombatError::BadRequest(
+                "chat_setup must name the setup the credentials belong to".into(),
+            )));
+        }
+        (_, setup) => setup,
+    };
+
+    // One statement, the key and the re-encrypted credentials together,
+    // and neither when the credentials belong to a setup a newer one
+    // replaced, while a setup is under way (it would store credentials
+    // under the old password), or when credentials are held and none are
+    // sent (they would stay under it). Credentials re-encrypted take a new
+    // setup number, returned in the header, so a tab still holding them
+    // under the old password has its writes refused rather than undoing
+    // this.
+    let written: Option<i64> = sqlx::query_scalar(
+        "UPDATE actors SET auth_key_hash = $1, \
+             chatmail_cred = COALESCE($2, chatmail_cred), \
+             chat_setup_generation = chat_setup_generation \
+                 + CASE WHEN $2::bytea IS NULL THEN 0 ELSE 1 END \
+         WHERE id = $3 \
+           AND ($2::bytea IS NULL OR chat_setup_generation = $4) \
+           AND ($2::bytea IS NOT NULL OR chatmail_cred IS NULL) \
+           AND (chat_setup_until IS NULL OR chat_setup_until < now()) \
+         RETURNING chat_setup_generation",
     )
     .bind(&hash)
     .bind(&blob_bytes)
     .bind(actor_id)
-    .execute(&state.pool)
+    .bind(chat_setup)
+    .fetch_optional(&state.pool)
     .await?;
+    let Some(generation) = written else {
+        let held: bool =
+            sqlx::query_scalar("SELECT chatmail_cred IS NOT NULL FROM actors WHERE id = $1")
+                .bind(actor_id)
+                .fetch_one(&state.pool)
+                .await?;
+        return Err(ApiError(if blob_bytes.is_none() && held {
+            NoombatError::BadRequest(
+                "chatmail_cred required: the chat credentials must be re-encrypted".into(),
+            )
+        } else {
+            NoombatError::Conflict(
+                "chat is being set up, or was set up again, in another tab or on another device"
+                    .into(),
+            )
+        }));
+    };
 
-    Ok(StatusCode::NO_CONTENT)
+    let mut response = StatusCode::NO_CONTENT.into_response();
+    response.headers_mut().insert(
+        crate::routes::chat::CHAT_SETUP,
+        axum::http::HeaderValue::from(generation),
+    );
+    Ok(response)
 }
 
 // ..... Chatmail provisioning .....
@@ -680,6 +731,9 @@ struct ProvisionChatRequest {
 struct ProvisionChatResponse {
     chatmail_addr: String,
     chatmail_password: String,
+    /// The setup's number, which storing the credentials and publishing
+    /// the key must name.
+    chat_setup: i64,
 }
 
 /// `POST /api/v1/me/provision_chat`
@@ -691,13 +745,18 @@ struct ProvisionChatResponse {
 /// password can set chat up; an account without a password sets one
 /// first, since chat's credentials are kept under it.
 ///
-/// The response includes the Chatmail address and password. The
-/// browser is responsible for generating an OpenPGP key pair,
-/// building the credential blob, encrypting it with the blob key
-/// (derived from the user's password), and storing it via
-/// `PUT /api/v1/me/chatmail_cred`.
+/// The response includes the Chatmail address and password, and the
+/// setup's number, `chat_setup`. The browser is responsible for
+/// generating an OpenPGP key pair, building the credential blob,
+/// encrypting it with the blob key (derived from the user's password),
+/// and storing it via `PUT /api/v1/me/chatmail_cred`, naming that setup.
+/// A second setup while one is under way is refused, and only the newest
+/// setup's credentials and key can be stored.
 ///
-/// Returns 400 if chat is already set up and usable.
+/// Returns 409 if chat is already set up and usable, as when another tab
+/// has just set it up, or while another setup is under way; 429 within a
+/// minute of a setup that reached the relay; 403 for a password that does
+/// not prove the member, or an account that may not chat.
 /// Returns 503 if Chatmail is not configured on this instance.
 async fn provision_chat(
     State(state): State<AppState>,
@@ -735,63 +794,49 @@ async fn provision_chat(
     // Chatmail password it holds. The mailbox is kept and given a new
     // password; the old key, whose private half went with the old setup,
     // is no longer published.
-    let (address, has_blob, flagged): (Option<String>, bool, bool) = sqlx::query_as(
-        "SELECT chatmail_addr, chatmail_cred IS NOT NULL, chat_requires_reprovisioning \
-         FROM actors WHERE id = $1",
-    )
-    .bind(actor_id)
-    .fetch_one(&state.pool)
-    .await?;
-    if let Some(address) = address {
-        if has_blob && !flagged {
-            return Err(ApiError(NoombatError::BadRequest(
-                "chat already provisioned".into(),
-            )));
-        }
-        let admin = state.chatmail_admin_client.as_ref().ok_or_else(|| {
-            ApiError(NoombatError::ServiceUnavailable(
-                "chatmail admin sidecar not configured on this instance".into(),
-            ))
-        })?;
-        let rotated = admin.rotate_password(&address).await?;
-        noombat_chat::keys::reset_setup(&state.pool, actor_id).await?;
-        noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
-        return Ok(Json(ProvisionChatResponse {
-            chatmail_addr: address,
-            chatmail_password: rotated.password,
-        }));
-    }
-
-    let chatmail_domain = state.chatmail_domain.as_deref().ok_or_else(|| {
-        ApiError(NoombatError::ServiceUnavailable(
-            "chatmail not configured on this instance".into(),
-        ))
-    })?;
-
-    // Without the sidecar there is no way to create an account: the
-    // relay only verifies logins. Refusing here keeps an unconfigured
-    // deployment from quietly falling back to a login-only path.
-    let admin = state.chatmail_admin_client.as_ref().ok_or_else(|| {
-        ApiError(NoombatError::ServiceUnavailable(
-            "chatmail admin sidecar not configured on this instance".into(),
-        ))
-    })?;
-
-    let provisioned =
-        noombat_chat::provision::provision_chatmail_account(admin, chatmail_domain, username)
+    //
+    // Without the sidecar there is no way to create an account: the relay
+    // only verifies logins. Refusing keeps an unconfigured deployment from
+    // quietly falling back to a login-only path.
+    let admin = state.chatmail_admin_client.clone();
+    let chatmail_domain = state.chatmail_domain.clone();
+    let username = username.to_owned();
+    let setup = noombat_chat::keys::set_up(
+        &state.pool,
+        actor_id,
+        noombat_chat::keys::RELAY_TIMEOUT,
+        |address| async move {
+            let admin = admin.ok_or_else(|| {
+                NoombatError::ServiceUnavailable(
+                    "chatmail admin sidecar not configured on this instance".into(),
+                )
+            })?;
+            if let Some(address) = address {
+                let rotated = admin.rotate_password(&address).await?;
+                return Ok((address, rotated.password));
+            }
+            let chatmail_domain = chatmail_domain.ok_or_else(|| {
+                NoombatError::ServiceUnavailable("chatmail not configured on this instance".into())
+            })?;
+            let provisioned = noombat_chat::provision::provision_chatmail_account(
+                &admin,
+                &chatmail_domain,
+                &username,
+            )
             .await?;
-
-    // Store the Chatmail address on the actor record.
-    sqlx::query("UPDATE actors SET chatmail_addr = $1 WHERE id = $2")
-        .bind(&provisioned.address)
-        .bind(actor_id)
-        .execute(&state.pool)
-        .await?;
+            Ok((provisioned.address, provisioned.password))
+        },
+    )
+    .await;
+    // Pushed whatever the outcome: a setup that failed after its claim had
+    // already forgotten the key the member published.
     noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
+    let setup = setup?;
 
     Ok(Json(ProvisionChatResponse {
-        chatmail_addr: provisioned.address,
-        chatmail_password: provisioned.password,
+        chatmail_addr: setup.address,
+        chatmail_password: setup.password,
+        chat_setup: setup.generation,
     }))
 }
 
@@ -800,7 +845,8 @@ async fn provision_chat(
 /// `GET /api/v1/me/chatmail_cred`
 ///
 /// Returns the encrypted credential blob as raw bytes
-/// (`application/octet-stream`). Returns 404 if no blob exists.
+/// (`application/octet-stream`), with the number of the setup it belongs
+/// to in the `Noombat-Chat-Setup` header. Returns 404 if no blob exists.
 async fn get_chatmail_cred(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
@@ -808,12 +854,7 @@ async fn get_chatmail_cred(
     let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
     let actor_id = viewer.actor_id;
 
-    let blob: Option<Vec<u8>> =
-        sqlx::query_scalar("SELECT chatmail_cred FROM actors WHERE id = $1")
-            .bind(actor_id)
-            .fetch_one(&state.pool)
-            .await
-            .map_err(|e| ApiError(NoombatError::Internal(format!("blob fetch failed: {e}"))))?;
+    let (blob, generation) = noombat_chat::keys::credentials(&state.pool, actor_id).await?;
 
     match blob {
         Some(bytes) => {
@@ -821,6 +862,11 @@ async fn get_chatmail_cred(
             response.headers_mut().insert(
                 axum::http::header::CONTENT_TYPE,
                 axum::http::HeaderValue::from_static("application/octet-stream"),
+            );
+            // Named back by every later write of the credentials or key.
+            response.headers_mut().insert(
+                crate::routes::chat::CHAT_SETUP,
+                axum::http::HeaderValue::from(generation),
             );
             Ok(response)
         }
@@ -833,7 +879,8 @@ async fn get_chatmail_cred(
 /// `PUT /api/v1/me/chatmail_cred`
 ///
 /// Stores the encrypted credential blob (raw bytes from the request
-/// body). Maximum size: 64 KiB.
+/// body). Maximum size: 64 KiB. The `Noombat-Chat-Setup` header names the
+/// setup it belongs to; 409 once a newer setup has replaced that one.
 ///
 /// **Note on envelope encryption:** This column is *not* envelope-
 /// encrypted at the server layer because the blob is already
@@ -842,6 +889,7 @@ async fn get_chatmail_cred(
 async fn put_chatmail_cred(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
+    headers: axum::http::HeaderMap,
     body: axum::body::Bytes,
 ) -> Result<StatusCode, ApiError> {
     let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
@@ -854,11 +902,10 @@ async fn put_chatmail_cred(
         ))));
     }
 
-    sqlx::query("UPDATE actors SET chatmail_cred = $1 WHERE id = $2")
-        .bind(body.as_ref())
-        .bind(actor_id)
-        .execute(&state.pool)
-        .await?;
+    // A tab holding an older setup's credentials must not replace the
+    // newest's, whose relay password they do not hold.
+    let generation = crate::routes::chat::chat_setup(&headers)?;
+    noombat_chat::keys::store_credentials(&state.pool, actor_id, generation, &body).await?;
 
     Ok(StatusCode::NO_CONTENT)
 }

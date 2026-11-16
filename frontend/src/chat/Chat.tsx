@@ -27,7 +27,7 @@ import { decryptBlob, encryptBlob, fetchBlob, storeBlob, type CredentialBlob } f
 import { repairOwnKey, type PublishedKeyResult } from "./directory";
 import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipient";
 import { deriveBlobKey, deriveBothKeys } from "../auth";
-import { provisionChat } from "./provision";
+import { provisionChat, type ProvisionResult } from "./provision";
 import { describeServerError } from "./server-error";
 
 // ..... Base64 helpers .....
@@ -71,6 +71,9 @@ interface ChatStrings {
   setUpWithPassword: string;
   password: string;
   setupFailed: string;
+  setupTooSoon: string;
+  setupError: string;
+  setUpElsewhere: string;
   enterPassword: string;
   unlock: string;
   keyChanged: (address: string, date: string) => string;
@@ -126,6 +129,10 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     password: "Password",
     setUpWithPassword: "Enter your Noombat password to set up encrypted chat on this account.",
     setupFailed: "Chat could not be set up. Check the password and try again.",
+    setupTooSoon: "Chat was set up a moment ago. Try again in a minute.",
+    setupError: "Chat could not be set up just now. Try again later.",
+    setUpElsewhere:
+      "Chat was set up in another tab or on another device. Reload this page to unlock it.",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
     keyChanged: (address, date) =>
@@ -185,6 +192,10 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     password: "Password",
     setUpWithPassword: "Enter your Noombat password to set up encrypted chat on this account.",
     setupFailed: "Chat could not be set up. Check the password and try again.",
+    setupTooSoon: "Chat was set up a moment ago. Try again in a minute.",
+    setupError: "Chat could not be set up just now. Try again later.",
+    setUpElsewhere:
+      "Chat was set up in another tab or on another device. Reload this page to unlock it.",
     enterPassword: "Enter your Noombat password to unlock encrypted chat.",
     unlock: "Unlock",
     keyChanged: (address, date) =>
@@ -246,6 +257,10 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
     setUpWithPassword:
       "Digite sua senha do Noombat para configurar o chat criptografado nesta conta.",
     setupFailed: "Não foi possível configurar o chat. Verifique a senha e tente novamente.",
+    setupTooSoon: "O chat foi configurado há pouco. Tente novamente daqui a um minuto.",
+    setupError: "Não foi possível configurar o chat agora. Tente novamente mais tarde.",
+    setUpElsewhere:
+      "O chat foi configurado em outra aba ou em outro dispositivo. Recarregue esta página para desbloqueá-lo.",
     enterPassword: "Digite sua senha Noombat para desbloquear o chat criptografado.",
     unlock: "Desbloquear",
     keyChanged: (address, date) =>
@@ -402,6 +417,12 @@ export default function Chat(props: ChatProps): JSX.Element {
   let publicKeyBytes: Uint8Array | null = null;
   let peerState: PeerStateTable | null = null;
   let blobKey: CryptoKey | null = null;
+  /** The chat setup the credentials belong to, which every write of them
+   *  or of the published key names. */
+  let setupNumber = 0;
+  /** Set once a newer setup elsewhere has replaced this one: these
+   *  credentials hold a password the relay no longer takes. */
+  let superseded = false;
 
   // ..... Dirty flag for peer state synchronisation .....
 
@@ -437,6 +458,7 @@ export default function Chat(props: ChatProps): JSX.Element {
     }
 
     const encryptedBlob = result.data;
+    setupNumber = result.setup;
     const domain = window.location.hostname;
 
     try {
@@ -473,7 +495,7 @@ export default function Chat(props: ChatProps): JSX.Element {
     setSettingUp(true);
     const password = setupPassword();
     setStatus("");
-    let provisioned: string | null;
+    let provisioned: ProvisionResult;
     try {
       const { authKey, blobKey } = await deriveBothKeys(
         password,
@@ -482,16 +504,22 @@ export default function Chat(props: ChatProps): JSX.Element {
       );
       provisioned = await provisionChat(blobKey, authKey);
     } catch {
-      provisioned = null;
+      provisioned = { status: "failed" };
     } finally {
       setSettingUp(false);
     }
-    if (!provisioned) {
-      setStatus(strings().setupFailed);
+    if (provisioned.status !== "set_up") {
+      const why = {
+        superseded: strings().setUpElsewhere,
+        refused: strings().setupFailed,
+        too_soon: strings().setupTooSoon,
+        failed: strings().setupError,
+      };
+      setStatus(why[provisioned.status]);
       return;
     }
     setSetupPassword("");
-    setAddress(provisioned);
+    setAddress(provisioned.address);
     // The unlock prompt shows should unlocking fail.
     setNeedsUnlock(true);
     setUnlockPassword(password);
@@ -504,7 +532,7 @@ export default function Chat(props: ChatProps): JSX.Element {
     if (ok) {
       // Repairs a key that failed to publish at setup: one lookup, and an
       // upload when the instance serves another key or none.
-      if (credentials) void repairOwnKey(address(), credentials);
+      if (credentials) void repairOwnKey(address(), credentials, setupNumber);
       setNeedsUnlock(false);
       setUnlockPassword("");
       connect();
@@ -803,7 +831,7 @@ export default function Chat(props: ChatProps): JSX.Element {
   let syncing = false;
 
   async function syncPeerState(): Promise<void> {
-    if (!peerState || !blobKey || !credentials) return;
+    if (!peerState || !blobKey || !credentials || superseded) return;
     // Skip the re-encryption and PUT if nothing changed.
     if (!peerStateDirty) return;
     // Prevent overlapping syncs.
@@ -817,8 +845,15 @@ export default function Chat(props: ChatProps): JSX.Element {
         peerStateJson,
       };
       const encrypted = await encryptBlob(blobKey, updatedBlob, address());
-      await storeBlob(encrypted);
-      peerStateDirty = false;
+      const stored = await storeBlob(encrypted, setupNumber);
+      if (stored === "superseded") {
+        // Writing on would only be refused again; this page is done.
+        superseded = true;
+        clearInterval(syncTimer);
+        setStatus(strings().setUpElsewhere);
+      } else if (stored === "stored") {
+        peerStateDirty = false;
+      }
     } catch {
       // Best-effort: sync failure is non-fatal. The dirty flag
       // remains set so the next interval retries.

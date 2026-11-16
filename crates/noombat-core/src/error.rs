@@ -51,6 +51,12 @@ pub enum NoombatError {
     #[error("service unavailable: {0}")]
     ServiceUnavailable(String),
 
+    /// The request was made against state that has since moved on, such as
+    /// a write naming a chat setup that a newer one replaced. Answered as
+    /// 409, with the detail, so the caller can say what happened.
+    #[error("conflict: {0}")]
+    Conflict(String),
+
     /// A per-account ceiling was reached: a quota rather than a refusal.
     ///
     /// Distinct from `Forbidden`, which says the caller may not do this at

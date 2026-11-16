@@ -42,8 +42,15 @@ pub async fn provision_chatmail_account(
     username: &str,
 ) -> Result<ProvisionedAccount> {
     let address = format!("{username}@{chatmail_domain}");
-    let created = admin.create_account(&address).await?;
-    let password = created.password;
+    // An account there already was made by an earlier setup that stopped
+    // before the address was recorded: a suspension mid-setup, a timeout
+    // after the relay acted, a crash. The address is this member's, so it
+    // gets a new password rather than refusing every setup from then on.
+    let password = match admin.create_account(&address).await {
+        Ok(created) => created.password,
+        Err(NoombatError::Conflict(_)) => admin.rotate_password(&address).await?.password,
+        Err(error) => return Err(error),
+    };
 
     // Establish a TCP connection to the Chatmail IMAP server
     // (port 993, implicit TLS).

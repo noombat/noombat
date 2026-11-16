@@ -56,6 +56,7 @@ impl IntoResponse for ApiError {
             NoombatError::ServiceUnavailable(detail) => {
                 (StatusCode::SERVICE_UNAVAILABLE, ApError::internal(detail))
             }
+            NoombatError::Conflict(detail) => (StatusCode::CONFLICT, ApError::bad_request(detail)),
             // The detail is returned, unlike a 500: a caller who has hit a
             // ceiling can only act on it if they are told which one.
             NoombatError::QuotaExceeded(detail) => {
