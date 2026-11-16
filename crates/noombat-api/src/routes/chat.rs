@@ -32,6 +32,10 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/v1/chat/keys/{address}", get(get_chat_key))
         .route(
+            "/api/v1/chat/keys/by-handle/{handle}",
+            get(get_chat_key_by_handle),
+        )
+        .route(
             "/users/{username}/chat/blocks/{address}",
             axum::routing::delete(unblock_chat_sender),
         )
@@ -143,6 +147,57 @@ async fn get_chat_key(
     let published = noombat_chat::keys::find_visible_local(&state.pool, &address, viewer.id)
         .await?
         .ok_or_else(no_chat_key)?;
+    Ok(key_answer(&published.address, &published.key))
+}
+
+/// `GET /api/v1/chat/keys/by-handle/{handle}`
+///
+/// The published key of the member a handle names, `@user@domain`: a
+/// local member as by address, and a member of another noombat instance
+/// once their key is bound to their own instance and the relay sends mail
+/// there. Every refusal about the member is the same 404.
+async fn get_chat_key_by_handle(
+    State(state): State<AppState>,
+    Path(handle): Path<String>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Result<impl IntoResponse, ApiError> {
+    let viewer = chat_member(&state, viewer).await?;
+    let (user, domain) = noombat_federation::webfinger::parse_handle(&handle)
+        .ok_or_else(|| ApiError(NoombatError::BadRequest("not a handle".into())))?;
+
+    if domain.eq_ignore_ascii_case(&state.domain) {
+        let owner = noombat_identity::repo::find_local_by_username(&state.pool, user)
+            .await
+            .map_err(|_| no_chat_key())?;
+        let address = owner.chatmail_addr.ok_or_else(no_chat_key)?;
+        let published = noombat_chat::keys::find_visible_local(&state.pool, &address, viewer.id)
+            .await?
+            .ok_or_else(no_chat_key)?;
+        return Ok(key_answer(&published.address, &published.key));
+    }
+
+    // Without the relay there is no chat, and no list of where it sends.
+    let admin = state
+        .chatmail_admin_client
+        .as_ref()
+        .ok_or_else(no_chat_key)?;
+    let allowlist = admin.allowlisted_domains().await.map_err(|error| {
+        tracing::warn!(%error, "the relay's allowlist could not be read");
+        no_chat_key()
+    })?;
+    let found = noombat_federation::remote_chat_key::find_by_handle(
+        &state.pool,
+        &state.http_client,
+        user,
+        domain,
+        &allowlist,
+    )
+    .await
+    .unwrap_or_else(|error| {
+        tracing::debug!(%handle, %error, "a handle could not be looked up");
+        None
+    });
+    let (_, published) = found.ok_or_else(no_chat_key)?;
     Ok(key_answer(&published.address, &published.key))
 }
 

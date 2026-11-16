@@ -1136,6 +1136,16 @@ CREATE TABLE chat_keys (
     updated_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The chat domain each remote instance publishes in its NodeInfo, kept for
+-- a day. A member of another instance has their chat key stored only when
+-- its address is on their own instance's chat domain. NULL records an
+-- instance that publishes none.
+CREATE TABLE remote_chatmail_domains (
+    domain          TEXT PRIMARY KEY,
+    chatmail_domain TEXT,
+    fetched_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- ..... RELAY SUBSCRIPTIONS .....
 
 -- Tracks ActivityPub relays to which this instance is subscribed.

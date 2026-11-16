@@ -439,6 +439,39 @@ impl ChatmailAdminClient {
         })?;
         Ok(body.exists)
     }
+
+    /// `GET /admin/v1/allowlist`
+    ///
+    /// The chat domains the relay sends mail to.
+    pub async fn allowlisted_domains(&self) -> Result<Vec<String>> {
+        let url = format!("{}/admin/v1/allowlist", self.base_url);
+        let resp = self
+            .http
+            .get(&url)
+            .bearer_auth(&self.secret)
+            .send()
+            .await
+            .map_err(request_failed)?;
+        if !resp.status().is_success() {
+            return Err(NoombatError::Internal(format!(
+                "admin sidecar allowlist returned {}",
+                resp.status()
+            )));
+        }
+        let body = resp.json::<AllowlistResponse>().await.map_err(|e| {
+            NoombatError::Internal(format!(
+                "admin sidecar response parse error: {}",
+                e.without_url()
+            ))
+        })?;
+        Ok(body.domains)
+    }
+}
+
+/// Response from the `allowlist` endpoint.
+#[derive(Debug, Deserialize)]
+struct AllowlistResponse {
+    domains: Vec<String>,
 }
 
 #[cfg(test)]

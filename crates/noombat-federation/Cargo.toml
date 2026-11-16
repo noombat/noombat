@@ -11,6 +11,7 @@ noombat-core = { workspace = true }
 noombat-ap = { workspace = true }
 noombat-identity = { workspace = true }
 noombat-markup = { workspace = true }
+noombat-openpgp = { workspace = true }
 async-trait = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }

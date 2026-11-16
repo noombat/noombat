@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: AGPL-3.0-or-later
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
-//! NodeInfo 2.1 response builder.
+//! NodeInfo 2.1 response builder, and the reader for a remote instance's
+//! chat domain.
 
+use noombat_core::error::{NoombatError, Result};
+use reqwest::Url;
 use serde::Serialize;
 use serde_json::{Value, json};
+use sqlx::PgPool;
+use tracing::warn;
+
+use crate::http;
 
 /// The NodeInfo well-known link relation.
 pub const NODEINFO_REL: &str = "http://nodeinfo.diaspora.software/ns/schema/2.1";
@@ -159,9 +166,164 @@ pub fn build(params: &NodeInfoParams) -> Value {
     })
 }
 
+// ..... A remote instance's chat domain .....
+
+/// The NodeInfo 2.x document a well-known response links to, when it is on
+/// the same host and port as `origin`. A link elsewhere is not followed,
+/// though the origin may still redirect the fetch.
+pub fn linked_document(well_known: &Value, origin: &Url) -> Option<Url> {
+    well_known["links"]
+        .as_array()?
+        .iter()
+        .filter(|link| {
+            link["rel"].as_str().is_some_and(|rel| {
+                rel.starts_with("http://nodeinfo.diaspora.software/ns/schema/2.")
+            })
+        })
+        .filter_map(|link| Url::parse(link["href"].as_str()?).ok())
+        .find(|url| {
+            url.host_str() == origin.host_str()
+                && url.port_or_known_default() == origin.port_or_known_default()
+        })
+}
+
+/// The chat domain a NodeInfo document publishes, in lower case.
+pub fn published_chatmail_domain(document: &Value) -> Option<String> {
+    let domain = document["metadata"]["noombat:chatmailDomain"]
+        .as_str()?
+        .trim();
+    (!domain.is_empty()).then(|| domain.to_ascii_lowercase())
+}
+
+/// The chat domain the instance at `origin` publishes, read from its
+/// NodeInfo: `None` when it publishes none.
+pub async fn fetch_chatmail_domain(
+    client: &reqwest::Client,
+    origin: &Url,
+) -> Result<Option<String>> {
+    let well_known_url = origin
+        .join("/.well-known/nodeinfo")
+        .map_err(|e| NoombatError::BadRequest(format!("no NodeInfo URL for {origin}: {e}")))?;
+    let response = http::guarded_get(client, well_known_url.as_str()).await?;
+    if !response.status().is_success() {
+        return Err(NoombatError::Federation(format!(
+            "NodeInfo links answered HTTP {}",
+            response.status()
+        )));
+    }
+    let well_known: Value = http::json_within_limit(response, "NodeInfo links").await?;
+    let Some(url) = linked_document(&well_known, origin) else {
+        return Ok(None);
+    };
+    let response = http::guarded_get(client, url.as_str()).await?;
+    if !response.status().is_success() {
+        return Err(NoombatError::Federation(format!(
+            "NodeInfo answered HTTP {}",
+            response.status()
+        )));
+    }
+    let document: Value = http::json_within_limit(response, "NodeInfo").await?;
+    Ok(published_chatmail_domain(&document))
+}
+
+/// The chat domain the instance serving `actor_uri` publishes, `None` when
+/// it publishes none, through a cache kept for a day. A failed read falls
+/// back to an expired entry, and is an error when there is none: not
+/// knowing is not the same as the instance publishing none.
+pub async fn remote_chatmail_domain(
+    pool: &PgPool,
+    client: &reqwest::Client,
+    actor_uri: &str,
+) -> Result<Option<String>> {
+    let origin = Url::parse(actor_uri)
+        .map_err(|e| NoombatError::BadRequest(format!("not an actor URL: {e}")))?;
+    let domain = crate::inbox::extract_domain(actor_uri)
+        .ok_or_else(|| NoombatError::BadRequest("an actor URL with no domain".into()))?;
+    let cached: Option<(Option<String>, bool)> = sqlx::query_as(
+        "SELECT chatmail_domain, fetched_at > now() - interval '1 day' \
+         FROM remote_chatmail_domains WHERE domain = $1",
+    )
+    .bind(&domain)
+    .fetch_optional(pool)
+    .await
+    .unwrap_or_else(|error| {
+        warn!(%domain, %error, "the chat domain cache could not be read");
+        None
+    });
+    if let Some((chatmail_domain, true)) = cached {
+        return Ok(chatmail_domain);
+    }
+
+    match fetch_chatmail_domain(client, &origin).await {
+        Ok(chatmail_domain) => {
+            if let Err(error) = sqlx::query(
+                "INSERT INTO remote_chatmail_domains (domain, chatmail_domain) VALUES ($1, $2) \
+                 ON CONFLICT (domain) DO UPDATE \
+                 SET chatmail_domain = EXCLUDED.chatmail_domain, fetched_at = now()",
+            )
+            .bind(&domain)
+            .bind(&chatmail_domain)
+            .execute(pool)
+            .await
+            {
+                warn!(%domain, %error, "the chat domain could not be cached");
+            }
+            Ok(chatmail_domain)
+        }
+        Err(error) => {
+            warn!(%domain, %error, "the chat domain could not be read from NodeInfo");
+            cached
+                .map(|(chatmail_domain, _)| chatmail_domain)
+                .ok_or(error)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_nodeinfo_2_document_on_the_same_host_and_port_is_linked() {
+        let origin = Url::parse("https://other.example/users/bob").expect("url");
+        let links = |rel: &str, href: &str| json!({ "links": [{ "rel": rel, "href": href }] });
+        let rel_21 = "http://nodeinfo.diaspora.software/ns/schema/2.1";
+        let rel_20 = "http://nodeinfo.diaspora.software/ns/schema/2.0";
+        for (rel, href, expected) in [
+            (rel_21, "https://other.example/nodeinfo/2.1", true),
+            (rel_20, "https://other.example/nodeinfo/2.0", true),
+            (rel_21, "https://other.example:443/nodeinfo/2.1", true),
+            (
+                "http://nodeinfo.diaspora.software/ns/schema/1.0",
+                "https://other.example/1.0",
+                false,
+            ),
+            (rel_21, "https://elsewhere.example/nodeinfo/2.1", false),
+            (rel_21, "https://other.example:8443/nodeinfo/2.1", false),
+            (rel_21, "https://sub.other.example/nodeinfo/2.1", false),
+        ] {
+            let linked = linked_document(&links(rel, href), &origin);
+            assert_eq!(linked.is_some(), expected, "{rel} {href}");
+        }
+        let two = json!({ "links": [
+            { "rel": rel_21, "href": "https://elsewhere.example/nodeinfo/2.1" },
+            { "rel": rel_21, "href": "https://other.example/nodeinfo/2.1" },
+        ] });
+        let linked = linked_document(&two, &origin).expect("the second link");
+        assert_eq!(linked.as_str(), "https://other.example/nodeinfo/2.1");
+    }
+
+    #[test]
+    fn the_published_chat_domain_is_read_in_lower_case() {
+        let document = |value: Value| json!({ "metadata": { "noombat:chatmailDomain": value } });
+        assert_eq!(
+            published_chatmail_domain(&document(json!(" Chat.Other.Example "))).as_deref(),
+            Some("chat.other.example")
+        );
+        assert_eq!(published_chatmail_domain(&document(json!(""))), None);
+        assert_eq!(published_chatmail_domain(&document(json!(7))), None);
+        assert_eq!(published_chatmail_domain(&json!({ "metadata": {} })), None);
+    }
 
     #[test]
     fn well_known_contains_link() {

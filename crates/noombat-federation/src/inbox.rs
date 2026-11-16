@@ -127,7 +127,25 @@ pub async fn resolve_actor(
     if let Some(cached) = repo::find_by_ap_id(pool, actor_uri).await? {
         return Ok(cached);
     }
+    fetch_actor(pool, http_client, actor_uri).await
+}
 
+/// Fetch a remote actor's profile over HTTP and upsert it, bypassing the
+/// cache [`resolve_actor`] consults first.
+pub async fn fetch_actor(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    actor_uri: &str,
+) -> Result<Actor> {
+    Ok(fetch_actor_document(pool, http_client, actor_uri).await?.0)
+}
+
+/// [`fetch_actor`], and the document the actor was read from.
+pub async fn fetch_actor_document(
+    pool: &PgPool,
+    http_client: &reqwest::Client,
+    actor_uri: &str,
+) -> Result<(Actor, ApActor)> {
     // Check whether this actor has been tombstoned (410 Gone) before
     // incurring an HTTP round-trip.
     let is_tombstoned: bool =
@@ -189,7 +207,8 @@ pub async fn resolve_actor(
 
     let remote = ap_actor_to_remote(&ap_actor, &final_url, actor_uri)?;
 
-    repo::upsert_remote_actor(pool, &remote).await
+    let actor = repo::upsert_remote_actor(pool, &remote).await?;
+    Ok((actor, ap_actor))
 }
 
 /// Resolve the actor whose key signed an inbound request.
@@ -1316,7 +1335,8 @@ async fn handle_update_actor(
         }
     };
 
-    repo::upsert_remote_actor(pool, &remote).await?;
+    let actor = repo::upsert_remote_actor(pool, &remote).await?;
+    crate::remote_chat_key::refresh(pool, http_client, &actor, &ap_actor).await;
     info!(actor = %activity.actor, "remote actor profile refreshed via Update");
 
     Ok(())

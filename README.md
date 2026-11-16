@@ -241,6 +241,7 @@ Do not use `SSL_CERT_FILE` for this. It replaces the trust store rather than ext
 | `/api/v1/me/chatmail_cred`                | PUT    | Store encrypted credential blob.          |
 | `/api/v1/me/chat_key`                     | PUT    | Publish your chat public key.             |
 | `/api/v1/chat/keys/{address}`             | GET    | Read a member's published chat key.       |
+| `/api/v1/chat/keys/by-handle/{handle}`    | GET    | Read a chat key by `@user@domain`.        |
 | `/api/v1/chat/reports`                    | POST   | Submit a chat message report.             |
 | `/api/v1/chat/ws`                         | GET    | Chat WebSocket (upgrade).                 |
 | `/api/v1/admin/actors/{id}/suspend`       | POST   | Suspend an actor (moderator/admin).       |

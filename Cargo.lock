@@ -2529,6 +2529,7 @@ dependencies = [
  "noombat-core",
  "noombat-identity",
  "noombat-markup",
+ "noombat-openpgp",
  "rand 0.10.3",
  "reqwest 0.13.5",
  "rsa",

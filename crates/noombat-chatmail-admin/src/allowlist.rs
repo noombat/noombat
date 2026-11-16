@@ -191,6 +191,24 @@ fn write_transport_maps(path: &str, domains: &BTreeSet<String>) -> std::io::Resu
     Ok(())
 }
 
+/// The domains in a `transport_maps` file: the domains this relay sends
+/// to. A missing file is an empty list, as Postfix reads it before the
+/// first synchronisation.
+pub fn read_transport_maps(path: &str) -> std::io::Result<BTreeSet<String>> {
+    let text = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(BTreeSet::new()),
+        Err(error) => return Err(error),
+    };
+    Ok(text
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty() && !line.starts_with('#'))
+        .filter_map(|line| line.split_whitespace().next())
+        .map(str::to_ascii_lowercase)
+        .collect())
+}
+
 /// Write the inbound sender-domain allowlist.
 ///
 /// `transport_maps` decides where this relay will send; this decides who it
@@ -211,4 +229,42 @@ fn write_sender_domains(path: &str, domains: &BTreeSet<String>) -> std::io::Resu
     }
     info!(path = %path, entries = domains.len(), "wrote sender domains");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_domains_written_to_the_transport_map_are_read_back() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("transport_maps");
+        let path = path.to_str().expect("a UTF-8 path");
+        let domains: BTreeSet<String> = ["chat.other.example", "chat.third.example"]
+            .map(String::from)
+            .into();
+        write_transport_maps(path, &domains).expect("written");
+        assert_eq!(read_transport_maps(path).expect("read"), domains);
+    }
+
+    #[test]
+    fn comments_blank_lines_and_case_are_set_aside() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("transport_maps");
+        fs::write(
+            &path,
+            "# a comment\n\n  Chat.Other.Example   smtp:[chat.other.example]\n",
+        )
+        .expect("written");
+        let read = read_transport_maps(path.to_str().expect("UTF-8")).expect("read");
+        assert_eq!(read, BTreeSet::from(["chat.other.example".to_owned()]));
+    }
+
+    #[test]
+    fn a_missing_transport_map_is_an_empty_list() {
+        let dir = tempfile::tempdir().expect("a temporary directory");
+        let path = dir.path().join("never-written");
+        let read = read_transport_maps(path.to_str().expect("UTF-8")).expect("read");
+        assert!(read.is_empty());
+    }
 }

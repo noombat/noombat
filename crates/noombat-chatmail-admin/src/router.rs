@@ -147,6 +147,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             delete(delete_account).put(create_account),
         )
         .route("/admin/v1/accounts/{address}/exists", get(account_exists))
+        .route("/admin/v1/allowlist", get(allowlist))
         .route(
             "/admin/v1/access-maps/recipients/{address}/block",
             post(block_recipient).delete(unblock_recipient),
@@ -627,6 +628,24 @@ async fn account_exists(
     }
 }
 
+/// `GET /admin/v1/allowlist`
+///
+/// The domains this relay sends mail to, read from the transport map
+/// Postfix uses, so that the server offers a key only for an address mail
+/// can reach.
+async fn allowlist(State(state): State<Arc<AppState>>) -> Reply {
+    match crate::allowlist::read_transport_maps(&state.config.transport_maps_path) {
+        Ok(domains) => reply(StatusCode::OK, json!({ "domains": domains })),
+        Err(e) => {
+            warn!(error = %e, "the transport map could not be read");
+            reply(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": "allowlist unreadable"}),
+            )
+        }
+    }
+}
+
 // ..... HELPERS .....
 
 /// Derive the maildir path for a Chatmail address.
@@ -776,6 +795,37 @@ mod tests {
             .await
             .expect("the router answers")
             .status()
+    }
+
+    #[tokio::test]
+    async fn the_allowlist_is_the_transport_maps_domains() {
+        use tower::ServiceExt;
+
+        let home = tempfile::tempdir().expect("a temporary directory");
+        let state = test_state(home.path());
+        std::fs::write(
+            &state.config.transport_maps_path,
+            "# generated\nchat.other.example smtp:[chat.other.example]\n",
+        )
+        .expect("a transport map");
+        let request = axum::http::Request::builder()
+            .uri("/admin/v1/allowlist")
+            .header(
+                axum::http::header::AUTHORIZATION,
+                format!("Bearer {SECRET}"),
+            )
+            .body(axum::body::Body::empty())
+            .expect("a request");
+        let response = router(state)
+            .oneshot(request)
+            .await
+            .expect("the router answers");
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .expect("a body");
+        let body: serde_json::Value = serde_json::from_slice(&body).expect("JSON");
+        assert_eq!(body, json!({ "domains": ["chat.other.example"] }));
     }
 
     #[tokio::test]

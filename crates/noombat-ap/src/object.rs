@@ -61,6 +61,10 @@ pub struct ApActor {
     /// full-text search (`toot:indexable`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub indexable: Option<bool>,
+    /// A noombat member's published chat key (`noombat:chatKey`), unread:
+    /// it is bound to the member's instance before anything uses it.
+    #[serde(rename = "noombat:chatKey", skip_serializing_if = "Option::is_none")]
+    pub chat_key: Option<Value>,
 }
 
 impl ApActor {

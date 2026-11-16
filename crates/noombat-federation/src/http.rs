@@ -97,6 +97,17 @@ pub fn domain_is_local(domain: &str) -> bool {
     host == "localhost" || host.ends_with(".localhost") || host == "127.0.0.1" || host == "[::1]"
 }
 
+/// The scheme for a URL this instance builds from a bare domain, such as a
+/// handle's: plain `http` only for a loopback name in the development
+/// posture, where local instances serve no certificate.
+pub fn scheme_for(domain: &str) -> &'static str {
+    if allow_local_targets() && domain_is_local(domain) {
+        "http"
+    } else {
+        "https"
+    }
+}
+
 /// Reject a URL a federation fetch must not follow.
 ///
 /// Applied to the URL a caller supplies and again to every redirect hop.
@@ -335,6 +346,15 @@ pub async fn json_within_limit<T: DeserializeOwned>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // This binary never allows local targets, so even a loopback name is
+    // reached over https; the integration tests cover the other posture.
+    #[test]
+    fn a_built_url_is_https_outside_the_development_posture() {
+        for domain in ["other.example", "localhost:8443", "127.0.0.1:8080"] {
+            assert_eq!(scheme_for(domain), "https", "{domain}");
+        }
+    }
 
     #[test]
     fn only_https_is_fetchable_and_credentials_are_refused() {

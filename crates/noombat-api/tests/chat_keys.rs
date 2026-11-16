@@ -99,6 +99,22 @@ const KIM_KEY: &str = concat!(
     "XWAtxmKbDoeInBeGrN2blQo=",
 );
 
+// Bob's key on another instance, for bob@chat.localhost.
+const REMOTE_BOB_KEY: &str = concat!(
+    "xjMEavkK0xYJKwYBBAHaRw8BAQdArCfO2ihUnxdP5cL6xG2aL2kf+SLU1Ba0Kpe6",
+    "0gktkqPNFDxib2JAY2hhdC5sb2NhbGhvc3Q+wsATBBMWCgCFBYJq+QrTAwsJBwkQ",
+    "i6LdMpIKXq9FFAAAAAAAHAAgc2FsdEBub3RhdGlvbnMub3BlbnBncGpzLm9yZ5JP",
+    "oWxhqCcTMLzIS/4l0vTwlBh4Xt9rUDLsrfdrR1h1BRUKCA4MBBYAAgECGQECmwMC",
+    "HgEWIQSKjPcbJ5vahYqHoseLot0ykgperwAAqacBAPVaJpByPkww4hGD5XVKwz2l",
+    "Y+2Aqbp5xufhJJSU89BMAQCvSXjDtSinFpODLSPOYFnSnGFSUIY39xVdqj8vVB/d",
+    "Ac44BGr5CtMSCisGAQQBl1UBBQEBB0DpD0IfwW29vAItgDxrgdNi/vr5Uu1OBWYZ",
+    "lP0tMAaZfgMBCAfCvgQYFgoAcAWCavkK0wkQi6LdMpIKXq9FFAAAAAAAHAAgc2Fs",
+    "dEBub3RhdGlvbnMub3BlbnBncGpzLm9yZ88GSV4klDNXPyvUdT/8VpSPUuTRwKpD",
+    "Kxm2M03x+DgBApsMFiEEioz3Gyeb2oWKh6LHi6LdMpIKXq8AAC6FAP9MxJBvNa4R",
+    "xMvQCBkv8TCqgc9T4mxHTVwWURKm3Td1QQD9GiyAsmYO4g2kXIy2dB2cuckCw0JN",
+    "F2uZgo+e4tOZHQY=",
+);
+
 fn key(b64: &str) -> Vec<u8> {
     STANDARD.decode(b64).expect("a fixture")
 }
@@ -863,4 +879,136 @@ async fn a_remote_actor_may_claim_a_local_members_address(pool: PgPool) {
     .execute(&pool)
     .await
     .expect("a remote row with the same address");
+}
+
+async fn lookup_handle(pool: &PgPool, token: Option<&str>, handle: &str) -> Reply {
+    let uri = format!("/api/v1/chat/keys/by-handle/{handle}");
+    send(pool, "GET", &uri, token, &[]).await
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_local_member_is_found_by_handle_under_the_same_rules(pool: PgPool) {
+    let pair = bob_publishes(&pool, false).await;
+    let bob_token = token_for(&pool, pair.bob, "bob").await;
+    for handle in ["@bob@noombat.example", "bob@NOOMBAT.example"] {
+        let reply = lookup_handle(&pool, Some(&bob_token), handle).await;
+        assert_eq!(reply.status, StatusCode::OK, "{handle}");
+        assert_eq!(served_key(&reply), key(BOB_KEY));
+        assert_eq!(reply.cache_control.as_deref(), Some("private, no-store"));
+    }
+    // Hidden from a stranger, as by address, and read as no key at all.
+    let hidden = lookup_handle(&pool, Some(&pair.alice_token), "@bob@noombat.example").await;
+    let missing = lookup_handle(&pool, Some(&pair.alice_token), "@nobody@noombat.example").await;
+    let without_chat =
+        lookup_handle(&pool, Some(&pair.alice_token), "@alice@noombat.example").await;
+    assert_eq!(hidden.status, StatusCode::NOT_FOUND);
+    assert_eq!(hidden.body, missing.body);
+    assert_eq!(without_chat.body, missing.body);
+
+    assert_eq!(
+        lookup_handle(&pool, Some(&bob_token), "bob").await.status,
+        StatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        lookup_handle(&pool, None, "@bob@noombat.example")
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+}
+
+/// Another noombat instance on a local port: WebFinger names Bob, his
+/// actor document carries his key, and NodeInfo names its chat domain.
+async fn other_instance() -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    // Named `localhost`, so that its chat domain can sit under its host.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let authority = format!(
+        "localhost:{}",
+        listener.local_addr().expect("address").port()
+    );
+    let base = format!("http://{authority}");
+    tokio::spawn(async move {
+        while let Ok((mut stream, _)) = listener.accept().await {
+            let mut request = vec![0; 4096];
+            let read = stream.read(&mut request).await.unwrap_or(0);
+            let request = String::from_utf8_lossy(&request[..read]).into_owned();
+            let path = request.split_whitespace().nth(1).unwrap_or("/");
+            let body = if path.starts_with("/.well-known/webfinger") {
+                serde_json::json!({
+                    "subject": "acct:bob@other.example",
+                    "links": [{
+                        "rel": "self",
+                        "type": "application/activity+json",
+                        "href": format!("{base}/users/bob"),
+                    }],
+                })
+            } else if path == "/users/bob" {
+                serde_json::json!({
+                    "id": format!("{base}/users/bob"),
+                    "type": "Person",
+                    "preferredUsername": "bob",
+                    "inbox": format!("{base}/users/bob/inbox"),
+                    "outbox": format!("{base}/users/bob/outbox"),
+                    "publicKey": {
+                        "id": format!("{base}/users/bob#main-key"),
+                        "owner": format!("{base}/users/bob"),
+                        "publicKeyPem": "KEY",
+                    },
+                    "noombat:chatKey": {
+                        "noombat:address": "bob@chat.localhost",
+                        "noombat:keyData": REMOTE_BOB_KEY,
+                    },
+                })
+            } else if path == "/.well-known/nodeinfo" {
+                serde_json::json!({ "links": [{
+                    "rel": "http://nodeinfo.diaspora.software/ns/schema/2.1",
+                    "href": format!("{base}/nodeinfo/2.1"),
+                }] })
+            } else {
+                let metadata = serde_json::json!({ "noombat:chatmailDomain": "chat.localhost" });
+                serde_json::json!({ "metadata": metadata })
+            };
+            let body = body.to_string();
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\
+                 Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+    authority
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_member_elsewhere_is_not_offered_without_the_relay(pool: PgPool) {
+    noombat_federation::http::set_allow_local_targets(true);
+    let alice = insert_member(&pool, "alice", true, true).await;
+    let alice_token = token_for(&pool, alice, "alice").await;
+    let authority = other_instance().await;
+
+    // The key is bindable: the lookup this route makes would keep it.
+    let client = reqwest::Client::new();
+    let allowlist = vec!["chat.localhost".to_owned()];
+    let found = noombat_federation::remote_chat_key::find_by_handle(
+        &pool, &client, "bob", &authority, &allowlist,
+    )
+    .await
+    .expect("looked up");
+    assert!(
+        found.is_some(),
+        "the stand-in instance serves a bindable key"
+    );
+
+    // This instance has no relay configured, so nothing is offered.
+    let reply = lookup_handle(&pool, Some(&alice_token), &format!("@bob@{authority}")).await;
+    let missing = lookup_handle(&pool, Some(&alice_token), "@nobody@noombat.example").await;
+    assert_eq!(reply.status, StatusCode::NOT_FOUND);
+    assert_eq!(reply.body, missing.body);
 }
