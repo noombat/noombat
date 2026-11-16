@@ -95,7 +95,7 @@ CREATE TABLE actors (
     orcid                        TEXT,
     moved_to                     TEXT, -- target actor URI if migrated via Move activity
     headline                     TEXT,
-    location                     TEXT, -- free-text location (e.g. "Berlin, Germany")
+    location                     TEXT, -- free-text location (e.g. "Sydney, Australia")
     -- Organisations only: the corporate domain claimed. Publishing is gated
     -- on a verified rel="me" link whose registrable domain matches it, so
     -- without the claim the gate would admit any domain the actor happens

@@ -15,7 +15,7 @@ use axum::extract::ws::{Message, WebSocket};
 use axum::extract::{State, WebSocketUpgrade};
 use axum::response::Response;
 use axum::routing::get;
-use noombat_chat::relay::{ClientMessage, IdleTimer, RelayConfig, ServerMessage};
+use noombat_chat::relay::{ClientMessage, ErrorCode, IdleTimer, RelayConfig, ServerMessage};
 use noombat_chat::session;
 use noombat_core::error::NoombatError;
 use tracing::{info, warn};
@@ -94,6 +94,7 @@ async fn handle_ws(
                 let _ = send_json(
                     &mut socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::AuthTimeout,
                         message: "auth timeout".into(),
                     },
                 )
@@ -112,14 +113,8 @@ async fn handle_ws(
         {
             Ok(s) => s,
             Err(e) => {
-                warn!(actor = %actor_id, error = %e, "IMAP login failed");
-                let _ = send_json(
-                    &mut socket,
-                    &ServerMessage::Error {
-                        message: "IMAP authentication failed".into(),
-                    },
-                )
-                .await;
+                warn!(actor = %actor_id, error = %e, "IMAP session not opened");
+                let _ = send_json(&mut socket, &connect_error(&e)).await;
                 return;
             }
         };
@@ -151,6 +146,7 @@ async fn handle_ws(
                 let _ = send_json(
                     &mut socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::IdleTimeout,
                         message: "session timed out due to inactivity".into(),
                     },
                 )
@@ -178,6 +174,7 @@ async fn handle_ws(
                 let _ = send_json(
                     &mut socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::InvalidMessage,
                         message: format!("invalid message: {e}"),
                     },
                 )
@@ -191,6 +188,7 @@ async fn handle_ws(
                 let _ = send_json(
                     &mut socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::AlreadyAuthenticated,
                         message: "already authenticated".into(),
                     },
                 )
@@ -206,6 +204,7 @@ async fn handle_ws(
                     let _ = send_json(
                         &mut socket,
                         &ServerMessage::Error {
+                            code: ErrorCode::Blocked,
                             message: "recipient has blocked this address".into(),
                         },
                     )
@@ -231,6 +230,7 @@ async fn handle_ws(
                         let _ = send_json(
                             &mut socket,
                             &ServerMessage::Error {
+                                code: ErrorCode::SendFailed,
                                 message: format!("send failed: {e}"),
                             },
                         )
@@ -254,6 +254,7 @@ async fn handle_ws(
                             let _ = send_json(
                                 &mut socket,
                                 &ServerMessage::Error {
+                                    code: ErrorCode::FetchFailed,
                                     message: format!("fetch failed: {e}"),
                                 },
                             )
@@ -304,6 +305,7 @@ async fn await_auth(socket: &mut WebSocket) -> Option<String> {
                 let _ = send_json(
                     socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::AuthRequired,
                         message: "first message must be auth".into(),
                     },
                 )
@@ -318,6 +320,7 @@ async fn await_auth(socket: &mut WebSocket) -> Option<String> {
                 let _ = send_json(
                     socket,
                     &ServerMessage::Error {
+                        code: ErrorCode::AuthRequired,
                         message: "first message must be auth".into(),
                     },
                 )
@@ -330,7 +333,92 @@ async fn await_auth(socket: &mut WebSocket) -> Option<String> {
 
 /// Serialise a [`ServerMessage`] and send it over the WebSocket.
 async fn send_json(socket: &mut WebSocket, msg: &ServerMessage) -> Result<(), axum::Error> {
-    let text = serde_json::to_string(msg)
-        .unwrap_or_else(|_| r#"{"type":"error","message":"serialisation failed"}"#.into());
+    let text = serde_json::to_string(msg).unwrap_or_else(|_| {
+        r#"{"type":"error","code":"internal","message":"serialisation failed"}"#.into()
+    });
     socket.send(Message::Text(text.into())).await
+}
+
+/// What the page is told when no session with the relay could be opened:
+/// a refused password apart from a relay that could not be reached.
+fn connect_error(error: &session::ConnectError) -> ServerMessage {
+    let (code, message) = match error {
+        session::ConnectError::Refused(_) => (ErrorCode::LoginFailed, "IMAP authentication failed"),
+        session::ConnectError::Unreachable(_) => (
+            ErrorCode::ConnectFailed,
+            "the chat relay could not be reached",
+        ),
+    };
+    ServerMessage::Error {
+        code,
+        message: message.into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_refused_password_is_told_from_an_unreachable_relay() {
+        let refused = connect_error(&session::ConnectError::Refused("no".into()));
+        let unreachable = connect_error(&session::ConnectError::Unreachable("down".into()));
+        assert!(matches!(
+            refused,
+            ServerMessage::Error {
+                code: ErrorCode::LoginFailed,
+                ..
+            }
+        ));
+        assert!(matches!(
+            unreachable,
+            ServerMessage::Error {
+                code: ErrorCode::ConnectFailed,
+                ..
+            }
+        ));
+    }
+
+    /// The client translates on `code`, so its spelling is the protocol.
+    #[test]
+    fn an_error_carries_its_code_in_snake_case() {
+        let error = ServerMessage::Error {
+            code: ErrorCode::LoginFailed,
+            message: "IMAP authentication failed".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&error).expect("serialised"),
+            serde_json::json!({
+                "type": "error",
+                "code": "login_failed",
+                "message": "IMAP authentication failed",
+            })
+        );
+    }
+
+    /// Every code, spelt as the page reads it. A code added without a line
+    /// here fails to compile at the `match`.
+    #[test]
+    fn every_error_code_is_spelt_as_the_page_reads_it() {
+        use ErrorCode::*;
+        for (code, wire) in [
+            (AuthTimeout, "auth_timeout"),
+            (AuthRequired, "auth_required"),
+            (AlreadyAuthenticated, "already_authenticated"),
+            (LoginFailed, "login_failed"),
+            (ConnectFailed, "connect_failed"),
+            (IdleTimeout, "idle_timeout"),
+            (InvalidMessage, "invalid_message"),
+            (Blocked, "blocked"),
+            (SendFailed, "send_failed"),
+            (FetchFailed, "fetch_failed"),
+            (Internal, "internal"),
+        ] {
+            match code {
+                AuthTimeout | AuthRequired | AlreadyAuthenticated | LoginFailed | ConnectFailed
+                | IdleTimeout | InvalidMessage | Blocked | SendFailed | FetchFailed | Internal => {}
+            }
+            assert_eq!(serde_json::to_value(code).expect("serialised"), wire);
+        }
+    }
 }

@@ -138,6 +138,25 @@ pub fn build_tls_connector() -> TlsConnector {
     TlsConnector::from(Arc::new(config))
 }
 
+/// Why a session with the relay could not be opened.
+#[derive(Debug)]
+pub enum ConnectError {
+    /// The relay could not be reached, or failed once it was.
+    Unreachable(String),
+    /// The relay refused the address and password.
+    Refused(String),
+}
+
+impl std::fmt::Display for ConnectError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConnectError::Unreachable(detail) | ConnectError::Refused(detail) => {
+                f.write_str(detail)
+            }
+        }
+    }
+}
+
 /// Establish an IMAP session with the Chatmail relay and select
 /// INBOX.
 pub async fn connect_imap(
@@ -145,30 +164,31 @@ pub async fn connect_imap(
     config: &RelayConfig,
     address: &str,
     password: &str,
-) -> Result<ImapSession, String> {
+) -> Result<ImapSession, ConnectError> {
+    let unreachable = |detail: String| ConnectError::Unreachable(detail);
     let tcp = tokio::net::TcpStream::connect((&*config.imap_host, config.imap_port))
         .await
-        .map_err(|e| format!("TCP connect failed: {e}"))?;
+        .map_err(|e| unreachable(format!("TCP connect failed: {e}")))?;
 
     let server_name = ServerName::try_from(config.imap_host.clone())
-        .map_err(|e| format!("invalid server name: {e}"))?;
+        .map_err(|e| unreachable(format!("invalid server name: {e}")))?;
 
     let tls_stream = tls_connector
         .connect(server_name, tcp)
         .await
-        .map_err(|e| format!("TLS handshake failed: {e}"))?;
+        .map_err(|e| unreachable(format!("TLS handshake failed: {e}")))?;
 
     let client = async_imap::Client::new(tls_stream);
 
     let mut session = client
         .login(address, password)
         .await
-        .map_err(|(e, _)| format!("IMAP login failed: {e}"))?;
+        .map_err(|(e, _)| ConnectError::Refused(format!("IMAP login failed: {e}")))?;
 
     session
         .select("INBOX")
         .await
-        .map_err(|e| format!("INBOX select failed: {e}"))?;
+        .map_err(|e| unreachable(format!("INBOX select failed: {e}")))?;
 
     Ok(session)
 }

@@ -100,9 +100,38 @@ pub enum ServerMessage {
         /// The recipient address.
         to: String,
     },
-    /// An error occurred.
+    /// An error occurred: `code` for the client to explain in the
+    /// member's language, `message` the detail, in English.
     #[serde(rename = "error")]
-    Error { message: String },
+    Error { code: ErrorCode, message: String },
+}
+
+/// What went wrong, as [`ServerMessage::Error`] names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// No `auth` message arrived in time.
+    AuthTimeout,
+    /// The first message was not `auth`.
+    AuthRequired,
+    /// `auth` was sent again on an authenticated session.
+    AlreadyAuthenticated,
+    /// The relay refused the chat password.
+    LoginFailed,
+    /// The relay could not be reached.
+    ConnectFailed,
+    /// The session was closed for inactivity.
+    IdleTimeout,
+    /// A message the server could not read.
+    InvalidMessage,
+    /// A send to an address the block list stops.
+    Blocked,
+    /// The relay did not take a message.
+    SendFailed,
+    /// Messages could not be fetched from the mailbox.
+    FetchFailed,
+    /// A reply the server could not serialise.
+    Internal,
 }
 
 /// Configuration for the chat relay.

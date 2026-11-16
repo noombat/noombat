@@ -45,6 +45,18 @@ document.addEventListener("DOMContentLoaded", () => {
   const username = dataEl.dataset.username ?? "";
   const chatmailAddr = dataEl.dataset.chatmailAddr ?? "";
   const chatmailDomain = dataEl.dataset.chatmailDomain ?? "";
+  // In the member's language, rendered by the server beside the values.
+  const labels = {
+    passwordPlaceholder: dataEl.dataset.labelPasswordPlaceholder ?? "",
+    unlock: dataEl.dataset.labelUnlock ?? "",
+    decrypting: dataEl.dataset.labelDecrypting ?? "",
+    copyPassword: dataEl.dataset.labelCopyPassword ?? "",
+    noBlob: dataEl.dataset.labelNoBlob ?? "",
+    sessionExpired: dataEl.dataset.labelSessionExpired ?? "",
+    serverError: dataEl.dataset.labelServerError ?? "",
+    wrongPassword: dataEl.dataset.labelWrongPassword ?? "",
+    qrFailed: dataEl.dataset.labelQrFailed ?? "",
+  };
 
   const revealBtn = document.getElementById("reveal-password-btn");
   const outputEl = document.getElementById("chatmail-password");
@@ -61,17 +73,16 @@ document.addEventListener("DOMContentLoaded", () => {
     prompt.className = "flex gap-2 items-center mt-2";
     prompt.innerHTML = `
       <input type="password" id="cred-password"
-             placeholder="Noombat password"
              class="border border-border-default rounded px-3 py-2 text-sm bg-bg-raised text-text-primary">
       <button type="button" id="cred-unlock"
-              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm">
-        Unlock
-      </button>
+              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm"></button>
     `;
     container.appendChild(prompt);
 
     const passwordInput = document.getElementById("cred-password") as HTMLInputElement;
     const unlockBtn = document.getElementById("cred-unlock") as HTMLButtonElement;
+    passwordInput.placeholder = labels.passwordPlaceholder;
+    unlockBtn.textContent = labels.unlock;
     passwordInput.focus();
 
     async function unlock(): Promise<void> {
@@ -79,7 +90,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (!password) return;
 
       unlockBtn.disabled = true;
-      unlockBtn.textContent = "Decrypting\u2026";
+      unlockBtn.textContent = labels.decrypting;
 
       try {
         const domain = window.location.hostname;
@@ -87,13 +98,16 @@ document.addEventListener("DOMContentLoaded", () => {
         const result = await fetchBlob();
         if (result.status !== "ok") {
           unlockBtn.disabled = false;
-          unlockBtn.textContent = "Unlock";
+          unlockBtn.textContent = labels.unlock;
           if (result.status === "not_provisioned") {
-            showError(container, "No credential blob found. Chat may not be provisioned.");
+            showError(container, labels.noBlob);
           } else if (result.status === "auth_error") {
-            showError(container, "Session expired. Please log in again.");
+            showError(container, labels.sessionExpired);
           } else {
-            showError(container, `Server error (HTTP ${result.httpStatus}).`);
+            showError(
+              container,
+              labels.serverError.replace("%{status}", String(result.httpStatus)),
+            );
           }
           return;
         }
@@ -110,7 +124,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const copyBtn = document.createElement("button");
         copyBtn.type = "button";
         copyBtn.className = "cred-copy text-xs text-text-secondary hover:text-text-primary mt-1";
-        copyBtn.textContent = "Copy password";
+        copyBtn.textContent = labels.copyPassword;
         copyBtn.addEventListener("click", () => {
           navigator.clipboard.writeText(chatmailPassword).then(() => {
             const orig = copyBtn.textContent;
@@ -144,7 +158,7 @@ document.addEventListener("DOMContentLoaded", () => {
                 ctx.fillStyle = "#666";
                 ctx.font = "11px sans-serif";
                 ctx.textAlign = "center";
-                ctx.fillText("QR rendering failed.", 100, 100);
+                ctx.fillText(labels.qrFailed, 100, 100, 190);
               }
             }
 
@@ -158,8 +172,8 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       } catch {
         unlockBtn.disabled = false;
-        unlockBtn.textContent = "Unlock";
-        showError(container, "Incorrect password or decryption failed.");
+        unlockBtn.textContent = labels.unlock;
+        showError(container, labels.wrongPassword);
       }
     }
 

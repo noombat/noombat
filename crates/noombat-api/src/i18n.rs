@@ -279,4 +279,69 @@ mod tests {
         };
         assert_eq!(i18n_en.lang_attr(), "en-US");
     }
+
+    // ..... Coverage .....
+
+    /// The keys templates and handlers ask for by name: every
+    /// `.t("...")` and `.tf("...", ...)` under `templates/` and `src/`,
+    /// the key on the line after the parenthesis where rustfmt wrapped it,
+    /// and the keys handlers pass to templates as data. This file is left
+    /// out, since its comments name example keys.
+    fn keys_asked_for() -> std::collections::BTreeSet<String> {
+        fn files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+            for entry in std::fs::read_dir(dir).expect("readable directory") {
+                let path = entry.expect("directory entry").path();
+                if path.is_dir() {
+                    files(&path, out);
+                } else {
+                    out.push(path);
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut paths = Vec::new();
+        files(&root.join("templates"), &mut paths);
+        files(&root.join("src"), &mut paths);
+        let mut keys = std::collections::BTreeSet::new();
+        for path in paths.iter().filter(|path| !path.ends_with("src/i18n.rs")) {
+            let text = std::fs::read_to_string(path).expect("readable source");
+            for marker in [".t(", ".tf("] {
+                for (at, _) in text.match_indices(marker) {
+                    let rest = text[at + marker.len()..].trim_start();
+                    if let Some(quoted) = rest.strip_prefix('"')
+                        && let Some(end) = quoted.find('"')
+                    {
+                        keys.insert(quoted[..end].to_owned());
+                    }
+                }
+            }
+        }
+        for (_, key) in crate::routes::admin::PERIOD_UNITS {
+            keys.insert(key.to_owned());
+        }
+        keys
+    }
+
+    /// Looked up in each locale without the fallback `t!` applies, which
+    /// would hide a key missing from pt-BR behind its English. A key found
+    /// nowhere renders as the locale and its name, `pt-BR.edit_location`.
+    #[test]
+    fn every_key_asked_for_is_translated_in_every_locale() {
+        let keys = keys_asked_for();
+        assert!(keys.len() > 300, "the scan found only {} keys", keys.len());
+        // One asked for on the line after the parenthesis, one passed as data.
+        for known in ["feed_loaded_announcement", "admin_settings_unit_weeks"] {
+            assert!(keys.contains(known), "the scan missed {known}");
+        }
+        let backend = crate::_rust_i18n_backend();
+        let missing: Vec<String> = AVAILABLE_LOCALES
+            .iter()
+            .flat_map(|locale| {
+                keys.iter()
+                    .filter(|key| backend.translate(locale, key).is_none())
+                    .map(move |key| format!("{locale}: {key}"))
+            })
+            .collect();
+        assert!(missing.is_empty(), "untranslated: {missing:?}");
+    }
 }

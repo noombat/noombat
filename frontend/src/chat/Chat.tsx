@@ -28,6 +28,7 @@ import { repairOwnKey, type PublishedKeyResult } from "./directory";
 import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipient";
 import { deriveBlobKey, deriveBothKeys } from "../auth";
 import { provisionChat } from "./provision";
+import { describeServerError } from "./server-error";
 
 // ..... Base64 helpers .....
 
@@ -88,6 +89,25 @@ interface ChatStrings {
   invalidPublishedKey: (who: string) => string;
   lookupFailed: string;
   instanceKeyNote: string;
+  chatNotSetUp: string;
+  sessionExpired: string;
+  httpError: (status: number) => string;
+  incorrectPassword: string;
+  encryptionFailed: (detail: string) => string;
+  signatureVerified: string;
+  signatureVerifiedBadge: string;
+  signatureFailed: string;
+  signatureFailedBadge: string;
+  encryptedUnverified: string;
+  loginFailed: string;
+  connectFailed: string;
+  idleTimeout: string;
+  blocked: string;
+  sendFailed: string;
+  fetchFailed: string;
+  serverFault: (detail: string) => string;
+  encryptionUnavailable: string;
+  decryptionFailed: string;
   close: string;
 }
 
@@ -130,6 +150,25 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       `The key this instance gave for ${who} is not valid. Nothing was sent.`,
     lookupFailed: "The key could not be looked up. Nothing was sent; try again.",
     instanceKeyNote: "Provided by this instance; not yet seen in a message from them.",
+    chatNotSetUp: "Chat is not set up on this account yet.",
+    sessionExpired: "Session expired. Please log in again.",
+    httpError: (status) => `Server error (HTTP ${status}).`,
+    incorrectPassword: "Incorrect password.",
+    encryptionFailed: (detail) => `Encryption failed: ${detail}`,
+    signatureVerified: "Signature verified",
+    signatureVerifiedBadge: "verified",
+    signatureFailed: "Signature verification failed",
+    signatureFailedBadge: "signature failed",
+    encryptedUnverified: "Encrypted (unverified key)",
+    loginFailed: "The chat server did not accept this account's chat password.",
+    connectFailed: "The chat server could not be reached. Trying again shortly.",
+    idleTimeout: "Disconnected after a period of inactivity.",
+    blocked: "Messages to this address are blocked.",
+    sendFailed: "The message could not be sent. Try again.",
+    fetchFailed: "New messages could not be fetched.",
+    serverFault: (detail) => `The chat server reported an error: ${detail}`,
+    encryptionUnavailable: "[the encryption module could not be loaded]",
+    decryptionFailed: "[this message could not be decrypted]",
     close: "Close",
   },
   "en-AU": {
@@ -170,6 +209,25 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       `The key this instance gave for ${who} is not valid. Nothing was sent.`,
     lookupFailed: "The key could not be looked up. Nothing was sent; try again.",
     instanceKeyNote: "Provided by this instance; not yet seen in a message from them.",
+    chatNotSetUp: "Chat is not set up on this account yet.",
+    sessionExpired: "Session expired. Please log in again.",
+    httpError: (status) => `Server error (HTTP ${status}).`,
+    incorrectPassword: "Incorrect password.",
+    encryptionFailed: (detail) => `Encryption failed: ${detail}`,
+    signatureVerified: "Signature verified",
+    signatureVerifiedBadge: "verified",
+    signatureFailed: "Signature verification failed",
+    signatureFailedBadge: "signature failed",
+    encryptedUnverified: "Encrypted (unverified key)",
+    loginFailed: "The chat server did not accept this account's chat password.",
+    connectFailed: "The chat server could not be reached. Trying again shortly.",
+    idleTimeout: "Disconnected after a period of inactivity.",
+    blocked: "Messages to this address are blocked.",
+    sendFailed: "The message could not be sent. Try again.",
+    fetchFailed: "New messages could not be fetched.",
+    serverFault: (detail) => `The chat server reported an error: ${detail}`,
+    encryptionUnavailable: "[the encryption module could not be loaded]",
+    decryptionFailed: "[this message could not be decrypted]",
     close: "Close",
   },
   "pt-BR": {
@@ -213,6 +271,25 @@ const TRANSLATIONS: Record<string, ChatStrings> = {
       `A chave que esta instância forneceu para ${who} não é válida. Nada foi enviado.`,
     lookupFailed: "Não foi possível consultar a chave. Nada foi enviado; tente novamente.",
     instanceKeyNote: "Fornecida por esta instância; ainda não vista em uma mensagem da pessoa.",
+    chatNotSetUp: "O chat ainda não está configurado nesta conta.",
+    sessionExpired: "Sessão expirada. Entre novamente.",
+    httpError: (status) => `Erro do servidor (HTTP ${status}).`,
+    incorrectPassword: "Senha incorreta.",
+    encryptionFailed: (detail) => `Falha na criptografia: ${detail}`,
+    signatureVerified: "Assinatura verificada",
+    signatureVerifiedBadge: "verificada",
+    signatureFailed: "Falha na verificação da assinatura",
+    signatureFailedBadge: "falha na assinatura",
+    encryptedUnverified: "Criptografada (chave não verificada)",
+    loginFailed: "O servidor de chat não aceitou a senha de chat desta conta.",
+    connectFailed: "Não foi possível alcançar o servidor de chat. Tentando novamente em instantes.",
+    idleTimeout: "Desconectado após um período de inatividade.",
+    blocked: "Mensagens para este endereço estão bloqueadas.",
+    sendFailed: "Não foi possível enviar a mensagem. Tente novamente.",
+    fetchFailed: "Não foi possível buscar novas mensagens.",
+    serverFault: (detail) => `O servidor de chat informou um erro: ${detail}`,
+    encryptionUnavailable: "[não foi possível carregar o módulo de criptografia]",
+    decryptionFailed: "[não foi possível descriptografar esta mensagem]",
     close: "Fechar",
   },
 };
@@ -246,6 +323,8 @@ interface ChatMessage {
 /** A message from the relay server. */
 interface ServerMsg {
   type: "ready" | "message" | "sent" | "error";
+  /** For an error, what went wrong; `message` is the detail. */
+  code?: string;
   uid?: number;
   from?: string;
   body_b64?: string;
@@ -345,15 +424,15 @@ export default function Chat(props: ChatProps): JSX.Element {
     const result = await fetchBlob();
 
     if (result.status === "not_provisioned") {
-      setStatus("Chat has not been provisioned.");
+      setStatus(strings().chatNotSetUp);
       return false;
     }
     if (result.status === "auth_error") {
-      setStatus("Session expired. Please log in again.");
+      setStatus(strings().sessionExpired);
       return false;
     }
     if (result.status === "error") {
-      setStatus(`Server error (HTTP ${result.httpStatus}).`);
+      setStatus(strings().httpError(result.httpStatus));
       return false;
     }
 
@@ -439,16 +518,28 @@ export default function Chat(props: ChatProps): JSX.Element {
       // Only fall back to the generic message if no specific status
       // was set (i.e. the decryptBlob catch path was taken).
       if (!status()) {
-        setStatus("Incorrect password.");
+        setStatus(strings().incorrectPassword);
       }
     }
   }
 
   // ..... WebSocket lifecycle .....
 
+  /** The codes of the errors the server closes the socket after. */
+  const CLOSING_CODES = new Set([
+    "auth_timeout",
+    "auth_required",
+    "login_failed",
+    "connect_failed",
+    "idle_timeout",
+  ]);
+  /** The code the server closed this connection on, if any. */
+  let closedFor: string | undefined;
+
   function connect(): void {
     if (!props.wsUrl || !credentials) return;
 
+    closedFor = undefined;
     setStatus(strings().connecting);
 
     ws = new WebSocket(props.wsUrl);
@@ -485,14 +576,18 @@ export default function Chat(props: ChatProps): JSX.Element {
         // Server confirmed the send.
       }
 
-      if (msg.type === "error" && msg.message) {
-        setStatus(msg.message);
+      if (msg.type === "error") {
+        if (msg.code && CLOSING_CODES.has(msg.code)) closedFor = msg.code;
+        setStatus(describeServerError(strings(), msg.code, msg.message));
       }
     };
 
     ws.onclose = () => {
       setConnected(false);
-      setStatus(strings().disconnected);
+      // The relay refused this password: asking again cannot succeed.
+      if (closedFor === "login_failed") return;
+      // The error the server closed on stays shown until the next try.
+      if (!closedFor) setStatus(strings().disconnected);
       // Reconnect with bounded exponential backoff and jitter.
       const delay = nextReconnectDelay();
       reconnectTimer = setTimeout(connect, delay);
@@ -565,10 +660,10 @@ export default function Chat(props: ChatProps): JSX.Element {
           body = new TextDecoder().decode(plainBytes);
         }
       } else {
-        body = "[encryption module unavailable]";
+        body = strings().encryptionUnavailable;
       }
     } catch {
-      body = "[decryption failed]";
+      body = strings().decryptionFailed;
     }
 
     const chatMsg: ChatMessage = {
@@ -805,7 +900,7 @@ export default function Chat(props: ChatProps): JSX.Element {
       cipherBytes = await encryptMessage(recipientKey, privateKeyBytes, plainBytes);
     } catch (err) {
       const detail = err instanceof Error ? err.message : String(err);
-      setStatus(`Encryption failed: ${detail}`);
+      setStatus(strings().encryptionFailed(detail));
       return;
     }
 
@@ -1135,22 +1230,25 @@ export default function Chat(props: ChatProps): JSX.Element {
                           {/* Signature / encryption trust indicator */}
                           <Show when={!msg.outgoing}>
                             <Show when={msg.signatureVerified === true}>
-                              <span class="text-xs text-text-success" title="Signature verified">
-                                &#x2713; verified
+                              <span
+                                class="text-xs text-text-success"
+                                title={strings().signatureVerified}
+                              >
+                                &#x2713; {strings().signatureVerifiedBadge}
                               </span>
                             </Show>
                             <Show when={msg.signatureVerified === false}>
                               <span
                                 class="text-xs text-text-warning"
-                                title="Signature verification failed"
+                                title={strings().signatureFailed}
                               >
-                                &#x26A0; signature failed
+                                &#x26A0; {strings().signatureFailedBadge}
                               </span>
                             </Show>
                             <Show when={msg.signatureVerified === null}>
                               <span
                                 class="text-xs text-text-secondary"
-                                title="Encrypted (unverified key)"
+                                title={strings().encryptedUnverified}
                               >
                                 &#x1F512;
                               </span>

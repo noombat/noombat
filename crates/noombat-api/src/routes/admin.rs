@@ -523,6 +523,16 @@ impl Default for InstanceSettingsRow {
     }
 }
 
+/// The period units the settings form offers: the stored value and its
+/// message key, the set the CHECK constraint accepts.
+pub(crate) const PERIOD_UNITS: [(&str, &str); 5] = [
+    ("hours", "admin_settings_unit_hours"),
+    ("days", "admin_settings_unit_days"),
+    ("weeks", "admin_settings_unit_weeks"),
+    ("months", "admin_settings_unit_months"),
+    ("years", "admin_settings_unit_years"),
+];
+
 #[derive(Template, WebTemplate)]
 #[template(path = "admin_settings.html")]
 struct SettingsAdminPage {
@@ -619,13 +629,7 @@ async fn settings_page(
         organization_period_cap_count: settings.organization_period_cap_count,
         organization_period_cap_amount: settings.organization_period_cap_amount,
         organization_period_cap_unit: settings.organization_period_cap_unit,
-        period_units: vec![
-            ("hours", "admin_settings_unit_hours"),
-            ("days", "admin_settings_unit_days"),
-            ("weeks", "admin_settings_unit_weeks"),
-            ("months", "admin_settings_unit_months"),
-            ("years", "admin_settings_unit_years"),
-        ],
+        period_units: PERIOD_UNITS.to_vec(),
         announcements,
     }
     .into_response()
