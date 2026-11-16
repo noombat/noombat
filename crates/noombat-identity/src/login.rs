@@ -77,6 +77,20 @@ pub async fn verify_credentials(
     Ok((actor_id, username, role, has_totp))
 }
 
+/// `Forbidden` unless `actor_id` is a local account that may sign in.
+pub async fn may_sign_in(pool: &PgPool, actor_id: Uuid) -> Result<()> {
+    let admitted: Option<bool> = sqlx::query_scalar(
+        "SELECT actor_status IN ('active', 'silenced') FROM actors WHERE id = $1 AND is_local",
+    )
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await?;
+    match admitted {
+        Some(true) => Ok(()),
+        _ => Err(NoombatError::Forbidden),
+    }
+}
+
 /// Check that `auth_key` is the signed-in account's own, for a step that
 /// asks for the password again. The session met any second factor at sign
 /// in, so only the key is checked. `Forbidden` for a key that does not

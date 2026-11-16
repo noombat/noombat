@@ -333,6 +333,31 @@ async fn the_browser_that_starts_an_orcid_link_finishes_it(pool: PgPool) {
     );
 }
 
+/// A link started before a suspension and finished after it adds no way
+/// in to the suspended account.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_link_finished_after_a_suspension_links_nothing(pool: PgPool) {
+    let alice = account(&pool, "alice", "active").await;
+    let session = signed_in_as(&pool, alice, "alice").await;
+    let app = test_state(pool.clone()).await;
+    let (state_token, cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .expect("suspended meanwhile");
+    finish(&app, &state_token, &cookies).await;
+    let linked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM oauth_identities WHERE provider = 'orcid' AND actor_id = $1)",
+    )
+    .bind(alice)
+    .fetch_one(&pool)
+    .await
+    .expect("identities readable");
+    assert!(!linked);
+}
+
 /// Linking an iD adds it to the actor document, so followers are sent it.
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]

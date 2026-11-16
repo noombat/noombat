@@ -937,8 +937,9 @@ async fn each_document_pushed_is_stamped_later_and_served_with_its_stamp(pool: P
     assert_eq!(pushed(pool.clone()).await, second, "nothing changed");
 }
 
-/// A suspension sent followers a `Delete`; a session that outlives it
-/// must not have an `Update` signed in the account's name.
+/// A suspension sent followers a `Delete`; nothing may push an `Update` in
+/// the account's name after it: a session from before it is refused the
+/// save, and a push from anywhere else sends nothing.
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn nothing_is_pushed_for_a_suspended_account(pool: PgPool) {
@@ -950,7 +951,17 @@ async fn nothing_is_pushed_for_a_suspended_account(pool: PgPool) {
         .execute(&pool)
         .await
         .expect("suspended");
-    send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    let reply = send_form(&pool, "/settings/privacy", &bob_token, HIDDEN).await;
+    assert_eq!(reply, StatusCode::FORBIDDEN);
+    sqlx::query(
+        "UPDATE actors SET actor_privacy = jsonb_set(actor_privacy, '{chatmail_visible}', 'false') \
+         WHERE id = $1",
+    )
+    .bind(pair.bob)
+    .execute(&pool)
+    .await
+    .expect("a change to push");
+    noombat_federation::update::push_actor_document(&pool, pair.bob, DOMAIN).await;
     assert!(updates_to(&pool, pair.bob, inbox).await.is_empty());
 }
 

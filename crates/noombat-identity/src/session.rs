@@ -225,14 +225,16 @@ pub async fn refresh_session(
     config: &SessionConfig,
     old_refresh_token: &str,
 ) -> Result<SessionTokens> {
-    // Find the session and verify it is not revoked or expired.
+    // Find the session and verify it is not revoked or expired, and that
+    // its account may still sign in, as login requires.
     let row = sqlx::query_as::<_, (Uuid, Uuid, String, InstanceRole)>(
         r#"SELECT s.id, s.actor_id, a.username, a.instance_role
            FROM sessions s
            JOIN actors a ON a.id = s.actor_id
            WHERE s.refresh_token = $1
              AND s.revoked_at IS NULL
-             AND s.expires_at > now()"#,
+             AND s.expires_at > now()
+             AND a.actor_status IN ('active', 'silenced')"#,
     )
     .bind(old_refresh_token)
     .fetch_optional(pool)
@@ -241,13 +243,18 @@ pub async fn refresh_session(
 
     let (session_id, actor_id, username, role) = row;
 
-    // Revoke the old refresh token (rotation).
-    sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1")
-        .bind(session_id)
-        .execute(pool)
-        .await?;
+    // Revoke the old refresh token (rotation), once: a second use of it
+    // finds it revoked and mints nothing.
+    let rotated =
+        sqlx::query("UPDATE sessions SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL")
+            .bind(session_id)
+            .execute(pool)
+            .await?;
+    if rotated.rows_affected() == 0 {
+        return Err(NoombatError::Forbidden);
+    }
 
-    create_session(
+    let tokens = create_session(
         pool,
         config,
         actor_id,
@@ -255,7 +262,23 @@ pub async fn refresh_session(
         role,
         SessionContext::refresh(),
     )
-    .await
+    .await?;
+    keep_only_if_admitted(pool, actor_id, tokens).await
+}
+
+/// `tokens`, unless the account was suspended while they were made: a
+/// suspension sets the status before it revokes, so a session made after
+/// its revocation is found here, and revoked.
+pub async fn keep_only_if_admitted(
+    pool: &PgPool,
+    actor_id: Uuid,
+    tokens: SessionTokens,
+) -> Result<SessionTokens> {
+    if crate::login::may_sign_in(pool, actor_id).await.is_err() {
+        revoke_session(pool, &tokens.refresh_token).await?;
+        return Err(NoombatError::Forbidden);
+    }
+    Ok(tokens)
 }
 
 /// Revoke a session (logout).

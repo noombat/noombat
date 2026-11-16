@@ -83,8 +83,13 @@ async fn execute_suspension(state: &AppState, actor_id: Uuid) -> Result<(), ApiE
     // forget what followers were last sent: the `Delete` below takes the
     // account from them, so the push after a lifted suspension sends the
     // document whatever it last carried. Nothing is pushed meanwhile.
+    // Every refresh token ends in the same statement, so no new session
+    // comes of one, and none comes back when the suspension is lifted; an
+    // access token reads on until it expires, and writes nothing.
     let suspended = sqlx::query(
-        "UPDATE actors SET actor_status = $2, federated_digest = NULL, updated_at = now() \
+        "WITH revoked AS ( \
+             UPDATE sessions SET revoked_at = now() WHERE actor_id = $1 AND revoked_at IS NULL) \
+         UPDATE actors SET actor_status = $2, federated_digest = NULL, updated_at = now() \
          WHERE id = $1 AND is_local = TRUE",
     )
     .bind(actor_id)

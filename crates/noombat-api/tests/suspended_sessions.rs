@@ -228,10 +228,8 @@ async fn suspend(pool: &PgPool, target: Uuid) {
     );
 }
 
-// Known defect: a suspended account's access token keeps writing; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a suspended account's access token still writes")]
 async fn a_suspended_accounts_access_token_may_not_publish_or_follow(pool: PgPool) {
     let member = insert_person(&pool, "member", "user", "active").await;
     let before = insert_remote(&pool, "before").await;
@@ -257,7 +255,7 @@ async fn a_suspended_accounts_access_token_may_not_publish_or_follow(pool: PgPoo
     );
     assert!(
         !writes.0.is_success() && !writes.1.is_success(),
-        "known defect: a suspended account's access token still writes"
+        "a suspended account's access token still writes"
     );
     assert_eq!(
         writes,
@@ -275,10 +273,8 @@ async fn a_suspended_accounts_access_token_may_not_publish_or_follow(pool: PgPoo
     );
 }
 
-// Known defect: refresh ignores suspension and mints a session; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a suspended account's refresh token mints a session")]
 async fn a_suspended_accounts_refresh_token_is_refused(pool: PgPool) {
     let member = insert_person(&pool, "member", "user", "active").await;
     let tokens = sign_in(&pool, member, "member", InstanceRole::User).await;
@@ -296,7 +292,7 @@ async fn a_suspended_accounts_refresh_token_is_refused(pool: PgPool) {
     let (status, _) = refresh(&pool, &rotated).await;
     assert!(
         !status.is_success(),
-        "known defect: a suspended account's refresh token mints a session"
+        "a suspended account's refresh token mints a session"
     );
     assert_eq!(
         status,
@@ -305,12 +301,11 @@ async fn a_suspended_accounts_refresh_token_is_refused(pool: PgPool) {
     );
 }
 
-// Known defect, latent while no route issues a pending account a session: its token can write.
-// OAuth sign-up creating pending accounts would end that, unless the callbacks refuse pending
-// accounts first. Remove `should_panic` once fixed.
+/// No route issues a pending account a session today; a token one got
+/// anyway, through an OAuth sign-up creating pending accounts say, must
+/// still be refused.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a pending account's access token writes")]
 async fn a_pending_accounts_access_token_may_not_publish_or_follow(pool: PgPool) {
     // The twin is admitted and otherwise identical, so only the status
     // differs between its requests and the pending account's.
@@ -339,7 +334,7 @@ async fn a_pending_accounts_access_token_may_not_publish_or_follow(pool: PgPool)
     );
     assert!(
         !writes.0.is_success() && !writes.1.is_success(),
-        "known defect: a pending account's access token writes"
+        "a pending account's access token writes"
     );
     assert_eq!(
         writes,
@@ -357,11 +352,9 @@ async fn a_pending_accounts_access_token_may_not_publish_or_follow(pool: PgPool)
     );
 }
 
-// Known defect, latent while no route issues a pending account a session: refresh ignores the
-// pending status; remove `should_panic` once fixed.
+/// The same for refreshing, which login's rule governs too.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a pending account's refresh token mints a session")]
 async fn a_pending_accounts_refresh_token_is_refused(pool: PgPool) {
     let admitted = insert_person(&pool, "admitted", "user", "active").await;
     let waiting = insert_person(&pool, "waiting", "user", "pending").await;
@@ -377,13 +370,222 @@ async fn a_pending_accounts_refresh_token_is_refused(pool: PgPool) {
     let (status, _) = refresh(&pool, &waiting_tokens.refresh_token).await;
     assert!(
         !status.is_success(),
-        "known defect: a pending account's refresh token mints a session"
+        "a pending account's refresh token mints a session"
     );
     assert_eq!(
         status,
         StatusCode::FORBIDDEN,
         "a pending account's refresh is refused as forbidden"
     );
+}
+
+/// A suspension revokes every session the account holds, so none comes
+/// back when it is lifted.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_suspension_revokes_every_session_for_good(pool: PgPool) {
+    let member = insert_person(&pool, "member", "user", "active").await;
+    let first = sign_in(&pool, member, "member", InstanceRole::User).await;
+    let second = sign_in(&pool, member, "member", InstanceRole::User).await;
+
+    suspend(&pool, member).await;
+
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sessions WHERE actor_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(member)
+    .fetch_one(&pool)
+    .await
+    .expect("sessions countable");
+    assert_eq!(open, 0, "every session revoked");
+    sqlx::query("UPDATE actors SET actor_status = 'active' WHERE id = $1")
+        .bind(member)
+        .execute(&pool)
+        .await
+        .expect("lifted");
+    for tokens in [first, second] {
+        assert_eq!(
+            refresh(&pool, &tokens.refresh_token).await.0,
+            StatusCode::FORBIDDEN,
+            "a session from before the suspension came back"
+        );
+    }
+}
+
+/// Refreshing checks the account's status itself, so a session the
+/// suspension did not revoke, an account suspended some other way say,
+/// buys nothing either.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_refresh_checks_the_accounts_status_itself(pool: PgPool) {
+    let member = insert_person(&pool, "member", "user", "active").await;
+    let tokens = sign_in(&pool, member, "member", InstanceRole::User).await;
+    sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
+        .bind(member)
+        .execute(&pool)
+        .await
+        .expect("suspended, sessions left open");
+    assert_eq!(
+        refresh(&pool, &tokens.refresh_token).await.0,
+        StatusCode::FORBIDDEN
+    );
+}
+
+/// Reads and logging out go on: the chat page still tells a suspended
+/// member why, and they can end the session they hold.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_suspended_account_still_reads_and_logs_out(pool: PgPool) {
+    let member = insert_person(&pool, "member", "user", "active").await;
+    let tokens = sign_in(&pool, member, "member", InstanceRole::User).await;
+    suspend(&pool, member).await;
+
+    let page = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .uri("/chat")
+                .header("authorization", format!("Bearer {}", tokens.access_token))
+                .body(Body::empty())
+                .expect("request"),
+        )
+        .await
+        .expect("the router is infallible");
+    assert_eq!(page.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(page.into_body(), 1024 * 1024)
+        .await
+        .expect("page body");
+    assert!(
+        String::from_utf8_lossy(&body).contains("Your account is suspended"),
+        "the chat page says why"
+    );
+
+    let logout = post_json(
+        &pool,
+        "/api/v1/auth/logout",
+        Some(&tokens.access_token),
+        json!({ "refresh_token": tokens.refresh_token }),
+    )
+    .await;
+    assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+}
+
+/// Send `method` to `uri` with `bearer`, a form body when there is one.
+async fn send(pool: &PgPool, method: &str, uri: &str, bearer: &str, form: &str) -> StatusCode {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {bearer}"))
+        .header("content-type", "application/x-www-form-urlencoded")
+        .body(Body::from(form.to_owned()))
+        .expect("request");
+    build_router(test_state(pool.clone()))
+        .oneshot(request)
+        .await
+        .expect("the router is infallible")
+        .status()
+}
+
+/// Every unsafe method is a write, not only POST; and the administration
+/// surfaces, and starting to link another way in, are refused to read too.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_suspended_token_neither_deletes_nor_administers_nor_links(pool: PgPool) {
+    let member = insert_person(&pool, "member", "moderator", "active").await;
+    let tokens = sign_in(&pool, member, "member", InstanceRole::Moderator).await;
+    suspend(&pool, member).await;
+    let bearer = tokens.access_token.as_str();
+    assert_eq!(
+        send(&pool, "DELETE", "/api/v1/auth/totp", bearer, "").await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(&pool, "GET", "/api/v1/admin/reports", bearer, "").await,
+        StatusCode::FORBIDDEN
+    );
+    assert_eq!(
+        send(&pool, "GET", "/api/v1/auth/orcid/link", bearer, "").await,
+        StatusCode::FORBIDDEN
+    );
+}
+
+/// What acts by its own credentials or on no account goes on: a browser
+/// still holding a suspended account's token signs in, registers and
+/// refreshes as another account, and sets its theme.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_suspended_token_does_not_stop_another_account_or_the_theme(pool: PgPool) {
+    let member = insert_person(&pool, "member", "user", "active").await;
+    let tokens = sign_in(&pool, member, "member", InstanceRole::User).await;
+    let other = insert_person(&pool, "other", "user", "active").await;
+    let key = "cd".repeat(32);
+    sqlx::query("UPDATE actors SET auth_key_hash = $1 WHERE id = $2")
+        .bind(noombat_identity::registration::hash_auth_key(&key).expect("hash"))
+        .bind(other)
+        .execute(&pool)
+        .await
+        .expect("a password");
+    suspend(&pool, member).await;
+    let bearer = Some(tokens.access_token.as_str());
+
+    let login = post_json(
+        &pool,
+        "/api/v1/auth/login",
+        bearer,
+        json!({ "username": "other", "auth_key": key }),
+    )
+    .await;
+    assert_eq!(login.status(), StatusCode::OK);
+    let body = axum::body::to_bytes(login.into_body(), 64 * 1024)
+        .await
+        .expect("login body");
+    let refresh_token = serde_json::from_slice::<Value>(&body).expect("JSON")["refresh_token"]
+        .as_str()
+        .expect("a refresh token")
+        .to_owned();
+    let refreshed = post_json(
+        &pool,
+        "/api/v1/auth/refresh",
+        bearer,
+        json!({ "refresh_token": refresh_token }),
+    )
+    .await;
+    assert_eq!(refreshed.status(), StatusCode::OK);
+    let registered = post_json(
+        &pool,
+        "/api/v1/auth/register",
+        bearer,
+        json!({ "username": "newcomer", "auth_key": "ef".repeat(32) }),
+    )
+    .await;
+    assert_ne!(registered.status(), StatusCode::FORBIDDEN, "registering");
+    let theme = send(
+        &pool,
+        "POST",
+        "/settings/theme",
+        &tokens.access_token,
+        "theme=dark",
+    )
+    .await;
+    assert_ne!(theme, StatusCode::FORBIDDEN, "the theme");
+}
+
+/// A session made while its account was being suspended is revoked as
+/// soon as it is made, so the suspension's own revocation cannot miss it.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_session_made_during_a_suspension_is_not_kept(pool: PgPool) {
+    let member = insert_person(&pool, "member", "user", "suspended").await;
+    let tokens = sign_in(&pool, member, "member", InstanceRole::User).await;
+    let kept = noombat_identity::session::keep_only_if_admitted(&pool, member, tokens).await;
+    assert!(kept.is_err());
+    let open: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sessions WHERE actor_id = $1 AND revoked_at IS NULL",
+    )
+    .bind(member)
+    .fetch_one(&pool)
+    .await
+    .expect("sessions countable");
+    assert_eq!(open, 0);
 }
 
 /// Silencing withholds reach, not access: whatever refuses suspended and

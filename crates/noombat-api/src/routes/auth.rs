@@ -228,6 +228,8 @@ async fn login(
         noombat_identity::session::SessionContext::sign_in(),
     )
     .await?;
+    let tokens =
+        noombat_identity::session::keep_only_if_admitted(&state.pool, actor_id, tokens).await?;
 
     // Fetch the encrypted credential blob, and the setup it belongs to,
     // which a write of it must name.
@@ -393,6 +395,8 @@ async fn mastodon_link_init(
     Query(query): Query<MastodonInitQuery>,
 ) -> Result<Response, ApiError> {
     let actor_id = require_actor(&viewer)?;
+    // A link adds a way in, which only an account that may sign in gains.
+    noombat_identity::login::may_sign_in(&state.pool, actor_id).await?;
 
     let (url, _state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
         &state.pool,
@@ -483,6 +487,8 @@ async fn orcid_link_init(
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
     let actor_id = require_actor(&viewer)?;
+    // A link adds a way in, which only an account that may sign in gains.
+    noombat_identity::login::may_sign_in(&state.pool, actor_id).await?;
     let orcid_config = state.orcid_config.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
             "ORCID not configured".into(),

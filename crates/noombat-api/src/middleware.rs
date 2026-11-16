@@ -6,10 +6,13 @@
 //! token, carried either as a bearer header or as the session cookie)
 //! and inserts it as a request extension for downstream handlers.
 //!
-//! Authorisation is **not** performed here. All access control is
-//! enforced by domain methods on model types in
-//! [`noombat_core::authorisation`] (visibility checks, role guards,
-//! block/mute guards) directly in the route handlers.
+//! Authorisation is **not** performed here, with one exception: a viewer
+//! whose account may not sign in, suspended or awaiting admission, is
+//! refused every request with an unsafe method and every request to the
+//! administration surfaces, since the access token they hold outlives the
+//! change. All other access control is enforced by domain methods on
+//! model types in [`noombat_core::authorisation`] (visibility checks, role
+//! guards, block/mute guards) directly in the route handlers.
 //!
 //! This module additionally builds the response security headers
 //! applied to every route; see [`security_headers`].
@@ -19,7 +22,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderName, HeaderValue, Request, header, header::AUTHORIZATION, header::COOKIE};
 use axum::middleware::Next;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use tower_http::set_header::SetResponseHeaderLayer;
 use tracing::{debug, error};
 
@@ -82,7 +85,8 @@ impl Viewer {
 /// Axum middleware function (for use with [`axum::middleware::from_fn_with_state`]).
 ///
 /// Resolves the authenticated viewer and inserts it as a request extension.
-/// Does not perform any authorisation checks.
+/// Refuses a write by a viewer whose account may not sign in, and performs
+/// no other authorisation check.
 pub async fn authentication(
     State(state): State<AppState>,
     mut request: Request<Body>,
@@ -97,11 +101,47 @@ pub async fn authentication(
     if let Some(token) = token
         && let Some(viewer) = resolve_viewer(&state, &token).await
     {
+        // Reads go on while the token lasts, so the pages telling the
+        // member why still render.
+        if !viewer.is_active() && (acts_as_viewer(&request) || administers(&request)) {
+            debug!(username = %viewer.username, "write refused: the account may not sign in");
+            return crate::error::ApiError(noombat_core::error::NoombatError::Forbidden)
+                .into_response();
+        }
         debug!(username = %viewer.username, "viewer resolved");
         request.extensions_mut().insert(viewer);
     }
 
     next.run(request).await
+}
+
+/// Whether the request is a write that may act as the signed-in account:
+/// any unsafe method but these. Signing in, registering, refreshing and
+/// logging out act by credentials in the request, never the session's,
+/// and signing in and refreshing check the account's status themselves;
+/// the theme and contrast controls set a cookie and act on no account.
+fn acts_as_viewer(request: &Request<Body>) -> bool {
+    let exempt = [
+        "/api/v1/auth/login",
+        "/api/v1/auth/register",
+        "/api/v1/auth/refresh",
+        "/api/v1/auth/logout",
+        "/settings/theme",
+        "/settings/contrast",
+    ];
+    !request.method().is_safe() && !exempt.contains(&request.uri().path())
+}
+
+/// Whether the request reaches the moderation and administration surfaces,
+/// which an account that may not sign in neither reads nor changes.
+fn administers(request: &Request<Body>) -> bool {
+    let path = request.uri().path();
+    ["/admin", "/api/v1/admin"].iter().any(|root| {
+        path == *root
+            || path
+                .strip_prefix(root)
+                .is_some_and(|rest| rest.starts_with('/'))
+    })
 }
 
 // ..... Viewer resolution .....

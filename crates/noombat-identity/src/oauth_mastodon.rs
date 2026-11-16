@@ -386,6 +386,8 @@ pub async fn handle_callback(
     // Linking: attach this Mastodon account to the account that started
     // the flow.
     if let Some(actor_id) = link_actor_id {
+        // Started by a session that may have been suspended since.
+        crate::login::may_sign_in(pool, actor_id).await?;
         if let Some((owner, _)) = existing {
             // One remote account, one local account. Silently re-pointing
             // it would take the second way in away from whoever holds it.
