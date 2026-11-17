@@ -1,0 +1,20 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes #}
+{# One link in the page's list. The add-link route renders it too, as the
+   answer its form appends to the list. #}
+            <li class="flex items-center gap-2 border-b border-border-default pb-2"
+                id="link-{{ link.id }}">
+                <a href="{{ link.url }}" class="text-text-brand text-sm no-underline hover:underline truncate flex-1"
+                   rel="noopener noreferrer" target="_blank">{{ link.url }}</a>
+                {% if link.verified_at.is_some() %}
+                <span class="text-text-success text-xs" aria-label="{{ i18n.t("profile_verified") }}">✓</span>
+                {% else %}
+                <span class="text-text-secondary text-xs">{{ i18n.t("link_pending") }}</span>
+                {% endif %}
+                <button type="button"
+                        hx-delete="/users/{{ username }}/links/{{ link.id }}"
+                        hx-target="#link-{{ link.id }}"
+                        hx-swap="outerHTML"
+                        class="text-text-secondary hover:text-text-danger text-xs"
+                        aria-label="{{ i18n.t("link_remove") }}">✕</button>
+            </li>

@@ -1,0 +1,14 @@
+{# SPDX-License-Identifier: AGPL-3.0-or-later #}
+{# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes #}
+{# One skill in the page's list. The add-skill route renders it too, as
+   the answer its form appends to the list. #}
+            <span class="bg-bg-raised border border-border-default px-3 py-1 rounded text-sm flex items-center gap-2"
+                  id="skill-{{ skill.id }}">
+                {{ skill.name }}
+                <button type="button"
+                        hx-delete="/users/{{ username }}/skills/{{ skill.id }}"
+                        hx-target="#skill-{{ skill.id }}"
+                        hx-swap="outerHTML"
+                        class="text-text-secondary hover:text-text-danger text-xs"
+                        aria-label="{{ i18n.t("skill_remove") }}: {{ skill.name }}">✕</button>
+            </span>

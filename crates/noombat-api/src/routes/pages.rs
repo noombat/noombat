@@ -397,6 +397,29 @@ struct SkillEntry {
     name: String,
 }
 
+/// One skill as the skills page lists it. The add-skill route answers
+/// that page's form with it, for htmx to append to the list.
+#[derive(Template, WebTemplate)]
+#[template(path = "skill_item.html")]
+pub(crate) struct SkillItem {
+    i18n: I18n,
+    username: String,
+    skill: SkillEntry,
+}
+
+impl SkillItem {
+    pub(crate) fn new(i18n: I18n, username: &str, id: uuid::Uuid, name: &str) -> Self {
+        Self {
+            i18n,
+            username: username.to_owned(),
+            skill: SkillEntry {
+                id: id.to_string(),
+                name: name.to_owned(),
+            },
+        }
+    }
+}
+
 #[derive(Template, WebTemplate)]
 #[template(path = "edit_skills.html")]
 struct EditSkillsPage {
@@ -423,6 +446,34 @@ struct LinkEntry {
     id: String,
     url: String,
     verified_at: Option<String>,
+}
+
+/// One link as the links page lists it. The add-link route answers that
+/// page's form with it, for htmx to append to the list.
+#[derive(Template, WebTemplate)]
+#[template(path = "link_item.html")]
+pub(crate) struct LinkItem {
+    i18n: I18n,
+    username: String,
+    link: LinkEntry,
+}
+
+impl LinkItem {
+    pub(crate) fn new(
+        i18n: I18n,
+        username: &str,
+        link: &noombat_identity::verification::VerifiedLink,
+    ) -> Self {
+        Self {
+            i18n,
+            username: username.to_owned(),
+            link: LinkEntry {
+                id: link.id.to_string(),
+                url: link.url.clone(),
+                verified_at: link.verified_at.map(|t| t.to_string()),
+            },
+        }
+    }
 }
 
 #[derive(Template, WebTemplate)]

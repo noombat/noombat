@@ -19,6 +19,7 @@ use noombat_core::error::NoombatError;
 
 use crate::error::ApiError;
 use crate::i18n::I18n;
+use crate::routes::body::JsonOrForm;
 use crate::state::AppState;
 use crate::theme::{Contrast, Theme};
 
@@ -447,7 +448,7 @@ async fn post_outbox(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    body: crate::routes::body::JsonOrForm<OutboxPostBody>,
+    body: JsonOrForm<OutboxPostBody>,
 ) -> Result<axum::response::Response, ApiError> {
     // The compose page posts here as an ordinary HTML form, so this
     // route is reached both ways and answers each in its own terms.
@@ -904,7 +905,8 @@ async fn patch_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(body): Json<PatchActorBody>,
+    // The edit-profile page posts this as an htmx form.
+    JsonOrForm { value: body, .. }: JsonOrForm<PatchActorBody>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
@@ -1139,7 +1141,7 @@ async fn create_alias(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<crate::middleware::Viewer>>,
-    Json(req): Json<CreateAliasRequest>,
+    JsonOrForm { value: req, .. }: JsonOrForm<CreateAliasRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor_id = require_owner(&viewer, &username)?;
 
@@ -1188,7 +1190,7 @@ async fn initiate_move(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<crate::middleware::Viewer>>,
-    Json(req): Json<MoveRequest>,
+    JsonOrForm { value: req, .. }: JsonOrForm<MoveRequest>,
 ) -> Result<StatusCode, ApiError> {
     let actor_id = require_owner(&viewer, &username)?;
     let actor = noombat_identity::repo::find_by_id(&state.pool, actor_id).await?;

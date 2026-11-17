@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 use crate::error::ApiError;
 use crate::middleware::Viewer;
+use crate::routes::body::JsonOrForm;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -172,7 +173,8 @@ async fn suspend_actor(
     State(state): State<AppState>,
     Path(actor_id): Path<Uuid>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(body): Json<SuspendRequest>,
+    // The users page posts this as an htmx form.
+    JsonOrForm { value: body, .. }: JsonOrForm<SuspendRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let moderator = require_moderator(&viewer)?;
 
@@ -305,8 +307,11 @@ async fn resolve_chat_report(
     State(state): State<AppState>,
     Path(report_id): Path<Uuid>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(body): Json<ResolveReportRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+    JsonOrForm {
+        value: body,
+        from_form,
+    }: JsonOrForm<ResolveReportRequest>,
+) -> Result<axum::response::Response, ApiError> {
     let moderator = require_moderator(&viewer)?;
     let moderator_id = moderator.actor_id;
 
@@ -417,13 +422,19 @@ async fn resolve_chat_report(
     .await
     .map_err(NoombatError::from)?;
 
+    // The moderation page's Dismiss swaps the answer over the report,
+    // so an empty body takes it off the queue.
+    if from_form {
+        return Ok((StatusCode::OK, axum::response::Html(String::new())).into_response());
+    }
     Ok((
         StatusCode::OK,
         Json(serde_json::json!({
             "report_id": report_id,
             "status": resolution_status,
         })),
-    ))
+    )
+        .into_response())
 }
 
 // ..... REPORT LISTING .....

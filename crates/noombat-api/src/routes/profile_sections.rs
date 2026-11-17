@@ -5,14 +5,16 @@
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::response::IntoResponse;
+use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, patch};
 use axum::{Json, Router};
 use noombat_core::privacy::SectionVisibility;
 
 use crate::auth::require_local_actor;
 use crate::error::ApiError;
+use crate::i18n::I18n;
 use crate::middleware::Viewer;
+use crate::routes::body::JsonOrForm;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -88,11 +90,13 @@ async fn list_work_experiences(
     Ok((StatusCode::OK, Json(items)))
 }
 
+// The creation routes below take `JsonOrForm`: the settings pages post
+// them as htmx forms, and an API client sends JSON.
 async fn create_work_experience(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(params): Json<noombat_identity::profile::NewWorkExperience>,
+    JsonOrForm { value: params, .. }: JsonOrForm<noombat_identity::profile::NewWorkExperience>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let exp =
@@ -148,7 +152,7 @@ async fn create_education_entry(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(params): Json<noombat_identity::profile::NewEducationEntry>,
+    JsonOrForm { value: params, .. }: JsonOrForm<noombat_identity::profile::NewEducationEntry>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let edu =
@@ -210,8 +214,12 @@ async fn add_skill(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(params): Json<AddSkillBody>,
-) -> Result<impl IntoResponse, ApiError> {
+    i18n: I18n,
+    JsonOrForm {
+        value: params,
+        from_form,
+    }: JsonOrForm<AddSkillBody>,
+) -> Result<Response, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let skill = noombat_identity::profile::add_skill(
         &state.pool,
@@ -225,7 +233,12 @@ async fn add_skill(
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
 
-    Ok((StatusCode::CREATED, Json(skill)))
+    // The page's form appends the answer to its list.
+    if from_form {
+        let item = crate::routes::pages::SkillItem::new(i18n, &username, skill.id, &skill.name);
+        return Ok((StatusCode::CREATED, item).into_response());
+    }
+    Ok((StatusCode::CREATED, Json(skill)).into_response())
 }
 
 async fn delete_skill(
@@ -281,7 +294,7 @@ async fn create_scholarly_article(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(body): Json<CreateScholarlyArticleRequest>,
+    JsonOrForm { value: body, .. }: JsonOrForm<CreateScholarlyArticleRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
@@ -359,8 +372,12 @@ async fn add_verified_link(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(params): Json<AddLinkBody>,
-) -> Result<impl IntoResponse, ApiError> {
+    i18n: I18n,
+    JsonOrForm {
+        value: params,
+        from_form,
+    }: JsonOrForm<AddLinkBody>,
+) -> Result<Response, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
     let link = noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
 
@@ -386,7 +403,12 @@ async fn add_verified_link(
         }
     });
 
-    Ok((StatusCode::CREATED, Json(link)))
+    // The page's form appends the answer to its list.
+    if from_form {
+        let item = crate::routes::pages::LinkItem::new(i18n, &username, &link);
+        return Ok((StatusCode::CREATED, item).into_response());
+    }
+    Ok((StatusCode::CREATED, Json(link)).into_response())
 }
 
 async fn delete_verified_link(

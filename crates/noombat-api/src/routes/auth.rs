@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::ApiError;
 use crate::middleware::Viewer;
+use crate::routes::body::JsonOrForm;
 use crate::state::AppState;
 
 pub fn router() -> Router<AppState> {
@@ -333,7 +334,8 @@ struct TotpVerifyRequest {
 async fn totp_verify(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
-    Json(req): Json<TotpVerifyRequest>,
+    // The enrolment page posts this as a form.
+    JsonOrForm { value: req, .. }: JsonOrForm<TotpVerifyRequest>,
 ) -> Result<Response, ApiError> {
     let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
     let actor_id = viewer.actor_id;

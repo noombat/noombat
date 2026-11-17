@@ -63,8 +63,8 @@
             </button>
         </form>
 
-        <!-- A separate form, because a file cannot travel in the JSON body
-             the form above submits. It posts multipart to its own route,
+        <!-- A separate form, because a file cannot travel in the url-encoded
+             body the form above submits. It posts multipart to its own route,
              which authenticates by session rather than by the path, so it
              cannot be aimed at another account. -->
         <form action="/settings/avatar" method="post" enctype="multipart/form-data"

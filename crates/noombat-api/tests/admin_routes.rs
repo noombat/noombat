@@ -508,12 +508,8 @@ async fn the_admin_pages_turn_away_anyone_below_their_role(pool: PgPool) {
 
 // ..... The users page's own request .....
 
-// Known defect: the users page's Suspend form posts url-encoded fields to a
-// handler that accepts only JSON, so the request is refused before it runs.
-// Remove `should_panic` once it is fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the users page's Suspend form is refused")]
 async fn the_users_pages_suspend_button_suspends_the_account(pool: PgPool) {
     let moderator = insert_person(&pool, "mod", "moderator").await;
     let target = insert_person(&pool, "target", "user").await;
@@ -574,7 +570,7 @@ async fn the_users_pages_suspend_button_suspends_the_account(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the users page's Suspend form is refused"
+        "the users page's Suspend form is refused"
     );
     assert!(
         status.is_success() || status.is_redirection(),
@@ -619,6 +615,17 @@ async fn submit_form(
     action: &str,
     fields: &str,
 ) -> StatusCode {
+    form_answer(pool, cookie, page, action, fields).await.0
+}
+
+/// [`submit_form`], with the body of the answer the page swaps in.
+async fn form_answer(
+    pool: &PgPool,
+    cookie: &str,
+    page: &str,
+    action: &str,
+    fields: &str,
+) -> (StatusCode, String) {
     let mut builder = Request::builder()
         .method("POST")
         .uri(action)
@@ -629,15 +636,19 @@ async fn submit_form(
     if !fields.is_empty() {
         builder = builder.header("content-type", FORM);
     }
-    build_router(test_state(pool.clone()))
+    let response = build_router(test_state(pool.clone()))
         .oneshot(
             builder
                 .body(Body::from(fields.to_owned()))
                 .expect("form request"),
         )
         .await
-        .expect("the router is infallible")
-        .status()
+        .expect("the router is infallible");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("answer body read");
+    (status, String::from_utf8_lossy(&body).into_owned())
 }
 
 async fn report_status(pool: &PgPool, report: Uuid) -> String {
@@ -723,13 +734,8 @@ async fn the_moderation_pages_dismiss_closes_a_post_report(pool: PgPool) {
     assert_eq!(report_status(&pool, report).await, "dismissed");
 }
 
-// Known defect: the chat-report Dismiss form posts url-encoded fields to a
-// handler that accepts only JSON. Remove `should_panic` once it is fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(
-    expected = "known defect: the moderation page's chat-report Dismiss form is refused"
-)]
 async fn the_moderation_pages_dismiss_closes_a_chat_report(pool: PgPool) {
     let moderator = insert_person(&pool, "mod", "moderator").await;
     let reporter = insert_person(&pool, "reporter", "user").await;
@@ -753,7 +759,7 @@ async fn the_moderation_pages_dismiss_closes_a_chat_report(pool: PgPool) {
         "the moderation page no longer renders the Dismiss form this test replays"
     );
 
-    let status = submit_form(
+    let (status, answer) = form_answer(
         &pool,
         &cookie,
         "/admin/moderation",
@@ -765,11 +771,54 @@ async fn the_moderation_pages_dismiss_closes_a_chat_report(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the moderation page's chat-report Dismiss form is refused"
+        "the moderation page's chat-report Dismiss form is refused"
     );
     assert!(
         status.is_success(),
         "the Dismiss form was refused: {status}"
     );
+    assert_eq!(report_status(&pool, report).await, "dismissed");
+    // The page swaps the answer over the report, taking it off the queue.
+    assert_eq!(answer, "", "the Dismiss answer would stay on the page");
+}
+
+/// An API client resolving a chat report is answered with the JSON
+/// document.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_chat_report_dismissed_by_an_api_client_is_answered_in_json(pool: PgPool) {
+    let moderator = insert_person(&pool, "mod", "moderator").await;
+    let reporter = insert_person(&pool, "reporter", "user").await;
+    let report: Uuid = sqlx::query_scalar(
+        "INSERT INTO reports (reporter_id, target_chat_addr, reason) \
+         VALUES ($1, 'sender@chat.example', 'spam') RETURNING id",
+    )
+    .bind(reporter)
+    .fetch_one(&pool)
+    .await
+    .expect("report fixture");
+    let token = token_for(&pool, moderator, "mod", InstanceRole::Moderator).await;
+
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("/api/v1/admin/chat-reports/{report}/resolve"))
+                .header("authorization", format!("Bearer {token}"))
+                .header("content-type", JSON)
+                .body(Body::from(r#"{"action":"dismiss"}"#))
+                .expect("resolve request"),
+        )
+        .await
+        .expect("the router is infallible");
+    let status = response.status();
+    let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("answer body read");
+
+    assert_eq!(status, StatusCode::OK, "the JSON dismissal failed");
+    let answer: serde_json::Value =
+        serde_json::from_slice(&body).expect("an API client is answered in JSON");
+    assert_eq!(answer["status"], "dismissed");
     assert_eq!(report_status(&pool, report).await, "dismissed");
 }

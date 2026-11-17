@@ -199,11 +199,8 @@ fn current_code(secret_base32: &str) -> String {
     code_at(secret_base32, now)
 }
 
-// Known defect: the handler takes only JSON, so the page gets 415; remove `should_panic` once
-// fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the enrolment page's form post is refused")]
 async fn the_enrolment_pages_form_post_enables_two_factor(pool: PgPool) {
     // ASCII "12345678901234567890" in base32, with the RFC's codes cut to six.
     for (time, expected) in [
@@ -241,7 +238,7 @@ async fn the_enrolment_pages_form_post_enables_two_factor(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the enrolment page's form post is refused"
+        "the enrolment page's form post is refused"
     );
     assert!(
         status.is_success() || status.is_redirection(),

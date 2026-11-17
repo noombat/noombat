@@ -138,6 +138,67 @@ async fn submit(
         .status()
 }
 
+/// A request through the assembled router, and its answer: the status,
+/// the content type and the body.
+async fn answer(
+    pool: &PgPool,
+    uri: &str,
+    cookie: &str,
+    content_type: &str,
+    body: &'static str,
+) -> (StatusCode, String, String) {
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::CONTENT_TYPE, content_type)
+                .header(header::COOKIE, cookie)
+                .body(Body::from(body))
+                .expect("request builds"),
+        )
+        .await
+        .expect("the router is infallible");
+    let status = response.status();
+    let content_type = response
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("answer body read");
+    (
+        status,
+        content_type,
+        String::from_utf8_lossy(&bytes).into_owned(),
+    )
+}
+
+/// A settings page as its owner's browser loads it.
+async fn page_html(pool: &PgPool, cookie: &str, page: &str) -> String {
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .uri(page)
+                .header(header::COOKIE, cookie)
+                .body(Body::empty())
+                .expect("page request builds"),
+        )
+        .await
+        .expect("the router is infallible");
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "{page} must serve its owner"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("page body read");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
 /// What `axum::Form` makes of a body, which is what a handler that
 /// accepts the form is given.
 async fn form_of<T: serde::de::DeserializeOwned>(body: &'static str) -> Result<T, StatusCode> {
@@ -191,10 +252,8 @@ async fn page_carries_form(pool: &PgPool, cookie: &str, page: &str, target: &str
 
 // ..... Profile .....
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the edit-profile form is refused")]
 async fn the_edit_profile_form_saves_every_field(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -233,7 +292,7 @@ async fn the_edit_profile_form_saves_every_field(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the edit-profile form is refused"
+        "the edit-profile form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -252,10 +311,8 @@ async fn the_edit_profile_form_saves_every_field(pool: PgPool) {
 
 // ..... Profile sections .....
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the add-skill form is refused")]
 async fn the_add_skill_form_saves_the_skill(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -286,7 +343,7 @@ async fn the_add_skill_form_saves_the_skill(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the add-skill form is refused"
+        "the add-skill form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -295,10 +352,8 @@ async fn the_add_skill_form_saves_the_skill(pool: PgPool) {
     );
 }
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the education form is refused")]
 async fn the_education_form_saves_the_entry(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -344,7 +399,7 @@ async fn the_education_form_saves_the_entry(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the education form is refused"
+        "the education form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -363,10 +418,8 @@ async fn the_education_form_saves_the_entry(pool: PgPool) {
     );
 }
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the experience form is refused")]
 async fn the_experience_form_saves_the_entry(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -412,7 +465,7 @@ async fn the_experience_form_saves_the_entry(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the experience form is refused"
+        "the experience form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -431,10 +484,8 @@ async fn the_experience_form_saves_the_entry(pool: PgPool) {
     );
 }
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the publication form is refused")]
 async fn the_publication_form_is_accepted(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -478,14 +529,12 @@ async fn the_publication_form_is_accepted(pool: PgPool) {
             && (status == StatusCode::BAD_REQUEST || status == StatusCode::UNPROCESSABLE_ENTITY));
     assert!(
         !refused_by_extractor,
-        "known defect: the publication form is refused, got {status}"
+        "the publication form is refused, got {status}"
     );
 }
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the add-link form is refused")]
 async fn the_add_link_form_saves_the_link(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -519,7 +568,7 @@ async fn the_add_link_form_saves_the_link(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the add-link form is refused"
+        "the add-link form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -529,6 +578,121 @@ async fn the_add_link_form_saves_the_link(pool: PgPool) {
         ),
         "the add-link form must save what it sends"
     );
+}
+
+/// The skills page appends the form's answer to its list, so a form is
+/// answered with the item exactly as the page lists it, its markup
+/// escaped, and an API client sending JSON is answered with the skill
+/// as JSON.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn the_add_skill_form_is_answered_with_the_item_the_page_lists(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}/skills");
+
+    let (status, content_type, item) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/x-www-form-urlencoded",
+        "name=Rust%20%26%20%3CWebAssembly%3E",
+    )
+    .await;
+    let page = page_html(&pool, &cookie, "/settings/skills").await;
+
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the add-skill form failed: {item}"
+    );
+    assert!(
+        content_type.starts_with("text/html"),
+        "the add-skill form was answered with {content_type}: {item}"
+    );
+    let item = item.trim();
+    assert!(
+        item.starts_with("<span")
+            && item.contains("WebAssembly")
+            && !item.contains("<WebAssembly>"),
+        "the answer is not the skill's item, escaped: {item}"
+    );
+    assert!(
+        page.contains(item),
+        "the answer is not the item the page lists: {item}"
+    );
+
+    let (status, content_type, json) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"name":"Type theory"}"#,
+    )
+    .await;
+    assert_eq!(
+        (status, content_type.starts_with("application/json")),
+        (StatusCode::CREATED, true),
+        "an API client must get JSON: {content_type} {json}"
+    );
+    let skill: serde_json::Value = serde_json::from_str(&json).expect("a JSON skill");
+    assert_eq!(skill["name"], "Type theory");
+}
+
+/// The links page appends the form's answer to its list, so a form is
+/// answered with the item exactly as the page lists it, while an API
+/// client sending JSON is answered with the link as JSON.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn the_add_link_form_is_answered_with_the_item_the_page_lists(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}/links");
+
+    let (status, content_type, item) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/x-www-form-urlencoded",
+        "url=https%3A%2F%2Falice.example%2F",
+    )
+    .await;
+    let page = page_html(&pool, &cookie, "/settings/links").await;
+
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the add-link form failed: {item}"
+    );
+    assert!(
+        content_type.starts_with("text/html"),
+        "the add-link form was answered with {content_type}: {item}"
+    );
+    let item = item.trim();
+    assert!(
+        item.starts_with("<li") && item.contains("https://alice.example/"),
+        "the answer is not the link's item: {item}"
+    );
+    assert!(
+        page.contains(item),
+        "the answer is not the item the page lists: {item}"
+    );
+
+    let (status, content_type, json) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"url":"https://alice.example/cv"}"#,
+    )
+    .await;
+    assert_eq!(
+        (status, content_type.starts_with("application/json")),
+        (StatusCode::CREATED, true),
+        "an API client must get JSON: {content_type} {json}"
+    );
+    let link: serde_json::Value = serde_json::from_str(&json).expect("a JSON link");
+    assert_eq!(link["url"], "https://alice.example/cv");
 }
 
 // Known defect: the control updates tables the schema lacks; remove `should_panic` once fixed.
@@ -672,10 +836,8 @@ async fn a_course_in_progress_with_no_end_date_reads_from_the_form() {
 
 // ..... Migration .....
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the add-alias form is refused")]
 async fn the_add_alias_form_saves_the_alias(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -707,7 +869,7 @@ async fn the_add_alias_form_saves_the_alias(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the add-alias form is refused"
+        "the add-alias form is refused"
     );
     assert_eq!(
         (status, saved),
@@ -719,10 +881,8 @@ async fn the_add_alias_form_saves_the_alias(pool: PgPool) {
     );
 }
 
-// Known defect: the handler extracts JSON and refuses this form; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the move form is refused")]
 async fn the_move_form_records_the_move(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -770,7 +930,7 @@ async fn the_move_form_records_the_move(pool: PgPool) {
     assert_ne!(
         status,
         StatusCode::UNSUPPORTED_MEDIA_TYPE,
-        "known defect: the move form is refused"
+        "the move form is refused"
     );
     assert_eq!(
         (status, moved_to.as_deref()),
