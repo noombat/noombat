@@ -150,7 +150,7 @@ argon2 = "0.6"
 hmac = "0.13"
 
 # JWT (short-lived access tokens). Backend must match meilisearch-sdk's.
-jsonwebtoken = { version = "11", features = ["aws_lc_rs"] }
+jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 
 # TOTP 2FA (RFC 6238).
 totp-rs = { version = "6", features = ["gen_secret", "otpauth"] }

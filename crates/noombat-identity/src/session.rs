@@ -159,12 +159,10 @@ pub async fn create_session(
         exp: access_exp.timestamp(),
     };
 
-    let access_token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| NoombatError::Internal(format!("JWT encoding failed: {e}")))?;
+    let key = EncodingKey::from_secret(config.jwt_secret.as_bytes())
+        .map_err(|e| NoombatError::Internal(format!("JWT signing key unusable: {e}")))?;
+    let access_token = encode(&Header::default(), &claims, &key)
+        .map_err(|e| NoombatError::Internal(format!("JWT encoding failed: {e}")))?;
 
     let refresh_token = generate_refresh_token();
 
@@ -206,12 +204,11 @@ pub fn verify_access_token(token: &str, config: &SessionConfig) -> Result<Access
     validation.set_required_spec_claims(&["sub", "exp", "iat", "aud"]);
     validation.set_audience(&[&config.domain]);
 
-    let data = decode::<AccessClaims>(
-        token,
-        &DecodingKey::from_secret(config.jwt_secret.as_bytes()),
-        &validation,
-    )
-    .map_err(|_| NoombatError::Forbidden)?;
+    // An empty secret is no key: nothing verifies against it.
+    let key = DecodingKey::from_secret(config.jwt_secret.as_bytes())
+        .map_err(|_| NoombatError::Forbidden)?;
+    let data =
+        decode::<AccessClaims>(token, &key, &validation).map_err(|_| NoombatError::Forbidden)?;
 
     Ok(data.claims)
 }
@@ -328,7 +325,7 @@ mod tests {
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+            &EncodingKey::from_secret(config.jwt_secret.as_bytes()).expect("a non-empty secret"),
         )
         .unwrap();
 
@@ -336,6 +333,36 @@ mod tests {
         assert_eq!(decoded.username, "alice");
         assert_eq!(decoded.sub, claims.sub);
         assert_eq!(decoded.aud, "test.noombat.social");
+    }
+
+    /// With an empty secret, which would be no key at all, nothing verifies.
+    #[test]
+    fn an_empty_secret_verifies_nothing() {
+        let config = test_config();
+        let now = Utc::now();
+        let claims = AccessClaims {
+            sub: Uuid::new_v4().to_string(),
+            username: "alice".to_owned(),
+            role: "user".to_owned(),
+            aud: "test.noombat.social".to_owned(),
+            iat: now.timestamp(),
+            exp: (now + TimeDelta::seconds(60)).timestamp(),
+        };
+        let token = encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(config.jwt_secret.as_bytes()).expect("a non-empty secret"),
+        )
+        .unwrap();
+
+        let empty = SessionConfig {
+            jwt_secret: String::new(),
+            ..config
+        };
+        assert!(matches!(
+            verify_access_token(&token, &empty),
+            Err(NoombatError::Forbidden)
+        ));
     }
 
     #[test]
@@ -354,7 +381,8 @@ mod tests {
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(b"wrong-secret-wrong-secret-wrong!"),
+            &EncodingKey::from_secret(b"wrong-secret-wrong-secret-wrong!")
+                .expect("a non-empty secret"),
         )
         .unwrap();
 
@@ -377,7 +405,7 @@ mod tests {
         let token = encode(
             &Header::default(),
             &claims,
-            &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+            &EncodingKey::from_secret(config.jwt_secret.as_bytes()).expect("a non-empty secret"),
         )
         .unwrap();
 
