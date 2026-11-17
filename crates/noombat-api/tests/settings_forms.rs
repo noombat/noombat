@@ -695,10 +695,8 @@ async fn the_add_link_form_is_answered_with_the_item_the_page_lists(pool: PgPool
     assert_eq!(link["url"], "https://alice.example/cv");
 }
 
-// Known defect: the control updates tables the schema lacks; remove `should_panic` once fixed.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: the section visibility control fails")]
 async fn the_section_visibility_control_changes_the_section(pool: PgPool) {
     let alice = insert_person(&pool).await;
     let cookie = session_cookie(&pool, alice).await;
@@ -767,13 +765,103 @@ async fn the_section_visibility_control_changes_the_section(pool: PgPool) {
         results
             .iter()
             .all(|(_, status, _)| !status.is_server_error()),
-        "known defect: the section visibility control fails: {results:?}"
+        "the section visibility control fails: {results:?}"
     );
     for (table, status, visibility) in results {
         assert_eq!(
             (status, visibility.as_str()),
             (StatusCode::NO_CONTENT, "followers"),
             "the control must change a row of {table}"
+        );
+    }
+}
+
+/// Hiding a section on the privacy page, and showing it again, reaches
+/// the followers, whose copy of the profile lists the sections shown.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_section_hidden_on_the_privacy_page_leaves_the_followers_copy(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    // A profile withheld from federation carries no sections at all.
+    sqlx::query(
+        "UPDATE actors SET actor_privacy = actor_privacy || '{\"federate_profile\": true}' \
+         WHERE id = $1",
+    )
+    .bind(alice)
+    .execute(&pool)
+    .await
+    .expect("privacy fixture");
+    let follower: Uuid = sqlx::query_scalar(
+        "INSERT INTO actors (actor_type, ap_id, username, domain, public_key_pem, is_local, \
+                             inbox_url) \
+         VALUES ('individual', 'https://peer.example/users/bob', 'bob', 'peer.example', 'KEY', \
+                 FALSE, 'https://peer.example/users/bob/inbox') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("remote follower fixture");
+    sqlx::query("INSERT INTO follows (follower_id, following_id, accepted) VALUES ($1, $2, TRUE)")
+        .bind(follower)
+        .bind(alice)
+        .execute(&pool)
+        .await
+        .expect("follow fixture");
+    let mut sections = Vec::new();
+    for organization in ["Hidden Labs", "Shown Labs"] {
+        let section: Uuid = sqlx::query_scalar(
+            "INSERT INTO work_experiences \
+                 (actor_id, title, organization, start_date, visibility, ap_object) \
+             VALUES ($1, 'Research engineer', $2, '2018-01-15', 'public', '{}') RETURNING id",
+        )
+        .bind(alice)
+        .bind(organization)
+        .fetch_one(&pool)
+        .await
+        .expect("experience fixture");
+        sections.push(section);
+    }
+    let hidden = sections[0];
+    page_carries_form(
+        &pool,
+        &cookie,
+        "/settings/privacy",
+        &format!("hx-patch=\"/api/v1/sections/{hidden}/visibility\""),
+        &["visibility"],
+    )
+    .await;
+
+    // The follower's queued Update replaces the one before it, so the
+    // queue holds the profile as the last change left it.
+    for (visibility, hidden_listed) in [("visibility=private", false), ("visibility=public", true)]
+    {
+        let status = submit(
+            &pool,
+            "PATCH",
+            &format!("/api/v1/sections/{hidden}/visibility"),
+            &cookie,
+            visibility,
+        )
+        .await;
+        let updates: Vec<String> = sqlx::query_scalar(
+            "SELECT payload::text FROM delivery_queue \
+             WHERE target_inbox = 'https://peer.example/users/bob/inbox' \
+               AND payload->>'type' = 'Update'",
+        )
+        .fetch_all(&pool)
+        .await
+        .expect("delivery queue readable");
+        assert_eq!(status, StatusCode::NO_CONTENT, "the control failed");
+        assert_eq!(
+            updates.len(),
+            1,
+            "the follower must be sent the profile as {visibility} left it"
+        );
+        let listed = |organization| updates[0].contains(organization);
+        assert!(
+            listed("Shown Labs") && listed("Hidden Labs") == hidden_listed,
+            "after {visibility} the profile sent lists the wrong sections: {}",
+            updates[0]
         );
     }
 }

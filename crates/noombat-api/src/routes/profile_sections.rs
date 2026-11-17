@@ -538,14 +538,15 @@ async fn update_section_visibility(
     // SAFETY: the table names are hardcoded constants, not user input,
     // so the `format!` interpolation does not introduce SQL injection.
     let tables: &[&str] = &[
-        "experiences",
-        "educations",
-        "publications",
+        "work_experiences",
+        "education_entries",
+        "scholarly_articles",
         "verified_links",
         "skills",
         "custom_profile_sections",
     ];
 
+    let actor = noombat_identity::repo::find_by_id(&state.pool, actor_id).await?;
     for table in tables {
         let query = format!("UPDATE {table} SET visibility = $1 WHERE id = $2 AND actor_id = $3");
         let result = sqlx::query(sqlx::AssertSqlSafe(query))
@@ -556,6 +557,11 @@ async fn update_section_visibility(
             .await
             .map_err(noombat_core::error::NoombatError::from)?;
         if result.rows_affected() > 0 {
+            // A section shown or hidden changes the search document and
+            // the profile followers were sent, as an added or removed
+            // experience, education entry, skill or publication does.
+            reindex_profile(&state, &actor).await;
+            enqueue_profile_update(&state, &actor).await;
             return Ok(StatusCode::NO_CONTENT);
         }
     }
