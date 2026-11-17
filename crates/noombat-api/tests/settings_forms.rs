@@ -1373,6 +1373,47 @@ async fn the_add_alias_form_saves_the_alias(pool: PgPool) {
     );
 }
 
+/// An alias added again is not listed twice: the migrate page's form gets
+/// 204 and nothing to append, and an API client gets 200.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn an_alias_added_again_is_not_listed_twice(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}/aliases");
+    const FORM: &str = "application/x-www-form-urlencoded";
+    const ALIAS: &str = "alias=https%3A%2F%2Fmastodon.example%2Fusers%2Falice";
+
+    let (status, _, _) = answer(&pool, &uri, &cookie, FORM, ALIAS).await;
+    assert_eq!(status, StatusCode::CREATED, "the first add failed");
+    let stored: Uuid = sqlx::query_scalar("SELECT id FROM actor_aliases WHERE actor_id = $1")
+        .bind(alice)
+        .fetch_one(&pool)
+        .await
+        .expect("alias readable");
+
+    let again = reswap(&pool, &uri, &cookie, FORM, ALIAS).await;
+    assert_eq!(
+        again,
+        (StatusCode::NO_CONTENT, Vec::<String>::new(), String::new()),
+        "the form must get nothing to append"
+    );
+
+    let (status, _, item) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"alias":"https://mastodon.example/users/alice"}"#,
+    )
+    .await;
+    assert_eq!(
+        (status, item.contains(&format!("id=\"alias-{stored}\""))),
+        (StatusCode::OK, true),
+        "an API client must get 200 and the alias already there: {item}"
+    );
+}
+
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
 async fn the_move_form_records_the_move(pool: PgPool) {

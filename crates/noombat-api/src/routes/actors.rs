@@ -1141,29 +1141,41 @@ async fn create_alias(
     State(state): State<AppState>,
     Path(username): Path<String>,
     viewer: Option<axum::Extension<crate::middleware::Viewer>>,
-    JsonOrForm { value: req, .. }: JsonOrForm<CreateAliasRequest>,
-) -> Result<impl IntoResponse, ApiError> {
+    JsonOrForm {
+        value: req,
+        from_form,
+    }: JsonOrForm<CreateAliasRequest>,
+) -> Result<axum::response::Response, ApiError> {
     let actor_id = require_owner(&viewer, &username)?;
 
-    // Through the helper rather than inlined: the inline INSERT had no
-    // conflict clause, so adding an alias twice failed the request, and
-    // it was the same shape as the move route bypassing initiate_move.
-    let id = noombat_federation::move_actor::add_alias(&state.pool, actor_id, &req.alias).await?;
+    let (id, created) =
+        noombat_federation::move_actor::add_alias(&state.pool, actor_id, &req.alias).await?;
     // The document lists the aliases, as `alsoKnownAs`.
     noombat_federation::update::push_actor_document(&state.pool, actor_id, &state.domain).await;
 
-    // Return an HTML fragment for HTMX to append.
+    // An alias added again answers a form with 204, which adds nothing to
+    // the migrate page's list: the page lists the alias already, unless it
+    // was loaded before another tab added it, when a reload shows it.
+    if !created && from_form {
+        return Ok(StatusCode::NO_CONTENT.into_response());
+    }
+
+    // The alias as an HTML list item, which the migrate page's form
+    // appends.
     let html = format!(
         r##"<li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-text-secondary hover:text-text-danger text-xs">✕</button></li>"##,
         id = id,
         alias = html_escape(&req.alias),
-        // Escaped like the alias beside it. A registered username cannot
-        // hold a markup character today, so this changes no output; the
-        // asymmetry was the risk, because it put the safety of a rendered
-        // fragment on a charset rule enforced three crates away.
+        // Escaped like the alias, so the fragment's safety does not rest
+        // on the rules for which characters a username may hold.
         username = html_escape(&username),
     );
-    Ok((StatusCode::CREATED, axum::response::Html(html)))
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, axum::response::Html(html)).into_response())
 }
 
 async fn delete_alias(

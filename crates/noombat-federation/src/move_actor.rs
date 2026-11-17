@@ -49,22 +49,27 @@ use crate::inbox::resolve_actor;
 /// This is the prerequisite step on the **target** instance: before
 /// the old account can send a `Move`, the new account must declare
 /// the old account as an alias.
-/// Returns the alias row's id, whether it was inserted now or already
-/// there. The caller needs an id to address the row with, and an alias
-/// added twice is the same alias: reporting a conflict would make the
-/// interface fail on a repeated click.
-pub async fn add_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Result<Uuid> {
-    let id = sqlx::query_scalar::<_, Uuid>(
-        "INSERT INTO actor_aliases (actor_id, alias) \
-         VALUES ($1, $2) \
+///
+/// Returns the row's id, the existing row's when the alias is already
+/// there, and whether this call inserted it. The caller needs an id to
+/// address the row with, and an alias added twice is the same alias:
+/// reporting a conflict would make the interface fail on a repeated click.
+pub async fn add_alias(pool: &PgPool, actor_id: Uuid, alias_uri: &str) -> Result<(Uuid, bool)> {
+    // The id is made here, so the row returned carries it only when this
+    // call inserted it.
+    let id = Uuid::new_v4();
+    let row = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO actor_aliases (id, actor_id, alias) \
+         VALUES ($1, $2, $3) \
          ON CONFLICT (actor_id, alias) DO UPDATE SET alias = EXCLUDED.alias \
          RETURNING id",
     )
+    .bind(id)
     .bind(actor_id)
     .bind(alias_uri)
     .fetch_one(pool)
     .await?;
-    Ok(id)
+    Ok((row, row == id))
 }
 
 /// Remove an alias by its row id, which is what the interface holds.
