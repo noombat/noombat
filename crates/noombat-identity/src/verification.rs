@@ -28,13 +28,17 @@ pub struct VerifiedLink {
     pub visibility: String,
 }
 
-/// Add a URL to the user's verified links (initially unverified).
-pub async fn add_link(pool: &PgPool, actor_id: Uuid, url: &str) -> Result<VerifiedLink> {
+/// Add a URL to the user's verified links (initially unverified), and say
+/// whether it is new. A link the user already has is kept as it is, its
+/// check time included, which only a check moves.
+pub async fn add_link(pool: &PgPool, actor_id: Uuid, url: &str) -> Result<(VerifiedLink, bool)> {
+    // The id is made here, so the row returned carries it only when this
+    // call inserted it.
     let id = Uuid::new_v4();
-    let row = sqlx::query_as::<_, VerifiedLink>(
+    let link = sqlx::query_as::<_, VerifiedLink>(
         r#"INSERT INTO verified_links (id, actor_id, url)
            VALUES ($1, $2, $3)
-           ON CONFLICT (actor_id, url) DO UPDATE SET last_checked = now()
+           ON CONFLICT (actor_id, url) DO UPDATE SET last_checked = verified_links.last_checked
            RETURNING id, actor_id, url, verified_at, last_checked, visibility"#,
     )
     .bind(id)
@@ -42,8 +46,9 @@ pub async fn add_link(pool: &PgPool, actor_id: Uuid, url: &str) -> Result<Verifi
     .bind(url)
     .fetch_one(pool)
     .await?;
+    let created = link.id == id;
 
-    Ok(row)
+    Ok((link, created))
 }
 
 /// List verified links for an actor.
@@ -116,16 +121,6 @@ pub async fn verify_link(
     Ok(verified)
 }
 
-/// Check whether the HTML body contains a `rel="me"` link pointing
-/// to any of the given profile URLs.
-///
-/// Accepts multiple URLs so that the caller can pass both the AP ID
-/// (`/users/{username}`) and the human-facing URL (`/@{username}`);
-/// a match on either form constitutes verification.
-///
-/// Uses the `scraper` crate (backed by `html5ever`) to parse the HTML,
-/// handling arbitrary attribute ordering, single-quoted values,
-/// multi-line elements, and other edge cases that regex cannot cover.
 /// A back-link URL reduced to what identifies it, for comparison.
 ///
 /// Only the parts that cannot change *which* URL is named: the scheme and
@@ -161,6 +156,16 @@ fn normalise_back_link(url: &str) -> String {
     format!("{authority}{path}")
 }
 
+/// Check whether the HTML body contains a `rel="me"` link pointing
+/// to any of the given profile URLs.
+///
+/// Accepts multiple URLs so that the caller can pass both the AP ID
+/// (`/users/{username}`) and the human-facing URL (`/@{username}`);
+/// a match on either form constitutes verification.
+///
+/// Uses the `scraper` crate (backed by `html5ever`) to parse the HTML,
+/// handling arbitrary attribute ordering, single-quoted values and
+/// multi-line elements.
 fn check_rel_me(html: &str, profile_urls: &[&str]) -> bool {
     let wanted: Vec<String> = profile_urls
         .iter()

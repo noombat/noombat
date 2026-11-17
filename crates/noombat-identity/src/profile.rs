@@ -679,35 +679,47 @@ pub struct Skill {
     pub visibility: String,
 }
 
-/// Add a skill to an actor's profile. Upserts on conflict.
+/// Add a skill to an actor's profile, and say whether it is new.
+///
+/// A skill the actor already has is kept as it is, its visibility changed
+/// only when one is given: the skills page sends none, and adding a skill
+/// again must not make one the member hid public.
 pub async fn add_skill(
     pool: &PgPool,
     actor_id: Uuid,
     name: &str,
     visibility: Option<&str>,
-) -> Result<Skill> {
-    let vis = visibility.unwrap_or("public");
-    if vis != "public" && vis != "private" {
+) -> Result<(Skill, bool)> {
+    if let Some(vis) = visibility
+        && vis != "public"
+        && vis != "private"
+    {
         return Err(NoombatError::BadRequest(
             "skill visibility must be 'public' or 'private'".into(),
         ));
     }
 
+    // One statement, so a removal racing the add cannot leave it with no
+    // row to answer with. The id is made here, so the row returned carries
+    // it only when this call inserted it.
     let id = Uuid::new_v4();
-    let row = sqlx::query_as::<_, Skill>(
+    let skill = sqlx::query_as::<_, Skill>(
         r#"INSERT INTO skills (id, actor_id, name, visibility)
            VALUES ($1, $2, $3, $4)
-           ON CONFLICT (actor_id, name) DO UPDATE SET visibility = $4
+           ON CONFLICT (actor_id, name) DO UPDATE
+               SET visibility = COALESCE($5, skills.visibility)
            RETURNING id, actor_id, name, visibility"#,
     )
     .bind(id)
     .bind(actor_id)
     .bind(name)
-    .bind(vis)
+    .bind(visibility.unwrap_or("public"))
+    .bind(visibility)
     .fetch_one(pool)
     .await?;
+    let created = skill.id == id;
 
-    Ok(row)
+    Ok((skill, created))
 }
 
 /// List skills for an actor, filtered by maximum visibility.

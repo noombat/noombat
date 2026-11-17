@@ -138,8 +138,30 @@ async fn submit(
         .status()
 }
 
-/// A request through the assembled router, and its answer: the status,
-/// the content type and the body.
+/// A POST through the assembled router, sent as htmx sends a form when
+/// the body is one.
+async fn post(
+    pool: &PgPool,
+    uri: &str,
+    cookie: &str,
+    content_type: &str,
+    body: &'static str,
+) -> axum::response::Response {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header(header::CONTENT_TYPE, content_type)
+        .header(header::COOKIE, cookie);
+    if content_type == "application/x-www-form-urlencoded" {
+        request = request.header("hx-request", "true");
+    }
+    build_router(test_state(pool.clone()))
+        .oneshot(request.body(Body::from(body)).expect("request builds"))
+        .await
+        .expect("the router is infallible")
+}
+
+/// A POST's answer: the status, the content type and the body.
 async fn answer(
     pool: &PgPool,
     uri: &str,
@@ -147,18 +169,7 @@ async fn answer(
     content_type: &str,
     body: &'static str,
 ) -> (StatusCode, String, String) {
-    let response = build_router(test_state(pool.clone()))
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri(uri)
-                .header(header::CONTENT_TYPE, content_type)
-                .header(header::COOKIE, cookie)
-                .body(Body::from(body))
-                .expect("request builds"),
-        )
-        .await
-        .expect("the router is infallible");
+    let response = post(pool, uri, cookie, content_type, body).await;
     let status = response.status();
     let content_type = response
         .headers()
@@ -174,6 +185,29 @@ async fn answer(
         content_type,
         String::from_utf8_lossy(&bytes).into_owned(),
     )
+}
+
+/// What htmx is told to do with a POST's answer: its status, the name of
+/// every `HX-*` header it carries, and its body.
+async fn reswap(
+    pool: &PgPool,
+    uri: &str,
+    cookie: &str,
+    content_type: &str,
+    body: &'static str,
+) -> (StatusCode, Vec<String>, String) {
+    let response = post(pool, uri, cookie, content_type, body).await;
+    let status = response.status();
+    let htmx: Vec<String> = response
+        .headers()
+        .keys()
+        .map(|name| name.as_str().to_owned())
+        .filter(|name| name.starts_with("hx-"))
+        .collect();
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("answer body read");
+    (status, htmx, String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// A settings page as its owner's browser loads it.
@@ -637,6 +671,281 @@ async fn the_add_skill_form_is_answered_with_the_item_the_page_lists(pool: PgPoo
     );
     let skill: serde_json::Value = serde_json::from_str(&json).expect("a JSON skill");
     assert_eq!(skill["name"], "Type theory");
+}
+
+/// A skill added again is kept as it is: one the member made private stays
+/// private, the page's form is told to append nothing, and an API client
+/// gets the skill with 200, its visibility changed only when it sends one.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_skill_added_again_is_kept_as_it_is(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}/skills");
+    const FORM: &str = "application/x-www-form-urlencoded";
+
+    let (status, _, _) = answer(&pool, &uri, &cookie, FORM, "name=Type%20theory").await;
+    assert_eq!(status, StatusCode::CREATED, "the first add failed");
+    let skill: Uuid = sqlx::query_scalar("SELECT id FROM skills WHERE actor_id = $1")
+        .bind(alice)
+        .fetch_one(&pool)
+        .await
+        .expect("skill readable");
+    let hidden = submit(
+        &pool,
+        "PATCH",
+        &format!("/api/v1/sections/{skill}/visibility"),
+        &cookie,
+        "visibility=private",
+    )
+    .await;
+    assert_eq!(hidden, StatusCode::NO_CONTENT, "the privacy control failed");
+
+    let again = reswap(&pool, &uri, &cookie, FORM, "name=Type%20theory").await;
+    let stored = || async {
+        sqlx::query_scalar::<_, String>("SELECT visibility FROM skills WHERE actor_id = $1")
+            .bind(alice)
+            .fetch_all(&pool)
+            .await
+            .expect("skills readable")
+    };
+    assert_eq!(
+        again,
+        (StatusCode::NO_CONTENT, Vec::<String>::new(), String::new()),
+        "the form must get nothing to append"
+    );
+    assert_eq!(
+        stored().await,
+        vec!["private"],
+        "adding the skill again must keep it, private"
+    );
+
+    let (status, _, json) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"name":"Type theory"}"#,
+    )
+    .await;
+    let kept: serde_json::Value = serde_json::from_str(&json).expect("a JSON skill");
+    assert_eq!(
+        (status, kept["id"].as_str(), kept["visibility"].as_str()),
+        (
+            StatusCode::OK,
+            Some(skill.to_string().as_str()),
+            Some("private")
+        ),
+        "an API client must get the skill as it is"
+    );
+
+    let (status, _, json) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"name":"Type theory","visibility":"public"}"#,
+    )
+    .await;
+    let changed: serde_json::Value = serde_json::from_str(&json).expect("a JSON skill");
+    assert_eq!(
+        (status, changed["visibility"].as_str(), stored().await),
+        (StatusCode::OK, Some("public"), vec!["public".to_owned()]),
+        "a visibility sent with the skill must be applied"
+    );
+
+    let (status, _, _) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"name":"Type theory","visibility":"nobody"}"#,
+    )
+    .await;
+    assert_eq!(
+        (status, stored().await),
+        (StatusCode::BAD_REQUEST, vec!["public".to_owned()]),
+        "a visibility the skill cannot have must be refused, the skill unchanged"
+    );
+}
+
+/// A link added again is not listed twice and is kept as it is: one the
+/// member made private stays private, the page's form is told to append
+/// nothing, and an API client gets the link with 200.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_link_added_again_is_not_listed_twice(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}/links");
+    const FORM: &str = "application/x-www-form-urlencoded";
+
+    let (status, _, _) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        FORM,
+        "url=https%3A%2F%2Falice.example%2F",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "the first add failed");
+    let first: Uuid = sqlx::query_scalar("SELECT id FROM verified_links WHERE actor_id = $1")
+        .bind(alice)
+        .fetch_one(&pool)
+        .await
+        .expect("link readable");
+    let hidden = submit(
+        &pool,
+        "PATCH",
+        &format!("/api/v1/sections/{first}/visibility"),
+        &cookie,
+        "visibility=private",
+    )
+    .await;
+    assert_eq!(hidden, StatusCode::NO_CONTENT, "the privacy control failed");
+
+    let again = reswap(
+        &pool,
+        &uri,
+        &cookie,
+        FORM,
+        "url=https%3A%2F%2Falice.example%2F",
+    )
+    .await;
+    assert_eq!(
+        again,
+        (StatusCode::NO_CONTENT, Vec::<String>::new(), String::new()),
+        "the form must get nothing to append"
+    );
+
+    let (status, _, json) = answer(
+        &pool,
+        &uri,
+        &cookie,
+        "application/json",
+        r#"{"url":"https://alice.example/"}"#,
+    )
+    .await;
+    let link: serde_json::Value = serde_json::from_str(&json).expect("a JSON link");
+    let rows: i64 = sqlx::query_scalar("SELECT count(*) FROM verified_links WHERE actor_id = $1")
+        .bind(alice)
+        .fetch_one(&pool)
+        .await
+        .expect("links readable");
+    assert_eq!(
+        (status, link["id"].as_str(), rows),
+        (StatusCode::OK, Some(first.to_string().as_str()), 1),
+        "an API client must get the one link there is"
+    );
+    assert_eq!(
+        link["visibility"].as_str(),
+        Some("private"),
+        "adding the link again must keep it, private"
+    );
+}
+
+/// A verified link added again is not checked again: it keeps its badge
+/// even when its site cannot be reached at that moment, and its check
+/// time, which sets when the stale-link worker next checks it.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_verified_link_added_again_keeps_its_badge(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    sqlx::query(
+        "INSERT INTO verified_links (actor_id, url, verified_at, last_checked, visibility) \
+         VALUES ($1, 'https://alice.example/', now() - interval '3 days', \
+                 now() - interval '3 days', 'public')",
+    )
+    .bind(alice)
+    .execute(&pool)
+    .await
+    .expect("verified link fixture");
+
+    // The client reaches nothing, so a check would fail.
+    let (status, _, _) = answer(
+        &pool,
+        &format!("/users/{USERNAME}/links"),
+        &cookie,
+        "application/json",
+        r#"{"url":"https://alice.example/"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "adding the link again failed");
+
+    // Longer than the client's timeout, so a check started by the add has
+    // finished by now.
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let (verified, checked_before_today): (bool, bool) = sqlx::query_as(
+        "SELECT verified_at IS NOT NULL, last_checked < now() - interval '1 day' \
+         FROM verified_links WHERE actor_id = $1",
+    )
+    .bind(alice)
+    .fetch_one(&pool)
+    .await
+    .expect("link readable");
+    assert_eq!(
+        (verified, checked_before_today),
+        (true, true),
+        "the link must keep its badge and its check time"
+    );
+}
+
+/// An unverified link added again is checked again: adding it is how a
+/// member asks for a link to be looked at once more.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn an_unverified_link_added_again_is_checked_again(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    sqlx::query(
+        "INSERT INTO verified_links (actor_id, url, last_checked) \
+         VALUES ($1, 'https://alice.example/', now() - interval '30 days')",
+    )
+    .bind(alice)
+    .execute(&pool)
+    .await
+    .expect("unverified link fixture");
+    let before: chrono::DateTime<chrono::Utc> =
+        sqlx::query_scalar("SELECT last_checked FROM verified_links WHERE actor_id = $1")
+            .bind(alice)
+            .fetch_one(&pool)
+            .await
+            .expect("link readable");
+
+    let (status, _, json) = answer(
+        &pool,
+        &format!("/users/{USERNAME}/links"),
+        &cookie,
+        "application/json",
+        r#"{"url":"https://alice.example/"}"#,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "adding the link again failed");
+    let added: serde_json::Value = serde_json::from_str(&json).expect("a JSON link");
+    assert_eq!(
+        added["last_checked"],
+        serde_json::to_value(before).expect("a time serialises"),
+        "the add itself must not move the check time, or the wait below proves nothing"
+    );
+
+    // The check fails, the client reaching nothing, and records when it ran.
+    let mut checked_today = false;
+    for _ in 0..150 {
+        checked_today = sqlx::query_scalar(
+            "SELECT last_checked > now() - interval '1 day' \
+             FROM verified_links WHERE actor_id = $1",
+        )
+        .bind(alice)
+        .fetch_one(&pool)
+        .await
+        .expect("link readable");
+        if checked_today {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    assert!(checked_today, "the link must be checked again");
 }
 
 /// The links page appends the form's answer to its list, so a form is

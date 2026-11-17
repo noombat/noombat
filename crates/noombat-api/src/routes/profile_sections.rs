@@ -221,7 +221,7 @@ async fn add_skill(
     }: JsonOrForm<AddSkillBody>,
 ) -> Result<Response, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
-    let skill = noombat_identity::profile::add_skill(
+    let (skill, created) = noombat_identity::profile::add_skill(
         &state.pool,
         actor.id,
         &params.name,
@@ -233,6 +233,9 @@ async fn add_skill(
     reindex_profile(&state, &actor).await;
     enqueue_profile_update(&state, &actor).await;
 
+    if !created {
+        return Ok(already_added(from_form, skill));
+    }
     // The page's form appends the answer to its list.
     if from_form {
         let item = crate::routes::pages::SkillItem::new(i18n, &username, skill.id, &skill.name);
@@ -379,30 +382,39 @@ async fn add_verified_link(
     }: JsonOrForm<AddLinkBody>,
 ) -> Result<Response, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
-    let link = noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
+    let (link, created) =
+        noombat_identity::verification::add_link(&state.pool, actor.id, &params.url).await?;
 
     // Trigger immediate verification (non-blocking). If verification
     // succeeds, emit an Update activity so that followers learn about
-    // the newly verified link.
-    let bg_state = state.clone();
-    let bg_actor = actor.clone();
-    let ap_url = format!("https://{}/users/{}", state.domain, username);
-    let human_url = format!("https://{}/@{}", state.domain, username);
-    let link_clone = link.clone();
-    tokio::spawn(async move {
-        let verified = noombat_identity::verification::verify_link(
-            &bg_state.pool,
-            &bg_state.http_client,
-            &link_clone,
-            &[&ap_url, &human_url],
-        )
-        .await;
+    // the newly verified link. A link already verified is kept as it is:
+    // adding it again does not check it again, so a site that is briefly
+    // unreachable cannot lose its badge that way, and the stale-link
+    // worker re-checks it on its own schedule.
+    if created || link.verified_at.is_none() {
+        let bg_state = state.clone();
+        let bg_actor = actor.clone();
+        let ap_url = format!("https://{}/users/{}", state.domain, username);
+        let human_url = format!("https://{}/@{}", state.domain, username);
+        let link_clone = link.clone();
+        tokio::spawn(async move {
+            let verified = noombat_identity::verification::verify_link(
+                &bg_state.pool,
+                &bg_state.http_client,
+                &link_clone,
+                &[&ap_url, &human_url],
+            )
+            .await;
 
-        if matches!(verified, Ok(true)) {
-            enqueue_profile_update(&bg_state, &bg_actor).await;
-        }
-    });
+            if matches!(verified, Ok(true)) {
+                enqueue_profile_update(&bg_state, &bg_actor).await;
+            }
+        });
+    }
 
+    if !created {
+        return Ok(already_added(from_form, link));
+    }
     // The page's form appends the answer to its list.
     if from_form {
         let item = crate::routes::pages::LinkItem::new(i18n, &username, &link);
@@ -420,6 +432,17 @@ async fn delete_verified_link(
     noombat_identity::verification::delete_link(&state.pool, actor.id, id).await?;
     enqueue_profile_update(&state, &actor).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The answer to adding a skill or link the member already has. Its form
+/// gets 204, which adds nothing to the page's list: the page lists the item
+/// already, unless it was loaded before another tab added it, when a
+/// reload shows it. An API client gets the item as it now is.
+fn already_added(from_form: bool, item: impl serde::Serialize) -> Response {
+    if from_form {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    (StatusCode::OK, Json(item)).into_response()
 }
 
 // ..... Custom profile sections .....
