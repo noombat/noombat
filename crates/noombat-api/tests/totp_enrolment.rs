@@ -7,6 +7,7 @@
 //! posts the six-digit code to `/api/v1/auth/totp/verify` through htmx, which
 //! encodes it as `application/x-www-form-urlencoded`, and the session rides
 //! in the cookie. The handler has to accept that request as the page sends it.
+//! Once enabled, the page's Disable form turns it off and is told so.
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -247,5 +248,104 @@ async fn the_enrolment_pages_form_post_enables_two_factor(pool: PgPool) {
     assert!(
         two_factor_enabled(&pool, member).await,
         "the enrolment form must enable two-factor"
+    );
+}
+
+/// A DELETE of two-factor sign-in, sent as htmx sends the page's Disable
+/// form when `from_page`, or as an API client does: its status and body.
+async fn disable(pool: &PgPool, cookie: &str, from_page: bool) -> (StatusCode, String) {
+    let mut request = Request::builder()
+        .method("DELETE")
+        .uri("/api/v1/auth/totp")
+        .header("cookie", cookie);
+    if from_page {
+        request = request
+            .header("hx-request", "true")
+            .header("hx-target", "totp-status")
+            .header("hx-current-url", format!("https://{DOMAIN}/auth/totp"));
+    }
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(request.body(Body::empty()).expect("disable request"))
+        .await
+        .expect("the router is infallible");
+    let status = response.status();
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("answer body");
+    (status, String::from_utf8_lossy(&bytes).into_owned())
+}
+
+/// The page shown to a member with two-factor enabled.
+async fn enabled_page(pool: &PgPool, cookie: &str) -> String {
+    let response = build_router(test_state(pool.clone()))
+        .oneshot(
+            Request::builder()
+                .uri("/auth/totp")
+                .header("cookie", cookie)
+                .body(Body::empty())
+                .expect("page request"),
+        )
+        .await
+        .expect("the router is infallible");
+    let bytes = axum::body::to_bytes(response.into_body(), 1 << 20)
+        .await
+        .expect("page body");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// The page's Disable form swaps its answer over the line saying two-factor
+/// is enabled, so it is answered with a line saying it is now disabled; an
+/// API client gets 204 and no body.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn the_disable_form_says_two_factor_is_disabled(pool: PgPool) {
+    let member = insert_person(&pool, "member").await;
+    let cookie = session_cookie(&pool, member, "member").await;
+
+    let secret = open_enrolment_page(&pool, &cookie).await;
+    assert_eq!(
+        submit_as_json(&pool, &cookie, &current_code(&secret)).await,
+        StatusCode::OK,
+        "two-factor must be enabled first"
+    );
+    let page = enabled_page(&pool, &cookie).await;
+    assert!(
+        page.contains(r#"<div id="totp-status">"#)
+            && page.contains(r#"hx-delete="/api/v1/auth/totp""#)
+            && page.contains(r##"hx-target="#totp-status""##),
+        "the page no longer renders the Disable form this test replays: {page}"
+    );
+
+    let (status, body) = disable(&pool, &cookie, true).await;
+    assert_eq!(
+        (
+            status,
+            body.contains("<p class=\"mb-4\">Two-factor authentication is disabled.</p>"),
+            body.contains(
+                r#"<span id="a11y-status" hx-swap-oob="innerHTML">Two-factor authentication is disabled.</span>"#
+            ),
+        ),
+        (StatusCode::OK, true, true),
+        "the page must show and announce that two-factor is disabled: {body}"
+    );
+    assert!(
+        !two_factor_enabled(&pool, member).await,
+        "the form must disable two-factor"
+    );
+
+    let secret = open_enrolment_page(&pool, &cookie).await;
+    assert_eq!(
+        submit_as_json(&pool, &cookie, &current_code(&secret)).await,
+        StatusCode::OK,
+        "two-factor must be enabled again"
+    );
+    assert_eq!(
+        disable(&pool, &cookie, false).await,
+        (StatusCode::NO_CONTENT, String::new()),
+        "an API client must get 204 and no body"
+    );
+    assert!(
+        !two_factor_enabled(&pool, member).await,
+        "the API must disable two-factor"
     );
 }

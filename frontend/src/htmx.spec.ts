@@ -2,7 +2,12 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * Guards the two htmx behaviours the Content-Security-Policy depends on.
+ * Guards the htmx behaviours the configuration in base.html depends on.
+ *
+ * The `responseHandling` setting there makes htmx swap a 204, so that a
+ * removed row leaves its page; it has to stay htmx's own default but for
+ * that one rule, and htmx has to keep replacing its list with it. The
+ * rest of this comment is about the other setting.
  *
  * htmx appends a `<style>` element during initialisation, which
  * `style-src 'self'` without `'unsafe-inline'` blocks. The injection is
@@ -25,11 +30,49 @@
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 
-const BUNDLE = readFileSync(new URL("../node_modules/htmx.org/dist/htmx.js", import.meta.url), {
+// The module Vite bundles: the package's `main`.
+const BUNDLE = readFileSync(new URL("../node_modules/htmx.org/dist/htmx.esm.js", import.meta.url), {
   encoding: "utf8",
 });
 
+const BASE_HTML = readFileSync(
+  new URL("../../crates/noombat-api/templates/base.html", import.meta.url),
+  { encoding: "utf8" },
+);
+
+interface Rule {
+  code: string;
+  swap: boolean;
+  error?: boolean;
+}
+
+/** The configuration `base.html` gives htmx in its meta element. */
+function metaConfig(): { responseHandling?: Rule[] } {
+  const content = /<meta name="htmx-config" content='([^']*)'>/.exec(BASE_HTML)?.[1];
+  expect(content, "base.html no longer carries the htmx-config meta element").toBeDefined();
+  return JSON.parse(content ?? "{}") as ReturnType<typeof metaConfig>;
+}
+
+/** htmx's own default `responseHandling`, as the bundle declares it. */
+function defaultResponseHandling(): Rule[] {
+  const literal = /responseHandling:\s*(\[[\s\S]*?\])\s*,/.exec(BUNDLE)?.[1];
+  expect(literal, "the bundle no longer declares a default responseHandling").toBeDefined();
+  return JSON.parse((literal ?? "[]").replace(/'/g, '"').replace(/(\w+):/g, '"$1":')) as Rule[];
+}
+
+/** The first rule htmx would apply to a status, as htmx itself picks one. */
+function ruleFor(status: number) {
+  return metaConfig().responseHandling?.find((rule) => new RegExp(rule.code).test(String(status)));
+}
+
 describe("htmx configuration surface", () => {
+  it("still reads responseHandling from its configuration", () => {
+    expect(
+      BUNDLE.includes("htmx.config.responseHandling"),
+      "htmx no longer reads htmx.config.responseHandling; the rule in base.html that swaps a 204 is being ignored",
+    ).toBe(true);
+  });
+
   it("still honours includeIndicatorStyles", () => {
     expect(
       BUNDLE.includes("includeIndicatorStyles"),
@@ -52,5 +95,37 @@ describe("htmx configuration surface", () => {
       /includeIndicatorStyles\s*!==\s*false/.test(BUNDLE),
       "htmx no longer guards style injection on includeIndicatorStyles !== false; re-check how injection is suppressed",
     ).toBe(true);
+  });
+});
+
+describe("the htmx configuration in base.html", () => {
+  it("is htmx's own default without its rule for 204", () => {
+    expect(
+      metaConfig().responseHandling,
+      "base.html's responseHandling has drifted from htmx's default; an upgrade may have changed it",
+    ).toEqual(defaultResponseHandling().filter((rule) => rule.code !== "204"));
+  });
+
+  it("replaces htmx's default list rather than merging into it", () => {
+    expect(/htmx\.config = mergeObjects\(htmx\.config, metaConfig\)/.test(BUNDLE)).toBe(true);
+    expect(
+      /function mergeObjects\(obj1, obj2\) \{\s*return Object\.assign\(\{\}, obj1, obj2\)/.test(
+        BUNDLE,
+      ),
+      "htmx no longer merges its configuration shallowly; the default rule for 204 may now come first",
+    ).toBe(true);
+  });
+
+  it("swaps a 204, so a removed row leaves the page", () => {
+    expect(
+      ruleFor(204)?.swap,
+      "a 204 is not swapped: the remove buttons' rows stay on the page until it is reloaded",
+    ).toBe(true);
+  });
+
+  it("still swaps a 200 and treats a 4xx or 5xx as an error, as htmx's default does", () => {
+    expect(ruleFor(200)?.swap).toBe(true);
+    expect(ruleFor(404)).toMatchObject({ swap: false, error: true });
+    expect(ruleFor(500)).toMatchObject({ swap: false, error: true });
   });
 });

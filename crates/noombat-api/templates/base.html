@@ -25,8 +25,13 @@
       htmx.ts is necessary: htmx reads this meta element while
       initialising, before a deferred module script could set the option.
       The equivalent rules live in frontend/src/main.css.
+
+      `responseHandling` is htmx's default without its exception for 204,
+      which it leaves unswapped: the pages' remove buttons are answered
+      204, and swapping that empty answer is what takes the row off the
+      page. This list replaces htmx's whole default, not only its 204 entry.
     -->
-    <meta name="htmx-config" content='{"includeIndicatorStyles":false}'>
+    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
     <title>{% block title %}Noombat{% endblock %}</title>
     {% block head %}{% endblock %}
     <link rel="stylesheet" href="/assets/main.css">

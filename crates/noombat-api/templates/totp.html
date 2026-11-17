@@ -9,20 +9,23 @@
         <h1 class="text-2xl font-bold mb-6">{{ i18n.t("auth_totp_heading") }}</h1>
 
         {% if totp_enabled %}
-        <p class="mb-4">{{ i18n.t("auth_totp_enabled") }}</p>
-        <form hx-delete="/api/v1/auth/totp"
-              hx-confirm="{{ i18n.t("auth_totp_disable") }}?"
-              class="inline">
-            <noscript>
-                <p class="text-sm text-text-secondary mb-2">
-                    JavaScript is required to disable two-factor authentication.
-                </p>
-            </noscript>
-            <button type="submit"
-                    class="bg-bg-danger text-text-on-danger rounded px-4 py-2 hover:opacity-90 text-sm">
-                {{ i18n.t("auth_totp_disable") }}
-            </button>
-        </form>
+        <div id="totp-status">
+            <p class="mb-4">{{ i18n.t("auth_totp_enabled") }}</p>
+            <form hx-delete="/api/v1/auth/totp"
+                  hx-target="#totp-status"
+                  hx-confirm="{{ i18n.t("auth_totp_disable") }}?"
+                  class="inline">
+                <noscript>
+                    <p class="text-sm text-text-secondary mb-2">
+                        JavaScript is required to disable two-factor authentication.
+                    </p>
+                </noscript>
+                <button type="submit"
+                        class="bg-bg-danger text-text-on-danger rounded px-4 py-2 hover:opacity-90 text-sm">
+                    {{ i18n.t("auth_totp_disable") }}
+                </button>
+            </form>
+        </div>
         {% else %}
 
         {% if let Some(qr_data_uri) = qr_data_uri %}

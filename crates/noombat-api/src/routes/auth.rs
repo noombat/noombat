@@ -350,16 +350,36 @@ async fn totp_verify(
     Ok((StatusCode::OK, axum::response::Html(html)).into_response())
 }
 
+/// Text escaped for an HTML fragment built here rather than by a template.
+fn escape_html(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
 async fn totp_disable(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
-) -> Result<impl IntoResponse, ApiError> {
+    i18n: crate::i18n::I18n,
+    headers: axum::http::HeaderMap,
+) -> Result<Response, ApiError> {
     let viewer = viewer.ok_or(ApiError(NoombatError::Forbidden))?;
     let actor_id = viewer.actor_id;
 
     noombat_identity::totp::disable_totp(&state.pool, actor_id).await?;
 
-    Ok(StatusCode::NO_CONTENT)
+    // The page's Disable form swaps the answer over the line saying
+    // two-factor is enabled, so it is told what changed, and the page's
+    // live region announces it.
+    if headers.contains_key("hx-request") {
+        let said = escape_html(&i18n.t("auth_totp_disabled"));
+        let html = format!(
+            r#"<p class="mb-4">{said}</p><span id="a11y-status" hx-swap-oob="innerHTML">{said}</span>"#
+        );
+        return Ok((StatusCode::OK, axum::response::Html(html)).into_response());
+    }
+    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 // ..... Mastodon OAuth .....

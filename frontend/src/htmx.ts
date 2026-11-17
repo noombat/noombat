@@ -5,15 +5,17 @@
 // Importing the module registers htmx on `window.htmx` as a side effect.
 //
 // Upgrading htmx: `crates/noombat-api/templates/base.html` carries an
-// htmx-config meta element disabling includeIndicatorStyles, because the
-// <style> element htmx injects during initialisation violates
-// `style-src 'self'`. htmx reads that element while initialising, so the
-// option cannot be set from here. It is the only thing preventing the
-// violation, so an upgrade that stopped honouring either the meta
-// element or the option would silently reintroduce it on every page.
+// htmx-config meta element with two settings. includeIndicatorStyles is
+// off, because the <style> element htmx injects during initialisation
+// violates `style-src 'self'`; htmx reads the element while initialising,
+// so that setting cannot be made from here, and it is the only thing
+// preventing the violation. responseHandling makes htmx swap a 204, so a
+// removed row leaves its page. An upgrade that stopped honouring the
+// element or either setting would silently undo one of them.
 //
-// `htmx.spec.ts` asserts the installed bundle still supports both, and
-// the end-to-end suite fails on any securitypolicyviolation.
+// `htmx.spec.ts` asserts the installed bundle still supports all three,
+// and the end-to-end suite fails on any securitypolicyviolation and
+// removes a row in a browser.
 //
 // The indicator rules in main.css are the project's own and use
 // `display` rather than htmx's `opacity`/`visibility`, so they are not a

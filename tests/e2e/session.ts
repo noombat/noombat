@@ -55,9 +55,11 @@ export const SESSION_ACCOUNTS = 4;
  *
  * Indices wrap around the seeded pool. Two workers sharing an account is
  * harmless where it can happen at all: the pool is as large as the worker
- * count this suite is configured for, and the accounts are only ever read
- * from. The per-worker split existed to keep parallel workers from racing
- * to create the same row, which seeding removes.
+ * count this suite is configured for, and the accounts are read from, but
+ * for `settings-lists.spec.ts`, which adds skills under names no other run
+ * uses and removes them again. The per-worker split existed to keep
+ * parallel workers from racing to create the same row, which seeding
+ * removes.
  */
 export function sessionUsername(workerIndex: number): string {
   return `e2e_session_w${workerIndex % SESSION_ACCOUNTS}`;
