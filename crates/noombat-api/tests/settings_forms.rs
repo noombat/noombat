@@ -373,8 +373,8 @@ async fn the_education_form_saves_the_entry(pool: PgPool) {
     )
     .await;
 
-    // A finished degree, so the end date is filled; an empty one is a
-    // separate fault, covered below.
+    // A finished degree, so the end date is filled; an empty one is
+    // covered below.
     let status = submit(
         &pool,
         "POST",
@@ -439,8 +439,8 @@ async fn the_experience_form_saves_the_entry(pool: PgPool) {
     )
     .await;
 
-    // A past position, so the end date is filled; an empty one is a
-    // separate fault, covered below.
+    // A past position, so the end date is filled; an empty one is
+    // covered below.
     let status = submit(
         &pool,
         "POST",
@@ -866,19 +866,19 @@ async fn a_section_hidden_on_the_privacy_page_leaves_the_followers_copy(pool: Pg
     }
 }
 
-// Known defect: an empty end date does not read as no date; remove `should_panic` once fixed.
-// The handlers read the form into this type, so a fix that reads it into another changes this.
+/// `create_work_experience` reads the experience page's form into
+/// `NewWorkExperience`.
 #[tokio::test]
-#[should_panic(expected = "known defect: an empty end date is refused")]
 async fn a_current_position_with_no_end_date_reads_from_the_form() {
     let dated = form_of::<noombat_identity::profile::NewWorkExperience>(
         "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
          &end_date=2025-06-30&description_md=&visibility=public",
     )
     .await;
-    assert!(
-        dated.is_ok(),
-        "the same form with a date must read, or the check below proves nothing"
+    assert_eq!(
+        dated.map(|experience| experience.end_date.map(|date| date.to_string())),
+        Ok(Some("2025-06-30".to_owned())),
+        "the same form with a date must keep it, or the check below proves nothing"
     );
 
     let parsed = form_of::<noombat_identity::profile::NewWorkExperience>(
@@ -890,23 +890,33 @@ async fn a_current_position_with_no_end_date_reads_from_the_form() {
     assert_eq!(
         parsed.map(|experience| experience.end_date),
         Ok(None),
-        "known defect: an empty end date is refused"
+        "an empty end date is refused"
+    );
+
+    let malformed = form_of::<noombat_identity::profile::NewWorkExperience>(
+        "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
+         &end_date=2025-02-30&description_md=&visibility=public",
+    )
+    .await;
+    assert!(
+        malformed.is_err(),
+        "a malformed end date must still be refused"
     );
 }
 
-// Known defect: an empty end date does not read as no date; remove `should_panic` once fixed.
-// The handlers read the form into this type, so a fix that reads it into another changes this.
+/// `create_education_entry` reads the education page's form into
+/// `NewEducationEntry`.
 #[tokio::test]
-#[should_panic(expected = "known defect: an empty end date is refused")]
 async fn a_course_in_progress_with_no_end_date_reads_from_the_form() {
     let dated = form_of::<noombat_identity::profile::NewEducationEntry>(
         "institution=University%20of%20Example&degree=PhD&field_of_study=Computer%20Science\
          &start_date=2024-10-01&end_date=2025-06-30&visibility=public",
     )
     .await;
-    assert!(
-        dated.is_ok(),
-        "the same form with a date must read, or the check below proves nothing"
+    assert_eq!(
+        dated.map(|entry| entry.end_date.map(|date| date.to_string())),
+        Ok(Some("2025-06-30".to_owned())),
+        "the same form with a date must keep it, or the check below proves nothing"
     );
 
     let parsed = form_of::<noombat_identity::profile::NewEducationEntry>(
@@ -918,7 +928,92 @@ async fn a_course_in_progress_with_no_end_date_reads_from_the_form() {
     assert_eq!(
         parsed.map(|entry| entry.end_date),
         Ok(None),
-        "known defect: an empty end date is refused"
+        "an empty end date is refused"
+    );
+
+    let malformed = form_of::<noombat_identity::profile::NewEducationEntry>(
+        "institution=University%20of%20Example&degree=PhD&field_of_study=Computer%20Science\
+         &start_date=2024-10-01&end_date=2025-02-30&visibility=public",
+    )
+    .await;
+    assert!(
+        malformed.is_err(),
+        "a malformed end date must still be refused"
+    );
+}
+
+/// An API client's end date reads as a date, and `null`, an empty string
+/// or no field at all reads as none.
+#[test]
+fn an_api_clients_end_date_reads_from_json() {
+    fn experience(end: &str) -> Option<String> {
+        let json = format!(
+            r#"{{"title":"Research engineer","organization":"Example Labs","start_date":"2023-01-09"{end}}}"#
+        );
+        serde_json::from_str::<noombat_identity::profile::NewWorkExperience>(&json)
+            .expect("the experience reads")
+            .end_date
+            .map(|date| date.to_string())
+    }
+    fn education(end: &str) -> Option<String> {
+        let json =
+            format!(r#"{{"institution":"University of Example","start_date":"2024-10-01"{end}}}"#);
+        serde_json::from_str::<noombat_identity::profile::NewEducationEntry>(&json)
+            .expect("the education entry reads")
+            .end_date
+            .map(|date| date.to_string())
+    }
+
+    for read in [experience, education] {
+        assert_eq!(
+            read(r#","end_date":"2025-06-30""#),
+            Some("2025-06-30".to_owned())
+        );
+        assert_eq!(read(r#","end_date":null"#), None);
+        assert_eq!(read(r#","end_date":"""#), None);
+        assert_eq!(read(""), None);
+    }
+}
+
+/// A current position and a degree in progress, saved through their
+/// pages' forms with the end date left blank, are stored with none.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn entries_saved_with_a_blank_end_date_have_none(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+
+    let experience = submit(
+        &pool,
+        "POST",
+        &format!("/users/{USERNAME}/experiences"),
+        &cookie,
+        "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
+         &end_date=&description_md=&visibility=public",
+    )
+    .await;
+    let education = submit(
+        &pool,
+        "POST",
+        &format!("/users/{USERNAME}/educations"),
+        &cookie,
+        "institution=University%20of%20Example&degree=PhD&field_of_study=Computer%20Science\
+         &start_date=2024-10-01&end_date=&visibility=public",
+    )
+    .await;
+
+    let ends: Vec<Option<String>> = sqlx::query_scalar(
+        "SELECT end_date::text FROM work_experiences WHERE actor_id = $1 \
+         UNION ALL SELECT end_date::text FROM education_entries WHERE actor_id = $1",
+    )
+    .bind(alice)
+    .fetch_all(&pool)
+    .await
+    .expect("entries readable");
+    assert_eq!(
+        (experience, education, ends),
+        (StatusCode::CREATED, StatusCode::CREATED, vec![None, None]),
+        "both entries must be saved with no end date"
     );
 }
 

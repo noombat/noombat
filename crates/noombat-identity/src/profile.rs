@@ -48,10 +48,24 @@ pub struct NewWorkExperience {
     /// names an actor: creating one is the person's side only.
     pub organization_id: Option<Uuid>,
     pub start_date: NaiveDate,
+    #[serde(default, deserialize_with = "empty_date_as_none")]
     pub end_date: Option<NaiveDate>,
     pub description_md: Option<String>,
     pub sort_order: Option<i16>,
     pub visibility: Option<String>,
+}
+
+/// An empty date is no date. A date field left blank on a page's form is
+/// still sent, with an empty value: a current position, or a degree still
+/// in progress, has no end date.
+fn empty_date_as_none<'de, D>(deserializer: D) -> std::result::Result<Option<NaiveDate>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    match Option::<String>::deserialize(deserializer)?.as_deref() {
+        None | Some("") => Ok(None),
+        Some(date) => date.parse().map(Some).map_err(serde::de::Error::custom),
+    }
 }
 
 /// The columns every experience query returns, in the order [`WorkExperience`]
@@ -457,6 +471,7 @@ pub struct NewEducationEntry {
     pub degree: Option<String>,
     pub field_of_study: Option<String>,
     pub start_date: NaiveDate,
+    #[serde(default, deserialize_with = "empty_date_as_none")]
     pub end_date: Option<NaiveDate>,
     pub description_md: Option<String>,
     pub sort_order: Option<i16>,
