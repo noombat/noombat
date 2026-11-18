@@ -47,42 +47,6 @@
 
         <!-- Domain list -->
         <div id="domain-list">
-            {% if domains.is_empty() %}
-            <p class="text-text-secondary">{{ i18n.t("admin_domains_empty") }}</p>
-            {% else %}
-            <div class="overflow-x-auto">
-                <table class="w-full text-sm">
-                    <thead>
-                        <tr class="border-b border-border-default text-start">
-                            <th class="py-2 pe-4">{{ i18n.t("admin_domains_domain") }}</th>
-                            <th class="py-2 pe-4">{{ i18n.t("admin_domains_restriction") }}</th>
-                            <th class="py-2 pe-4">{{ i18n.t("admin_domains_reason") }}</th>
-                            <th class="py-2 pe-4">{{ i18n.t("admin_domains_added_by") }}</th>
-                            <th class="py-2 pe-4">{{ i18n.t("admin_domains_date") }}</th>
-                            <th class="py-2">{{ i18n.t("admin_users_col_actions") }}</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for entry in domains %}
-                        <tr class="border-b border-border-default">
-                            <td class="py-2 pe-4 font-mono">{{ entry.domain }}</td>
-                            <td class="py-2 pe-4">{{ entry.restriction }}</td>
-                            <td class="py-2 pe-4">{{ entry.reason }}</td>
-                            <td class="py-2 pe-4">{{ entry.created_by_name }}</td>
-                            <td class="py-2 pe-4">{{ entry.created_at }}</td>
-                            <td class="py-2">
-                                <button hx-delete="/api/v1/admin/domains/{{ entry.id }}"
-                                        hx-swap="outerHTML" hx-target="closest tr"
-                                        hx-confirm="{{ i18n.t("admin_domains_confirm_remove") }}"
-                                        class="text-xs border border-border-default rounded px-2 py-0.5 hover:bg-surface-alt">
-                                    {{ i18n.t("admin_domains_remove") }}
-                                </button>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% endif %}
+            {% include "admin_domain_list.html" %}
         </div>
 {% endblock %}

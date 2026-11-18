@@ -148,20 +148,7 @@
 
             <div id="announcement-list" class="space-y-2">
                 {% for ann in announcements %}
-                <div class="flex items-center gap-3 border border-border-default rounded p-3 text-sm">
-                    <span class="flex-1">{{ ann.content }}</span>
-                    {% if ann.active %}
-                    <span class="text-xs text-text-brand">{{ i18n.t("admin_announcements_active") }}</span>
-                    {% else %}
-                    <span class="text-xs text-text-secondary">{{ i18n.t("admin_announcements_inactive") }}</span>
-                    {% endif %}
-                    <span class="text-xs text-text-secondary">{{ ann.created_at }}</span>
-                    <button hx-delete="/api/v1/admin/announcements/{{ ann.id }}"
-                            hx-swap="outerHTML" hx-target="closest div"
-                            class="text-xs border border-border-default rounded px-2 py-0.5 hover:bg-surface-alt">
-                        {{ i18n.t("admin_announcements_delete") }}
-                    </button>
-                </div>
+                {% include "admin_announcement_item.html" %}
                 {% endfor %}
             </div>
         </section>

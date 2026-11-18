@@ -822,3 +822,150 @@ async fn a_chat_report_dismissed_by_an_api_client_is_answered_in_json(pool: PgPo
     assert_eq!(answer["status"], "dismissed");
     assert_eq!(report_status(&pool, report).await, "dismissed");
 }
+
+// ..... The domains and settings pages' add forms .....
+
+/// The domains page's add form is answered with the list the page shows,
+/// which htmx puts in place of the old one: the table in place of the
+/// empty message, every restriction in the page's order, a reason escaped,
+/// and a domain restricted again listed once, with its new restriction and
+/// 200 rather than 201.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_domains_pages_add_form_is_answered_with_the_list_the_page_shows(pool: PgPool) {
+    let moderator = insert_person(&pool, "mod", "moderator").await;
+    let cookie = format!(
+        "noombat_session={}",
+        token_for(&pool, moderator, "mod", InstanceRole::Moderator).await
+    );
+    let page = "/admin/domains";
+    let action = "/api/v1/admin/domains";
+    let html = page_as(&pool, &cookie, page).await;
+    assert!(
+        html.contains(format!(r#"hx-post="{action}""#).as_str())
+            && html.contains(r##"hx-swap="innerHTML" hx-target="#domain-list""##)
+            && html.contains(r#"<div id="domain-list">"#)
+            && ["domain", "restriction", "reason"]
+                .iter()
+                .all(|field| html.contains(format!(r#"name="{field}""#).as_str())),
+        "the domains page no longer renders the form this test replays"
+    );
+
+    let (status, list) = form_answer(
+        &pool,
+        &cookie,
+        page,
+        action,
+        "domain=zed.example&restriction=silence&reason=",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "the first add failed: {list}");
+    assert!(
+        list.contains("<table") && list.contains("zed.example"),
+        "the first answer must be the table, in place of the empty message: {list}"
+    );
+
+    let (status, list) = form_answer(
+        &pool,
+        &cookie,
+        page,
+        action,
+        "domain=abc.example&restriction=block&reason=Spam%20%3Cscript%3E",
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "the second add failed: {list}");
+    assert!(
+        matches!(
+            (list.find("abc.example"), list.find("zed.example")),
+            (Some(abc), Some(zed)) if abc < zed
+        ),
+        "the answer must list every restriction in the page's order: {list}"
+    );
+    assert!(
+        list.contains("Spam") && !list.contains("<script>"),
+        "the reason must be escaped: {list}"
+    );
+
+    let (status, list) = form_answer(
+        &pool,
+        &cookie,
+        page,
+        action,
+        "domain=abc.example&restriction=silence&reason=",
+    )
+    .await;
+    let row = list
+        .split("abc.example")
+        .nth(1)
+        .and_then(|rest| rest.split("</tr>").next())
+        .unwrap_or_default();
+    assert_eq!(
+        (
+            status,
+            list.matches("abc.example").count(),
+            row.contains(">silence<"),
+            row.contains("Spam")
+        ),
+        (StatusCode::OK, 1, true, false),
+        "a domain restricted again must be listed once, with its new restriction and reason: {list}"
+    );
+    assert!(
+        page_as(&pool, &cookie, page).await.contains(list.trim()),
+        "the answer is not the list the page shows: {list}"
+    );
+}
+
+/// The settings page's announcement form is answered with the new
+/// announcement as the page lists it, escaped, which htmx puts at the top
+/// of the list.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_settings_pages_announcement_form_is_answered_with_the_item_the_page_lists(
+    pool: PgPool,
+) {
+    let admin = insert_person(&pool, "admin", "admin").await;
+    let cookie = format!(
+        "noombat_session={}",
+        token_for(&pool, admin, "admin", InstanceRole::Admin).await
+    );
+    let page = "/admin/settings";
+    let action = "/api/v1/admin/announcements";
+    let html = page_as(&pool, &cookie, page).await;
+    assert!(
+        html.contains(
+            format!(r##"hx-post="{action}" hx-swap="afterbegin" hx-target="#announcement-list""##)
+                .as_str()
+        ) && html.contains(r#"name="content""#),
+        "the settings page no longer renders the form this test replays"
+    );
+
+    let (status, item) = form_answer(
+        &pool,
+        &cookie,
+        page,
+        action,
+        "content=Maintenance%20%3Ctonight%3E",
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::CREATED,
+        "the announcement form failed: {item}"
+    );
+    let id: Uuid = sqlx::query_scalar("SELECT id FROM announcements")
+        .fetch_one(&pool)
+        .await
+        .expect("one announcement");
+    let item = item.trim();
+    assert!(
+        item.starts_with("<div")
+            && item.contains("Maintenance")
+            && !item.contains("<tonight>")
+            && item.contains(format!(r#"hx-delete="{action}/{id}""#).as_str()),
+        "the answer is not the announcement's item, escaped: {item}"
+    );
+    assert!(
+        page_as(&pool, &cookie, page).await.contains(item),
+        "the answer is not the item the page lists: {item}"
+    );
+}

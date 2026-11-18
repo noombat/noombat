@@ -361,6 +361,15 @@ struct DomainsPage {
     domains: Vec<DomainEntry>,
 }
 
+/// The domains page's list of restrictions. The add-domain route answers
+/// that page's form with it, for htmx to put in place of the list.
+#[derive(Template, WebTemplate)]
+#[template(path = "admin_domain_list.html")]
+struct DomainList {
+    i18n: I18n,
+    domains: Vec<DomainEntry>,
+}
+
 /// Row returned by the domain restrictions JOIN query.
 #[derive(sqlx::FromRow)]
 struct DomainRestrictionRow {
@@ -370,6 +379,32 @@ struct DomainRestrictionRow {
     reason: Option<String>,
     created_by_name: Option<String>,
     created_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Every domain restriction, in the order the domains page lists them.
+async fn domain_entries(pool: &sqlx::PgPool) -> Result<Vec<DomainEntry>, sqlx::Error> {
+    let rows: Vec<DomainRestrictionRow> = sqlx::query_as(
+        r#"SELECT dr.id, dr.domain, dr.restriction, dr.reason,
+                      COALESCE(a.display_name, a.username) AS created_by_name,
+                      dr.created_at
+               FROM domain_restrictions dr
+               LEFT JOIN actors a ON a.id = dr.created_by
+               ORDER BY dr.domain ASC"#,
+    )
+    .fetch_all(pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| DomainEntry {
+            id: row.id.to_string(),
+            domain: row.domain,
+            restriction: row.restriction,
+            reason: row.reason.unwrap_or_default(),
+            created_by_name: row.created_by_name.unwrap_or_default(),
+            created_at: row.created_at.format("%Y-%m-%d").to_string(),
+        })
+        .collect())
 }
 
 async fn domains_page(
@@ -383,30 +418,7 @@ async fn domains_page(
         return *r;
     }
     let uname = nav_username(&viewer);
-
-    let rows: Vec<DomainRestrictionRow> = sqlx::query_as(
-        r#"SELECT dr.id, dr.domain, dr.restriction, dr.reason,
-                      COALESCE(a.display_name, a.username) AS created_by_name,
-                      dr.created_at
-               FROM domain_restrictions dr
-               LEFT JOIN actors a ON a.id = dr.created_by
-               ORDER BY dr.domain ASC"#,
-    )
-    .fetch_all(&state.pool)
-    .await
-    .unwrap_or_default();
-
-    let domains = rows
-        .into_iter()
-        .map(|row| DomainEntry {
-            id: row.id.to_string(),
-            domain: row.domain,
-            restriction: row.restriction,
-            reason: row.reason.unwrap_or_default(),
-            created_by_name: row.created_by_name.unwrap_or_default(),
-            created_at: row.created_at.format("%Y-%m-%d").to_string(),
-        })
-        .collect();
+    let domains = domain_entries(&state.pool).await.unwrap_or_default();
 
     DomainsPage {
         i18n,
@@ -430,32 +442,51 @@ struct AddDomainRequest {
 async fn add_domain_restriction(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
+    i18n: I18n,
     Form(body): Form<AddDomainRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let moderator = require_moderator_api(&viewer)?;
     let moderator_id = moderator.actor_id;
 
-    sqlx::query(
-        "INSERT INTO domain_restrictions (domain, restriction, reason, created_by) \
-         VALUES ($1, $2, $3, $4) \
-         ON CONFLICT (domain) DO UPDATE SET restriction = $2, reason = $3",
+    // A domain already restricted keeps its row and takes the new
+    // restriction and reason. The id is made here, so the row returned
+    // carries it only when this call inserted it.
+    let new_id = Uuid::new_v4();
+    let id: Uuid = sqlx::query_scalar(
+        "INSERT INTO domain_restrictions (id, domain, restriction, reason, created_by) \
+         VALUES ($1, $2, $3, $4, $5) \
+         ON CONFLICT (domain) DO UPDATE SET restriction = $3, reason = $4 \
+         RETURNING id",
     )
+    .bind(new_id)
     .bind(&body.domain)
     .bind(&body.restriction)
     .bind(&body.reason)
     .bind(moderator_id)
-    .execute(&state.pool)
+    .fetch_one(&state.pool)
     .await
     .map_err(NoombatError::from)?;
+    let created = id == new_id;
 
     info!(
         domain = %body.domain,
         restriction = %body.restriction,
+        created,
         moderator = ?moderator.username,
-        "domain restriction added"
+        "domain restriction set"
     );
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true }))))
+    // The page's form puts the answer in place of its list, which may be
+    // the empty message, and a domain restricted again must show once.
+    let domains = domain_entries(&state.pool)
+        .await
+        .map_err(NoombatError::from)?;
+    let status = if created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+    Ok((status, DomainList { i18n, domains }))
 }
 
 async fn remove_domain_restriction(
@@ -567,6 +598,30 @@ struct AnnouncementEntry {
     created_at: String,
 }
 
+/// An announcement as read from the database: id, content, active, created.
+type AnnouncementRow = (Uuid, String, bool, chrono::DateTime<chrono::Utc>);
+
+impl From<AnnouncementRow> for AnnouncementEntry {
+    fn from((id, content, active, created_at): AnnouncementRow) -> Self {
+        Self {
+            id: id.to_string(),
+            content,
+            active,
+            created_at: created_at.format("%Y-%m-%d").to_string(),
+        }
+    }
+}
+
+/// One announcement as the settings page lists it. The create-announcement
+/// route answers that page's form with it, for htmx to put at the top of
+/// the list.
+#[derive(Template, WebTemplate)]
+#[template(path = "admin_announcement_item.html")]
+struct AnnouncementItem {
+    i18n: I18n,
+    ann: AnnouncementEntry,
+}
+
 async fn settings_page(
     State(state): State<AppState>,
     i18n: I18n,
@@ -594,22 +649,17 @@ async fn settings_page(
     .flatten()
     .unwrap_or_default();
 
-    let announcement_rows: Vec<(Uuid, String, bool, chrono::DateTime<chrono::Utc>)> =
-        sqlx::query_as(
-            "SELECT id, content, active, created_at FROM announcements ORDER BY created_at DESC LIMIT 50",
-        )
-        .fetch_all(&state.pool)
-        .await
-        .unwrap_or_default();
+    let announcement_rows: Vec<AnnouncementRow> = sqlx::query_as(
+        "SELECT id, content, active, created_at FROM announcements \
+         ORDER BY created_at DESC LIMIT 50",
+    )
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     let announcements = announcement_rows
         .into_iter()
-        .map(|(id, content, active, created_at)| AnnouncementEntry {
-            id: id.to_string(),
-            content,
-            active,
-            created_at: created_at.format("%Y-%m-%d").to_string(),
-        })
+        .map(AnnouncementEntry::from)
         .collect();
 
     SettingsAdminPage {
@@ -788,20 +838,28 @@ struct CreateAnnouncementRequest {
 async fn create_announcement(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
+    i18n: I18n,
     Form(body): Form<CreateAnnouncementRequest>,
 ) -> Result<impl IntoResponse, ApiError> {
     let admin = require_admin_api(&viewer)?;
     let admin_id = admin.actor_id;
 
-    sqlx::query("INSERT INTO announcements (content, created_by, expires_at) VALUES ($1, $2, $3)")
-        .bind(&body.content)
-        .bind(admin_id)
-        .bind(body.expires_at)
-        .execute(&state.pool)
-        .await
-        .map_err(NoombatError::from)?;
+    let row: AnnouncementRow = sqlx::query_as(
+        "INSERT INTO announcements (content, created_by, expires_at) VALUES ($1, $2, $3) \
+         RETURNING id, content, active, created_at",
+    )
+    .bind(&body.content)
+    .bind(admin_id)
+    .bind(body.expires_at)
+    .fetch_one(&state.pool)
+    .await
+    .map_err(NoombatError::from)?;
 
-    Ok((StatusCode::CREATED, Json(serde_json::json!({ "ok": true }))))
+    let item = AnnouncementItem {
+        i18n,
+        ann: AnnouncementEntry::from(row),
+    };
+    Ok((StatusCode::CREATED, item))
 }
 
 async fn delete_announcement(
