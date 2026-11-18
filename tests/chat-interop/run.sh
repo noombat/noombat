@@ -610,7 +610,8 @@ sys.exit(0 if key and base64.b64decode(key, validate=True) == open(sys.argv[1], 
     }
     # The address too: the page sends to the one a handle's answer names.
     served_address() {
-        python3 -c 'import json, sys; sys.exit(0 if json.load(sys.stdin).get("address") == sys.argv[1] else 1)' "$1"
+        python3 -c 'import json, sys
+sys.exit(0 if json.load(sys.stdin).get("address") == sys.argv[1] else 1)' "$1"
     }
     if curl $CURL_OPTS -s -H "Authorization: Bearer $ALICE_TOKEN" \
         "$NOOMBAT/api/v1/chat/keys/by-handle/%40bob%40${NOOMBAT_DOMAIN}" 2>/dev/null \
@@ -731,7 +732,8 @@ else
     # password, rather than failing on the account that exists.
     # Its digest of the document last pushed is forgotten too, so the
     # setup's push records a new one whatever the document holds.
-    if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, chat_set_up_at = NULL, federated_digest = NULL WHERE username = 'alice'" > /dev/null; then
+    if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, \
+chat_set_up_at = NULL, federated_digest = NULL WHERE username = 'alice'" > /dev/null; then
         TAKEN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
           -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" \
           -H "X-CSRF-Token: $(csrf_token "${ALICE_TOKEN}")" \
@@ -739,11 +741,14 @@ else
           "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || TAKEN=""
         if [ "$(printf '%s' "$TAKEN" | tail -n1)" = "200" ] \
             && printf '%s' "$TAKEN" | grep -q "\"chatmail_addr\":\"alice@${CHATMAIL_DOMAIN}\""; then
-            pass "Set up again: an account the relay made but noombat never recorded is taken up (HTTP 200)"
+            pass "Set up again: an account the relay made but noombat never recorded \
+is taken up (HTTP 200)"
         else
-            fail "Set up again: a first setup stranded after the relay made its account was refused: $(printf '%s' "$TAKEN" | tail -n1)"
+            fail "Set up again: a first setup stranded after the relay made its account \
+was refused: $(printf '%s' "$TAKEN" | tail -n1)"
         fi
-        if [ "$(db_sql "SELECT federated_digest IS NOT NULL FROM actors WHERE username = 'alice'")" = "t" ]; then
+        if [ "$(db_sql "SELECT federated_digest IS NOT NULL FROM actors \
+WHERE username = 'alice'")" = "t" ]; then
             pass "Set up again: the setup pushed alice's actor document"
         else
             fail "Set up again: the setup pushed nothing (no digest recorded)"
@@ -768,7 +773,8 @@ elif TWO_BROWSERS=$(cd "$HERE/../e2e" && NOOMBAT_DOMAIN="$NOOMBAT_DOMAIN" \
       CHAT_DOMAIN="$CHATMAIL_DOMAIN" CHAT_FRANK_PASSWORD="$CHAT_FRANK_PASSWORD" \
       CHAT_GRACE_PASSWORD="$CHAT_GRACE_PASSWORD" \
       "$PLAYWRIGHT" test --config playwright.chat.config.ts 2>&1); then
-    pass "Two browsers: frank writes first on grace's published key, sees its fingerprint, and reads her reply"
+    pass "Two browsers: frank writes first on grace's published key, sees its fingerprint, \
+and reads her reply"
 else
     fail "Two browsers failed: $(printf '%s' "$TWO_BROWSERS" | tail -n 40)"
 fi

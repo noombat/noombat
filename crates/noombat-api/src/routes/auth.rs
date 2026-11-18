@@ -375,7 +375,11 @@ async fn totp_disable(
     if headers.contains_key("hx-request") {
         let said = escape_html(&i18n.t("auth_totp_disabled"));
         let html = format!(
-            r#"<p class="mb-4">{said}</p><span id="a11y-status" hx-swap-oob="innerHTML">{said}</span>"#
+            concat!(
+                r#"<p class="mb-4">{said}</p>"#,
+                r#"<span id="a11y-status" hx-swap-oob="innerHTML">{said}</span>"#,
+            ),
+            said = said,
         );
         return Ok((StatusCode::OK, axum::response::Html(html)).into_response());
     }
@@ -769,28 +773,18 @@ struct ProvisionChatResponse {
     chat_setup: i64,
 }
 
-/// `POST /api/v1/me/provision_chat`
+/// `POST /api/v1/me/provision_chat`: create the member's Chatmail account and
+/// answer its address, password and setup number (`chat_setup`). The body
+/// carries the password's auth key, `{"auth_key": ...}`, so neither a stolen
+/// session nor a mistyped password can set chat up; an account without a
+/// password sets one first, since chat's credentials are kept under it. The
+/// browser makes the key pair, encrypts the credentials under a key derived
+/// from the password and stores them at `PUT /api/v1/me/chatmail_cred`, naming
+/// the setup; only the newest setup's credentials and key are accepted.
 ///
-/// Provision a Chatmail account for the authenticated user: the sidecar
-/// creates the account, one IMAP login proves it, and the address is
-/// stored on the actor record. The member sends their password's auth key,
-/// `{"auth_key": ...}`, so neither a stolen session nor a mistyped
-/// password can set chat up; an account without a password sets one
-/// first, since chat's credentials are kept under it.
-///
-/// The response includes the Chatmail address and password, and the
-/// setup's number, `chat_setup`. The browser is responsible for
-/// generating an OpenPGP key pair, building the credential blob,
-/// encrypting it with the blob key (derived from the user's password),
-/// and storing it via `PUT /api/v1/me/chatmail_cred`, naming that setup.
-/// A second setup while one is under way is refused, and only the newest
-/// setup's credentials and key can be stored.
-///
-/// Returns 409 if chat is already set up and usable, as when another tab
-/// has just set it up, or while another setup is under way; 429 within a
-/// minute of a setup that reached the relay; 403 for a password that does
-/// not prove the member, or an account that may not chat.
-/// Returns 503 if Chatmail is not configured on this instance.
+/// 409 if chat is set up and usable or a setup is under way; 429 within a
+/// minute of a setup that reached the relay; 403 if the password does not
+/// prove the member or they may not chat; 503 if Chatmail is not configured.
 async fn provision_chat(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
