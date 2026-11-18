@@ -34,6 +34,7 @@ use serde::Deserialize;
 use tracing::info;
 use uuid::Uuid;
 
+use crate::csrf::CsrfToken;
 use crate::error::ApiError;
 use crate::i18n::I18n;
 use crate::middleware::Viewer;
@@ -154,6 +155,7 @@ struct ModerationPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     reports: Vec<UnifiedReportEntry>,
 }
@@ -163,6 +165,7 @@ async fn moderation_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     if let Err(r) = require_moderator(&viewer) {
@@ -228,6 +231,7 @@ async fn moderation_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         reports,
     }
@@ -251,6 +255,7 @@ struct UsersPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     users: Vec<UserEntry>,
     filter_role: String,
@@ -279,6 +284,7 @@ async fn users_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
     axum::extract::Query(params): axum::extract::Query<UsersQuery>,
 ) -> Response {
@@ -332,6 +338,7 @@ async fn users_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         users,
         filter_role,
@@ -357,6 +364,7 @@ struct DomainsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     domains: Vec<DomainEntry>,
 }
@@ -412,6 +420,7 @@ async fn domains_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     if let Err(r) = require_moderator(&viewer) {
@@ -424,6 +433,7 @@ async fn domains_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         domains,
     }
@@ -570,6 +580,7 @@ struct SettingsAdminPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     registration_mode: String,
     default_job_approval: bool,
@@ -627,6 +638,7 @@ async fn settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     if let Err(r) = require_admin(&viewer) {
@@ -666,6 +678,7 @@ async fn settings_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         registration_mode: settings.registration_mode,
         default_job_approval: settings.default_job_approval,
@@ -891,6 +904,7 @@ struct FederationPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     queue_depth: i64,
     failed_domains: Vec<FailedDomainEntry>,
@@ -917,6 +931,7 @@ async fn federation_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     if let Err(r) = require_admin(&viewer) {
@@ -981,6 +996,7 @@ async fn federation_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         queue_depth,
         failed_domains,

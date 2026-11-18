@@ -74,3 +74,26 @@ test("a skill added on its page is removed without a reload", async ({ page }) =
   await page.reload();
   await expect(row(removed)).toHaveCount(0);
 });
+
+test("a write the server refuses says so on the page", async ({ page }) => {
+  const refused = `${run} refused`;
+
+  await page.goto("/settings/skills");
+  // A token the session never had, as a page left open across a sign-in
+  // elsewhere holds.
+  await page.evaluate(() => {
+    document.querySelector('meta[name="csrf-token"]')?.setAttribute("content", "stale");
+  });
+  const form = page.locator('form[hx-post$="/skills"]');
+  await form.locator('input[name="name"]').fill(refused);
+  const [answer] = await Promise.all([
+    page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().endsWith("/skills"),
+    ),
+    form.locator('button[type="submit"]').click(),
+  ]);
+
+  expect(answer.status(), "the stale token must be refused").toBe(403);
+  await expect(page.getByRole("alert")).toContainText("Reload the page");
+  await expect(page.locator("#skills-list > span").filter({ hasText: refused })).toHaveCount(0);
+});

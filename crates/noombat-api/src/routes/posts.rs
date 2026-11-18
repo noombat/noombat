@@ -21,6 +21,7 @@ use noombat_core::error::NoombatError;
 use noombat_markup::headings::Heading;
 use tracing::warn;
 
+use crate::csrf::CsrfToken;
 use crate::error::ApiError;
 use crate::i18n::I18n;
 use crate::middleware::Viewer;
@@ -35,6 +36,10 @@ pub fn router() -> Router<AppState> {
         .route("/@{username}/posts/{post_id}", get(get_post))
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is an extractor the page needs"
+)]
 async fn get_post(
     State(state): State<AppState>,
     Path((username, post_id)): Path<(String, Uuid)>,
@@ -42,6 +47,7 @@ async fn get_post(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<impl IntoResponse, ApiError> {
     let row = sqlx::query_as::<_, PostRow>(
@@ -197,6 +203,7 @@ async fn get_post(
             i18n,
             theme,
             contrast,
+            csrf,
             article_title,
             aria_article_label,
             canonical_url,
@@ -222,6 +229,7 @@ async fn get_post(
         i18n,
         theme,
         contrast,
+        csrf,
         page_title,
         aria_post_label,
         post_id: row.id.to_string(),
@@ -273,6 +281,7 @@ struct PostPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     page_title: String,
     aria_post_label: String,
     post_id: String,
@@ -297,6 +306,7 @@ struct ArticlePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     article_title: String,
     aria_article_label: String,
     canonical_url: String,

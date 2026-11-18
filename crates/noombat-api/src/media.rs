@@ -360,7 +360,6 @@ impl MediaStore {
     ///
     /// Nothing is contacted here, so a third party's outage is a failed
     /// upload rather than an instance that will not start.
-    #[allow(clippy::too_many_arguments)]
     pub fn s3(
         endpoint: impl Into<String>,
         bucket: impl Into<String>,
@@ -613,7 +612,10 @@ fn hex(bytes: &[u8]) -> String {
 /// `service` is a parameter rather than a constant so published test
 /// vectors, which sign for other service names, can be run against this
 /// function unchanged.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one input the Signature Version 4 algorithm signs"
+)]
 fn sign_v4(
     method: &str,
     canonical_path: &str,

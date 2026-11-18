@@ -55,7 +55,7 @@ async function oneTabAtATime<T>(task: () => Promise<T>): Promise<T> {
  * Requires the blob encryption key (derived from the user's
  * password) and an authenticated session. The session may be
  * carried either by a bearer token in `sessionStorage` (the
- * registration flow) or by the `noombat_session` cookie (the
+ * registration flow) or by the `__Host-noombat_session` cookie (the
  * upgrade flow); {@link authHeaders} selects whichever is present.
  *
  * Resolves to how setting up ended, the address once the blob is stored. Nothing is

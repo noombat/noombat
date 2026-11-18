@@ -98,6 +98,34 @@ async fn token_for(pool: &PgPool, actor_id: Uuid, username: &str, role: Instance
     .access_token
 }
 
+/// The CSRF token of the session a cookie names, masked as that session's
+/// pages carry it: a write the cookie authenticates must send it.
+async fn csrf_of(pool: &PgPool, cookie: &str) -> String {
+    let token = cookie
+        .strip_prefix("__Host-noombat_session=")
+        .unwrap_or(cookie);
+    let config = noombat_identity::session::SessionConfig {
+        jwt_secret: JWT_SECRET.to_owned(),
+        domain: DOMAIN.to_owned(),
+        access_ttl_secs: 900,
+        refresh_ttl_secs: 2_592_000,
+    };
+    let claims = noombat_identity::session::verify_access_token(token, &config)
+        .expect("the session's access token verifies");
+    let session = Uuid::parse_str(
+        claims
+            .sid
+            .as_deref()
+            .expect("the access token names its session"),
+    )
+    .expect("a session id");
+    let token = noombat_identity::session::csrf_token(pool, session)
+        .await
+        .expect("sessions readable")
+        .expect("the session has a CSRF token");
+    noombat_identity::session::mask_csrf_token(&token).expect("the token masks")
+}
+
 /// A refusal shows a role check only if the caller was signed in: an
 /// anonymous caller is refused too. A page any member may open answers 200
 /// to a session and sends anyone else to sign in.
@@ -514,7 +542,7 @@ async fn the_users_pages_suspend_button_suspends_the_account(pool: PgPool) {
     let moderator = insert_person(&pool, "mod", "moderator").await;
     let target = insert_person(&pool, "target", "user").await;
     let token = token_for(&pool, moderator, "mod", InstanceRole::Moderator).await;
-    let cookie = format!("noombat_session={token}");
+    let cookie = format!("__Host-noombat_session={token}");
     let action = format!("/api/v1/admin/actors/{target}/suspend");
 
     // The request below replays this page's form, so first check the page
@@ -560,6 +588,7 @@ async fn the_users_pages_suspend_button_suspends_the_account(pool: PgPool) {
                 .header("hx-current-url", format!("https://{DOMAIN}/admin/users"))
                 .header("origin", format!("https://{DOMAIN}"))
                 .header("cookie", cookie.as_str())
+                .header("x-csrf-token", csrf_of(&pool, &cookie).await)
                 .body(Body::from("reason="))
                 .expect("suspend request"),
         )
@@ -632,7 +661,8 @@ async fn form_answer(
         .header("hx-request", "true")
         .header("hx-current-url", format!("https://{DOMAIN}{page}"))
         .header("origin", format!("https://{DOMAIN}"))
-        .header("cookie", cookie);
+        .header("cookie", cookie)
+        .header("x-csrf-token", csrf_of(pool, cookie).await);
     if !fields.is_empty() {
         builder = builder.header("content-type", FORM);
     }
@@ -670,7 +700,7 @@ async fn the_users_pages_unsuspend_button_lifts_the_suspension(pool: PgPool) {
         .await
         .expect("suspension fixture");
     let cookie = format!(
-        "noombat_session={}",
+        "__Host-noombat_session={}",
         token_for(&pool, moderator, "mod", InstanceRole::Moderator).await
     );
     let action = format!("/api/v1/admin/actors/{target}/unsuspend");
@@ -707,7 +737,7 @@ async fn the_moderation_pages_dismiss_closes_a_post_report(pool: PgPool) {
     .await
     .expect("report fixture");
     let cookie = format!(
-        "noombat_session={}",
+        "__Host-noombat_session={}",
         token_for(&pool, moderator, "mod", InstanceRole::Moderator).await
     );
     let action = format!("/api/v1/admin/reports/{report}/resolve");
@@ -748,7 +778,7 @@ async fn the_moderation_pages_dismiss_closes_a_chat_report(pool: PgPool) {
     .await
     .expect("report fixture");
     let cookie = format!(
-        "noombat_session={}",
+        "__Host-noombat_session={}",
         token_for(&pool, moderator, "mod", InstanceRole::Moderator).await
     );
     let action = format!("/api/v1/admin/chat-reports/{report}/resolve");
@@ -835,7 +865,7 @@ async fn a_chat_report_dismissed_by_an_api_client_is_answered_in_json(pool: PgPo
 async fn the_domains_pages_add_form_is_answered_with_the_list_the_page_shows(pool: PgPool) {
     let moderator = insert_person(&pool, "mod", "moderator").await;
     let cookie = format!(
-        "noombat_session={}",
+        "__Host-noombat_session={}",
         token_for(&pool, moderator, "mod", InstanceRole::Moderator).await
     );
     let page = "/admin/domains";
@@ -925,7 +955,7 @@ async fn the_settings_pages_announcement_form_is_answered_with_the_item_the_page
 ) {
     let admin = insert_person(&pool, "admin", "admin").await;
     let cookie = format!(
-        "noombat_session={}",
+        "__Host-noombat_session={}",
         token_for(&pool, admin, "admin", InstanceRole::Admin).await
     );
     let page = "/admin/settings";

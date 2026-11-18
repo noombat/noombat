@@ -10,6 +10,7 @@ Playwright suite driving real browsers against a running Noombat stack. It cover
 | `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                  |
 | `security-headers.spec.ts`  | Response headers and the CSP                         |
 | `settings-lists.spec.ts`    | A settings list's add and remove, as htmx swaps them |
+| `compose-form.spec.ts`      | The compose page's plain form, with its CSRF token   |
 | `session.ts`                | Registers and signs in the accounts the specs use    |
 | `axe-fixture.ts`            | Wires axe-core into the Playwright fixture           |
 | `playwright.config.ts`      | Six browser projects, three desktop and three mobile |
@@ -39,7 +40,7 @@ scripts/e2e-stack.sh down
 
 ## Fixtures three files have to agree on
 
-The suite does not create its own data, but for `settings-lists.spec.ts`, which adds two skills to a seeded account and removes them. `scripts/e2e-stack.sh` seeds it and the specs address it by hard-coded value, so changing one place and not the others breaks the run as a timeout or a missing element rather than as a visible mismatch.
+The suite does not create its own data, but for `settings-lists.spec.ts`, which adds two skills to a seeded account and removes them, and `compose-form.spec.ts`, which publishes one note to followers each run and leaves it, posts having no route that deletes them. `scripts/e2e-stack.sh` seeds it and the specs address it by hard-coded value, so changing one place and not the others breaks the run as a timeout or a missing element rather than as a visible mismatch.
 
 | Fixture                      | Also hard-coded in                                                    |
 | ---------------------------- | --------------------------------------------------------------------- |

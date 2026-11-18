@@ -5,7 +5,7 @@
  * Session header construction for authenticated API requests.
  *
  * Noombat accepts two session carriers: an `Authorization: Bearer`
- * header and the `noombat_session` cookie. The server resolves the
+ * header and the `__Host-noombat_session` cookie. The server resolves the
  * header first and only falls back to the cookie when no header is
  * present, so an `Authorization: Bearer ` header with an empty
  * token *shadows* an otherwise valid cookie and produces an
@@ -19,6 +19,8 @@
  * `credentials: "same-origin"`.
  */
 
+import { withCsrf } from "../csrf";
+
 /** Session-storage key holding the JWT access token. */
 export const ACCESS_TOKEN_KEY = "noombat_access_token";
 
@@ -28,8 +30,12 @@ export function accessToken(): string | null {
   return token && token.length > 0 ? token : null;
 }
 
-/** Build request headers for an authenticated API call, merging `extra`. */
+/**
+ * Build request headers for an authenticated API call, merging `extra`:
+ * the bearer token when one is stored, and otherwise, the session cookie
+ * authenticating the call, the page's CSRF token.
+ */
 export function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
   const token = accessToken();
-  return token ? { ...extra, Authorization: `Bearer ${token}` } : { ...extra };
+  return token ? { ...extra, Authorization: `Bearer ${token}` } : withCsrf(extra);
 }

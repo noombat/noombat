@@ -190,7 +190,8 @@ mod tests {
 
     #[test]
     fn reads_the_theme_from_among_other_cookies() {
-        let headers = headers_with_cookie("noombat_session=abc; noombat_theme=dark; other=1");
+        let headers =
+            headers_with_cookie("__Host-noombat_session=abc; noombat_theme=dark; other=1");
         assert_eq!(from_headers(&headers), Theme::Dark);
     }
 
@@ -248,8 +249,9 @@ mod tests {
     /// both must get both.
     #[test]
     fn theme_and_contrast_are_read_from_the_same_header_without_colliding() {
-        let headers =
-            headers_with_cookie("noombat_theme=dark; noombat_session=x; noombat_contrast=high");
+        let headers = headers_with_cookie(
+            "noombat_theme=dark; __Host-noombat_session=x; noombat_contrast=high",
+        );
         assert_eq!(from_headers(&headers), Theme::Dark);
         assert_eq!(contrast_from_headers(&headers), Contrast::High);
     }

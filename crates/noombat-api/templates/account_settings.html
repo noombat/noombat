@@ -19,6 +19,32 @@
             </a>
         </section>
 
+        <!-- Another way to sign in: plain forms that post, carrying the
+             session's token, so no page elsewhere can start a link. -->
+        <section class="mb-8 max-w-lg">
+            <h2 class="text-lg font-semibold mb-2">{{ i18n.t("account_link_heading") }}</h2>
+            <form method="post" action="/api/v1/auth/mastodon/link" class="flex flex-wrap gap-2 items-end mb-3">
+                <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
+                <label class="text-sm flex-1">
+                    {{ i18n.t("account_link_mastodon_handle") }}
+                    <input type="text" name="handle" required autocomplete="off"
+                           placeholder="you@mastodon.example"
+                           class="block w-full border border-border-default rounded px-3 py-1 bg-bg-raised text-text-primary text-sm mt-1">
+                </label>
+                <button type="submit" class="bg-bg-brand text-text-on-brand rounded px-4 py-1 text-sm hover:opacity-90">
+                    {{ i18n.t("account_link_mastodon") }}
+                </button>
+            </form>
+            {% if orcid_enabled %}
+            <form method="post" action="/api/v1/auth/orcid/link">
+                <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
+                <button type="submit" class="bg-bg-brand text-text-on-brand rounded px-4 py-1 text-sm hover:opacity-90">
+                    {{ i18n.t("account_link_orcid") }}
+                </button>
+            </form>
+            {% endif %}
+        </section>
+
         <!-- Account deletion -->
         <section class="max-w-lg">
             <h2 class="text-lg font-semibold mb-2">{{ i18n.t("account_delete") }}</h2>

@@ -13,6 +13,7 @@
              every submission on content type before it read a field. -->
         <form method="post" action="{{ form_action }}"
               class="space-y-4 max-w-lg">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
 
             <div>
                 <label for="job-title" class="block text-sm mb-1">{{ i18n.t("job_title_label") }}</label>

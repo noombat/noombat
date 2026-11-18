@@ -40,7 +40,7 @@ def handshake(sock, authority, token):
             "Connection: Upgrade\r\n"
             f"Sec-WebSocket-Key: {key}\r\n"
             "Sec-WebSocket-Version: 13\r\n"
-            f"Cookie: noombat_session={token}\r\n"
+            f"Cookie: __Host-noombat_session={token}\r\n"
             "\r\n"
         ).encode()
     )

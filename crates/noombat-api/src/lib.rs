@@ -10,6 +10,7 @@ pub mod analytics;
 pub mod auth;
 pub mod chatmail_ops;
 pub mod cookie;
+pub mod csrf;
 pub mod erasure;
 pub mod error;
 pub mod housekeeping;
@@ -72,6 +73,10 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::admin::router())
         .merge(routes::account::router())
         .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            csrf::protect,
+        ))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             middleware::authentication,

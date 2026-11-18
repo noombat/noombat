@@ -71,6 +71,14 @@ mock_auth_key() {
     printf '%064s' '' | tr ' ' "$char"
 }
 
+# The session's CSRF token, read from the chat page, which carries it
+# masked as every page does: a write the session cookie authenticates must
+# send it.
+csrf_token() {
+    curl $CURL_OPTS -s "$NOOMBAT/chat" -H "Cookie: __Host-noombat_session=$1" 2>/dev/null \
+      | grep -o '<meta name="csrf-token" content="[^"]*"' | cut -d'"' -f4
+}
+
 # SQL against the stack's own database, for state no API sets. The
 # project name is the one the README and CI bring the stack up under.
 db_sql() {
@@ -288,7 +296,7 @@ echo ""
 # 9. Allowlisted domain: chat page loads for an authenticated user.
 if [ -n "$ALICE_TOKEN" ]; then
     HTTP_CODE=$(curl $CURL_OPTS -sf -o /dev/null -w '%{http_code}' "$NOOMBAT/chat" \
-      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || HTTP_CODE="000"
+      -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" 2>/dev/null) || HTTP_CODE="000"
     if [ "$HTTP_CODE" = "200" ]; then
         pass "Chat page loads for authenticated user (HTTP 200)"
     else
@@ -329,7 +337,8 @@ fi
 # and Noombat trusts it through SSL_CERT_FILE.
 if [ -n "$ALICE_TOKEN" ]; then
     PROV_BODY=$(curl $CURL_OPTS -s -w '\n%{http_code}' \
-      -X POST -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+      -X POST -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" \
+      -H "X-CSRF-Token: $(csrf_token "${ALICE_TOKEN}")" \
       -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || PROV_BODY=""
     PROV_CODE=$(printf '%s' "$PROV_BODY" | tail -n1)
@@ -347,7 +356,7 @@ if [ -n "$ALICE_TOKEN" ]; then
     # credentials, so this asserts that provisioning actually happened,
     # rather than that the instance is configured.
     CRED_PAGE=$(curl $CURL_OPTS -sf "$NOOMBAT/settings/chat" \
-      -H "Cookie: noombat_session=${ALICE_TOKEN}" 2>/dev/null) || CRED_PAGE=""
+      -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" 2>/dev/null) || CRED_PAGE=""
     if echo "$CRED_PAGE" | grep -q "$CHATMAIL_DOMAIN"; then
         pass "Credential page names $CHATMAIL_DOMAIN for the provisioned account"
     else
@@ -412,7 +421,8 @@ else
       > /dev/null 2>&1 || true
 
     BOB_PROV=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
-      -H "Cookie: noombat_session=${BOB_TOKEN}" \
+      -H "Cookie: __Host-noombat_session=${BOB_TOKEN}" \
+      -H "X-CSRF-Token: $(csrf_token "${BOB_TOKEN}")" \
       -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_BOB_AUTH_KEY\"}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || BOB_PROV=""
     PROVISION_CODE=$(printf '%s' "$BOB_PROV" | tail -n1)
@@ -691,7 +701,8 @@ else
         fail "Set up again: alice's setup could not be released through the stack's database"
     fi
     AGAIN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
-      -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+      -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" \
+      -H "X-CSRF-Token: $(csrf_token "${ALICE_TOKEN}")" \
       -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
       "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || AGAIN=""
     NEW_PASSWORD=$(printf '%s' "$AGAIN" | grep -o '"chatmail_password":"[^"]*"' | cut -d'"' -f4)
@@ -722,7 +733,8 @@ else
     # setup's push records a new one whatever the document holds.
     if db_sql "UPDATE actors SET chatmail_addr = NULL, chatmail_cred = NULL, chat_set_up_at = NULL, federated_digest = NULL WHERE username = 'alice'" > /dev/null; then
         TAKEN=$(curl $CURL_OPTS -s -w '\n%{http_code}' -X POST \
-          -H "Cookie: noombat_session=${ALICE_TOKEN}" \
+          -H "Cookie: __Host-noombat_session=${ALICE_TOKEN}" \
+          -H "X-CSRF-Token: $(csrf_token "${ALICE_TOKEN}")" \
           -H "Content-Type: application/json" -d "{\"auth_key\":\"$CHAT_ALICE_AUTH_KEY\"}" \
           "$NOOMBAT/api/v1/me/provision_chat" 2>/dev/null) || TAKEN=""
         if [ "$(printf '%s' "$TAKEN" | tail -n1)" = "200" ] \

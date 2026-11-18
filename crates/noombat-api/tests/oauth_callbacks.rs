@@ -151,7 +151,7 @@ async fn signed_in_as(pool: &PgPool, actor: Uuid, username: &str) -> String {
     )
     .await
     .expect("session fixture");
-    format!("noombat_session={}", tokens.access_token)
+    format!("__Host-noombat_session={}", tokens.access_token)
 }
 
 async fn set_registration_mode(pool: &PgPool, mode: &str) {
@@ -218,6 +218,62 @@ async fn start(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
     (state_token, held.join("; "))
 }
 
+/// The settings page's link form, posted by a browser holding `cookies`:
+/// its token in the form's field, as the page sends it. The redirect to
+/// ORCID is a 303, which the browser follows with a GET.
+async fn start_link(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
+    let session = cookies
+        .split(';')
+        .map(str::trim)
+        .find_map(|c| c.strip_prefix("__Host-noombat_session="))
+        .expect("a signed-in browser");
+    let claims = noombat_identity::session::verify_access_token(session, &session_config())
+        .expect("the session's token verifies");
+    let sid = Uuid::parse_str(claims.sid.as_deref().expect("a session's token names it"))
+        .expect("a session id");
+    let token = noombat_identity::session::csrf_token(&app.pool, sid)
+        .await
+        .expect("sessions readable")
+        .expect("the session has a token");
+    let token = noombat_identity::session::mask_csrf_token(&token).expect("the token masks");
+    let response = build_router(app.clone())
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(uri)
+                .header(header::COOKIE, cookies)
+                .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                .body(Body::from(format!("csrf_token={token}")))
+                .expect("request built"),
+        )
+        .await
+        .expect("router responded");
+    assert_eq!(
+        response.status(),
+        StatusCode::SEE_OTHER,
+        "the link form redirects to ORCID"
+    );
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .expect("the redirect names ORCID")
+        .to_owned();
+    let state_token = location
+        .rsplit_once("state=")
+        .and_then(|(_, rest)| rest.split('&').next())
+        .map(str::to_owned)
+        .expect("the redirect carries a state");
+    let mut held: Vec<String> = cookies
+        .split(';')
+        .map(str::trim)
+        .filter(|c| !c.is_empty())
+        .map(str::to_owned)
+        .collect();
+    held.extend(cookies_set_by(&response));
+    (state_token, held.join("; "))
+}
+
 /// ORCID's redirect back, opened in a browser holding `cookies`.
 async fn finish(app: &AppState, state_token: &str, cookies: &str) -> Response {
     let uri = format!("/api/v1/auth/orcid/callback?code=stand-in-code&state={state_token}");
@@ -227,7 +283,7 @@ async fn finish(app: &AppState, state_token: &str, cookies: &str) -> Response {
 /// Whether `response` signs the browser in.
 fn sets_a_session(response: &Response) -> bool {
     cookies_set_by(response).iter().any(|pair| {
-        pair.strip_prefix("noombat_session=")
+        pair.strip_prefix("__Host-noombat_session=")
             .is_some_and(|token| !token.is_empty())
     })
 }
@@ -315,7 +371,7 @@ async fn the_browser_that_starts_an_orcid_link_finishes_it(pool: PgPool) {
     let session = signed_in_as(&pool, alice, "alice").await;
     let app = test_state(pool.clone()).await;
 
-    let (state_token, cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    let (state_token, cookies) = start_link(&app, "/api/v1/auth/orcid/link", &session).await;
     let response = finish(&app, &state_token, &cookies).await;
 
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
@@ -341,7 +397,7 @@ async fn a_link_finished_after_a_suspension_links_nothing(pool: PgPool) {
     let alice = account(&pool, "alice", "active").await;
     let session = signed_in_as(&pool, alice, "alice").await;
     let app = test_state(pool.clone()).await;
-    let (state_token, cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    let (state_token, cookies) = start_link(&app, "/api/v1/auth/orcid/link", &session).await;
     sqlx::query("UPDATE actors SET actor_status = 'suspended' WHERE id = $1")
         .bind(alice)
         .execute(&pool)
@@ -388,7 +444,7 @@ async fn linking_an_orcid_id_pushes_it_to_followers(pool: PgPool) {
 
     let session = signed_in_as(&pool, alice, "alice").await;
     let app = test_state(pool.clone()).await;
-    let (state_token, cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    let (state_token, cookies) = start_link(&app, "/api/v1/auth/orcid/link", &session).await;
     finish(&app, &state_token, &cookies).await;
 
     let pushed: Vec<serde_json::Value> =
@@ -485,7 +541,8 @@ async fn an_orcid_link_finished_in_another_browser_links_nothing(pool: PgPool) {
     let mallory = account(&pool, "mallory", "active").await;
     let session = signed_in_as(&pool, mallory, "mallory").await;
     let app = test_state(pool.clone()).await;
-    let (state_token, _mallorys_cookies) = start(&app, "/api/v1/auth/orcid/link", &session).await;
+    let (state_token, _mallorys_cookies) =
+        start_link(&app, "/api/v1/auth/orcid/link", &session).await;
     let sessions_before = sessions_of(&pool, mallory).await;
 
     let response = finish(&app, &state_token, "").await;
@@ -524,9 +581,9 @@ async fn an_orcid_link_finished_with_another_flows_cookies_links_nothing(pool: P
     let victims_session = signed_in_as(&pool, victim, "victim").await;
     let app = test_state(pool.clone()).await;
     let (state_token, _mallorys_cookies) =
-        start(&app, "/api/v1/auth/orcid/link", &mallorys_session).await;
+        start_link(&app, "/api/v1/auth/orcid/link", &mallorys_session).await;
     let (_victims_state, victims_cookies) =
-        start(&app, "/api/v1/auth/orcid/link", &victims_session).await;
+        start_link(&app, "/api/v1/auth/orcid/link", &victims_session).await;
 
     finish(&app, &state_token, &victims_cookies).await;
 

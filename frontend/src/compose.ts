@@ -13,6 +13,8 @@
  * without `'unsafe-inline'`.
  */
 
+import { withCsrf } from "./csrf";
+
 /** Bind the post-type radios to the visibility of the article fields. */
 function setupPostTypeToggle(): void {
   const note = document.getElementById("post-type-note");
@@ -100,7 +102,7 @@ async function uploadOne(
 
   let response: Response;
   try {
-    response = await fetch("/api/v1/media", { method: "POST", body });
+    response = await fetch("/api/v1/media", { method: "POST", headers: withCsrf(), body });
   } catch {
     // The server never answered, so there is nothing to report but
     // that the upload did not arrive.
@@ -188,7 +190,7 @@ async function describe(id: string, alt: string): Promise<void> {
   try {
     await fetch(`/api/v1/media/${id}`, {
       method: "PATCH",
-      headers: { "content-type": "application/json" },
+      headers: withCsrf({ "content-type": "application/json" }),
       body: JSON.stringify({ alt }),
     });
   } catch {

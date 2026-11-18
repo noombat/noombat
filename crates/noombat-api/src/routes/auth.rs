@@ -30,10 +30,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/totp/verify", post(totp_verify))
         .route("/api/v1/auth/totp", delete(totp_disable))
         .route("/api/v1/auth/mastodon", get(mastodon_init))
-        .route("/api/v1/auth/mastodon/link", get(mastodon_link_init))
+        .route("/api/v1/auth/mastodon/link", post(mastodon_link_init))
         .route("/api/v1/auth/mastodon/callback", get(mastodon_callback))
         .route("/api/v1/auth/orcid", get(orcid_init))
-        .route("/api/v1/auth/orcid/link", get(orcid_link_init))
+        .route("/api/v1/auth/orcid/link", post(orcid_link_init))
         .route("/api/v1/auth/orcid/callback", get(orcid_callback))
         .route("/api/v1/auth/password", post(set_password))
         .route("/api/v1/me/email", post(request_email_verification))
@@ -197,7 +197,7 @@ async fn register(
     )
     .await?;
 
-    let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
+    let cookie = crate::cookie::set_session_cookie(&tokens);
     let mut response = (StatusCode::CREATED, Json(&tokens)).into_response();
     response
         .headers_mut()
@@ -253,7 +253,7 @@ async fn login(
         "chat_setup": chat_setup,
     });
 
-    let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
+    let cookie = crate::cookie::set_session_cookie(&tokens);
     let mut response = Json(body).into_response();
     response
         .headers_mut()
@@ -282,7 +282,7 @@ async fn refresh(
         noombat_identity::session::refresh_session(&state.pool, session_config, &req.refresh_token)
             .await?;
 
-    let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
+    let cookie = crate::cookie::set_session_cookie(&tokens);
     let mut response = Json(&tokens).into_response();
     response
         .headers_mut()
@@ -302,7 +302,7 @@ async fn logout(
     Json(req): Json<LogoutRequest>,
 ) -> Result<Response, ApiError> {
     noombat_identity::session::revoke_session(&state.pool, &req.refresh_token).await?;
-    let cookie = crate::cookie::clear_session_cookie(&state.domain);
+    let cookie = crate::cookie::clear_session_cookie();
     let mut response = StatusCode::NO_CONTENT.into_response();
     response
         .headers_mut()
@@ -405,16 +405,20 @@ async fn mastodon_init(
     Ok(Redirect::temporary(&url).into_response())
 }
 
-/// `GET /api/v1/auth/mastodon/link`
+/// `POST /api/v1/auth/mastodon/link`
 ///
 /// Start the same flow as signing in, but bound to the account already
 /// signed in, so the callback links rather than creating. The account is
 /// taken from the session here and recorded with the state: nothing in the
 /// redirect that comes back is trusted to say whose account this is.
+///
+/// A POST, so the forged-write checks guard it: a GET any page could link
+/// to would bind a Mastodon account the linking page chose, its own
+/// server's, to whoever followed the link.
 async fn mastodon_link_init(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
-    Query(query): Query<MastodonInitQuery>,
+    JsonOrForm { value: query, .. }: JsonOrForm<MastodonInitQuery>,
 ) -> Result<Response, ApiError> {
     let actor_id = require_actor(&viewer)?;
     // A link adds a way in, which only an account that may sign in gains.
@@ -429,7 +433,8 @@ async fn mastodon_link_init(
     )
     .await?;
 
-    Ok(Redirect::temporary(&url).into_response())
+    // 303, so the browser follows it to the instance with a GET.
+    Ok(Redirect::to(&url).into_response())
 }
 
 #[derive(Deserialize)]
@@ -472,7 +477,7 @@ async fn mastodon_callback(
     .await?;
 
     // Set the session cookie and redirect to the home page.
-    let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
+    let cookie = crate::cookie::set_session_cookie(&tokens);
     let mut response = Redirect::temporary("/").into_response();
     response
         .headers_mut()
@@ -500,10 +505,10 @@ async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError>
     Ok(Redirect::temporary(&url).into_response())
 }
 
-/// `GET /api/v1/auth/orcid/link`
+/// `POST /api/v1/auth/orcid/link`
 ///
 /// As `orcid_init`, but bound to the signed-in account so the callback
-/// links rather than creating.
+/// links rather than creating; a POST for the reason the Mastodon link is.
 async fn orcid_link_init(
     State(state): State<AppState>,
     viewer: Option<axum::Extension<Viewer>>,
@@ -525,7 +530,7 @@ async fn orcid_link_init(
     )
     .await?;
 
-    Ok(Redirect::temporary(&url).into_response())
+    Ok(Redirect::to(&url).into_response())
 }
 
 async fn orcid_callback(
@@ -593,7 +598,7 @@ async fn orcid_callback(
     )
     .await?;
 
-    let cookie = crate::cookie::set_session_cookie(&tokens, &state.domain);
+    let cookie = crate::cookie::set_session_cookie(&tokens);
     let mut response = Redirect::temporary("/").into_response();
     response
         .headers_mut()

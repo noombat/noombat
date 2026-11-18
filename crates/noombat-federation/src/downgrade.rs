@@ -214,7 +214,10 @@ pub struct VerifiedLinkRef<'a> {
 /// key beside a visible chat address (profile data, unlike the signing
 /// keys above), and the sections whose visibility is
 /// [`SectionVisibility::Public`].
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one part of the actor document this sole serialiser emits"
+)]
 pub fn build_federated_actor(
     actor: &Actor,
     domain: &str,

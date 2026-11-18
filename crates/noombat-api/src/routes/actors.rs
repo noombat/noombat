@@ -88,11 +88,16 @@ fn wants_activity_json(headers: &HeaderMap) -> bool {
 }
 
 use crate::auth::{require_acts_for, require_local_actor};
+use crate::csrf::CsrfToken;
 use crate::middleware::Viewer;
 use noombat_core::authorisation::{InteractionService, OrganizationRole};
 
 // ..... GET /users/{username} .....
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is an extractor the page needs"
+)]
 async fn get_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -101,6 +106,7 @@ async fn get_actor(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = noombat_identity::repo::find_local_by_username(&state.pool, &username).await?;
 
@@ -192,6 +198,7 @@ async fn get_actor(
         i18n,
         theme,
         contrast,
+        csrf,
         page_title,
         username: actor.username.clone(),
         display_name,
@@ -226,6 +233,10 @@ async fn get_actor(
 // matches the behaviour of Mastodon, which serves AP JSON at
 // `/@{username}` as well.
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is an extractor the page needs"
+)]
 async fn get_actor_human(
     state: State<AppState>,
     path: Path<String>,
@@ -234,8 +245,9 @@ async fn get_actor_human(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
 ) -> Result<impl IntoResponse, ApiError> {
-    get_actor(state, path, headers, viewer, i18n, theme, contrast).await
+    get_actor(state, path, headers, viewer, i18n, theme, contrast, csrf).await
 }
 
 // ..... GET /users/{username}/outbox .......
@@ -1117,6 +1129,7 @@ struct ProfilePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     page_title: String,
     username: String,
     display_name: String,

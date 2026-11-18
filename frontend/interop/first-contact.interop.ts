@@ -86,7 +86,7 @@ async function chatSocket(member: Member) {
   const url = new URL("/api/v1/chat/ws", BASE);
   url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
   // Node's WebSocket takes headers, which a browser sends as the cookie.
-  const init = { headers: { Cookie: `noombat_session=${member.token}` } };
+  const init = { headers: { Cookie: `__Host-noombat_session=${member.token}` } };
   const ws = new WebSocket(url, init as unknown as string[]);
   const received: ServerMsg[] = [];
   ws.onmessage = (event) => received.push(JSON.parse(String(event.data)) as ServerMsg);

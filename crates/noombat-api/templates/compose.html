@@ -14,6 +14,7 @@
               action="/users/{{ username }}/outbox"
               aria-label="{{ i18n.t("aria_compose") }}"
               class="space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
 
             <!-- Post type toggle -->
             <fieldset class="flex gap-4 items-center">

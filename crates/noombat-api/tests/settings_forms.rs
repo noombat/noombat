@@ -114,6 +114,34 @@ async fn session_cookie(pool: &PgPool, actor_id: Uuid) -> String {
     format!("{}={token}", noombat_api::cookie::COOKIE_NAME)
 }
 
+/// The CSRF token of the session a cookie names, masked as that session's
+/// pages carry it: a write the cookie authenticates must send it.
+async fn csrf_of(pool: &PgPool, cookie: &str) -> String {
+    let token = cookie
+        .strip_prefix("__Host-noombat_session=")
+        .unwrap_or(cookie);
+    let config = noombat_identity::session::SessionConfig {
+        jwt_secret: JWT_SECRET.to_owned(),
+        domain: DOMAIN.to_owned(),
+        access_ttl_secs: 900,
+        refresh_ttl_secs: 2_592_000,
+    };
+    let claims = noombat_identity::session::verify_access_token(token, &config)
+        .expect("the session's access token verifies");
+    let session = Uuid::parse_str(
+        claims
+            .sid
+            .as_deref()
+            .expect("the access token names its session"),
+    )
+    .expect("a session id");
+    let token = noombat_identity::session::csrf_token(pool, session)
+        .await
+        .expect("sessions readable")
+        .expect("the session has a CSRF token");
+    noombat_identity::session::mask_csrf_token(&token).expect("the token masks")
+}
+
 /// One htmx form submission through the assembled router.
 async fn submit(
     pool: &PgPool,
@@ -127,6 +155,7 @@ async fn submit(
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
         .header(header::COOKIE, cookie)
+        .header("x-csrf-token", csrf_of(pool, cookie).await)
         .header("hx-request", "true")
         .body(Body::from(body))
         .expect("request builds");
@@ -146,6 +175,7 @@ async fn send_json(pool: &PgPool, method: &str, uri: &str, cookie: &str, body: &
         .uri(uri)
         .header(header::CONTENT_TYPE, "application/json")
         .header(header::COOKIE, cookie)
+        .header("x-csrf-token", csrf_of(pool, cookie).await)
         .body(Body::from(body.to_owned()))
         .expect("request builds");
 
@@ -169,7 +199,8 @@ async fn post(
         .method("POST")
         .uri(uri)
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::COOKIE, cookie);
+        .header(header::COOKIE, cookie)
+        .header("x-csrf-token", csrf_of(pool, cookie).await);
     if content_type == "application/x-www-form-urlencoded" {
         request = request.header("hx-request", "true");
     }
@@ -558,6 +589,7 @@ async fn the_publication_form_is_accepted(pool: PgPool) {
                 .uri(format!("/users/{USERNAME}/publications"))
                 .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
                 .header(header::COOKIE, cookie.as_str())
+                .header("x-csrf-token", csrf_of(&pool, &cookie).await)
                 .header("hx-request", "true")
                 .body(Body::from("doi=10.1000%2Fxyz123&visibility=public"))
                 .expect("request builds"),

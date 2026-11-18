@@ -19,6 +19,7 @@
  */
 
 import { createSignal, createEffect, onCleanup, Show, type JSX } from "solid-js";
+import { withCsrf } from "../csrf";
 
 // ..... i18n .....
 
@@ -117,7 +118,6 @@ export default function Editor(props: EditorProps): JSX.Element {
     // schedules a new one holding that run's text. Reading the signal
     // inside the timeout would instead send whatever the editor holds
     // 500 ms later, which is the behaviour this pattern exists to avoid.
-    // eslint-disable-next-line solid/reactivity
     const text = source();
     clearTimeout(timer);
 
@@ -141,7 +141,7 @@ export default function Editor(props: EditorProps): JSX.Element {
 
       void fetch("/api/v1/preview", {
         method: "POST",
-        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        headers: withCsrf({ "Content-Type": "application/x-www-form-urlencoded" }),
         body,
         signal: controller.signal,
         credentials: "same-origin",

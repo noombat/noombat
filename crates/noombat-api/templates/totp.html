@@ -51,6 +51,7 @@
               hx-target="#totp-enrolment"
               hx-swap="innerHTML"
               class="space-y-4">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
             <div>
                 <label for="totp-code" class="block text-sm mb-1">
                     {{ i18n.t("auth_totp_verify_label") }}
@@ -66,6 +67,16 @@
             </button>
         </form>
         </div>
+        {% else %}
+        <!-- The secret is made by this post, not by loading the page, so a
+             link from elsewhere cannot replace one being scanned. -->
+        <form method="post" action="/auth/totp">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
+            <button type="submit"
+                    class="w-full bg-bg-brand text-text-on-brand rounded px-4 py-2 hover:opacity-90">
+                {{ i18n.t("auth_totp_start") }}
+            </button>
+        </form>
         {% endif %}
 
         {% endif %}

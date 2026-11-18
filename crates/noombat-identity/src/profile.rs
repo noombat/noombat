@@ -1121,7 +1121,6 @@ async fn render_optional_markdown(
     }
 }
 
-/// Build an ActivityPub object for an experience entry.
 /// Build the wire form of an experience.
 ///
 /// `noombat:organizationConfirmed` is this instance asserting that the
@@ -1130,7 +1129,10 @@ async fn render_optional_markdown(
 /// emitted as `false` rather than omitted when absent, so that a consumer
 /// distinguishes an unconfirmed claim from an older document that predates
 /// the field.
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "each argument is one field of the experience's wire form"
+)]
 fn build_work_experience_ap_object(
     id: &Uuid,
     title: &str,

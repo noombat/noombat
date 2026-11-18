@@ -126,7 +126,8 @@ async fn press(pool: &PgPool, session: &str, uri: String) -> StatusCode {
     let request = Request::builder()
         .method("POST")
         .uri(uri)
-        .header("cookie", format!("noombat_session={session}"))
+        .header("cookie", format!("__Host-noombat_session={session}"))
+        .header("x-csrf-token", csrf_of(pool, session).await)
         .header("hx-request", "true")
         .header("content-type", "application/x-www-form-urlencoded")
         .body(Body::empty())
@@ -139,6 +140,34 @@ async fn press(pool: &PgPool, session: &str, uri: String) -> StatusCode {
         .status()
 }
 
+/// The CSRF token of the session a cookie names, masked as that session's
+/// pages carry it: a write the cookie authenticates must send it.
+async fn csrf_of(pool: &PgPool, cookie: &str) -> String {
+    let token = cookie
+        .strip_prefix("__Host-noombat_session=")
+        .unwrap_or(cookie);
+    let config = noombat_identity::session::SessionConfig {
+        jwt_secret: JWT_SECRET.to_owned(),
+        domain: DOMAIN.to_owned(),
+        access_ttl_secs: 900,
+        refresh_ttl_secs: 2_592_000,
+    };
+    let claims = noombat_identity::session::verify_access_token(token, &config)
+        .expect("the session's access token verifies");
+    let session = Uuid::parse_str(
+        claims
+            .sid
+            .as_deref()
+            .expect("the access token names its session"),
+    )
+    .expect("a session id");
+    let token = noombat_identity::session::csrf_token(pool, session)
+        .await
+        .expect("sessions readable")
+        .expect("the session has a CSRF token");
+    noombat_identity::session::mask_csrf_token(&token).expect("the token masks")
+}
+
 /// Bob's follow-requests page, which must offer the request `id` with the
 /// buttons whose requests the tests then send.
 async fn follow_requests_page(pool: &PgPool, session: &str, id: Uuid) {
@@ -146,7 +175,7 @@ async fn follow_requests_page(pool: &PgPool, session: &str, id: Uuid) {
         .oneshot(
             Request::builder()
                 .uri("/settings/follow-requests")
-                .header("cookie", format!("noombat_session={session}"))
+                .header("cookie", format!("__Host-noombat_session={session}"))
                 .body(Body::empty())
                 .expect("page request"),
         )

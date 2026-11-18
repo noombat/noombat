@@ -15,6 +15,7 @@ use axum::response::IntoResponse;
 use axum::routing::get;
 use serde::Deserialize;
 
+use crate::csrf::CsrfToken;
 use crate::i18n::I18n;
 use crate::middleware::Viewer;
 use crate::state::AppState;
@@ -58,6 +59,7 @@ async fn feed_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> impl IntoResponse {
     let viewer = viewer.as_ref().map(|p| p.username.clone());
@@ -67,6 +69,7 @@ async fn feed_page(
         i18n,
         theme,
         contrast,
+        csrf,
     }
 }
 
@@ -337,6 +340,7 @@ struct FeedPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     feed_url: String,
 }
 

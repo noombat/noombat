@@ -96,10 +96,10 @@ pub async fn authentication(
     // across it. `axum::body::Body` is not `Sync`, so a `&Request<Body>`
     // held across an await makes this future non-`Send` and the layer
     // stops satisfying `Service`.
-    let token = bearer_or_cookie_token(&request).map(str::to_owned);
+    let token = bearer_or_cookie_token(&request).map(|(token, cookie)| (token.to_owned(), cookie));
 
-    if let Some(token) = token
-        && let Some(viewer) = resolve_viewer(&state, &token).await
+    if let Some((token, from_cookie)) = token
+        && let Some((viewer, session_id)) = resolve_viewer(&state, &token).await
     {
         // Reads go on while the token lasts, so the pages telling the
         // member why still render.
@@ -109,6 +109,11 @@ pub async fn authentication(
                 .into_response();
         }
         debug!(username = %viewer.username, "viewer resolved");
+        if from_cookie {
+            request
+                .extensions_mut()
+                .insert(crate::csrf::CookieSession { session_id });
+        }
         request.extensions_mut().insert(viewer);
     }
 
@@ -120,7 +125,7 @@ pub async fn authentication(
 /// logging out act by credentials in the request, never the session's,
 /// and signing in and refreshing check the account's status themselves;
 /// the theme and contrast controls set a cookie and act on no account.
-fn acts_as_viewer(request: &Request<Body>) -> bool {
+pub(crate) fn acts_as_viewer(request: &Request<Body>) -> bool {
     let exempt = [
         "/api/v1/auth/login",
         "/api/v1/auth/register",
@@ -146,19 +151,20 @@ fn administers(request: &Request<Body>) -> bool {
 
 // ..... Viewer resolution .....
 
-/// The session token a request carries, if any.
+/// The session token a request carries, if any, and whether it came from
+/// the cookie.
 ///
 /// Resolution order:
 /// 1. `Authorization: Bearer <jwt>` header (API clients, HTMX with
 ///    injected headers).
-/// 2. `noombat_session=<jwt>` cookie (server-rendered page loads,
-///    HTMX partial requests; cookies are sent automatically by the
-///    browser).
+/// 2. The session cookie (server-rendered page loads, HTMX partial
+///    requests; cookies are sent automatically by the browser), when
+///    exactly one is sent.
 ///
 /// A request that carries neither is anonymous. There is deliberately
 /// no third way in: an instance-wide token that named its account from
 /// the request path would let one secret act as every user.
-fn bearer_or_cookie_token(request: &Request<Body>) -> Option<&str> {
+fn bearer_or_cookie_token(request: &Request<Body>) -> Option<(&str, bool)> {
     // 1. Try Authorisation header.
     let token_from_header = request
         .headers()
@@ -166,26 +172,35 @@ fn bearer_or_cookie_token(request: &Request<Body>) -> Option<&str> {
         .and_then(|v| v.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "));
 
-    // 2. Try session cookie.
-    let token_from_cookie = request
+    // 2. Try session cookie, read from every `Cookie` header, as HTTP/2
+    // may send each cookie in one of its own. Two sessions are refused
+    // rather than one chosen: taking the first would let the order the
+    // browser sends them in, which a cookie set elsewhere can arrange,
+    // decide which session a page runs on.
+    let name = format!("{}=", crate::cookie::COOKIE_NAME);
+    let mut sessions = request
         .headers()
-        .get(COOKIE)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|cookies| {
-            cookies.split(';').find_map(|c| {
-                let c = c.trim();
-                c.strip_prefix("noombat_session=")
-            })
-        });
+        .get_all(COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|cookies| cookies.split(';'))
+        .filter_map(|c| c.trim().strip_prefix(name.as_str()));
+    let token_from_cookie = match (sessions.next(), sessions.next()) {
+        (Some(token), None) => Some(token),
+        _ => None,
+    };
 
-    token_from_header.or(token_from_cookie)
+    token_from_header
+        .map(|token| (token, false))
+        .or(token_from_cookie.map(|token| (token, true)))
 }
 
-/// Turn a session token into the viewer it names.
+/// Turn a session token into the viewer it names, and the session it was
+/// issued with when it names one.
 ///
 /// A valid token whose actor no longer exists resolves to nothing, so a
 /// session outlives its account by one request at most.
-async fn resolve_viewer(state: &AppState, token: &str) -> Option<Viewer> {
+async fn resolve_viewer(state: &AppState, token: &str) -> Option<(Viewer, Option<uuid::Uuid>)> {
     // A JWT session token is the only thing that identifies a caller.
     let session_config = state.session_config.as_ref()?;
     let claims = noombat_identity::session::verify_access_token(token, session_config).ok()?;
@@ -207,12 +222,19 @@ async fn resolve_viewer(state: &AppState, token: &str) -> Option<Viewer> {
     .await
     .ok()??;
 
-    Some(Viewer {
-        actor_id,
-        username: claims.username,
-        instance_role,
-        actor_status,
-    })
+    let session_id = claims
+        .sid
+        .as_deref()
+        .and_then(|sid| uuid::Uuid::parse_str(sid).ok());
+    Some((
+        Viewer {
+            actor_id,
+            username: claims.username,
+            instance_role,
+            actor_status,
+        },
+        session_id,
+    ))
 }
 
 // ..... Response security headers .....

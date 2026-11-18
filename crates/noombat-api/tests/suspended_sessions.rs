@@ -503,7 +503,7 @@ async fn a_suspended_token_neither_deletes_nor_administers_nor_links(pool: PgPoo
         StatusCode::FORBIDDEN
     );
     assert_eq!(
-        send(&pool, "GET", "/api/v1/auth/orcid/link", bearer, "").await,
+        send(&pool, "POST", "/api/v1/auth/orcid/link", bearer, "").await,
         StatusCode::FORBIDDEN
     );
 }

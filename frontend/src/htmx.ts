@@ -21,6 +21,17 @@
 // `display` rather than htmx's `opacity`/`visibility`, so they are not a
 // copy of upstream and need no synchronisation with it.
 import "htmx.org";
+import { addCsrfHeader, showRefusal, type HtmxRequestDetail } from "./csrf";
+
+// Every htmx write carries the session's CSRF token as a header.
+document.addEventListener("htmx:configRequest", (event) => {
+  addCsrfHeader((event as CustomEvent<HtmxRequestDetail>).detail);
+});
+
+// A refused write says so on the page.
+document.addEventListener("htmx:responseError", (event) => {
+  showRefusal((event as CustomEvent<{ xhr: XMLHttpRequest }>).detail.xhr);
+});
 
 /*
  * Delegated disclosure toggles.

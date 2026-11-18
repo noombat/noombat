@@ -39,6 +39,7 @@ zip = { workspace = true }
 ammonia = { workspace = true }
 governor = { workspace = true }
 hmac = { workspace = true }
+subtle = { workspace = true }
 
 image = { workspace = true }
 blurhash = { workspace = true }

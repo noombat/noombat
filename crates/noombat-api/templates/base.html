@@ -32,6 +32,12 @@
       page. This list replaces htmx's whole default, not only its 204 entry.
     -->
     <meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+    <!-- The session's CSRF token, which htmx.js and the front end's
+         writes send as the X-CSRF-Token header. A write the session
+         cookie authenticates is refused without it. -->
+    {% if let Some(token) = csrf.value() %}
+    <meta name="csrf-token" content="{{ token }}">
+    {% endif %}
     <title>{% block title %}Noombat{% endblock %}</title>
     {% block head %}{% endblock %}
     <link rel="stylesheet" href="/assets/main.css">

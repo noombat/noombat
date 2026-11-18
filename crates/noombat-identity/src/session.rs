@@ -34,6 +34,12 @@ pub struct AccessClaims {
     pub iat: i64,
     /// Expiration (Unix timestamp).
     pub exp: i64,
+    /// The `sessions` row this token was issued with, which ties a write
+    /// authenticated by the session cookie to that session's CSRF token.
+    /// Optional when read: a token without one still verifies, and is
+    /// refused only for those writes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sid: Option<String>,
 }
 
 /// The result of a successful authentication: an access/refresh token
@@ -45,6 +51,10 @@ pub struct SessionTokens {
     pub expires_in: i64,
     pub actor_id: Uuid,
     pub username: String,
+    /// The session's CSRF token, which pages carry masked; never sent in
+    /// the sign-in answer.
+    #[serde(skip)]
+    pub csrf_token: String,
 }
 
 /// Configuration for session token lifetimes.
@@ -104,9 +114,11 @@ pub struct SessionContext<'a> {
     pub ip_addr: Option<&'a str>,
     /// Whether this is a fresh sign-in or a rotation of an existing one.
     pub origin: SessionOrigin,
+    /// The CSRF token a rotation carries over; a sign-in makes a new one.
+    pub csrf_token: Option<&'a str>,
 }
 
-impl SessionContext<'_> {
+impl<'a> SessionContext<'a> {
     /// A fresh sign-in, with no client details recorded.
     ///
     /// Every caller currently passes `None` for both `user_agent` and
@@ -118,15 +130,18 @@ impl SessionContext<'_> {
             user_agent: None,
             ip_addr: None,
             origin: SessionOrigin::SignIn,
+            csrf_token: None,
         }
     }
 
-    /// A refresh-token rotation, with no client details recorded.
-    pub fn refresh() -> Self {
+    /// A refresh-token rotation, with no client details recorded, keeping
+    /// the rotated session's CSRF token.
+    pub fn refresh(csrf_token: &'a str) -> Self {
         Self {
             user_agent: None,
             ip_addr: None,
             origin: SessionOrigin::Refresh,
+            csrf_token: Some(csrf_token),
         }
     }
 }
@@ -150,6 +165,8 @@ pub async fn create_session(
         InstanceRole::Admin => "admin",
     };
 
+    // The row's id is made here so the access token can name it.
+    let session_id = Uuid::new_v4();
     let claims = AccessClaims {
         sub: actor_id.to_string(),
         username: username.to_owned(),
@@ -157,25 +174,26 @@ pub async fn create_session(
         aud: config.domain.clone(),
         iat: now.timestamp(),
         exp: access_exp.timestamp(),
+        sid: Some(session_id.to_string()),
     };
 
-    let key = EncodingKey::from_secret(config.jwt_secret.as_bytes())
-        .map_err(|e| NoombatError::Internal(format!("JWT signing key unusable: {e}")))?;
-    let access_token = encode(&Header::default(), &claims, &key)
-        .map_err(|e| NoombatError::Internal(format!("JWT encoding failed: {e}")))?;
+    let access_token = encode_access_token(&claims, config)?;
 
-    let refresh_token = generate_refresh_token();
+    let refresh_token = random_token();
+    let csrf_token = context.csrf_token.map_or_else(random_token, str::to_owned);
 
     sqlx::query(
         r#"INSERT INTO sessions
-               (actor_id, refresh_token, user_agent, ip_addr, expires_at)
-           VALUES ($1, $2, $3, $4, $5)"#,
+               (id, actor_id, refresh_token, user_agent, ip_addr, expires_at, csrf_token)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)"#,
     )
+    .bind(session_id)
     .bind(actor_id)
     .bind(&refresh_token)
     .bind(context.user_agent)
     .bind(context.ip_addr)
     .bind(refresh_exp)
+    .bind(&csrf_token)
     .execute(pool)
     .await?;
 
@@ -192,7 +210,30 @@ pub async fn create_session(
         expires_in: config.access_ttl_secs,
         actor_id,
         username: username.to_owned(),
+        csrf_token,
     })
+}
+
+/// The CSRF token of the session an access token names, while that session
+/// stands: a refresh replaces the cookie with one naming the new session,
+/// which carries the same token, so only a session ended by logout or a
+/// revocation still names this row, and its writes are refused.
+pub async fn csrf_token(pool: &PgPool, session_id: Uuid) -> Result<Option<String>> {
+    Ok(
+        sqlx::query_scalar("SELECT csrf_token FROM sessions WHERE id = $1 AND revoked_at IS NULL")
+            .bind(session_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+/// Sign `claims` as this instance signs its access tokens: the reverse of
+/// [`verify_access_token`].
+pub fn encode_access_token(claims: &AccessClaims, config: &SessionConfig) -> Result<String> {
+    let key = EncodingKey::from_secret(config.jwt_secret.as_bytes())
+        .map_err(|e| NoombatError::Internal(format!("JWT signing key unusable: {e}")))?;
+    encode(&Header::default(), claims, &key)
+        .map_err(|e| NoombatError::Internal(format!("JWT encoding failed: {e}")))
 }
 
 /// Decode and validate an access token, returning the claims.
@@ -224,8 +265,8 @@ pub async fn refresh_session(
 ) -> Result<SessionTokens> {
     // Find the session and verify it is not revoked or expired, and that
     // its account may still sign in, as login requires.
-    let row = sqlx::query_as::<_, (Uuid, Uuid, String, InstanceRole)>(
-        r#"SELECT s.id, s.actor_id, a.username, a.instance_role
+    let row = sqlx::query_as::<_, (Uuid, Uuid, String, InstanceRole, String)>(
+        r#"SELECT s.id, s.actor_id, a.username, a.instance_role, s.csrf_token
            FROM sessions s
            JOIN actors a ON a.id = s.actor_id
            WHERE s.refresh_token = $1
@@ -238,7 +279,7 @@ pub async fn refresh_session(
     .await?
     .ok_or(NoombatError::Forbidden)?;
 
-    let (session_id, actor_id, username, role) = row;
+    let (session_id, actor_id, username, role, csrf_token) = row;
 
     // Revoke the old refresh token (rotation), once: a second use of it
     // finds it revoked and mints nothing.
@@ -257,7 +298,7 @@ pub async fn refresh_session(
         actor_id,
         &username,
         role,
-        SessionContext::refresh(),
+        SessionContext::refresh(&csrf_token),
     )
     .await?;
     keep_only_if_admitted(pool, actor_id, tokens).await
@@ -287,18 +328,83 @@ pub async fn revoke_session(pool: &PgPool, refresh_token: &str) -> Result<()> {
     Ok(())
 }
 
-/// Generate a cryptographically random opaque refresh token.
-fn generate_refresh_token() -> String {
+/// The bytes in a random token, and in a CSRF token's pad.
+const TOKEN_BYTES: usize = 32;
+
+/// A cryptographically random opaque token: 32 bytes, base64url.
+fn random_token() -> String {
     use base64::Engine as _;
     use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-    let mut buf = [0u8; 32];
+    let mut buf = [0u8; TOKEN_BYTES];
     rand::fill(&mut buf);
     URL_SAFE_NO_PAD.encode(buf)
+}
+
+/// A session's CSRF token as a page carries it: a fresh random pad, then
+/// the token XORed with it, base64url. No two pages hold the same text, so
+/// compressing a page beside text a requester chose cannot give it away.
+pub fn mask_csrf_token(token: &str) -> Option<String> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let token = URL_SAFE_NO_PAD.decode(token).ok()?;
+    if token.len() != TOKEN_BYTES {
+        return None;
+    }
+    let mut masked = vec![0u8; TOKEN_BYTES];
+    rand::fill(&mut masked[..]);
+    let hidden: Vec<u8> = masked.iter().zip(&token).map(|(pad, b)| pad ^ b).collect();
+    masked.extend(hidden);
+    Some(URL_SAFE_NO_PAD.encode(masked))
+}
+
+/// The token a page's masked copy stands for. Only a masked copy is
+/// accepted: no page serves the bare token.
+pub fn unmask_csrf_token(masked: &str) -> Option<String> {
+    use base64::Engine as _;
+    use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+    let masked = URL_SAFE_NO_PAD.decode(masked).ok()?;
+    if masked.len() != 2 * TOKEN_BYTES {
+        return None;
+    }
+    let (pad, hidden) = masked.split_at(TOKEN_BYTES);
+    let token: Vec<u8> = pad.iter().zip(hidden).map(|(pad, b)| pad ^ b).collect();
+    Some(URL_SAFE_NO_PAD.encode(token))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_masked_token_stands_for_the_token_and_differs_each_time() {
+        let token = random_token();
+        let first = mask_csrf_token(&token).expect("a token masks");
+        let second = mask_csrf_token(&token).expect("a token masks");
+        assert_ne!(first, second, "two masks of one token must differ");
+        assert_eq!(unmask_csrf_token(&first).as_deref(), Some(token.as_str()));
+        assert_eq!(unmask_csrf_token(&second).as_deref(), Some(token.as_str()));
+    }
+
+    #[test]
+    fn only_a_masked_token_unmasks() {
+        let token = random_token();
+        let masked = mask_csrf_token(&token).expect("a token masks");
+        assert_eq!(unmask_csrf_token(&token), None, "the bare token");
+        assert_eq!(unmask_csrf_token("not base64url!"), None, "not base64url");
+        assert_eq!(unmask_csrf_token(&masked[1..]), None, "a truncated mask");
+        let overlong = format!("{masked}AAAA");
+        assert_eq!(unmask_csrf_token(&overlong), None, "an overlong mask");
+        assert_eq!(
+            unmask_csrf_token(&format!("{masked}==")),
+            None,
+            "a padded mask"
+        );
+    }
+
+    #[test]
+    fn only_a_token_of_the_right_length_masks() {
+        assert_eq!(mask_csrf_token("AAAA"), None);
+    }
 
     fn test_config() -> SessionConfig {
         SessionConfig {
@@ -320,6 +426,7 @@ mod tests {
             aud: "test.noombat.social".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
+            sid: None,
         };
 
         let token = encode(
@@ -347,6 +454,7 @@ mod tests {
             aud: "test.noombat.social".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
+            sid: None,
         };
         let token = encode(
             &Header::default(),
@@ -376,6 +484,7 @@ mod tests {
             aud: "test.noombat.social".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
+            sid: None,
         };
 
         let token = encode(
@@ -400,6 +509,7 @@ mod tests {
             aud: "other-instance.example".to_owned(),
             iat: now.timestamp(),
             exp: (now + TimeDelta::seconds(60)).timestamp(),
+            sid: None,
         };
 
         let token = encode(
@@ -417,7 +527,7 @@ mod tests {
 
     #[test]
     fn refresh_token_is_url_safe() {
-        let token = generate_refresh_token();
+        let token = random_token();
         assert!(
             token
                 .chars()

@@ -15,6 +15,7 @@ use crate::error::ApiError;
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{get, post};
 
+use crate::csrf::CsrfToken;
 use crate::i18n::I18n;
 use crate::middleware::Viewer;
 use crate::state::AppState;
@@ -256,6 +257,7 @@ struct LoginPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     error: Option<String>,
     orcid_enabled: bool,
     /// Gates the copy on the login page, never the controls. The OAuth
@@ -270,6 +272,7 @@ struct RegisterPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     error: Option<String>,
     open_registrations: bool,
 }
@@ -280,6 +283,7 @@ struct TotpPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     totp_enabled: bool,
     qr_data_uri: Option<String>,
@@ -292,6 +296,7 @@ struct ChatPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     ws_url: String,
     chatmail_addr: String,
@@ -315,6 +320,7 @@ struct UpgradePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
 }
 
@@ -324,6 +330,7 @@ struct ChatCredentialsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     chatmail_addr: String,
@@ -337,6 +344,7 @@ struct SettingsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
 }
 
@@ -346,6 +354,7 @@ struct EditProfilePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     display_name: String,
@@ -365,6 +374,7 @@ struct EditWorkExperiencePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     title: String,
@@ -381,6 +391,7 @@ struct EditEducationEntryPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     institution: String,
@@ -426,6 +437,7 @@ struct EditSkillsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     skills: Vec<SkillEntry>,
@@ -437,6 +449,7 @@ struct EditScholarlyArticlePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
 }
@@ -482,6 +495,7 @@ struct EditLinksPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     domain: String,
@@ -494,6 +508,7 @@ struct EditJobPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     /// Where the form posts. A new posting goes to `/settings/jobs`, an
     /// existing one to `/settings/jobs/{id}`, and the template does not
@@ -510,11 +525,18 @@ struct EditJobPage {
 
 impl EditJobPage {
     /// An empty form for a posting that does not exist yet.
-    fn blank(i18n: I18n, theme: Theme, contrast: Contrast, username: String) -> Self {
+    fn blank(
+        i18n: I18n,
+        theme: Theme,
+        contrast: Contrast,
+        csrf: CsrfToken,
+        username: String,
+    ) -> Self {
         Self {
             i18n,
             theme,
             contrast,
+            csrf,
             nav_username: username,
             form_action: "/settings/jobs".to_owned(),
             title: String::new(),
@@ -534,6 +556,7 @@ struct ComposePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
 }
@@ -554,6 +577,7 @@ struct SearchPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     query: String,
     index: String,
     /// The declaration the seeker filtered on, so the control comes back
@@ -575,6 +599,7 @@ struct FollowRequestsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     requests: Vec<FollowRequestEntry>,
@@ -604,6 +629,7 @@ struct BlockedMutedPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     blocked: Vec<BlockEntry>,
@@ -625,6 +651,7 @@ struct PrivacyPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     discoverable: bool,
     indexable: bool,
@@ -656,6 +683,7 @@ struct MigratePage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     username: String,
     aliases: Vec<AliasEntry>,
@@ -668,7 +696,7 @@ pub fn router() -> Router<AppState> {
         // Auth pages (unauthenticated).
         .route("/auth/login", get(login_page))
         .route("/auth/register", get(register_page))
-        .route("/auth/totp", get(totp_page))
+        .route("/auth/totp", get(totp_page).post(start_totp))
         .route("/auth/upgrade", get(upgrade_page))
         // Chat.
         .route("/chat", get(chat_page))
@@ -713,11 +741,13 @@ async fn login_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
 ) -> impl IntoResponse {
     LoginPage {
         i18n,
         theme,
         contrast,
+        csrf,
         error: None,
         orcid_enabled: state.orcid_config.is_some(),
         open_registrations: state.open_registrations,
@@ -729,11 +759,13 @@ async fn register_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
 ) -> impl IntoResponse {
     RegisterPage {
         i18n,
         theme,
         contrast,
+        csrf,
         error: None,
         open_registrations: state.open_registrations,
     }
@@ -744,6 +776,7 @@ async fn totp_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> impl IntoResponse {
     let mut totp_enabled = false;
@@ -761,8 +794,8 @@ async fn totp_page(
 
         if !totp_enabled {
             let uname = nav_username(&viewer);
-            if let Ok(enrolment) =
-                noombat_identity::totp::enrol_totp(&state.pool, actor_id, &uname, &state.domain)
+            if let Ok(Some(enrolment)) =
+                noombat_identity::totp::pending_totp(&state.pool, actor_id, &uname, &state.domain)
                     .await
             {
                 qr_data_uri =
@@ -776,6 +809,7 @@ async fn totp_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: nav_username(&viewer),
         totp_enabled,
         qr_data_uri,
@@ -783,11 +817,30 @@ async fn totp_page(
     }
 }
 
+/// Make a TOTP secret, then show the page, which now finds it and its QR
+/// code. An account already enrolled is sent back to the page unchanged.
+async fn start_totp(
+    State(state): State<AppState>,
+    viewer: Option<axum::Extension<Viewer>>,
+) -> Response {
+    let Some(actor_id) = actor_uuid(&viewer) else {
+        return Redirect::to("/auth/login").into_response();
+    };
+    let uname = nav_username(&viewer);
+    if let Err(error) =
+        noombat_identity::totp::enrol_totp(&state.pool, actor_id, &uname, &state.domain).await
+    {
+        tracing::debug!(%error, "TOTP enrolment not started");
+    }
+    Redirect::to("/auth/totp").into_response()
+}
+
 async fn chat_page(
     State(state): State<AppState>,
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -822,6 +875,7 @@ async fn chat_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: username.clone(),
         ws_url,
         chatmail_addr,
@@ -839,6 +893,7 @@ async fn upgrade_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     match require_auth(&viewer) {
@@ -846,6 +901,7 @@ async fn upgrade_page(
             i18n,
             theme,
             contrast,
+            csrf,
             nav_username: uname,
         }
         .into_response(),
@@ -858,6 +914,7 @@ async fn chat_credentials_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -888,6 +945,7 @@ async fn chat_credentials_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         chatmail_addr,
@@ -971,6 +1029,7 @@ async fn settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     match require_auth(&viewer) {
@@ -978,6 +1037,7 @@ async fn settings_page(
             i18n,
             theme,
             contrast,
+            csrf,
             nav_username: uname,
         }
         .into_response(),
@@ -990,6 +1050,7 @@ async fn edit_profile_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1029,6 +1090,7 @@ async fn edit_profile_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         display_name: row.0.unwrap_or_default(),
@@ -1046,6 +1108,7 @@ async fn edit_work_experience_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
@@ -1056,6 +1119,7 @@ async fn edit_work_experience_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         title: String::new(),
@@ -1073,6 +1137,7 @@ async fn edit_education_entry_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
@@ -1083,6 +1148,7 @@ async fn edit_education_entry_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         institution: String::new(),
@@ -1100,6 +1166,7 @@ async fn edit_skills_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1124,6 +1191,7 @@ async fn edit_skills_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         skills,
@@ -1136,6 +1204,7 @@ async fn edit_scholarly_article_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
@@ -1146,6 +1215,7 @@ async fn edit_scholarly_article_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -1157,6 +1227,7 @@ async fn edit_links_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1182,6 +1253,7 @@ async fn edit_links_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         domain: state.domain.clone(),
@@ -1195,13 +1267,14 @@ async fn edit_job_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
         Ok(u) => u,
         Err(r) => return r,
     };
-    EditJobPage::blank(i18n, theme, contrast, uname).into_response()
+    EditJobPage::blank(i18n, theme, contrast, csrf, uname).into_response()
 }
 
 // ..... The job write path .....
@@ -1340,6 +1413,7 @@ async fn edit_existing_job_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
@@ -1359,6 +1433,7 @@ async fn edit_existing_job_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         form_action: format!("/settings/jobs/{id}"),
         title: job.title,
@@ -1413,6 +1488,7 @@ async fn compose_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let uname = match require_auth(&viewer) {
@@ -1423,6 +1499,7 @@ async fn compose_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
     }
@@ -1434,6 +1511,7 @@ async fn privacy_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1479,7 +1557,8 @@ async fn privacy_page(
     let mut section_rows = Vec::new();
 
     let exp_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, visibility FROM work_experiences WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, title, visibility FROM work_experiences \
+         WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1495,7 +1574,8 @@ async fn privacy_page(
     }
 
     let edu_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, institution, visibility FROM education_entries WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, institution, visibility FROM education_entries \
+         WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1511,7 +1591,8 @@ async fn privacy_page(
     }
 
     let pub_rows: Vec<(uuid::Uuid, String, String)> = sqlx::query_as(
-        "SELECT id, title, visibility FROM scholarly_articles WHERE actor_id = $1 ORDER BY sort_order",
+        "SELECT id, title, visibility FROM scholarly_articles \
+         WHERE actor_id = $1 ORDER BY sort_order",
     )
     .bind(actor_id)
     .fetch_all(&state.pool)
@@ -1560,6 +1641,7 @@ async fn privacy_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         discoverable: privacy["discoverable"].as_bool().unwrap_or(true),
         indexable: privacy["indexable"].as_bool().unwrap_or(true),
@@ -1602,7 +1684,8 @@ async fn privacy_preview_partial(
     let perspective = params.perspective.unwrap_or_else(|| "public".into());
 
     let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT COALESCE(display_name, username), COALESCE(headline, ''), COALESCE(summary_html, '') FROM actors WHERE id = $1",
+        "SELECT COALESCE(display_name, username), COALESCE(headline, ''), \
+         COALESCE(summary_html, '') FROM actors WHERE id = $1",
     )
     .bind(actor_id)
     .fetch_optional(&state.pool)
@@ -1654,10 +1737,13 @@ async fn privacy_preview_partial(
     // allowlist). It is safe to interpolate without re-sanitising,
     // consistent with the profile template's `{{ summary_html|safe }}`.
     let html = format!(
-        r#"<p class="font-semibold text-lg">{display_name}</p>
+        concat!(
+            r#"<p class="font-semibold text-lg">{display_name}</p>
 {headline_html}
 <div class="text-sm leading-relaxed mt-2">{summary}</div>
-<p class="text-xs text-text-secondary mt-3">{exp_count} experience · {edu_count} education · {pub_count} publications visible</p>"#,
+<p class="text-xs text-text-secondary mt-3">{exp_count} experience · "#,
+            r#"{edu_count} education · {pub_count} publications visible</p>"#,
+        ),
         display_name = ammonia::clean(&display_name),
         headline_html = if headline.is_empty() {
             String::new()
@@ -1684,8 +1770,10 @@ struct AccountSettingsPage {
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     nav_username: String,
     deletion_pending: bool,
+    orcid_enabled: bool,
 }
 
 async fn account_settings_page(
@@ -1693,6 +1781,7 @@ async fn account_settings_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1711,8 +1800,10 @@ async fn account_settings_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname,
         deletion_pending: deletion_requested.is_some(),
+        orcid_enabled: state.orcid_config.is_some(),
     }
     .into_response()
 }
@@ -1722,6 +1813,7 @@ async fn blocked_muted_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1799,6 +1891,7 @@ async fn blocked_muted_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         blocked,
@@ -1813,6 +1906,7 @@ async fn follow_requests_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1821,8 +1915,13 @@ async fn follow_requests_page(
     let uname = nav_username(&viewer);
 
     let rows = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid)>(
-        "SELECT id, follower_id FROM follows WHERE following_id = $1 AND accepted = FALSE ORDER BY created_at DESC"
-    ).bind(actor_id).fetch_all(&state.pool).await.unwrap_or_default();
+        "SELECT id, follower_id FROM follows WHERE following_id = $1 AND accepted = FALSE \
+         ORDER BY created_at DESC",
+    )
+    .bind(actor_id)
+    .fetch_all(&state.pool)
+    .await
+    .unwrap_or_default();
 
     let mut requests = Vec::new();
     for (id, follower_id) in rows {
@@ -1846,6 +1945,7 @@ async fn follow_requests_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         requests,
@@ -1858,6 +1958,7 @@ async fn migrate_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Response {
     let Some(actor_id) = actor_uuid(&viewer) else {
@@ -1884,6 +1985,7 @@ async fn migrate_page(
         i18n,
         theme,
         contrast,
+        csrf,
         nav_username: uname.clone(),
         username: uname,
         aliases,
@@ -1896,6 +1998,7 @@ async fn search_html_page(
     i18n: I18n,
     theme: Theme,
     contrast: Contrast,
+    csrf: CsrfToken,
     axum::extract::Query(params): axum::extract::Query<SearchQueryParams>,
 ) -> impl IntoResponse {
     let query = params.q.clone().unwrap_or_default();
@@ -1981,6 +2084,7 @@ async fn search_html_page(
         i18n,
         theme,
         contrast,
+        csrf,
         query,
         index,
         org_kind: org_kind.map(|k| k.as_str()).unwrap_or_default().to_owned(),
@@ -2063,6 +2167,7 @@ mod tests {
             },
             theme,
             contrast,
+            csrf: CsrfToken::absent(),
             error: None,
             orcid_enabled: false,
             open_registrations: true,
@@ -2082,6 +2187,7 @@ mod tests {
             },
             theme: Theme::System,
             contrast: Contrast::Standard,
+            csrf: CsrfToken::absent(),
             error: None,
             orcid_enabled: false,
             open_registrations: true,
@@ -2221,6 +2327,7 @@ mod tests {
             },
             theme: Theme::System,
             contrast: Contrast::Standard,
+            csrf: CsrfToken::absent(),
             error: Some(HOSTILE.to_owned()),
             orcid_enabled: false,
             open_registrations: true,

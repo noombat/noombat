@@ -69,6 +69,7 @@
              cannot be aimed at another account. -->
         <form action="/settings/avatar" method="post" enctype="multipart/form-data"
               class="space-y-4 max-w-lg mt-8 border-t border-border-default pt-6">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
             <h2 class="text-lg font-semibold">{{ i18n.t("edit_avatar_heading") }}</h2>
 
             {% if avatar_url.is_empty() %}
@@ -116,6 +117,7 @@
            is empty, which is exactly when somebody wants to remove one. #}
         {% if !avatar_url.is_empty() %}
         <form action="/settings/avatar/remove" method="post" class="max-w-lg">
+            <input type="hidden" name="csrf_token" value="{{ csrf.value().unwrap_or_default() }}">
             <button type="submit"
                     class="text-sm text-text-secondary underline">
                 {{ i18n.t("edit_avatar_remove") }}

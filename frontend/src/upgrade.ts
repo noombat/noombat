@@ -25,6 +25,7 @@
 import { deriveBothKeys } from "./auth";
 import { provisionChat } from "./chat/provision";
 import { showFormAlert } from "./ui/alert";
+import { withCsrf } from "./csrf";
 
 /** Read a localised string from the document element, with fallback. */
 function localised(key: string, fallback: string): string {
@@ -69,7 +70,7 @@ function setupUpgradeForm(): void {
     try {
       pwResp = await fetch("/api/v1/auth/password", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: withCsrf({ "Content-Type": "application/json" }),
         body: JSON.stringify({ auth_key: authKey }),
       });
     } catch {

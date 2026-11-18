@@ -14,7 +14,7 @@
 //
 // A session token carries both fields, because the server mints it from
 // the account it has just authenticated. It is presented as a Bearer
-// header to a request context and as the `noombat_session` cookie to a
+// header to a request context and as the `__Host-noombat_session` cookie to a
 // browser. The server reads the header first and the cookie second, so
 // a group that authenticates the browser must not also set a header.
 //
@@ -28,7 +28,7 @@ import { test } from "@playwright/test";
 const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
 
 /** The cookie the server reads; see crates/noombat-api/src/cookie.rs. */
-const COOKIE_NAME = "noombat_session";
+const COOKIE_NAME = "__Host-noombat_session";
 
 /**
  * The authentication key the fixture account is registered with.
@@ -57,7 +57,8 @@ export const SESSION_ACCOUNTS = 4;
  * harmless where it can happen at all: the pool is as large as the worker
  * count this suite is configured for, and the accounts are read from, but
  * for `settings-lists.spec.ts`, which adds skills under names no other run
- * uses and removes them again. The per-worker split existed to keep
+ * uses and removes them again, and `compose-form.spec.ts`, which publishes
+ * a note under a name no other run uses. The per-worker split existed to keep
  * parallel workers from racing to create the same row, which seeding
  * removes.
  */
@@ -165,7 +166,14 @@ export async function requireSession(
 
 /** Put the session on the browser, so that page navigations carry it. */
 export async function authenticateBrowser(context: BrowserContext, token: string): Promise<void> {
-  await context.addCookies([{ name: COOKIE_NAME, value: token, url: BASE_URL }]);
+  // Secure, as the server sets it: the name's `__Host-` prefix requires it.
+  // By domain and path, since given a `url` Playwright takes `secure` from
+  // its scheme instead, and Chromium refuses the cookie.
+  const domain = new URL(BASE_URL).hostname;
+  await context.addCookies([{ name: COOKIE_NAME, value: token, domain, path: "/", secure: true }]);
+  const set = (await context.cookies()).find((cookie) => cookie.name === COOKIE_NAME);
+  if (!set) throw new Error(`the browser did not keep ${COOKIE_NAME}`);
+  if (!set.secure) throw new Error(`the browser holds ${COOKIE_NAME} without Secure`);
 }
 
 function accessToken(body: string): string {

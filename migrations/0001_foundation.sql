@@ -254,7 +254,13 @@ CREATE TABLE sessions (
     ip_addr         TEXT,
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
     expires_at      TIMESTAMPTZ NOT NULL,
-    revoked_at      TIMESTAMPTZ -- non-NULL = revoked
+    revoked_at      TIMESTAMPTZ, -- non-NULL = revoked
+    -- What a write authenticated by the session cookie must also carry:
+    -- the session's pages hold it masked, and a page elsewhere cannot
+    -- read it.
+    -- A refresh copies it to the new row, so pages open across one
+    -- keep working.
+    csrf_token      TEXT NOT NULL
 );
 
 CREATE INDEX idx_sessions_actor ON sessions (actor_id);
