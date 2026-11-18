@@ -5,14 +5,15 @@
 //
 // All variables are injected by the CV generation pipeline (cv.rs)
 // before this file is appended.
-// Do NOT declare #let bindings here: they would shadow the injected values.
+// Do NOT declare top-level #let bindings here: they would shadow the
+// injected values.
 //
 // Expected variables:
 //   name            : str
 //   title           : str          (may be "")
 //   summary         : content|none (none when absent)
 //   orcid           : str          (may be "")
-//   experiences     : array of dict(title, company, dates, description)
+//   experiences     : array of dict(title, organization, dates, description)
 //   educations      : array of dict(institution, degree, field, dates, description)
 //   skills          : array of str
 //   publications    : array of dict(formatted, doi)
@@ -60,11 +61,11 @@
   #v(2pt)
 ]
 
-// ..... WorkExperience .....
-#if work_experiences.len() > 0 [
-  == WorkExperience
+// ..... Work experience .....
+#if experiences.len() > 0 [
+  == Work experience
   #for exp in experiences [
-    *#exp.title*, #exp.company #h(1fr) #exp.dates
+    *#exp.title*, #exp.organization #h(1fr) #exp.dates
     #v(2pt)
     #if "description" in exp and exp.description != "" [
       #exp.description
@@ -73,17 +74,16 @@
   ]
 ]
 
-// ..... EducationEntry .....
-#if education_entries.len() > 0 [
-  == EducationEntry
+// ..... Education .....
+#if educations.len() > 0 [
+  == Education
   #for edu in educations [
     *#edu.institution* #h(1fr) #edu.dates
     #v(2pt)
-    #if "degree" in edu and edu.degree != "" [
-      #edu.degree
-      #if "field" in edu and edu.field != "" [
-        · #edu.field
-      ]
+    // The degree and the field of study, whichever are present, joined.
+    #let parts = (edu.at("degree", default: ""), edu.at("field", default: "")).filter(p => p != "")
+    #if parts.len() > 0 [
+      #parts.join(" · ")
       #v(2pt)
     ]
     #if "description" in edu and edu.description != "" [
@@ -100,9 +100,9 @@
   #v(6pt)
 ]
 
-// ..... ScholarlyArticles .....
-#if scholarly_articles.len() > 0 [
-  == ScholarlyArticles
+// ..... Scholarly articles .....
+#if publications.len() > 0 [
+  == Scholarly articles
   #for pub_ in publications [
     #pub_.formatted
     #if "doi" in pub_ and pub_.doi != "" [

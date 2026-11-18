@@ -901,6 +901,13 @@ struct PatchActorBody {
     summary_md: Option<String>,
 }
 
+/// A profile field as the update applies it: one left out, or sent as
+/// null, is left as it is, and one sent blank, as the page's form sends a
+/// field the member emptied, is cleared.
+fn blank_clears(field: Option<String>) -> Option<Option<String>> {
+    field.map(|text| Some(text).filter(|text| !text.trim().is_empty()))
+}
+
 async fn patch_actor(
     State(state): State<AppState>,
     Path(username): Path<String>,
@@ -910,18 +917,20 @@ async fn patch_actor(
 ) -> Result<impl IntoResponse, ApiError> {
     let actor = require_local_actor(&state.pool, &viewer, &username).await?;
 
-    // Render Markdown summary through the noombat-markup pipeline.
-    let summary_html = match body.summary_md.as_deref() {
-        Some(md) => Some(noombat_markup::render_async(md.to_owned()).await?.html),
+    let summary_md = blank_clears(body.summary_md);
+
+    let summary_html = match &summary_md {
+        Some(Some(md)) => Some(Some(noombat_markup::render_async(md.clone()).await?.html)),
+        Some(None) => Some(None),
         None => None,
     };
 
     let params = noombat_identity::repo::UpdateActor {
-        display_name: body.display_name.map(Some),
-        headline: body.headline.map(Some),
-        location: body.location.map(Some),
-        summary_md: body.summary_md.map(Some),
-        summary_html: summary_html.map(Some),
+        display_name: blank_clears(body.display_name),
+        headline: blank_clears(body.headline),
+        location: blank_clears(body.location),
+        summary_md,
+        summary_html,
         avatar_url: None,
         header_url: None,
     };
@@ -1163,7 +1172,15 @@ async fn create_alias(
     // The alias as an HTML list item, which the migrate page's form
     // appends.
     let html = format!(
-        r##"<li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm" id="alias-{id}"><span class="flex-1 truncate font-mono">{alias}</span><button type="button" hx-delete="/users/{username}/aliases/{id}" hx-target="#alias-{id}" hx-swap="outerHTML" class="text-text-secondary hover:text-text-danger text-xs">✕</button></li>"##,
+        concat!(
+            r##"<li class="flex items-center gap-2 border-b border-border-default pb-2 text-sm" "##,
+            r##"id="alias-{id}">"##,
+            r##"<span class="flex-1 truncate font-mono">{alias}</span>"##,
+            r##"<button type="button" hx-delete="/users/{username}/aliases/{id}" "##,
+            r##"hx-target="#alias-{id}" hx-swap="outerHTML" "##,
+            r##"class="text-text-secondary hover:text-text-danger text-xs">✕</button>"##,
+            r##"</li>"##,
+        ),
         id = id,
         alias = html_escape(&req.alias),
         // Escaped like the alias, so the fragment's safety does not rest

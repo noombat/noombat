@@ -234,6 +234,21 @@ jobs:
         env:
           NOOMBAT_REQUIRE_TYPST: "1"
         run: cargo test -p noombat-identity --lib -- --include-ignored a_slow_compile
+      # The CV render test reads the typeset PDF back with pdftotext,
+      # which the runner image may lack.
+      - name: Install pdftotext
+        run: |
+          command -v pdftotext || {
+            sudo apt-get update
+            sudo apt-get install -y --no-install-recommends poppler-utils
+          }
+          pdftotext -v
+      # Held to NOOMBAT_REQUIRE_TYPST for the reason the slow-compile
+      # step is.
+      - name: "Assert the default CV template typesets every section"
+        env:
+          NOOMBAT_REQUIRE_TYPST: "1"
+        run: cargo test -p noombat-identity --test cv_render -- --include-ignored
 
   deny:
     name: Cargo Deny

@@ -26,10 +26,10 @@ post_title_pattern: "Post by %{name}"
 
 # Profile.
 profile_title_pattern: "%{display_name} (@%{handle})"
-profile_work_experience: "WorkExperience"
-profile_education_entry: "EducationEntry"
+profile_work_experience: "Work experience"
+profile_education_entry: "Education"
 profile_skills: "Skills"
-profile_publications: "ScholarlyArticles"
+profile_publications: "Scholarly articles"
 profile_links: "Links"
 profile_present: "present"
 profile_verified: "Verified"
@@ -158,7 +158,7 @@ vis_private: "Private"
 vis_unlisted: "Unlisted"
 vis_connections: "Connections only"
 
-# WorkExperience.
+# Work experience.
 edit_work_experience_title: "Add experience"
 exp_title: "Title"
 exp_organization: "Organisation"
@@ -166,7 +166,7 @@ exp_start_date: "Start date"
 exp_end_date: "End date"
 exp_description: "Description"
 
-# EducationEntry.
+# Education.
 edit_education_entry_title: "Add education"
 edu_institution: "Institution"
 edu_degree: "Degree"
@@ -178,7 +178,7 @@ skill_placeholder: "Add a skill"
 skill_add: "Add"
 skill_remove: "Remove"
 
-# ScholarlyArticles.
+# Scholarly articles.
 edit_pub_title: "Add publication"
 pub_doi: "DOI"
 pub_doi_help: "Enter a DOI and the metadata will be imported automatically."

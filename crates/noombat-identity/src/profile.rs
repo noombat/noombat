@@ -50,6 +50,7 @@ pub struct NewWorkExperience {
     pub start_date: NaiveDate,
     #[serde(default, deserialize_with = "empty_date_as_none")]
     pub end_date: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "blank_text_as_none")]
     pub description_md: Option<String>,
     pub sort_order: Option<i16>,
     pub visibility: Option<String>,
@@ -65,6 +66,35 @@ where
     match Option::<String>::deserialize(deserializer)?.as_deref() {
         None | Some("") => Ok(None),
         Some(date) => date.parse().map(Some).map_err(serde::de::Error::custom),
+    }
+}
+
+/// Blank text is no text. A page's form sends a field left blank with an
+/// empty value, which would otherwise be stored and shown as an empty part
+/// of the entry.
+fn blank_text_as_none<'de, D>(deserializer: D) -> std::result::Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(Option::<String>::deserialize(deserializer)?.filter(|text| !text.trim().is_empty()))
+}
+
+/// An update's optional field: left out or null, the stored value is
+/// kept; blank, it is cleared; anything else replaces it, read as the
+/// field's type.
+fn blank_clears<'de, D, T>(deserializer: D) -> std::result::Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    match Option::<String>::deserialize(deserializer)? {
+        None => Ok(None),
+        Some(text) if text.trim().is_empty() => Ok(Some(None)),
+        Some(text) => text
+            .parse()
+            .map(|value| Some(Some(value)))
+            .map_err(serde::de::Error::custom),
     }
 }
 
@@ -199,15 +229,19 @@ pub async fn delete_work_experience(pool: &PgPool, actor_id: Uuid, id: Uuid) -> 
 
 /// Parameters for updating an existing experience entry.
 ///
-/// All fields are optional; only supplied fields are modified.
+/// All fields are optional; only supplied fields are modified. An optional
+/// one sent blank is cleared: outer `None` leaves it alone, inner `None`
+/// clears it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateWorkExperience {
     pub title: Option<String>,
     pub organization: Option<String>,
-    /// Outer `None` leaves the reference alone; inner `None` clears it.
+    #[serde(default, deserialize_with = "blank_clears")]
     pub organization_id: Option<Option<Uuid>>,
     pub start_date: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub end_date: Option<Option<NaiveDate>>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub description_md: Option<Option<String>>,
     pub sort_order: Option<i16>,
     pub visibility: Option<String>,
@@ -468,11 +502,14 @@ pub struct EducationEntry {
 #[derive(Debug, Clone, Deserialize)]
 pub struct NewEducationEntry {
     pub institution: String,
+    #[serde(default, deserialize_with = "blank_text_as_none")]
     pub degree: Option<String>,
+    #[serde(default, deserialize_with = "blank_text_as_none")]
     pub field_of_study: Option<String>,
     pub start_date: NaiveDate,
     #[serde(default, deserialize_with = "empty_date_as_none")]
     pub end_date: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "blank_text_as_none")]
     pub description_md: Option<String>,
     pub sort_order: Option<i16>,
     pub visibility: Option<String>,
@@ -566,13 +603,20 @@ pub async fn delete_education_entry(pool: &PgPool, actor_id: Uuid, id: Uuid) -> 
 }
 
 /// Parameters for updating an existing education entry.
+///
+/// Only supplied fields are modified. An optional one sent blank is
+/// cleared: outer `None` leaves it alone, inner `None` clears it.
 #[derive(Debug, Clone, Deserialize)]
 pub struct UpdateEducationEntry {
     pub institution: Option<String>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub degree: Option<Option<String>>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub field_of_study: Option<Option<String>>,
     pub start_date: Option<NaiveDate>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub end_date: Option<Option<NaiveDate>>,
+    #[serde(default, deserialize_with = "blank_clears")]
     pub description_md: Option<Option<String>>,
     pub sort_order: Option<i16>,
     pub visibility: Option<String>,

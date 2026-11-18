@@ -138,6 +138,24 @@ async fn submit(
         .status()
 }
 
+/// A JSON request through the assembled router, as an API client sends it
+/// with the session cookie.
+async fn send_json(pool: &PgPool, method: &str, uri: &str, cookie: &str, body: &str) -> StatusCode {
+    let request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header(header::CONTENT_TYPE, "application/json")
+        .header(header::COOKIE, cookie)
+        .body(Body::from(body.to_owned()))
+        .expect("request builds");
+
+    build_router(test_state(pool.clone()))
+        .oneshot(request)
+        .await
+        .expect("the router is infallible")
+        .status()
+}
+
 /// A POST through the assembled router, sent as htmx sends a form when
 /// the body is one.
 async fn post(
@@ -1257,7 +1275,8 @@ async fn a_course_in_progress_with_no_end_date_reads_from_the_form() {
 fn an_api_clients_end_date_reads_from_json() {
     fn experience(end: &str) -> Option<String> {
         let json = format!(
-            r#"{{"title":"Research engineer","organization":"Example Labs","start_date":"2023-01-09"{end}}}"#
+            r#"{{"title":"Research engineer","organization":"Example Labs",
+                "start_date":"2023-01-09"{end}}}"#
         );
         serde_json::from_str::<noombat_identity::profile::NewWorkExperience>(&json)
             .expect("the experience reads")
@@ -1324,6 +1343,403 @@ async fn entries_saved_with_a_blank_end_date_have_none(pool: PgPool) {
         (StatusCode::CREATED, StatusCode::CREATED, vec![None, None]),
         "both entries must be saved with no end date"
     );
+}
+
+/// Optional text left blank on the experience and education forms, or
+/// only spaces, is stored as none, and the profile shows no empty part:
+/// "PhD · 2024-10-01", not "PhD ·  · 2024-10-01", and an entry with no
+/// degree starts at its field of study.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn blank_optional_fields_of_a_section_are_saved_as_none(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+
+    let experience = submit(
+        &pool,
+        "POST",
+        &format!("/users/{USERNAME}/experiences"),
+        &cookie,
+        "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
+         &end_date=&description_md=%20%20&visibility=public",
+    )
+    .await;
+    let doctorate = submit(
+        &pool,
+        "POST",
+        &format!("/users/{USERNAME}/educations"),
+        &cookie,
+        "institution=University%20of%20Example&degree=PhD&field_of_study=\
+         &start_date=2024-10-01&end_date=&visibility=public",
+    )
+    .await;
+    let course = submit(
+        &pool,
+        "POST",
+        &format!("/users/{USERNAME}/educations"),
+        &cookie,
+        "institution=Example%20College&degree=&field_of_study=Mathematics\
+         &start_date=2019-09-01&end_date=2020-06-30&visibility=public",
+    )
+    .await;
+
+    let description: (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT description_md, description_html FROM work_experiences WHERE actor_id = $1",
+    )
+    .bind(alice)
+    .fetch_one(&pool)
+    .await
+    .expect("experience readable");
+    let education: Vec<(Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT degree, field_of_study FROM education_entries WHERE actor_id = $1 \
+         ORDER BY start_date",
+    )
+    .bind(alice)
+    .fetch_all(&pool)
+    .await
+    .expect("education entries readable");
+    assert_eq!(
+        (experience, doctorate, course, description, education),
+        (
+            StatusCode::CREATED,
+            StatusCode::CREATED,
+            StatusCode::CREATED,
+            (None, None),
+            vec![
+                (None, Some("Mathematics".to_owned())),
+                (Some("PhD".to_owned()), None)
+            ],
+        ),
+        "blank optional fields must be stored as none"
+    );
+
+    let profile = page_html(&pool, &cookie, &format!("/@{USERNAME}")).await;
+    assert!(
+        profile.contains(">PhD · 2024-10-01 - ")
+            && profile.contains(">Mathematics · 2019-09-01 - "),
+        "the profile must show no empty part of an education entry: {profile}"
+    );
+}
+
+/// An API client's blank text reads as none on the section types too, and
+/// text with something in it is kept as sent.
+#[test]
+fn an_api_clients_blank_text_reads_as_none() {
+    fn education(json: &str) -> noombat_identity::profile::NewEducationEntry {
+        serde_json::from_str(json).expect("the education entry reads")
+    }
+    let blank = education(
+        r#"{"institution":"University of Example","degree":"","field_of_study":" ",
+            "description_md":"","start_date":"2024-10-01"}"#,
+    );
+    let kept = education(
+        r#"{"institution":"University of Example","degree":"PhD","field_of_study":"Logic",
+            "description_md":" Thesis on *types*","start_date":"2024-10-01"}"#,
+    );
+    let experience: noombat_identity::profile::NewWorkExperience = serde_json::from_str(
+        r#"{"title":"Research engineer","organization":"Example Labs",
+            "description_md":"","start_date":"2023-01-09"}"#,
+    )
+    .expect("the experience reads");
+
+    assert_eq!(
+        (
+            blank.degree,
+            blank.field_of_study,
+            blank.description_md,
+            experience.description_md
+        ),
+        (None, None, None, None)
+    );
+    assert_eq!(
+        (
+            kept.degree.as_deref(),
+            kept.field_of_study.as_deref(),
+            kept.description_md.as_deref()
+        ),
+        (Some("PhD"), Some("Logic"), Some(" Thesis on *types*"))
+    );
+}
+
+/// A profile field the edit-profile form sends blank, or only spaces, is
+/// cleared, the rendered summary with its Markdown; an API client's field
+/// sent as "" is cleared too, and one it leaves out is kept.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn a_profile_field_sent_blank_is_cleared(pool: PgPool) {
+    type Profile = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    async fn fill(pool: &PgPool, id: Uuid) {
+        sqlx::query(
+            "UPDATE actors SET display_name = 'Alice', headline = 'Research engineer', \
+             location = 'Berlin', summary_md = 'Works on *types*.', \
+             summary_html = '<p>Works on <em>types</em>.</p>' WHERE id = $1",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .expect("profile fixture");
+    }
+    async fn profile(pool: &PgPool, id: Uuid) -> Profile {
+        sqlx::query_as(
+            "SELECT display_name, headline, location, summary_md, summary_html \
+             FROM actors WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .expect("profile readable")
+    }
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let uri = format!("/users/{USERNAME}");
+
+    fill(&pool, alice).await;
+    let status = submit(
+        &pool,
+        "PATCH",
+        &uri,
+        &cookie,
+        "display_name=&headline=&location=%20&summary_md=",
+    )
+    .await;
+    assert_eq!(
+        (status, profile(&pool, alice).await),
+        (StatusCode::OK, (None, None, None, None, None)),
+        "the edit-profile form must clear the fields it sends blank"
+    );
+
+    fill(&pool, alice).await;
+    let status = send_json(
+        &pool,
+        "PATCH",
+        &uri,
+        &cookie,
+        r#"{"headline":"","location":"Paris"}"#,
+    )
+    .await;
+    assert_eq!(
+        (status, profile(&pool, alice).await),
+        (
+            StatusCode::OK,
+            (
+                Some("Alice".to_owned()),
+                None,
+                Some("Paris".to_owned()),
+                Some("Works on *types*.".to_owned()),
+                Some("<p>Works on <em>types</em>.</p>".to_owned())
+            )
+        ),
+        "an API client's blank field must be cleared and the fields it leaves out kept"
+    );
+}
+
+/// An API client's update keeps a field it leaves out or sends as null,
+/// clears one it sends blank, and sets one it sends, read as its type.
+#[test]
+fn an_api_clients_update_keeps_clears_or_sets_each_field() {
+    let education: noombat_identity::profile::UpdateEducationEntry = serde_json::from_str(
+        r#"{"degree":"","field_of_study":null,"end_date":" ","description_md":"*New*"}"#,
+    )
+    .expect("the education update reads");
+    assert_eq!(
+        (
+            education.degree,
+            education.field_of_study,
+            education.end_date,
+            education.description_md
+        ),
+        (Some(None), None, Some(None), Some(Some("*New*".to_owned())))
+    );
+
+    let experience: noombat_identity::profile::UpdateWorkExperience =
+        serde_json::from_str(r#"{"organization_id":"","end_date":"2025-06-30"}"#)
+            .expect("the experience update reads");
+    assert_eq!(
+        (
+            experience.organization_id,
+            experience
+                .end_date
+                .map(|end| end.map(|date| date.to_string())),
+            experience.description_md
+        ),
+        (Some(None), Some(Some("2025-06-30".to_owned())), None)
+    );
+    assert!(
+        serde_json::from_str::<noombat_identity::profile::UpdateWorkExperience>(
+            r#"{"end_date":"June"}"#
+        )
+        .is_err(),
+        "a malformed end date must be refused, not read as blank"
+    );
+}
+
+/// Entries updated through the API: a field sent blank is cleared, the
+/// rendered description with its Markdown, one left out is kept, and the
+/// profile then shows no empty part.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn an_update_sent_blank_clears_the_field(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let created = (
+        submit(
+            &pool,
+            "POST",
+            &format!("/users/{USERNAME}/educations"),
+            &cookie,
+            "institution=University%20of%20Example&degree=PhD&field_of_study=Logic\
+             &start_date=2016-09-01&end_date=2020-06-30&visibility=public",
+        )
+        .await,
+        submit(
+            &pool,
+            "POST",
+            &format!("/users/{USERNAME}/experiences"),
+            &cookie,
+            "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
+             &end_date=&description_md=Builds%20*things*.&visibility=public",
+        )
+        .await,
+    );
+    assert_eq!(
+        created,
+        (StatusCode::CREATED, StatusCode::CREATED),
+        "the entries were not created"
+    );
+    let education: Uuid = sqlx::query_scalar("SELECT id FROM education_entries")
+        .fetch_one(&pool)
+        .await
+        .expect("education entry readable");
+    let experience: Uuid = sqlx::query_scalar("SELECT id FROM work_experiences")
+        .fetch_one(&pool)
+        .await
+        .expect("experience readable");
+
+    let updated = (
+        send_json(
+            &pool,
+            "PATCH",
+            &format!("/users/{USERNAME}/educations/{education}"),
+            &cookie,
+            r#"{"degree":"","end_date":""}"#,
+        )
+        .await,
+        send_json(
+            &pool,
+            "PATCH",
+            &format!("/users/{USERNAME}/experiences/{experience}"),
+            &cookie,
+            r#"{"description_md":""}"#,
+        )
+        .await,
+    );
+    type Saved = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let saved: Saved = sqlx::query_as(
+        "SELECT e.degree, e.field_of_study, e.end_date::text, w.description_md, w.description_html \
+         FROM education_entries e, work_experiences w",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("entries readable");
+    assert_eq!(
+        (updated, saved),
+        (
+            (StatusCode::OK, StatusCode::OK),
+            (None, Some("Logic".to_owned()), None, None, None)
+        ),
+        "a field sent blank must be cleared and one left out kept"
+    );
+
+    let profile = page_html(&pool, &cookie, &format!("/@{USERNAME}")).await;
+    assert!(
+        profile.contains(">Logic · 2016-09-01 - "),
+        "the profile must show the updated entry with no empty part: {profile}"
+    );
+}
+
+/// The English pages name the profile's sections in plain words: the
+/// settings page links to all three, and the profile heads the ones it
+/// shows with them, in both English locales.
+#[sqlx::test(migrations = "../../migrations")]
+#[ignore = "requires a database; run with --include-ignored"]
+async fn the_profile_sections_are_named_in_plain_words(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let cookie = session_cookie(&pool, alice).await;
+    let created = (
+        submit(
+            &pool,
+            "POST",
+            &format!("/users/{USERNAME}/experiences"),
+            &cookie,
+            "title=Research%20engineer&organization=Example%20Labs&start_date=2023-01-09\
+             &end_date=&description_md=&visibility=public",
+        )
+        .await,
+        submit(
+            &pool,
+            "POST",
+            &format!("/users/{USERNAME}/educations"),
+            &cookie,
+            "institution=University%20of%20Example&degree=PhD&field_of_study=Logic\
+             &start_date=2016-09-01&end_date=2020-06-30&visibility=public",
+        )
+        .await,
+    );
+    assert_eq!(
+        created,
+        (StatusCode::CREATED, StatusCode::CREATED),
+        "the entries were not created"
+    );
+
+    for locale in ["en-US", "en-AU"] {
+        let page = |uri: String| {
+            let pool = pool.clone();
+            let cookie = cookie.clone();
+            async move {
+                let response = build_router(test_state(pool))
+                    .oneshot(
+                        Request::builder()
+                            .uri(uri)
+                            .header(header::COOKIE, cookie)
+                            .header(header::ACCEPT_LANGUAGE, locale)
+                            .body(Body::empty())
+                            .expect("page request builds"),
+                    )
+                    .await
+                    .expect("the router is infallible");
+                let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+                    .await
+                    .expect("page body read");
+                String::from_utf8_lossy(&bytes).into_owned()
+            }
+        };
+        let settings = page("/settings".to_owned()).await;
+        let profile = page(format!("/@{USERNAME}")).await;
+        for label in ["Work experience", "Education", "Scholarly articles"] {
+            assert!(
+                settings.contains(&format!(">{label}</span>")),
+                "{locale}: the settings page must link to \"{label}\": {settings}"
+            );
+        }
+        for heading in ["Work experience", "Education"] {
+            assert!(
+                profile.contains(&format!(">{heading}</h2>")),
+                "{locale}: the profile must head a section \"{heading}\": {profile}"
+            );
+        }
+    }
 }
 
 // ..... Migration .....

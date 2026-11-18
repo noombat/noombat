@@ -52,6 +52,42 @@ pub async fn generate_cv_pdf(
     let publications = profile::list_scholarly_articles(pool, actor_id, max_vis).await?;
     let links = crate::verification::list_links(pool, actor_id).await?;
 
+    let cv = CvProfile {
+        name: actor.display_name.as_deref().unwrap_or(&actor.username),
+        headline: actor.headline.as_deref(),
+        summary_md: actor.summary_md.as_deref(),
+        orcid: actor.orcid.as_deref(),
+        experiences: &experiences,
+        educations: &educations,
+        skills: &skills,
+        publications: &publications,
+        links: &links,
+    };
+    typeset_cv(&cv, template_dir, template, citation_style).await
+}
+
+/// What a CV is typeset from: the profile, its sections already limited to
+/// what the CV may show.
+pub struct CvProfile<'a> {
+    pub name: &'a str,
+    pub headline: Option<&'a str>,
+    pub summary_md: Option<&'a str>,
+    pub orcid: Option<&'a str>,
+    pub experiences: &'a [profile::WorkExperience],
+    pub educations: &'a [profile::EducationEntry],
+    pub skills: &'a [profile::Skill],
+    pub publications: &'a [profile::ScholarlyArticle],
+    pub links: &'a [crate::verification::VerifiedLink],
+}
+
+/// Typeset a CV as a PDF with the template `template` from
+/// `template_dir`, from the source assembled out of `cv`.
+pub async fn typeset_cv(
+    cv: &CvProfile<'_>,
+    template_dir: &Path,
+    template: &str,
+    citation_style: &str,
+) -> Result<Vec<u8>> {
     // ..... Load template .....
     let template_path = template_dir.join(format!("{template}.typ"));
     let template_src = tokio::fs::read_to_string(&template_path)
@@ -78,11 +114,11 @@ pub async fn generate_cv_pdf(
     // shadow these values).
     src.push_str(&format!(
         "#let name = \"{}\"\n",
-        escape_typst_string(actor.display_name.as_deref().unwrap_or(&actor.username))
+        escape_typst_string(cv.name)
     ));
 
     // Professional headline (injected as Typst `title`).
-    let headline = actor.headline.as_deref().unwrap_or("");
+    let headline = cv.headline.unwrap_or("");
     src.push_str(&format!(
         "#let title = \"{}\"\n",
         escape_typst_string(headline)
@@ -91,7 +127,7 @@ pub async fn generate_cv_pdf(
     // Summary (Markdown to Typst). Inject `none` when absent so the
     // template guard `#if summary != none` works correctly (an empty
     // content block `[]` is truthy and not equal to `""` or `none`).
-    match actor.summary_md.as_deref() {
+    match cv.summary_md {
         Some(md) if !md.trim().is_empty() => {
             // Bound to the expression directly. Wrapping it in `[...]`
             // would put it back in markup context, which is the whole
@@ -105,7 +141,7 @@ pub async fn generate_cv_pdf(
     }
 
     // ORCID iD (empty string when absent).
-    match actor.orcid.as_deref() {
+    match cv.orcid {
         Some(orcid) => src.push_str(&format!(
             "#let orcid = \"{}\"\n",
             escape_typst_string(orcid)
@@ -113,9 +149,9 @@ pub async fn generate_cv_pdf(
         None => src.push_str("#let orcid = \"\"\n"),
     }
 
-    // WorkExperiences.
+    // Work experience.
     src.push_str("#let experiences = (\n");
-    for exp in &experiences {
+    for exp in cv.experiences {
         let dates = format_date_range(exp.start_date, exp.end_date);
         let desc = exp
             .description_md
@@ -130,9 +166,9 @@ pub async fn generate_cv_pdf(
     }
     src.push_str(")\n");
 
-    // EducationEntries.
+    // Education.
     src.push_str("#let educations = (\n");
-    for edu in &educations {
+    for edu in cv.educations {
         let dates = format_date_range(edu.start_date, edu.end_date);
         let desc = edu
             .description_md
@@ -142,7 +178,8 @@ pub async fn generate_cv_pdf(
         let degree = edu.degree.as_deref().unwrap_or("");
         let field = edu.field_of_study.as_deref().unwrap_or("");
         src.push_str(&format!(
-            "  (institution: \"{}\", degree: \"{}\", field: \"{}\", dates: \"{dates}\", description: {desc}),\n",
+            "  (institution: \"{}\", degree: \"{}\", field: \"{}\", \
+             dates: \"{dates}\", description: {desc}),\n",
             escape_typst_string(&edu.institution),
             escape_typst_string(degree),
             escape_typst_string(field),
@@ -152,18 +189,18 @@ pub async fn generate_cv_pdf(
 
     // Skills.
     src.push_str("#let skills = (\n");
-    for skill in &skills {
+    for skill in cv.skills {
         src.push_str(&format!("  \"{}\",\n", escape_typst_string(&skill.name)));
     }
     src.push_str(")\n");
 
-    // ScholarlyArticles (formatted per the requested citation style).
+    // Scholarly articles, formatted in the requested citation style.
     src.push_str(&format!(
         "#let citation_style = \"{}\"\n",
         escape_typst_string(citation_style)
     ));
     src.push_str("#let publications = (\n");
-    for pub_ in &publications {
+    for pub_ in cv.publications {
         let authors_str = if let Some(arr) = pub_.authors.as_array() {
             arr.iter()
                 .filter_map(|v| v.as_str())
@@ -194,7 +231,7 @@ pub async fn generate_cv_pdf(
 
     // Verified links.
     src.push_str("#let verified_links = (\n");
-    for link in &links {
+    for link in cv.links {
         if link.verified_at.is_some() {
             src.push_str(&format!("  \"{}\",\n", escape_typst_string(&link.url)));
         }
@@ -259,35 +296,42 @@ fn permits() -> &'static Semaphore {
     PERMITS.get_or_init(|| Semaphore::new(limits().max_concurrent))
 }
 
+/// How much of Typst's diagnostic is kept for the log: its head names the
+/// first error or warning and its line.
+const DIAGNOSTIC_LINES: usize = 12;
+const DIAGNOSTIC_CHARS: usize = 2000;
+
+/// The head of Typst's diagnostic, bounded in lines and in characters.
+fn diagnostic(stderr: &[u8]) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .take(DIAGNOSTIC_LINES)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .chars()
+        .take(DIAGNOSTIC_CHARS)
+        .collect()
+}
+
 /// Compile a Typst source string to PDF bytes using the `typst` CLI.
 ///
-/// Four things bound this, and the first two are the ones that matter:
+/// Bounded four ways, the first two the ones that matter:
 ///
-/// - A **permit** from a process-wide semaphore, so the number of
-///   concurrent compilations is capped no matter how many requests
-///   arrive. Waiting for one is itself bounded, because an unbounded
-///   queue is the same exhaustion one layer down.
-/// - A **timeout**, after which the child is killed. This works because
-///   Typst is a separate process: killing it genuinely reclaims the CPU,
-///   unlike an in-process interpreter, which cannot be interrupted from
-///   the outside.
-/// - `--root` pinned to the temporary directory. Typst already resolves
-///   paths relative to the input's parent and refuses `..`, so this is a
-///   guard against that default changing or against a future caller
-///   compiling somewhere less isolated, not a live hole.
-/// - Package paths pointed inside the tempdir. This does **not** stop a
-///   fetch: `@preview` still reaches `packages.typst.org` with these set,
-///   confirmed against typst 0.15. What it buys is that anything fetched
-///   lands in a directory that is deleted with the request instead of
-///   accumulating in a shared cache. The reason no fetch happens today is
-///   that user content cannot emit `#import` at all since the markup
-///   emitter switched to string literals; only an operator's own template
-///   can. Closing the network path properly needs process isolation this
-///   does not have.
+/// - A **permit** from a process-wide semaphore caps concurrent
+///   compilations, and the wait for one is bounded too.
+/// - A **timeout** kills the child; Typst being a separate process, the
+///   kill reclaims the CPU.
+/// - `--root` is pinned to the temporary directory: a guard should Typst
+///   stop refusing `..`, or a caller compile somewhere less isolated.
+/// - Package paths point inside the tempdir. That does **not** stop a
+///   fetch (`@preview` still reaches `packages.typst.org`, confirmed with
+///   typst 0.15); it keeps anything fetched out of a shared cache. None
+///   happens because user content, written as string literals, cannot
+///   emit `#import`; only an operator's template can. Closing the network
+///   path needs process isolation this does not have.
 ///
-/// `--ignore-system-fonts` needs no accompanying `--font-path`: Typst
-/// embeds Libertinus Serif, which is what the default template asks for,
-/// and a compile with the flag and no font path succeeds.
+/// `--ignore-system-fonts` needs no `--font-path`: Typst embeds
+/// Libertinus Serif, which the default template asks for.
 async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
     let limits = limits();
 
@@ -325,6 +369,11 @@ async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
         .arg(&output_path)
         .env("TYPST_PACKAGE_PATH", &package_dir)
         .env("TYPST_PACKAGE_CACHE_PATH", &package_dir)
+        // Piped, so a failure's diagnostic reaches the error below rather
+        // than the server's own stderr; `wait_with_output` captures only
+        // piped streams.
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
         .kill_on_drop(true)
         .spawn()
         .map_err(|e| {
@@ -350,11 +399,16 @@ async fn compile_typst_source(source: &str) -> Result<Vec<u8>> {
         }
     };
 
+    let diagnostic = diagnostic(&output.stderr);
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
         return Err(NoombatError::Internal(format!(
-            "typst compilation failed: {stderr}"
+            "typst compilation failed: {diagnostic}"
         )));
+    }
+    // Warnings, a missing font in an operator's template among them, are
+    // the operator's to see.
+    if !diagnostic.is_empty() {
+        warn!(%diagnostic, "Typst compiled the CV with warnings");
     }
 
     tokio::fs::read(&output_path)

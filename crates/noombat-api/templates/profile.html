@@ -103,7 +103,7 @@
             {% for edu in education_entries %}
             <article class="mb-4 border-b border-border-default pb-4">
                 <h3 class="font-semibold">{{ edu.institution }}</h3>
-                <p class="text-text-secondary text-sm">{% if let Some(degree) = edu.degree %}{{ degree }}{% endif %}{% if let Some(field) = edu.field_of_study %} · {{ field }}{% endif %} · {{ edu.start_date }}{% if let Some(end) = edu.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
+                <p class="text-text-secondary text-sm">{% if let Some(degree) = edu.degree %}{{ degree }} · {% endif %}{% if let Some(field) = edu.field_of_study %}{{ field }} · {% endif %}{{ edu.start_date }}{% if let Some(end) = edu.end_date %} - {{ end }}{% else %} - {{ i18n.t("profile_present") }}{% endif %}</p>
             </article>
             {% endfor %}
         </section>
