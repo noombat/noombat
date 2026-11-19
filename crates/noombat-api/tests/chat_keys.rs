@@ -895,7 +895,8 @@ async fn a_documents_stamp_never_goes_back(pool: PgPool) {
     let pair = bob_publishes(&pool, true).await;
     let inbox = follow_from_elsewhere(&pool, pair.bob).await;
     let ahead: chrono::DateTime<chrono::Utc> = sqlx::query_scalar(
-        "UPDATE actors SET document_updated = date_trunc('milliseconds', now()) + interval '1 hour' \
+        "UPDATE actors \
+         SET document_updated = date_trunc('milliseconds', now()) + interval '1 hour' \
          WHERE id = $1 RETURNING document_updated",
     )
     .bind(pair.bob)
@@ -1992,7 +1993,10 @@ async fn two_setups_at_once_ask_the_relay_once(pool: PgPool) {
         other => panic!("not one setup and one refusal: {other:?}"),
     };
     assert!(
-        matches!(&refused, noombat_core::error::NoombatError::Conflict(detail) if detail.contains("being set up")),
+        matches!(
+            &refused,
+            noombat_core::error::NoombatError::Conflict(detail) if detail.contains("being set up")
+        ),
         "{refused:?}"
     );
     noombat_chat::keys::store_credentials(&pool, bob, made.generation, b"credentials")
@@ -2450,7 +2454,8 @@ async fn writes_name_the_newest_setup_or_are_refused(pool: PgPool) {
 async fn resetting_a_setup_keeps_the_address_and_forgets_the_rest(pool: PgPool) {
     let pair = bob_publishes(&pool, true).await;
     sqlx::query(
-        "UPDATE actors SET chatmail_cred = '\\x01', chat_requires_reprovisioning = TRUE WHERE id = $1",
+        "UPDATE actors SET chatmail_cred = '\\x01', chat_requires_reprovisioning = TRUE \
+         WHERE id = $1",
     )
     .bind(pair.bob)
     .execute(&pool)
@@ -2464,7 +2469,8 @@ async fn resetting_a_setup_keeps_the_address_and_forgets_the_rest(pool: PgPool) 
     assert_eq!(setup.password, "rotated");
     assert_eq!(setup.generation, 1);
     let (address, blob, flagged): (Option<String>, Option<Vec<u8>>, bool) = sqlx::query_as(
-        "SELECT chatmail_addr, chatmail_cred, chat_requires_reprovisioning FROM actors WHERE id = $1",
+        "SELECT chatmail_addr, chatmail_cred, chat_requires_reprovisioning FROM actors \
+         WHERE id = $1",
     )
     .bind(pair.bob)
     .fetch_one(&pool)
