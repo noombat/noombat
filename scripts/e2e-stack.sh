@@ -208,8 +208,13 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
         'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$ARTICLE_ID',
         'article',
         'Seeded Test Article',
-        E'## Introduction\n\nThis article is seeded so the permalink has something to render.\n\n## Second section\n\nA second heading, so the table of contents holds more than one entry.',
-        '<h2 id=\"introduction\">Introduction</h2><p>This article is seeded so the permalink has something to render.</p><h2 id=\"second-section\">Second section</h2><p>A second heading, so the table of contents holds more than one entry.</p>',
+        E'## Introduction\n\nThis article is seeded so the permalink has something to render.'
+        '\n\n## Second section\n\n'
+        'A second heading, so the table of contents holds more than one entry.',
+        '<h2 id=\"introduction\">Introduction</h2>'
+        '<p>This article is seeded so the permalink has something to render.</p>'
+        '<h2 id=\"second-section\">Second section</h2>'
+        '<p>A second heading, so the table of contents holds more than one entry.</p>',
         'public',
         jsonb_build_object(
           '@context', 'https://www.w3.org/ns/activitystreams',

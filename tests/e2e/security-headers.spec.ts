@@ -243,7 +243,9 @@ async function collectViolations(page: Page): Promise<string[]> {
   await page.addInitScript(() => {
     document.addEventListener("securitypolicyviolation", (e) => {
       const event = e as SecurityPolicyViolationEvent;
-      const record = `${event.violatedDirective} blocked ${event.blockedURI || "inline"} (${event.sourceFile ?? "?"}:${event.lineNumber ?? 0})`;
+      const blocked = event.blockedURI || "inline";
+      const where = `${event.sourceFile ?? "?"}:${event.lineNumber ?? 0}`;
+      const record = `${event.violatedDirective} blocked ${blocked} (${where})`;
       (window as unknown as { __recordCspViolation?: (d: string) => void }).__recordCspViolation?.(
         record,
       );

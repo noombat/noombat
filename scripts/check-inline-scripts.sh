@@ -116,4 +116,5 @@ if [ "$FAIL" -gt 0 ]; then
 fi
 
 echo ""
-echo "Scanned $COUNT template(s) under $DIR: all compatible with script-src 'self'; style-src 'self'."
+echo "Scanned $COUNT template(s) under $DIR:" \
+    "all compatible with script-src 'self'; style-src 'self'."

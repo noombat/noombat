@@ -87,7 +87,8 @@ pub async fn build_authorise_url(
     .await?;
 
     let url = format!(
-        "{}/oauth/authorize?client_id={}&response_type=code&scope=/authenticate&redirect_uri={}&state={state}",
+        "{}/oauth/authorize?client_id={}&response_type=code&scope=/authenticate\
+         &redirect_uri={}&state={state}",
         orcid_config.base_uri,
         crate::oauth_util::urlencoding(&orcid_config.client_id),
         crate::oauth_util::urlencoding(&redirect_uri),
