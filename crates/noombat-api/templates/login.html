@@ -130,5 +130,8 @@
 {% endblock %}
 
 {% block style %}
-<script type="module" src="/assets/auth.js"></script>
+{% for href in crate::assets::stylesheets("auth") %}
+<link rel="stylesheet" href="{{ href }}">
+{% endfor %}
+<script type="module" src="{{ crate::assets::url("auth") }}"></script>
 {% endblock %}

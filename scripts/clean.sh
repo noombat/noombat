@@ -15,7 +15,7 @@ cargo clean
 
 echo "Cleaning frontend dependencies and build output..."
 rm -rf frontend/node_modules
-rm -rf frontend/dist
+rm -rf frontend/dist frontend/dist.next frontend/dist.old
 
 echo "Cleaning sqlx offline query cache..."
 rm -rf .sqlx

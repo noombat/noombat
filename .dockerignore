@@ -5,6 +5,8 @@ target/
 # frontend stage; host-side artifacts must not leak into the
 # image and shadow the production build).
 frontend/dist/
+frontend/dist.next/
+frontend/dist.old/
 frontend/node_modules/
 
 # pnpm's content-addressed store, when pnpm is pointed at the repository.

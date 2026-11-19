@@ -285,17 +285,26 @@ async fn a_matching_validator_is_answered_with_not_modified(pool: PgPool) {
         .await
         .expect("one row");
 
+    // Revalidated by a signed-in member: the answer stays as cacheable as
+    // the file, not the session's `private, no-store`.
     let response = build_router(state)
         .oneshot(
             Request::builder()
                 .uri(format!("/media/{object_key}"))
                 .header(header::IF_NONE_MATCH, format!("\"{object_key}\""))
+                .header(header::COOKIE, format!("__Host-noombat_session={token}"))
                 .body(Body::empty())
                 .expect("request"),
         )
         .await
         .expect("infallible");
     assert_eq!(response.status(), StatusCode::NOT_MODIFIED);
+    let cache = response
+        .headers()
+        .get(header::CACHE_CONTROL)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
+    assert!(cache.starts_with("public, max-age="), "{cache}");
 }
 
 #[ignore = "requires a database; run with --include-ignored"]

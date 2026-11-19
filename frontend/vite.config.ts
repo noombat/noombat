@@ -29,24 +29,11 @@ export default defineConfig({
         upgrade: "src/upgrade.ts",
       },
       output: {
-        // CSS assets keep stable names; JS islands get hashed names.
-        // The htmx entry receives a stable name because base.html
-        // references it with a fixed <script src="/assets/htmx.js">.
-        assetFileNames: "assets/[name][extname]",
-        entryFileNames: (chunkInfo) => {
-          if (
-            chunkInfo.name === "htmx" ||
-            chunkInfo.name === "auth" ||
-            chunkInfo.name === "editor" ||
-            chunkInfo.name === "chat" ||
-            chunkInfo.name === "chat-cred" ||
-            chunkInfo.name === "compose" ||
-            chunkInfo.name === "upgrade"
-          ) {
-            return "assets/[name].js";
-          }
-          return "assets/[name]-[hash].js";
-        },
+        // Every file is named by a hash of its content, so the server can
+        // let browsers keep it for a year; pages find the names in the
+        // manifest below.
+        assetFileNames: "assets/[name]-[hash][extname]",
+        entryFileNames: "assets/[name]-[hash].js",
       },
     },
     // Emit a manifest so the server can resolve hashed filenames.

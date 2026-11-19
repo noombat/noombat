@@ -938,8 +938,9 @@ async fn a_refusal_answers_as_its_asker_reads(pool: PgPool) {
     );
 }
 
-/// A page answered to a session carries its token, so no cache may keep
-/// it; a visitor's is left to the defaults.
+/// An answer to a session, a page or JSON, can carry its token or the
+/// member's own data, so no cache may keep it; a visitor's is left to the
+/// defaults.
 #[ignore = "requires a database; run with --include-ignored"]
 #[sqlx::test(migrations = "../../migrations")]
 async fn a_sessions_pages_are_not_cached(pool: PgPool) {
@@ -952,26 +953,32 @@ async fn a_sessions_pages_are_not_cached(pool: PgPool) {
             if let Some(cookie) = cookie {
                 request = request.header(header::COOKIE, cookie);
             }
-            build_router(test_state(pool))
+            let response = build_router(test_state(pool))
                 .oneshot(request.body(Body::empty()).expect("request builds"))
                 .await
-                .expect("the router is infallible")
+                .expect("the router is infallible");
+            let kept = response
                 .headers()
                 .get(header::CACHE_CONTROL)
-                .map(|v| v.to_str().unwrap_or_default().to_owned())
+                .map(|v| v.to_str().unwrap_or_default().to_owned());
+            (response.status(), kept)
         }
     };
+    let kept = (StatusCode::OK, Some("private, no-store".to_owned()));
     assert_eq!(
         (
             cache(Some(cookie(&session)), "/settings").await,
             cache(Some(cookie(&session)), "/auth/totp").await,
-            cache(None, "/auth/login").await,
+            cache(Some(cookie(&session)), SKILLS).await,
+            cache(Some(cookie(&session)), "/api/v1/me/export").await,
         ),
-        (
-            Some("private, no-store".to_owned()),
-            Some("private, no-store".to_owned()),
-            None
-        )
+        (kept.clone(), kept.clone(), kept.clone(), kept),
+        "pages and JSON answered to a session"
+    );
+    assert_eq!(
+        (cache(None, "/auth/login").await, cache(None, SKILLS).await),
+        ((StatusCode::OK, None), (StatusCode::OK, None)),
+        "pages and JSON answered to a visitor"
     );
 }
 

@@ -473,4 +473,6 @@ jobs:
         with:
           name: noombat-frontend
           path: frontend/dist/
+          # Vite's manifest is in the hidden `.vite/`, which the server needs.
+          include-hidden-files: true
           retention-days: 30

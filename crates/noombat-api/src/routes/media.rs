@@ -116,7 +116,19 @@ async fn serve_media(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.split(',').any(|candidate| candidate.trim() == etag))
     {
-        return StatusCode::NOT_MODIFIED.into_response();
+        // As cacheable as the file itself, or a cache revalidating it would
+        // take a session's `private, no-store` in its place.
+        return (
+            StatusCode::NOT_MODIFIED,
+            [
+                (
+                    header::CACHE_CONTROL,
+                    format!("public, max-age={MEDIA_MAX_AGE_SECS}"),
+                ),
+                (header::ETAG, etag),
+            ],
+        )
+            .into_response();
     }
 
     let bytes = match state.media.get(&object_key).await {

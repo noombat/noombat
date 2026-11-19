@@ -141,14 +141,11 @@ pub async fn protect(
     }
 }
 
-/// A page answered to a session carries its token and the member's own
-/// data, so no cache may keep it.
+/// An answer to a session can carry its token or the member's own data,
+/// so no cache may keep it, unless its route says otherwise, as the hashed
+/// assets and public media do.
 fn private(mut response: Response) -> Response {
-    let html = response
-        .headers()
-        .get(CONTENT_TYPE)
-        .is_some_and(|v| v.as_bytes().starts_with(b"text/html"));
-    if html && !response.headers().contains_key(CACHE_CONTROL) {
+    if !response.headers().contains_key(CACHE_CONTROL) {
         response
             .headers_mut()
             .insert(CACHE_CONTROL, HeaderValue::from_static("private, no-store"));

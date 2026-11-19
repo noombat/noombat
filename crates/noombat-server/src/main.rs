@@ -397,6 +397,18 @@ async fn main() -> anyhow::Result<()> {
     // critical values are not equal to their documented defaults.
     validate_production_config(&config);
 
+    // ..... Frontend build .....
+    //
+    // Pages name their scripts and stylesheets through Vite's manifest:
+    // without a whole one, every page would name files that answer 404.
+    if let Err(problem) = noombat_api::assets::check() {
+        error!(
+            "{problem}. Build the frontend first (`pnpm build` in frontend/), and start \
+             the server in the folder that holds frontend/dist."
+        );
+        std::process::exit(1);
+    }
+
     // ..... Envelope encryption key .....
     //
     // Parse the hex-encoded KEK (if configured) and initialise the

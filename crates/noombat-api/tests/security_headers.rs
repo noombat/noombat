@@ -208,16 +208,23 @@ async fn login_page_carries_the_header_set() {
 
 #[tokio::test]
 async fn static_assets_carry_the_header_set() {
-    // Served by `nest_service`, not by a route handler. A layer moved
-    // inside the router would leave precisely this response bare while
-    // every other assertion in this file still passed.
+    // Served by the nested `/assets` service, not by a route handler. A
+    // layer moved inside the router would leave precisely this response
+    // bare while every other assertion in this file still passed.
     //
-    // The status is not asserted: `ServeDir` resolves relative to the
-    // working directory, so the file is present when the frontend has
-    // been built and absent otherwise. Either way the nested service
-    // handled the request, which is the property under test.
-    let response = get(DOMAIN, "/assets/htmx.js").await;
-    assert_header_set(&response, "/assets/htmx.js");
+    // A name no build has: every file's name carries a hash, so the
+    // answer is the nested service's 404, which is the answer under test.
+    let response = get(DOMAIN, "/assets/no-such-file.js").await;
+    assert_header_set(&response, "/assets/no-such-file.js");
+    // Only the assets service says `no-store` to a visitor: the router's
+    // own 404 says nothing about caching.
+    assert_eq!(
+        response
+            .headers()
+            .get(axum::http::header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
 }
 
 // ..... Coverage of the remaining response paths .....

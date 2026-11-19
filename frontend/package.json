@@ -9,7 +9,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "sh build.sh",
     "preview": "vite preview",
     "test": "vitest run",
     "lint": "eslint src/ interop/",

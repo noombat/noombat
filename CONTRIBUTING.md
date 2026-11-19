@@ -131,12 +131,20 @@ Discrete interactive components (the Markdown editor, the chat interface) are co
 
 ### Entry points
 
-| Entry    | File                   | Output             | Purpose                                                 |
-|----------|------------------------|--------------------|---------------------------------------------------------|
-| `htmx`   | `src/htmx.ts`          | `assets/htmx.js`   | HTMX library (loaded on every page).                    |
-| `auth`   | `src/auth.ts`          | `assets/auth.js`   | Split key derivation, form interception, token refresh. |
-| `editor` | `src/editor/index.tsx` | `assets/editor.js` | Markdown + LaTeX live-preview editor.                   |
-| `chat`   | `src/chat/index.tsx`   | `assets/chat.js`   | Real-time encrypted chat island.                        |
+| Entry       | File                   | Output                       | Purpose                                                 |
+|-------------|------------------------|------------------------------|---------------------------------------------------------|
+| `main`      | `src/main.css`         | `assets/main-[hash].css`     | The stylesheet every page loads.                        |
+| `htmx`      | `src/htmx.ts`          | `assets/htmx-[hash].js`      | HTMX library (loaded on every page).                    |
+| `auth`      | `src/auth.ts`          | `assets/auth-[hash].js`      | Split key derivation, form interception, token refresh. |
+| `editor`    | `src/editor/index.tsx` | `assets/editor-[hash].js`    | Markdown + LaTeX live-preview editor.                   |
+| `chat`      | `src/chat/index.tsx`   | `assets/chat-[hash].js`      | Real-time encrypted chat island.                        |
+| `chat-cred` | `src/chat-cred.ts`     | `assets/chat-cred-[hash].js` | The chat credentials page.                              |
+| `compose`   | `src/compose.ts`       | `assets/compose-[hash].js`   | The compose page's form.                                |
+| `upgrade`   | `src/upgrade.ts`       | `assets/upgrade-[hash].js`   | Setting a password on an account made through OAuth.    |
+
+Every built file is named by a hash of its content, so `/assets` lets browsers keep it for a year.
+Templates name an entry's script and stylesheets through `noombat_api::assets`, which reads Vite's manifest; a test refuses an `/assets/` path written into a template.
+The server refuses to start without a whole build, so run `pnpm build` in `frontend/` before it; it reads the manifest again after each rebuild. `pnpm build` builds into `dist.next/` and then renames it into `dist/`'s place, so a running server only ever finds a whole build, and a failed build leaves the last one serving.
 
 ### Encryption and Autocrypt
 

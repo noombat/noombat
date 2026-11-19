@@ -96,6 +96,7 @@ Black-box HTTP test suite that verifies a running Noombat server responds correc
 Tests health, WebFinger, NodeInfo, and outbox endpoints via `curl`.
 
 ```sh
+(cd frontend && pnpm install && pnpm build)  # The server refuses to start without it.
 cargo run --bin noombat &
 sleep 2
 ./scripts/smoke-test.sh

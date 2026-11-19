@@ -91,7 +91,7 @@ report() {
 
 # 1. Opening <script> tags that carry no src attribute.
 INLINE_SCRIPTS=$(printf '%s\n' "$SOURCE" | grep -E '<script([^>]*)>' | grep -v 'src=' || true)
-report "inline <script> element (use a Vite entry point and src=\"/assets/...\")" \
+report "inline <script> element (use a Vite entry point, src=\"{{ crate::assets::url(...) }}\")" \
     "$INLINE_SCRIPTS"
 
 # 2. Inline event-handler attributes.

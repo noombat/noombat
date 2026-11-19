@@ -129,8 +129,8 @@ up() {
     say "cargo build failed"; return 1
   }
 
-  if [ ! -d "$REPO/frontend/dist" ]; then
-    say "frontend/dist is missing; run 'pnpm build' in frontend/ first"
+  if [ ! -f "$REPO/frontend/dist/.vite/manifest.json" ]; then
+    say "no frontend build (frontend/dist/.vite/manifest.json); run 'pnpm build' in frontend/ first"
     return 1
   fi
   "$REPO/scripts/asset-manifest.sh" > "$REPO/frontend/dist/assets-manifest.json" || {

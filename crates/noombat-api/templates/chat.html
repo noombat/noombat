@@ -41,5 +41,8 @@
 {% endblock %}
 
 {% block style %}
-<script type="module" src="/assets/chat.js"></script>
+{% for href in crate::assets::stylesheets("chat") %}
+<link rel="stylesheet" href="{{ href }}">
+{% endfor %}
+<script type="module" src="{{ crate::assets::url("chat") }}"></script>
 {% endblock %}

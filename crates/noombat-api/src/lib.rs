@@ -7,6 +7,7 @@
 rust_i18n::i18n!("locales", fallback = "en-US");
 
 pub mod analytics;
+pub mod assets;
 pub mod auth;
 pub mod chatmail_ops;
 pub mod cookie;
@@ -72,7 +73,12 @@ pub fn build_router(state: AppState) -> Router {
         .merge(routes::explore::router())
         .merge(routes::admin::router())
         .merge(routes::account::router())
-        .nest_service("/assets", ServeDir::new("frontend/dist/assets"))
+        .nest(
+            "/assets",
+            Router::new()
+                .fallback_service(ServeDir::new("frontend/dist/assets"))
+                .layer(axum::middleware::map_response(assets::caching)),
+        )
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             csrf::protect,

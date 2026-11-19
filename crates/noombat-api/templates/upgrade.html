@@ -50,6 +50,12 @@
 {% endblock %}
 
 {% block style %}
-<script type="module" src="/assets/auth.js"></script>
-<script type="module" src="/assets/upgrade.js"></script>
+{% for href in crate::assets::stylesheets("auth") %}
+<link rel="stylesheet" href="{{ href }}">
+{% endfor %}
+{% for href in crate::assets::stylesheets("upgrade") %}
+<link rel="stylesheet" href="{{ href }}">
+{% endfor %}
+<script type="module" src="{{ crate::assets::url("auth") }}"></script>
+<script type="module" src="{{ crate::assets::url("upgrade") }}"></script>
 {% endblock %}

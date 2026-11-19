@@ -200,11 +200,11 @@ test.describe("Article permalink", () => {
     await page.goto(ARTICLE_PATH);
 
     await expect(
-      page.locator('link[rel="stylesheet"][href="/assets/main.css"]'),
+      page.locator('link[rel="stylesheet"][href^="/assets/main-"]'),
       "the article page loads no stylesheet: <head> is being swallowed",
     ).toHaveCount(1);
     await expect(
-      page.locator('script[src="/assets/htmx.js"]'),
+      page.locator('script[src^="/assets/htmx-"]'),
       "the article page loads no htmx: <head> is being swallowed",
     ).toHaveCount(1);
     await expect(
@@ -242,11 +242,11 @@ test.describe("Note permalink", () => {
     await page.goto(NOTE_PATH);
 
     await expect(
-      page.locator('link[rel="stylesheet"][href="/assets/main.css"]'),
+      page.locator('link[rel="stylesheet"][href^="/assets/main-"]'),
       "the note page loads no stylesheet: <head> is being swallowed",
     ).toHaveCount(1);
     await expect(
-      page.locator('script[src="/assets/htmx.js"]'),
+      page.locator('script[src^="/assets/htmx-"]'),
       "the note page loads no htmx: <head> is being swallowed",
     ).toHaveCount(1);
     await expect(

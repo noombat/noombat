@@ -21,6 +21,8 @@
 
 # Build output, run artefacts and dependencies.
 /frontend/dist/
+/frontend/dist.next/
+/frontend/dist.old/
 /tests/e2e/test-results/
 /tests/e2e/playwright-report/
 **/node_modules/

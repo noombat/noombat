@@ -69,7 +69,7 @@ const PUBLIC_PAGES = ["/", "/auth/login", "/auth/register", ARTICLE_PATH, NOTE_P
  * Pages behind `require_auth`, which must carry it too.
  *
  * /auth/upgrade is here because upgrade.html is the sole referrer of
- * /assets/upgrade.js, so nothing else puts that asset under the
+ * the upgrade entry's script, so nothing else puts that asset under the
  * manifest gate below.
  */
 const AUTHENTICATED_PAGES = ["/chat", "/settings/chat", "/compose", "/auth/upgrade"];
@@ -137,15 +137,21 @@ test.describe("Security headers", () => {
 
   test("static assets carry the header set too", async ({ request }) => {
     // The layer is applied outside the /assets service. A regression
-    // that moved it inside would leave exactly this response bare.
-    const res = await request.get("/assets/htmx.js");
+    // that moved it inside would leave exactly this response bare. The
+    // file's name is the build's, read from the page that loads it.
+    const page = await (await request.get("/")).text();
+    const htmx = /<script type="module" src="(\/assets\/htmx-[^"]+)"/.exec(page)?.[1];
+    expect(htmx, "the home page loads htmx by its hashed name").toBeDefined();
+    const res = await request.get(htmx ?? "");
     expect(res.ok()).toBeTruthy();
 
     const headers = res.headers();
     for (const [name, value] of Object.entries(EXACT_HEADERS)) {
-      expect(headers[name], `/assets/htmx.js: ${name}`).toBe(value);
+      expect(headers[name], `${htmx}: ${name}`).toBe(value);
     }
     expect(headers["content-security-policy"]).toBeDefined();
+    // Named by its content, so a browser may keep it for a year.
+    expect(headers["cache-control"]).toBe("public, max-age=31536000, immutable");
   });
 
   test("an error response carries the header set too", async ({ request }) => {
@@ -423,7 +429,7 @@ function expectManifestedAssets(
 ): void {
   const origin = new URL(pageUrl).origin;
 
-  // Every page loads main.css and htmx.js at minimum. An empty set means
+  // Every page loads the main stylesheet and htmx at minimum. An empty set means
   // the recording missed them, not that the page is clean, and would
   // otherwise pass every assertion below by having nothing to check.
   expect(
