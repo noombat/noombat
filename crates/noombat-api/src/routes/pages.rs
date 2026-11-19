@@ -868,7 +868,11 @@ async fn chat_page(
     // development instance served over HTTP.
     let ws_url = format!(
         "{}/api/v1/chat/ws",
-        crate::middleware::websocket_origin(&state.domain, state.public_port)
+        crate::middleware::websocket_origin(
+            &state.domain,
+            state.public_port,
+            state.public_origin.as_deref(),
+        )
     );
     let username = nav_username(&viewer);
     ChatPage {
@@ -1010,7 +1014,11 @@ fn redirect_back_with(
     headers: &axum::http::HeaderMap,
     cookie: axum::http::HeaderValue,
 ) -> Response {
-    let origin = crate::middleware::http_origin(&state.domain, state.public_port);
+    let origin = crate::middleware::http_origin(
+        &state.domain,
+        state.public_port,
+        state.public_origin.as_deref(),
+    );
     let back = headers
         .get(axum::http::header::REFERER)
         .and_then(|value| value.to_str().ok())

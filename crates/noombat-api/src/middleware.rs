@@ -262,18 +262,19 @@ pub fn is_local_domain(domain: &str) -> bool {
 ///
 /// A development instance is served over plain HTTP, where the
 /// browser rejects a `wss://` connection; a production instance is
-/// served over TLS, where it rejects `ws://`. The value returned here
-/// is pinned in `connect-src` and is also the origin embedded in the
-/// chat page, so the two cannot disagree with each other.
+/// served over TLS, where it rejects `ws://`. An origin the operator
+/// configured, for a local instance behind a TLS proxy, wins over both.
+/// The value returned here is pinned in `connect-src` and is also the
+/// origin embedded in the chat page, so the two cannot disagree.
 ///
 /// Both must also agree with the origin the browser actually used. A
 /// host source in a Content-Security-Policy that names no port matches
 /// only the scheme's default, so `ws://localhost` permits port 80
 /// alone: a development instance on 8443 had its WebSocket blocked by
 /// its own policy, and the URL on the page named the wrong port too.
-pub fn websocket_origin(domain: &str, public_port: u16) -> String {
-    let scheme = if is_local_domain(domain) { "ws" } else { "wss" };
-    format!("{scheme}://{}", origin_authority(domain, public_port))
+pub fn websocket_origin(domain: &str, public_port: u16, configured: Option<&str>) -> String {
+    let (secure, authority) = origin_parts(domain, public_port, configured);
+    format!("{}://{authority}", if secure { "wss" } else { "ws" })
 }
 
 /// Build the HTTP origin a browser addresses this instance by.
@@ -281,13 +282,26 @@ pub fn websocket_origin(domain: &str, public_port: u16) -> String {
 /// Differs from [`websocket_origin`] in scheme alone, and shares the host
 /// and port reasoning with it so the two can never disagree about which
 /// requests are same-origin.
-pub fn http_origin(domain: &str, public_port: u16) -> String {
-    let scheme = if is_local_domain(domain) {
-        "http"
-    } else {
-        "https"
-    };
-    format!("{scheme}://{}", origin_authority(domain, public_port))
+pub fn http_origin(domain: &str, public_port: u16, configured: Option<&str>) -> String {
+    let (secure, authority) = origin_parts(domain, public_port, configured);
+    format!("{}://{authority}", if secure { "https" } else { "http" })
+}
+
+/// Whether this instance's origin is served over TLS, and its
+/// `host[:port]`: the `configured` origin's, else the domain's.
+fn origin_parts(domain: &str, public_port: u16, configured: Option<&str>) -> (bool, String) {
+    if let Some(origin) = configured {
+        if let Some(authority) = origin.strip_prefix("https://") {
+            return (true, authority.to_owned());
+        }
+        if let Some(authority) = origin.strip_prefix("http://") {
+            return (false, authority.to_owned());
+        }
+    }
+    (
+        !is_local_domain(domain),
+        origin_authority(domain, public_port),
+    )
 }
 
 /// The `host[:port]` half of this instance's origin.
@@ -311,12 +325,12 @@ fn origin_authority(domain: &str, public_port: u16) -> String {
 /// allowing the scheme wholesale with `wss:`. A scheme-wide source
 /// permits exfiltration to any host over that scheme, which defeats
 /// much of the point of a `default-src 'none'` policy.
-pub fn content_security_policy(domain: &str, public_port: u16) -> String {
+pub fn content_security_policy(domain: &str, public_port: u16, configured: Option<&str>) -> String {
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self'; \
          connect-src 'self' {origin}; img-src 'self' data:; font-src 'self'; \
          frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
-        origin = websocket_origin(domain, public_port),
+        origin = websocket_origin(domain, public_port, configured),
     )
 }
 
@@ -334,11 +348,17 @@ pub fn content_security_policy(domain: &str, public_port: u16) -> String {
 /// Apply this after every route and after the `/assets` service, so
 /// that static assets and error responses produced by inner layers
 /// carry the headers too.
-pub fn security_headers<S>(router: Router<S>, domain: &str, public_port: u16) -> Router<S>
+pub fn security_headers<S>(
+    router: Router<S>,
+    domain: &str,
+    public_port: u16,
+    configured: Option<&str>,
+) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
 {
-    let csp = match HeaderValue::from_str(&content_security_policy(domain, public_port)) {
+    let csp = match HeaderValue::from_str(&content_security_policy(domain, public_port, configured))
+    {
         Ok(value) => value,
         Err(e) => {
             error!(
@@ -408,22 +428,53 @@ mod tests {
     fn websocket_origin_follows_the_deployment_scheme() {
         // A local domain gains the listening port, because a host
         // source naming no port matches only the scheme default.
-        assert_eq!(websocket_origin("localhost", 8443), "ws://localhost:8443");
+        assert_eq!(
+            websocket_origin("localhost", 8443, None),
+            "ws://localhost:8443"
+        );
         // A port already present is respected rather than doubled.
         assert_eq!(
-            websocket_origin("localhost:9000", 8443),
+            websocket_origin("localhost:9000", 8443, None),
             "ws://localhost:9000"
         );
         // Production is behind a terminator on 443.
         assert_eq!(
-            websocket_origin("noombat.social", 8443),
+            websocket_origin("noombat.social", 8443, None),
             "wss://noombat.social"
+        );
+    }
+
+    /// A local instance behind a TLS proxy is reached at the origin its
+    /// operator configured, scheme and port both.
+    #[test]
+    fn a_configured_origin_wins() {
+        let configured = Some("https://localhost:8443");
+        assert_eq!(
+            http_origin("localhost", 8444, configured),
+            "https://localhost:8443"
+        );
+        assert_eq!(
+            websocket_origin("localhost", 8444, configured),
+            "wss://localhost:8443"
+        );
+        let plain = Some("http://localhost:9000");
+        assert_eq!(
+            http_origin("localhost", 8444, plain),
+            "http://localhost:9000"
+        );
+        assert_eq!(
+            websocket_origin("localhost", 8444, plain),
+            "ws://localhost:9000"
+        );
+        assert!(
+            content_security_policy("localhost", 8444, configured)
+                .contains("connect-src 'self' wss://localhost:8443;")
         );
     }
 
     #[test]
     fn csp_pins_the_websocket_host_rather_than_the_scheme() {
-        let csp = content_security_policy("noombat.social", 8443);
+        let csp = content_security_policy("noombat.social", 8443, None);
 
         let connect_src = csp
             .split(';')
@@ -452,7 +503,7 @@ mod tests {
 
     #[test]
     fn csp_denies_by_default_and_omits_unsafe_sources() {
-        let csp = content_security_policy("noombat.social", 8443);
+        let csp = content_security_policy("noombat.social", 8443, None);
         assert!(csp.starts_with("default-src 'none';"));
         assert!(csp.contains("script-src 'self';"));
         assert!(csp.contains("style-src 'self';"));
@@ -466,7 +517,7 @@ mod tests {
     #[test]
     fn csp_is_a_single_line_valid_header_value() {
         for domain in ["localhost", "localhost:8443", "noombat.social"] {
-            let csp = content_security_policy(domain, 8443);
+            let csp = content_security_policy(domain, 8443, None);
             assert!(!csp.contains('\n'), "{domain}: policy contains a newline");
             assert!(
                 HeaderValue::from_str(&csp).is_ok(),

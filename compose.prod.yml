@@ -15,6 +15,7 @@
 
 services:
   caddy:
+    # Caddy 2.11.9; ci-e2e.yml downloads the same release, so move it with this.
     image: docker.io/library/caddy:2-alpine@sha256:78bd35025c7ba85961dd149ae670315129954e77abe2383ac47c89106b35ade9
     restart: unless-stopped
     environment:

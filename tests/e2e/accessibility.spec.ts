@@ -134,52 +134,62 @@ test.describe("Accessibility: authenticated pages", () => {
     await authenticateBrowser(context, await requireSession(request, testInfo.workerIndex));
   });
 
+  /**
+   * Go to `path` and require that page, as the admin group does: without a
+   * session `require_auth` answers with the sign-in page, which has no
+   * violations either, so a scan of it passes under this page's name.
+   */
+  async function visit(page: import("@playwright/test").Page, path: string): Promise<void> {
+    await page.goto(path);
+    expect(new URL(page.url()).pathname, `expected to be served ${path}`).toBe(path);
+  }
+
   // ----- Settings -----
 
   test("settings hub", async ({ page, axeScan }) => {
-    await page.goto("/settings");
+    await visit(page, "/settings");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit profile", async ({ page, axeScan }) => {
-    await page.goto("/settings/profile");
+    await visit(page, "/settings/profile");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit experience", async ({ page, axeScan }) => {
-    await page.goto("/settings/experience");
+    await visit(page, "/settings/experience");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit education", async ({ page, axeScan }) => {
-    await page.goto("/settings/education");
+    await visit(page, "/settings/education");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit skills", async ({ page, axeScan }) => {
-    await page.goto("/settings/skills");
+    await visit(page, "/settings/skills");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit publications", async ({ page, axeScan }) => {
-    await page.goto("/settings/publications");
+    await visit(page, "/settings/publications");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("edit verified links", async ({ page, axeScan }) => {
-    await page.goto("/settings/links");
+    await visit(page, "/settings/links");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("post a job", async ({ page, axeScan }) => {
-    await page.goto("/settings/jobs/new");
+    await visit(page, "/settings/jobs/new");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -187,20 +197,20 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Privacy & Safety -----
 
   test("privacy and safety settings", async ({ page, axeScan }) => {
-    await page.goto("/settings/privacy");
+    await visit(page, "/settings/privacy");
     await waitForPartial(page, "#privacy-preview > *");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("blocked and muted accounts", async ({ page, axeScan }) => {
-    await page.goto("/settings/blocked");
+    await visit(page, "/settings/blocked");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("follow requests", async ({ page, axeScan }) => {
-    await page.goto("/settings/follow-requests");
+    await visit(page, "/settings/follow-requests");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -208,7 +218,7 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Chat -----
 
   test("chat credentials", async ({ page, axeScan }) => {
-    await page.goto("/settings/chat");
+    await visit(page, "/settings/chat");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -216,13 +226,13 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Account -----
 
   test("account migration", async ({ page, axeScan }) => {
-    await page.goto("/settings/migrate");
+    await visit(page, "/settings/migrate");
     const results = await axeScan();
     expectNoViolations(results);
   });
 
   test("account settings (export and deletion)", async ({ page, axeScan }) => {
-    await page.goto("/settings/account");
+    await visit(page, "/settings/account");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -230,7 +240,7 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Compose -----
 
   test("compose page", async ({ page, axeScan }) => {
-    await page.goto("/compose");
+    await visit(page, "/compose");
     const results = await axeScan();
     expectNoViolations(results);
   });
@@ -238,7 +248,7 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Password upgrade -----
 
   test("upgrade page", async ({ page, axeScan }) => {
-    await page.goto("/auth/upgrade");
+    await visit(page, "/auth/upgrade");
     // The page is behind require_auth, which answers a request without a
     // principal with a redirect to /auth/login. That page has no
     // violations either, so the scan alone cannot tell the two apart.
@@ -250,7 +260,7 @@ test.describe("Accessibility: authenticated pages", () => {
   // ----- Two-factor authentication -----
 
   test("TOTP setup page", async ({ page, axeScan }) => {
-    await page.goto("/auth/totp");
+    await visit(page, "/auth/totp");
     const results = await axeScan();
     expectNoViolations(results);
   });

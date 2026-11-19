@@ -1,0 +1,18 @@
+# SPDX-License-Identifier: AGPL-3.0-or-later
+# SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
+
+# The end-to-end suite's TLS front, as Caddy is production's: WebKit keeps
+# no `Secure` cookie, the session's included, over plain HTTP, even on
+# localhost. The server behind it is told this origin by
+# NOOMBAT_PUBLIC_ORIGIN, and Playwright accepts Caddy's local certificate.
+
+{
+	admin off
+	skip_install_trust
+	auto_https disable_redirects
+}
+
+https://localhost:8443 {
+	tls internal
+	reverse_proxy 127.0.0.1:8444
+}

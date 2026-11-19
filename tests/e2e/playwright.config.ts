@@ -10,7 +10,7 @@ import { defineConfig, devices } from "@playwright/test";
 
 import { SESSION_ACCOUNTS } from "./session";
 
-const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
+const BASE_URL = process.env.BASE_URL ?? "https://localhost:8443";
 
 export default defineConfig({
   testDir: ".",
@@ -26,6 +26,9 @@ export default defineConfig({
 
   use: {
     baseURL: BASE_URL,
+    // The stack's Caddy signs with its own local authority, which no
+    // browser here trusts.
+    ignoreHTTPSErrors: true,
     trace: "on-first-retry",
   },
 

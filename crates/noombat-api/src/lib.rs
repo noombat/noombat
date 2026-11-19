@@ -44,6 +44,7 @@ use crate::state::AppState;
 pub fn build_router(state: AppState) -> Router {
     let domain = state.domain.clone();
     let public_port = state.public_port;
+    let public_origin = state.public_origin.clone();
 
     let router = Router::new()
         .merge(routes::federation::router())
@@ -94,5 +95,6 @@ pub fn build_router(state: AppState) -> Router {
         .layer(CompressionLayer::new())
         .layer(TraceLayer::new_for_http());
 
-    middleware::security_headers(router, &domain, public_port).with_state(state)
+    middleware::security_headers(router, &domain, public_port, public_origin.as_deref())
+        .with_state(state)
 }

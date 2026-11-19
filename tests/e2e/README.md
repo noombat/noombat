@@ -4,25 +4,26 @@ Playwright suite driving real browsers against a running Noombat stack. It cover
 
 ## Components
 
-| File                        | Purpose                                              |
-| --------------------------- | ---------------------------------------------------- |
-| `smoke.spec.ts`             | Pages render and permalinks resolve                  |
-| `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                  |
-| `security-headers.spec.ts`  | Response headers and the CSP                         |
-| `settings-lists.spec.ts`    | A settings list's add and remove, as htmx swaps them |
-| `compose-form.spec.ts`      | The compose page's plain form, with its CSRF token   |
-| `session.ts`                | Registers and signs in the accounts the specs use    |
-| `axe-fixture.ts`            | Wires axe-core into the Playwright fixture           |
-| `playwright.config.ts`      | Six browser projects, three desktop and three mobile |
-| `playwright.chat.config.ts` | The chat stack's config, for `chat/` alone           |
-| `chat/two-browsers.chat.ts` | Chat in two contexts: chat-interop check 19          |
+| File                        | Purpose                                                 |
+| --------------------------- | ------------------------------------------------------- |
+| `smoke.spec.ts`             | Pages render and permalinks resolve                     |
+| `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                     |
+| `security-headers.spec.ts`  | Response headers and the CSP                            |
+| `settings-lists.spec.ts`    | A settings list's add and remove, as htmx swaps them    |
+| `compose-form.spec.ts`      | The compose page's plain form, with its CSRF token      |
+| `session.ts`                | Registers and signs in the accounts the specs use       |
+| `axe-fixture.ts`            | Wires axe-core into the Playwright fixture              |
+| `playwright.config.ts`      | Six browser projects, three desktop and three mobile    |
+| `Caddyfile`                 | The stack's TLS front, on the host network (Linux only) |
+| `playwright.chat.config.ts` | The chat stack's config, for `chat/` alone              |
+| `chat/two-browsers.chat.ts` | Chat in two contexts: chat-interop check 19             |
 
 This directory is its own pnpm project, `noombat-e2e`, separate from `frontend/` and with its own lockfile, `tsconfig.json` and ESLint config. Run `pnpm lint` and `pnpm typecheck` here; the frontend's do not cover it.
 
 ## Running
 
 ```sh
-# Raise PostgreSQL, Redis, Meilisearch and Noombat, and seed the fixtures.
+# Raise PostgreSQL, Redis, Meilisearch, Noombat and Caddy, and seed the fixtures.
 scripts/e2e-stack.sh up
 
 # Once, to install the suite's own dependencies.
@@ -37,6 +38,8 @@ scripts/e2e-stack.sh down
 ```
 
 `scripts/e2e-stack.sh` also takes `status`.
+
+The stack serves the suite at `https://localhost:8443` through Caddy (`Caddyfile` here), with the server behind it on 8444, as production serves it behind TLS: WebKit keeps no `Secure` cookie over plain HTTP, so the session cookie would never reach it there.
 
 ## Fixtures three files have to agree on
 

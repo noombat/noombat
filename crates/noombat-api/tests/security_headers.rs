@@ -46,6 +46,7 @@ fn test_state(domain: &str) -> AppState {
             .expect("lazy pool construction cannot fail for a well-formed URL"),
         domain: domain.to_owned(),
         public_port: PUBLIC_PORT,
+        public_origin: None,
         http_client: reqwest::Client::new(),
         open_registrations: true,
         search: None,

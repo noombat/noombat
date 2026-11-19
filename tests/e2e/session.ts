@@ -25,7 +25,7 @@
 import type { APIRequestContext, BrowserContext } from "@playwright/test";
 import { test } from "@playwright/test";
 
-const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
+const BASE_URL = process.env.BASE_URL ?? "https://localhost:8443";
 
 /** The cookie the server reads; see crates/noombat-api/src/cookie.rs. */
 const COOKIE_NAME = "__Host-noombat_session";

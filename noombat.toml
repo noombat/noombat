@@ -5,6 +5,9 @@ domain = "localhost"
 database_url = "postgres://noombat:noombat@localhost/noombat"
 host = "0.0.0.0"
 port = 8443
+# The origin browsers reach this local instance at behind a TLS proxy
+# (default: the domain and port imply it).
+# public_origin = "https://localhost:8443"
 max_connections = 5
 open_registrations = true
 

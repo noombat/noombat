@@ -505,6 +505,7 @@ fn test_state(pool: PgPool, media: MediaStore) -> AppState {
         pool,
         domain: DOMAIN.to_owned(),
         public_port: 8443,
+        public_origin: None,
         http_client: reqwest::Client::new(),
         open_registrations: true,
         search: None,

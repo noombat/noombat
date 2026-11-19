@@ -74,6 +74,7 @@ async fn test_state(pool: PgPool) -> AppState {
         pool,
         domain: DOMAIN.to_owned(),
         public_port: 8443,
+        public_origin: None,
         // A proxy named in the environment would be asked for the stand-in's
         // loopback address.
         http_client: reqwest::Client::builder()

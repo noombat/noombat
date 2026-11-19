@@ -49,6 +49,7 @@ fn test_state(pool: PgPool) -> AppState {
         pool,
         domain: DOMAIN.to_owned(),
         public_port: 8443,
+        public_origin: None,
         http_client: reqwest::Client::new(),
         open_registrations: true,
         search: None,
@@ -270,6 +271,98 @@ async fn a_write_from_elsewhere_is_refused(pool: PgPool) {
             "a request from {from:?} was refused"
         );
     }
+}
+
+// ..... An instance behind a TLS proxy .....
+
+/// The answer an instance in `state` gives `request`.
+async fn answer_from(state: AppState, request: Request<Body>) -> axum::response::Response {
+    build_router(state)
+        .oneshot(request)
+        .await
+        .expect("the router is infallible")
+}
+
+/// An instance told the origin a proxy serves it at judges `Origin`, the
+/// theme form's way back, the chat page's WebSocket and its policy by that
+/// origin, not the one its domain implies. The server allows such an origin
+/// for a local domain only; this crate takes whatever it is given.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_configured_public_origin_is_this_instances_own(pool: PgPool) {
+    let alice = insert_person(&pool).await;
+    let session = sign_in(&pool, alice).await;
+    let proxied = || AppState {
+        public_origin: Some(format!("{ORIGIN}:8443")),
+        // A relay, so that the chat page mounts the island it addresses.
+        chatmail_domain: Some(format!("chat.{DOMAIN}")),
+        ..test_state(pool.clone())
+    };
+    for (origin, expected) in [
+        (format!("{ORIGIN}:8443"), StatusCode::CREATED),
+        (ORIGIN.to_owned(), StatusCode::FORBIDDEN),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri(SKILLS)
+            .header(header::COOKIE, cookie(&session))
+            .header(header::CONTENT_TYPE, JSON)
+            .header("x-csrf-token", masked(&session.csrf_token))
+            .header(header::ORIGIN, &origin)
+            .body(Body::from(format!(r#"{{"name":"From {expected}"}}"#)))
+            .expect("request builds");
+        let status = answer_from(proxied(), request).await.status();
+        assert_eq!(status, expected, "from {origin}");
+    }
+
+    for (referer, back) in [
+        (format!("{ORIGIN}:8443/settings"), "/settings"),
+        (format!("{ORIGIN}/settings"), "/"),
+    ] {
+        let request = Request::builder()
+            .method("POST")
+            .uri("/settings/theme")
+            .header(header::COOKIE, cookie(&session))
+            .header(header::CONTENT_TYPE, FORM)
+            .header("sec-fetch-site", "same-origin")
+            .header(header::REFERER, &referer)
+            .body(Body::from("theme=dark"))
+            .expect("request builds");
+        let response = answer_from(proxied(), request).await;
+        assert_eq!(
+            response
+                .headers()
+                .get(header::LOCATION)
+                .and_then(|v| v.to_str().ok()),
+            Some(back),
+            "back from {referer}"
+        );
+    }
+
+    let request = Request::builder()
+        .uri("/chat")
+        .header(header::COOKIE, cookie(&session))
+        .body(Body::empty())
+        .expect("request builds");
+    let response = answer_from(proxied(), request).await;
+    let policy = response
+        .headers()
+        .get("content-security-policy")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        policy.contains("connect-src 'self' wss://noombat.example:8443;"),
+        "{policy}"
+    );
+    let bytes = axum::body::to_bytes(response.into_body(), 4 * 1024 * 1024)
+        .await
+        .expect("page body read");
+    let page = String::from_utf8_lossy(&bytes);
+    assert!(
+        page.contains(r#"data-ws-url="wss://noombat.example:8443/api/v1/chat/ws""#),
+        "the chat page's WebSocket"
+    );
 }
 
 // ..... The session's token .....

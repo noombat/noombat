@@ -87,7 +87,7 @@ docker compose -f tests/interop/compose.yml down -v
 
 # End-to-end browser tests.
 cd tests/e2e && pnpm install && pnpm exec playwright install --with-deps
-NOOMBAT_URL=http://localhost:8443 pnpm exec playwright test
+pnpm exec playwright test  # against scripts/e2e-stack.sh up, at https://localhost:8443
 ```
 
 ## `smoke-test.sh`

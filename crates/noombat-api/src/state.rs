@@ -18,12 +18,18 @@ use crate::rate_limit::FallbackRateLimiter;
 pub struct AppState {
     pub pool: PgPool,
     pub domain: String,
-    /// Port the browser connects to.
-    /// Consumed only by [`crate::middleware::websocket_origin`], which
-    /// appends it for a local domain carrying no port of its own. A
-    /// production deployment sits behind a TLS terminator on 443, so the
-    /// value is ignored there.
+    /// The listening port, which the browser connects to when no proxy
+    /// fronts the instance. Consumed by [`crate::middleware::websocket_origin`]
+    /// and [`crate::middleware::http_origin`], which append it for a local
+    /// domain carrying no port of its own. A production deployment sits
+    /// behind a TLS terminator on 443, so the value is ignored there.
     pub public_port: u16,
+    /// The origin browsers reach a local instance at when a TLS proxy
+    /// fronts it, as in the end-to-end stack; it replaces the one the
+    /// domain and port imply. Checked at startup to name the domain's own
+    /// host, and stored in the form a browser sends as `Origin`, which the
+    /// origin check compares byte for byte.
+    pub public_origin: Option<String>,
     pub http_client: reqwest::Client,
     pub open_registrations: bool,
     /// Search backend (default: Meilisearch).

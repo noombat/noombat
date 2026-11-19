@@ -258,8 +258,10 @@ async fn dereference(
     // The reader's origin is this instance's own, because the employer
     // dereferences over the web here. A remote employer's request would
     // carry its origin through a signed fetch, which job federation does
-    // not do in v1.
-    let reader_origin = crate::middleware::http_origin(&state.domain, state.public_port);
+    // not do in v1. The configured public origin is left out, so that this
+    // check is as it was: that setting moves the origin browsers use, not the
+    // ActivityPub ids grants are minted for.
+    let reader_origin = crate::middleware::http_origin(&state.domain, state.public_port, None);
 
     let redeemed =
         noombat_jobs::applications::redeem(&state.pool, &query.token, &reader_origin, document)

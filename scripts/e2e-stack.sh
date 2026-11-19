@@ -4,8 +4,8 @@
 #
 # Raise or tear down the minimal stack an end-to-end run needs.
 #
-#   scripts/e2e-stack.sh up      services, assets, seed, server
-#   scripts/e2e-stack.sh down    server, containers, volumes
+#   scripts/e2e-stack.sh up      services, assets, stand-in ORCID, server, Caddy, seed
+#   scripts/e2e-stack.sh down    Caddy, stand-in ORCID, server, containers, volumes
 #   scripts/e2e-stack.sh status  what is currently running
 #
 # This wraps `compose.yml` plus `compose.dev.yml` rather than replacing
@@ -43,6 +43,10 @@ PID_FILE="$RUN_DIR/server.pid"
 LOG_FILE="$RUN_DIR/server.log"
 STAND_IN_PID_FILE="$RUN_DIR/stand-in-orcid.pid"
 STAND_IN_PORT=8790
+# The suite's origin, served over TLS by Caddy in front of the server,
+# which listens on NOOMBAT_PORT.
+PUBLIC_PORT=8443
+CADDY_NAME=noombat-e2e-caddy
 
 COMPOSE=(docker compose -f "$REPO/compose.yml" -f "$REPO/compose.dev.yml")
 SERVICES=(db redis meilisearch)
@@ -75,9 +79,13 @@ E2E_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$CJK75/eF2NFDNvNV5I+DGQ$Eqae0tH
 
 # Matches compose.dev.yml's published ports and ci-e2e.yml's values.
 export NOOMBAT_DATABASE_URL="postgres://noombat:noombat@localhost:5432/noombat"
-export NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-localhost}"
+# The domain and port set outright: the Caddyfile serves
+# https://localhost:8443 and proxies to 8444, and the public origin must name
+# the domain's host.
+export NOOMBAT_DOMAIN="localhost"
 export NOOMBAT_HOST="0.0.0.0"
-export NOOMBAT_PORT="${NOOMBAT_PORT:-8443}"
+export NOOMBAT_PORT="8444"
+export NOOMBAT_PUBLIC_ORIGIN="https://localhost:$PUBLIC_PORT"
 export NOOMBAT_REDIS_URL="redis://localhost:6379"
 export NOOMBAT_MEILI_URL="http://localhost:7700"
 export NOOMBAT_MEILI_KEY="${MEILI_MASTER_KEY:-noombat-dev-key}"
@@ -146,8 +154,9 @@ up() {
   # the pid file ends up naming something dead. `down` can then never
   # stop the survivor, and it keeps serving the binary built first: every
   # rebuild after that is verified against code that is not running.
-  if curl -fsS -o /dev/null --max-time 2 "http://localhost:$NOOMBAT_PORT/" 2>/dev/null; then
-    say "something is already serving on :$NOOMBAT_PORT"
+  if curl -fsS -o /dev/null --max-time 2 "http://localhost:$NOOMBAT_PORT/" 2>/dev/null \
+    || (exec 3<>"/dev/tcp/127.0.0.1/$PUBLIC_PORT") 2>/dev/null; then
+    say "something is already serving on :$NOOMBAT_PORT or :$PUBLIC_PORT"
     say "  run 'scripts/e2e-stack.sh down' first, or 'pgrep -a noombat' to find it"
     return 1
   fi
@@ -167,7 +176,7 @@ up() {
 
   # `exec` matters. Without it, `( cd ... && nohup ... & )` records the
   # PID of the subshell, and the server is that subshell's child, so
-  # `down` kills the wrapper and orphans a server still holding :8443.
+  # `down` kills the wrapper and orphans a server still holding its port.
   # With `exec` the subshell is replaced by the server, so the PID in
   # the file is the server's own.
   # The default media root is /var/lib/noombat/media, which a container
@@ -187,6 +196,22 @@ up() {
     rm -f "$PID_FILE"
     return 1
   fi
+
+  # Caddy in front, serving the suite over TLS as production does: WebKit
+  # keeps no Secure cookie over plain HTTP. Production's image, read from
+  # compose.prod.yml so that the two cannot drift apart.
+  local caddy_image
+  caddy_image=$(sed -n 's/^ *image: \(docker\.io\/library\/caddy:[^ ]*\)$/\1/p' \
+    "$REPO/compose.prod.yml" | head -1)
+  docker rm -f "$CADDY_NAME" >/dev/null 2>&1
+  docker run -d --name "$CADDY_NAME" --network host \
+    -v "$REPO/tests/e2e/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" >/dev/null || {
+    say "Caddy did not start (image: ${caddy_image:-none named in compose.prod.yml})"; return 1
+  }
+  wait_for "Caddy on :$PUBLIC_PORT" 15 \
+    curl -fsSk -o /dev/null "https://localhost:$PUBLIC_PORT/healthz" || {
+    say "Caddy did not come up; see 'docker logs $CADDY_NAME'"; return 1
+  }
   say "server up (pid $server_pid, log $LOG_FILE)"
 
   seed
@@ -212,7 +237,7 @@ seed() {
       INSERT INTO actors
         (actor_type, ap_id, username, domain, public_key_pem, is_local)
       VALUES
-        ('individual', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+        ('individual', 'http://localhost:$PUBLIC_PORT/users/testuser',
          'testuser', '$NOOMBAT_DOMAIN',
          '-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
@@ -226,7 +251,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
       SELECT
         '$ARTICLE_ID',
         a.id,
-        'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$ARTICLE_ID',
+        'http://localhost:$PUBLIC_PORT/users/testuser/posts/$ARTICLE_ID',
         'article',
         'Seeded Test Article',
         E'## Introduction\n\nThis article is seeded so the permalink has something to render.'
@@ -240,12 +265,12 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
         jsonb_build_object(
           '@context', 'https://www.w3.org/ns/activitystreams',
           'type', 'Create',
-          'actor', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+          'actor', 'http://localhost:$PUBLIC_PORT/users/testuser',
           'object', jsonb_build_object(
-            'id', 'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$ARTICLE_ID',
+            'id', 'http://localhost:$PUBLIC_PORT/users/testuser/posts/$ARTICLE_ID',
             'type', 'Article',
             'name', 'Seeded Test Article',
-            'attributedTo', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+            'attributedTo', 'http://localhost:$PUBLIC_PORT/users/testuser',
             'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
       FROM actors a
       WHERE a.username = 'testuser' AND a.is_local
@@ -257,7 +282,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
       SELECT
         '$NOTE_ID',
         a.id,
-        'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$NOTE_ID',
+        'http://localhost:$PUBLIC_PORT/users/testuser/posts/$NOTE_ID',
         'note',
         E'A seeded note, so post.html is rendered by something.',
         '<p>A seeded note, so post.html is rendered by something.</p>',
@@ -265,11 +290,11 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
         jsonb_build_object(
           '@context', 'https://www.w3.org/ns/activitystreams',
           'type', 'Create',
-          'actor', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+          'actor', 'http://localhost:$PUBLIC_PORT/users/testuser',
           'object', jsonb_build_object(
-            'id', 'http://localhost:$NOOMBAT_PORT/users/testuser/posts/$NOTE_ID',
+            'id', 'http://localhost:$PUBLIC_PORT/users/testuser/posts/$NOTE_ID',
             'type', 'Note',
-            'attributedTo', 'http://localhost:$NOOMBAT_PORT/users/testuser',
+            'attributedTo', 'http://localhost:$PUBLIC_PORT/users/testuser',
             'to', jsonb_build_array('https://www.w3.org/ns/activitystreams#Public')))
       FROM actors a
       WHERE a.username = 'testuser' AND a.is_local
@@ -326,7 +351,7 @@ seed_admin() {
         (actor_type, ap_id, username, domain, public_key_pem, is_local,
          instance_role, auth_key_hash)
       SELECT 'individual',
-             'http://localhost:$NOOMBAT_PORT/users/' || u.name,
+             'http://localhost:$PUBLIC_PORT/users/' || u.name,
              u.name, '$NOOMBAT_DOMAIN',
              '-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
@@ -364,6 +389,9 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
 }
 
 down() {
+  if docker rm -f "$CADDY_NAME" >/dev/null 2>&1; then
+    say "Caddy stopped"
+  fi
   if [ -f "$STAND_IN_PID_FILE" ]; then
     local stand_in j
     stand_in="$(cat "$STAND_IN_PID_FILE")"
@@ -406,6 +434,9 @@ down() {
   fi
 
   # Last check on the thing that actually matters: is the port free?
+  if (exec 3<>"/dev/tcp/127.0.0.1/$PUBLIC_PORT") 2>/dev/null; then
+    say "WARNING: something is still serving on :$PUBLIC_PORT"
+  fi
   if curl -fsS -o /dev/null --max-time 2 "http://localhost:$NOOMBAT_PORT/" 2>/dev/null; then
     say "WARNING: something is still serving on :$NOOMBAT_PORT"
     say "  find it with: pgrep -a noombat"
@@ -434,6 +465,11 @@ status() {
     say "stand-in ORCID: running (pid $(cat "$STAND_IN_PID_FILE"))"
   else
     say "stand-in ORCID: not running"
+  fi
+  if [ -n "$(docker ps -q --filter "name=^${CADDY_NAME}\$")" ]; then
+    say "Caddy: running, serving https://localhost:$PUBLIC_PORT"
+  else
+    say "Caddy: not running"
   fi
   "${COMPOSE[@]}" ps --format '  {{.Service}}  {{.Status}}' 2>/dev/null \
     || say "no compose project running"

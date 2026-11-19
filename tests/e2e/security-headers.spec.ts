@@ -51,7 +51,7 @@ import { authenticateBrowser, requireSession } from "./session";
 
 // ..... Configuration .....
 
-const BASE_URL = process.env.BASE_URL ?? "http://localhost:8443";
+const BASE_URL = process.env.BASE_URL ?? "https://localhost:8443";
 
 /**
  * The seeded permalinks, one per template: the article renders

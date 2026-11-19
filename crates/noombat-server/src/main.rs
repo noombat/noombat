@@ -42,6 +42,10 @@ struct Config {
     /// Listen port (default `8443`).
     #[serde(default = "default_port")]
     port: u16,
+    /// The origin browsers reach a local instance at when a TLS proxy
+    /// fronts it, as `https://localhost:8443`; unset, the domain and
+    /// listening port imply it.
+    public_origin: Option<String>,
     /// Maximum database connections (default `10`).
     #[serde(default = "default_max_connections")]
     max_connections: u32,
@@ -396,6 +400,15 @@ async fn main() -> anyhow::Result<()> {
     // When the domain is not `localhost`, verify that security-
     // critical values are not equal to their documented defaults.
     validate_production_config(&config);
+
+    // ..... Public origin .....
+    let public_origin = match public_origin(&config) {
+        Ok(origin) => origin,
+        Err(problem) => {
+            error!("{problem}");
+            std::process::exit(1);
+        }
+    };
 
     // ..... Frontend build .....
     //
@@ -885,6 +898,7 @@ async fn main() -> anyhow::Result<()> {
         pool,
         domain: config.domain.clone(),
         public_port: config.port,
+        public_origin,
         http_client,
         open_registrations: config.open_registrations,
         search,
@@ -1176,6 +1190,76 @@ fn chatmail_secret_problem(secret: Option<&str>) -> Option<String> {
     })
 }
 
+/// The configured public origin, checked and in the one form a browser
+/// sends as `Origin`: `http` or `https`, a lowercase host and a port only
+/// when not the scheme's default. For a local domain only, naming its own
+/// host, so that it can move an instance's scheme and port but never point
+/// at another site. Blank counts as unset.
+fn public_origin(config: &Config) -> Result<Option<String>, String> {
+    let Some(given) = config
+        .public_origin
+        .as_deref()
+        .map(str::trim)
+        .filter(|origin| !origin.is_empty())
+    else {
+        return Ok(None);
+    };
+    let unfit = || {
+        format!("NOOMBAT_PUBLIC_ORIGIN is {given:?}, not an origin such as https://localhost:8443")
+    };
+    let origin = given.strip_suffix('/').unwrap_or(given);
+    let (scheme, default_port, authority) = if let Some(rest) = origin.strip_prefix("https://") {
+        ("https", 443, rest)
+    } else if let Some(rest) = origin.strip_prefix("http://") {
+        ("http", 80, rest)
+    } else {
+        return Err(unfit());
+    };
+    if authority.contains(['/', '?', '#', '@']) {
+        return Err(unfit());
+    }
+    let host = host_of(authority);
+    let port = match &authority[host.len()..] {
+        "" => default_port,
+        rest => rest
+            .strip_prefix(':')
+            .filter(|digits| !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+            .and_then(|digits| digits.parse::<u16>().ok())
+            .filter(|port| *port != 0)
+            .ok_or_else(unfit)?,
+    };
+    if host.is_empty() {
+        return Err(unfit());
+    }
+    if !noombat_api::middleware::is_local_domain(&config.domain) {
+        return Err(format!(
+            "NOOMBAT_PUBLIC_ORIGIN is set for {:?}, which is not a local domain: it is for a \
+             local instance behind a TLS proxy.",
+            config.domain
+        ));
+    }
+    if !host.eq_ignore_ascii_case(host_of(&config.domain)) {
+        return Err(format!(
+            "NOOMBAT_PUBLIC_ORIGIN is {given:?}, whose host is not the domain's, {:?}.",
+            config.domain
+        ));
+    }
+    let host = host.to_ascii_lowercase();
+    Ok(Some(if port == default_port {
+        format!("{scheme}://{host}")
+    } else {
+        format!("{scheme}://{host}:{port}")
+    }))
+}
+
+/// The host of a `host[:port]`, an IPv6 literal's brackets included.
+fn host_of(authority: &str) -> &str {
+    match authority.find(']') {
+        Some(end) if authority.starts_with('[') => &authority[..=end],
+        _ => authority.split(':').next().unwrap_or(authority),
+    }
+}
+
 /// ORCID's sign-in settings, or `None` when no client is configured, a
 /// blank ID or secret counting as none.
 fn orcid_config(config: &Config) -> Option<noombat_identity::oauth_orcid::OrcidConfig> {
@@ -1251,7 +1335,8 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         Config, INSECURE_CHATMAIL_SECRET, MIN_CHATMAIL_SECRET_LEN, chatmail_secret_problem,
-        embedded_migrations, orcid_config, orcid_uri_problem, parse_relay_policy, session_config,
+        embedded_migrations, orcid_config, orcid_uri_problem, parse_relay_policy, public_origin,
+        session_config,
     };
     use figment::Figment;
     use figment::providers::{Format, Toml};
@@ -1307,6 +1392,82 @@ mod tests {
                 "https://pub.orcid.org".to_owned()
             )
         );
+    }
+
+    /// What the public-origin check makes of `origin` for `domain`.
+    fn checked_origin(domain: &str, origin: &str) -> Result<Option<String>, String> {
+        let toml = format!(
+            "domain = {domain:?}\ndatabase_url = \"postgres://db/x\"\npublic_origin = {origin:?}"
+        );
+        public_origin(&Figment::new().merge(Toml::string(&toml)).extract().unwrap())
+    }
+
+    #[test]
+    fn a_public_origin_moves_only_the_scheme_and_port() {
+        let kept = |origin: &str| Ok(Some(origin.to_owned()));
+        assert_eq!(
+            checked_origin("localhost", "https://localhost:8443"),
+            kept("https://localhost:8443")
+        );
+        assert_eq!(
+            checked_origin("localhost", "https://localhost:8443/"),
+            kept("https://localhost:8443")
+        );
+        assert_eq!(
+            checked_origin("localhost:8444", "https://localhost"),
+            kept("https://localhost")
+        );
+        assert_eq!(
+            checked_origin("[::1]", "https://[::1]:8443"),
+            kept("https://[::1]:8443")
+        );
+        assert_eq!(checked_origin("localhost", " "), Ok(None));
+        // Stored as a browser sends it, or the comparisons never match.
+        assert_eq!(
+            checked_origin("localhost", "https://LocalHost:8443"),
+            kept("https://localhost:8443")
+        );
+        assert_eq!(
+            checked_origin("localhost", "https://localhost:443"),
+            kept("https://localhost")
+        );
+        assert_eq!(
+            checked_origin("localhost", "http://localhost:80"),
+            kept("http://localhost")
+        );
+        assert_eq!(
+            checked_origin("localhost", "https://localhost:08443"),
+            kept("https://localhost:8443")
+        );
+        for (domain, refused) in [
+            ("localhost", "localhost:8443"),
+            ("localhost", "ftp://localhost:8443"),
+            ("localhost", "https://localhost:8443/path"),
+            ("localhost", "https://user@localhost:8443"),
+            ("localhost", "https://localhost:port"),
+            ("localhost", "https://localhost:0"),
+            ("localhost", "https://localhost:65536"),
+            ("localhost", "https://localhost:+8443"),
+            ("localhost", "https://localhost:"),
+            ("localhost", "https://"),
+            ("localhost", "https://elsewhere.example:8443"),
+            ("localhost", "https://localhost.example"),
+            ("noombat.social", "https://noombat.social"),
+        ] {
+            assert!(
+                checked_origin(domain, refused).is_err(),
+                "{refused} for {domain}"
+            );
+        }
+        // Refused as no origin at all, not as another host.
+        for refused in [
+            "https://localhost/path",
+            "https://localhost?x",
+            "https://user@localhost",
+        ] {
+            let problem = checked_origin("localhost", refused).expect_err(refused);
+            assert!(problem.contains("not an origin"), "{problem}");
+        }
     }
 
     #[test]

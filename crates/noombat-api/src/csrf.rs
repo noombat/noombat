@@ -163,7 +163,12 @@ pub(crate) fn from_own_pages(state: &AppState, headers: &HeaderMap) -> bool {
     }
     headers.get(ORIGIN).is_none_or(|origin| {
         origin.as_bytes()
-            == crate::middleware::http_origin(&state.domain, state.public_port).as_bytes()
+            == crate::middleware::http_origin(
+                &state.domain,
+                state.public_port,
+                state.public_origin.as_deref(),
+            )
+            .as_bytes()
     })
 }
 

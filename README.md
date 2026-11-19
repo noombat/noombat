@@ -138,12 +138,13 @@ Environment variables take precedence.
 
 ### Required settings
 
-| Key            | Env Var                | Description                         |
-|----------------|------------------------|-------------------------------------|
-| `domain`       | `NOOMBAT_DOMAIN`       | Instance domain.                    |
-| `database_url` | `NOOMBAT_DATABASE_URL` | PostgreSQL connection URL.          |
-| `host`         | `NOOMBAT_HOST`         | Listen address (default `0.0.0.0`). |
-| `port`         | `NOOMBAT_PORT`         | Listen port (default `8443`).       |
+| Key             | Env Var                 | Description                                                                                    |
+|-----------------|-------------------------|------------------------------------------------------------------------------------------------|
+| `domain`        | `NOOMBAT_DOMAIN`        | Instance domain.                                                                               |
+| `database_url`  | `NOOMBAT_DATABASE_URL`  | PostgreSQL connection URL.                                                                     |
+| `host`          | `NOOMBAT_HOST`          | Listen address (default `0.0.0.0`).                                                            |
+| `port`          | `NOOMBAT_PORT`          | Listen port (default `8443`).                                                                  |
+| `public_origin` | `NOOMBAT_PUBLIC_ORIGIN` | A local instance's origin behind a TLS proxy, as `https://localhost:8443`; local domains only. |
 
 ### Authentication
 
@@ -354,8 +355,8 @@ cd tests/e2e
 pnpm install
 pnpm exec playwright install --with-deps
 
-# Run against a running Noombat instance.
-NOOMBAT_URL=http://localhost:8443 pnpm exec playwright test
+# Run against the stack scripts/e2e-stack.sh up serves at https://localhost:8443.
+pnpm exec playwright test
 ```
 
 ## Deployment

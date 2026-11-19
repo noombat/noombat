@@ -104,6 +104,7 @@ fn test_state(pool: PgPool, search: Arc<dyn SearchBackend>) -> AppState {
         pool,
         domain: DOMAIN.to_owned(),
         public_port: 8443,
+        public_origin: None,
         http_client: reqwest::Client::new(),
         open_registrations: true,
         search: Some(search),
