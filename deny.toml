@@ -16,6 +16,9 @@ yanked = "warn"
 ignore = [
     # Unmaintained, not vulnerable. Drop once an async-imap release stops pulling it.
     { id = "RUSTSEC-2026-0441", reason = "pin-utils, via async-imap" },
+    # Unmaintained, not vulnerable, and no release clears it. Drop once nothing in
+    # the graph uses it.
+    { id = "RUSTSEC-2026-0543", reason = "chrono, used by six workspace crates and via sqlx and async-imap" },
 ]
 
 [licenses]
