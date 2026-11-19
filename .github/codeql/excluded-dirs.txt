@@ -9,6 +9,7 @@
 crates/noombat-api/tests
 crates/noombat-federation/tests
 crates/noombat-identity/tests
+crates/noombat-server/tests
 tests/chat-interop
 tests/e2e
 tests/e2e/chat
