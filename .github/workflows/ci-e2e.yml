@@ -102,6 +102,11 @@ jobs:
       # The values mirror the test overlay in compose.test.yml.
       NOOMBAT_RATE_LIMIT: "10000"
       NOOMBAT_FED_RATE_LIMIT: "10000"
+      # ORCID pointed at a stand-in, so oauth-start.spec.ts follows the
+      # login page's ORCID button to a provider in each browser.
+      NOOMBAT_ORCID_CLIENT_ID: stand-in-client
+      NOOMBAT_ORCID_CLIENT_SECRET: stand-in-secret
+      NOOMBAT_ORCID_BASE_URI: http://localhost:8790
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -250,6 +255,20 @@ jobs:
             exit 1
           fi
           echo "test actor, article and note seeded"
+
+      - name: Start the stand-in ORCID
+        run: |
+          nohup node tests/e2e/stand-in-orcid.mjs 8790 > /tmp/stand-in-orcid.log 2>&1 &
+          for i in $(seq 1 15); do
+            if curl -s -o /dev/null http://localhost:8790/; then
+              echo "The stand-in ORCID is up"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::the stand-in ORCID did not start"
+          cat /tmp/stand-in-orcid.log
+          exit 1
 
       - name: Start Noombat server
         run: |

@@ -41,6 +41,8 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="${E2E_RUN_DIR:-${TMPDIR:-/tmp}/noombat-e2e}"
 PID_FILE="$RUN_DIR/server.pid"
 LOG_FILE="$RUN_DIR/server.log"
+STAND_IN_PID_FILE="$RUN_DIR/stand-in-orcid.pid"
+STAND_IN_PORT=8790
 
 COMPOSE=(docker compose -f "$REPO/compose.yml" -f "$REPO/compose.dev.yml")
 SERVICES=(db redis meilisearch)
@@ -88,6 +90,12 @@ export NOOMBAT_JWT_SECRET="${NOOMBAT_JWT_SECRET:-ci-e2e-jwt-secret-at-least-32-b
 # address, and the production figures are not test figures.
 export NOOMBAT_RATE_LIMIT="10000"
 export NOOMBAT_FED_RATE_LIMIT="10000"
+# ORCID pointed at a stand-in the stack starts, so oauth-start.spec.ts
+# follows the login page's ORCID button to a provider. Set outright, as
+# the rate limits are: the spec fails against any other ORCID.
+export NOOMBAT_ORCID_CLIENT_ID="stand-in-client"
+export NOOMBAT_ORCID_CLIENT_SECRET="stand-in-secret"
+export NOOMBAT_ORCID_BASE_URI="http://localhost:$STAND_IN_PORT"
 export NOOMBAT_CV_DOWNLOAD_LIMIT="10000"
 
 say() { printf '  %s\n' "$*"; }
@@ -143,6 +151,19 @@ up() {
     say "  run 'scripts/e2e-stack.sh down' first, or 'pgrep -a noombat' to find it"
     return 1
   fi
+  # The stand-in ORCID, refused likewise: a second one would die on the
+  # port and leave its pid file naming the dead one.
+  if curl -sS -o /dev/null --max-time 2 "http://127.0.0.1:$STAND_IN_PORT/" 2>/dev/null; then
+    say "something is already serving on :$STAND_IN_PORT; run 'scripts/e2e-stack.sh down' first"
+    return 1
+  fi
+  node "$REPO/tests/e2e/stand-in-orcid.mjs" "$STAND_IN_PORT" \
+    > "$RUN_DIR/stand-in-orcid.log" 2>&1 &
+  echo $! > "$STAND_IN_PID_FILE"
+  wait_for "the stand-in ORCID on :$STAND_IN_PORT" 10 \
+    curl -sS -o /dev/null "http://127.0.0.1:$STAND_IN_PORT/" || {
+    say "the stand-in ORCID did not come up; see $RUN_DIR/stand-in-orcid.log"; return 1
+  }
 
   # `exec` matters. Without it, `( cd ... && nohup ... & )` records the
   # PID of the subshell, and the server is that subshell's child, so
@@ -343,6 +364,22 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0placeholder
 }
 
 down() {
+  if [ -f "$STAND_IN_PID_FILE" ]; then
+    local stand_in j
+    stand_in="$(cat "$STAND_IN_PID_FILE")"
+    kill "$stand_in" 2>/dev/null
+    for ((j = 0; j < 5; j++)); do
+      kill -0 "$stand_in" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "$stand_in" 2>/dev/null; then
+      kill -9 "$stand_in" 2>/dev/null
+      say "stand-in ORCID did not stop on SIGTERM; killed (pid $stand_in)"
+    else
+      say "stand-in ORCID stopped (pid $stand_in)"
+    fi
+    rm -f "$STAND_IN_PID_FILE"
+  fi
   if [ -f "$PID_FILE" ]; then
     local pid i
     pid="$(cat "$PID_FILE")"
@@ -373,6 +410,9 @@ down() {
     say "WARNING: something is still serving on :$NOOMBAT_PORT"
     say "  find it with: pgrep -a noombat"
   fi
+  if curl -sS -o /dev/null --max-time 2 "http://127.0.0.1:$STAND_IN_PORT/" 2>/dev/null; then
+    say "WARNING: something is still serving on :$STAND_IN_PORT"
+  fi
 
   # -v drops the database volume too. Nothing in it survives a run that
   # is worth keeping: migrations run at boot and `seed` rebuilds its rows.
@@ -389,6 +429,11 @@ status() {
     say "server: running (pid $(cat "$PID_FILE"))"
   else
     say "server: not running"
+  fi
+  if [ -f "$STAND_IN_PID_FILE" ] && kill -0 "$(cat "$STAND_IN_PID_FILE")" 2>/dev/null; then
+    say "stand-in ORCID: running (pid $(cat "$STAND_IN_PID_FILE"))"
+  else
+    say "stand-in ORCID: not running"
   fi
   "${COMPOSE[@]}" ps --format '  {{.Service}}  {{.Status}}' 2>/dev/null \
     || say "no compose project running"

@@ -20,7 +20,7 @@
 use axum::Router;
 use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderName, HeaderValue, Request, header, header::AUTHORIZATION, header::COOKIE};
+use axum::http::{HeaderName, HeaderValue, Request, header, header::AUTHORIZATION};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use tower_http::set_header::SetResponseHeaderLayer;
@@ -121,13 +121,16 @@ pub async fn authentication(
 }
 
 /// Whether the request is a write that may act as the signed-in account:
-/// any unsafe method but these. Signing in, registering, refreshing and
-/// logging out act by credentials in the request, never the session's,
+/// any unsafe method but these. Signing in (with a password, or by starting
+/// a Mastodon or ORCID sign-in), registering, refreshing and logging out
+/// act by credentials in the request, never the session's,
 /// and signing in and refreshing check the account's status themselves;
 /// the theme and contrast controls set a cookie and act on no account.
 pub(crate) fn acts_as_viewer(request: &Request<Body>) -> bool {
     let exempt = [
         "/api/v1/auth/login",
+        "/api/v1/auth/mastodon",
+        "/api/v1/auth/orcid",
         "/api/v1/auth/register",
         "/api/v1/auth/refresh",
         "/api/v1/auth/logout",
@@ -172,23 +175,9 @@ fn bearer_or_cookie_token(request: &Request<Body>) -> Option<(&str, bool)> {
         .and_then(|v| v.to_str().ok())
         .and_then(|h| h.strip_prefix("Bearer "));
 
-    // 2. Try session cookie, read from every `Cookie` header, as HTTP/2
-    // may send each cookie in one of its own. Two sessions are refused
-    // rather than one chosen: taking the first would let the order the
-    // browser sends them in, which a cookie set elsewhere can arrange,
-    // decide which session a page runs on.
-    let name = format!("{}=", crate::cookie::COOKIE_NAME);
-    let mut sessions = request
-        .headers()
-        .get_all(COOKIE)
-        .iter()
-        .filter_map(|v| v.to_str().ok())
-        .flat_map(|cookies| cookies.split(';'))
-        .filter_map(|c| c.trim().strip_prefix(name.as_str()));
-    let token_from_cookie = match (sessions.next(), sessions.next()) {
-        (Some(token), None) => Some(token),
-        _ => None,
-    };
+    // 2. Try the session cookie: two count as none, so the order the
+    // browser sends them in does not decide which session a page runs on.
+    let token_from_cookie = crate::cookie::single(request.headers(), crate::cookie::COOKIE_NAME);
 
     token_from_header
         .map(|token| (token, false))

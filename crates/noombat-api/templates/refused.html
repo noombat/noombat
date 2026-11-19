@@ -3,10 +3,10 @@
 <!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
 <!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
 
-{% block title %}{{ i18n.t("csrf_refused_title") }}{% endblock %}
+{% block title %}{{ title }}{% endblock %}
 
 {% block content %}
-        <h1 class="text-2xl font-bold mb-4">{{ i18n.t("csrf_refused_title") }}</h1>
+        <h1 class="text-2xl font-bold mb-4">{{ title }}</h1>
         <p class="mb-4">{{ message }}</p>
-        <p><a href="/" class="text-text-brand">{{ i18n.t("csrf_refused_home") }}</a></p>
+        <p><a href="{{ back_href }}" class="text-text-brand">{{ back_label }}</a></p>
 {% endblock %}

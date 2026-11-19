@@ -6,10 +6,9 @@
 //! ORCID's address comes from configuration, so a local stand-in answers
 //! the token exchange and the whole flow runs here: the start route, the
 //! provider's redirect back, and what the callback writes and sets. A flow
-//! is finished with the cookies its start route set, as the browser that
-//! started it would send them, unless the test is about another browser: a
-//! refusal then comes from the check its test names, not from a missing
-//! cookie once the state is bound to one.
+//! starts with a POST from this instance's own pages and is finished with
+//! the cookies its start set, as the browser that started it would send
+//! them, unless the test is about another browser.
 //!
 //! The Mastodon callback builds its token address as `https://` plus the
 //! instance's domain, which a plain local listener cannot answer. Both
@@ -186,27 +185,69 @@ fn cookies_set_by(response: &Response) -> Vec<String> {
         .collect()
 }
 
-/// Start a flow at `uri` from a browser holding `cookies`. Returns the
-/// `state` the redirect to ORCID carries and the cookies that browser holds
-/// afterwards.
-async fn start(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
-    let response = get(app, uri, cookies).await;
+/// The sign-in form's POST to `uri` with `body`, from a page `site` names
+/// (`Sec-Fetch-Site`), in a browser holding `cookies`.
+async fn post_start(app: &AppState, uri: &str, body: &str, site: &str, cookies: &str) -> Response {
+    let mut request = Request::builder()
+        .method("POST")
+        .uri(uri)
+        .header("sec-fetch-site", site)
+        .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded");
+    if !cookies.is_empty() {
+        request = request.header(header::COOKIE, cookies);
+    }
+    build_router(app.clone())
+        .oneshot(
+            request
+                .body(Body::from(body.to_owned()))
+                .expect("request built"),
+        )
+        .await
+        .expect("router responded")
+}
+
+/// The provider's address a start's page moves on to, and the cookies the
+/// start set: the page answers 200 and refreshes to that address.
+async fn moved_on(response: Response) -> (String, Vec<String>) {
     assert_eq!(
         response.status(),
-        StatusCode::TEMPORARY_REDIRECT,
-        "the start route redirects to ORCID"
+        StatusCode::OK,
+        "a start answers with its page"
     );
-    let location = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .expect("the redirect names ORCID")
-        .to_owned();
-    let state_token = location
-        .rsplit_once("state=")
+    let set = cookies_set_by(&response);
+    let page = text(response).await;
+    let url = page
+        .split(r#"<meta http-equiv="refresh" content="0;url="#)
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .expect("the page moves on to the provider")
+        .replace("&amp;", "&");
+    (url, set)
+}
+
+/// The `state` an address to the provider carries.
+fn state_of(url: &str) -> String {
+    url.rsplit_once("state=")
         .and_then(|(_, rest)| rest.split('&').next())
         .map(str::to_owned)
-        .expect("the redirect carries a state");
+        .expect("the address carries a state")
+}
+
+/// A response's body as text.
+async fn text(response: Response) -> String {
+    let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+        .await
+        .expect("body read");
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+/// Start a flow at `uri` from this instance's sign-in page, in a browser
+/// holding `cookies`. Returns the `state` in the address it moves on to and
+/// the cookies that browser holds afterwards.
+async fn start(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
+    let response = post_start(app, uri, "", "same-origin", cookies).await;
+    let (url, set) = moved_on(response).await;
+    let state_token = state_of(&url);
 
     let mut held: Vec<String> = cookies
         .split(';')
@@ -214,13 +255,12 @@ async fn start(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
         .filter(|c| !c.is_empty())
         .map(str::to_owned)
         .collect();
-    held.extend(cookies_set_by(&response));
+    held.extend(set);
     (state_token, held.join("; "))
 }
 
 /// The settings page's link form, posted by a browser holding `cookies`:
-/// its token in the form's field, as the page sends it. The redirect to
-/// ORCID is a 303, which the browser follows with a GET.
+/// its token in the form's field, as the page sends it.
 async fn start_link(app: &AppState, uri: &str, cookies: &str) -> (String, String) {
     let session = cookies
         .split(';')
@@ -248,29 +288,15 @@ async fn start_link(app: &AppState, uri: &str, cookies: &str) -> (String, String
         )
         .await
         .expect("router responded");
-    assert_eq!(
-        response.status(),
-        StatusCode::SEE_OTHER,
-        "the link form redirects to ORCID"
-    );
-    let location = response
-        .headers()
-        .get(header::LOCATION)
-        .and_then(|v| v.to_str().ok())
-        .expect("the redirect names ORCID")
-        .to_owned();
-    let state_token = location
-        .rsplit_once("state=")
-        .and_then(|(_, rest)| rest.split('&').next())
-        .map(str::to_owned)
-        .expect("the redirect carries a state");
+    let (url, set) = moved_on(response).await;
+    let state_token = state_of(&url);
     let mut held: Vec<String> = cookies
         .split(';')
         .map(str::trim)
         .filter(|c| !c.is_empty())
         .map(str::to_owned)
         .collect();
-    held.extend(cookies_set_by(&response));
+    held.extend(set);
     (state_token, held.join("; "))
 }
 
@@ -335,6 +361,131 @@ async fn active_local_accounts(pool: &PgPool) -> i64 {
         .expect("accounts readable")
 }
 
+// ..... Where a sign-in starts .....
+
+/// A sign-in starts only with a POST from this instance's own pages: one
+/// another site starts could sign the visitor in as that site chose, so it
+/// is refused, as is a GET any link could make, before a flow is stored or
+/// its cookie set.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_sign_in_starts_only_from_this_instances_pages(pool: PgPool) {
+    let app = test_state(pool.clone()).await;
+    for (uri, body) in [
+        ("/api/v1/auth/orcid", ""),
+        ("/api/v1/auth/mastodon", "handle=mallory%40evil.invalid"),
+    ] {
+        let refused = post_start(&app, uri, body, "cross-site", "").await;
+        assert_eq!(
+            refused.status(),
+            StatusCode::FORBIDDEN,
+            "{uri} from another site"
+        );
+        assert!(
+            cookies_set_by(&refused).is_empty(),
+            "{uri}: no cookie is set"
+        );
+        let by_get = get(&app, uri, "").await;
+        assert_eq!(
+            by_get.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "{uri} by GET"
+        );
+    }
+    let flows: i64 = sqlx::query_scalar("SELECT count(*) FROM oauth_states")
+        .fetch_one(&pool)
+        .await
+        .expect("flows countable");
+    assert_eq!(flows, 0, "no flow is stored");
+}
+
+/// The sign-in page starts each sign-in with the POST those routes take.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn the_sign_in_page_starts_each_sign_in_with_a_post(pool: PgPool) {
+    let app = test_state(pool.clone()).await;
+    let page = text(get(&app, "/auth/login", "").await).await;
+    for action in ["/api/v1/auth/mastodon", "/api/v1/auth/orcid"] {
+        assert!(
+            page.contains(&format!(r#"<form method="post" action="{action}""#)),
+            "the sign-in page starts {action} with a POST"
+        );
+    }
+}
+
+/// A start answers with a page that moves on to the provider rather than a
+/// redirect, which `form-action 'self'` refuses after a form's POST; the
+/// page carries the flow's cookie and is kept by no cache.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_start_answers_with_a_page_that_moves_on(pool: PgPool) {
+    let app = test_state(pool.clone()).await;
+    let response = post_start(&app, "/api/v1/auth/orcid", "", "same-origin", "").await;
+    assert_eq!(
+        response
+            .headers()
+            .get(header::CACHE_CONTROL)
+            .and_then(|v| v.to_str().ok()),
+        Some("no-store")
+    );
+    let (url, set) = moved_on(response).await;
+    assert!(url.contains("/oauth/authorize?"), "{url}");
+    assert!(
+        set.contains(&format!("__Host-noombat_oauth={}", state_of(&url))),
+        "the flow's cookie holds its state: {set:?}"
+    );
+}
+
+/// A start that says neither where it came from is refused: no session's
+/// token backs a sign-in's start.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_start_saying_nothing_of_its_origin_is_refused(pool: PgPool) {
+    let app = test_state(pool.clone()).await;
+    for uri in ["/api/v1/auth/orcid", "/api/v1/auth/mastodon"] {
+        let response = build_router(app.clone())
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri(uri)
+                    .header(header::CONTENT_TYPE, "application/x-www-form-urlencoded")
+                    .body(Body::from("handle=mallory%40evil.invalid"))
+                    .expect("request built"),
+            )
+            .await
+            .expect("router responded");
+        assert_eq!(response.status(), StatusCode::FORBIDDEN, "{uri}");
+    }
+}
+
+/// A browser still holding a suspended account's session can sign in to
+/// another account: a sign-in's start acts by no session.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_browser_holding_a_suspended_session_can_start_a_sign_in(pool: PgPool) {
+    let mallory = account(&pool, "mallory", "suspended").await;
+    let session = signed_in_as(&pool, mallory, "mallory").await;
+    let app = test_state(pool.clone()).await;
+    let response = post_start(&app, "/api/v1/auth/orcid", "", "same-origin", &session).await;
+    assert_eq!(response.status(), StatusCode::OK);
+}
+
+/// A callback with no cookie for its flow and an empty state is refused
+/// like any other: an absent cookie matches nothing.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_callback_with_no_cookie_and_no_state_is_refused(pool: PgPool) {
+    let app = test_state(pool.clone()).await;
+    let response = get(
+        &app,
+        "/api/v1/auth/orcid/callback?code=stand-in-code&state=",
+        "",
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+    assert!(text(response).await.contains("Not finished"));
+}
+
 // ..... One browser, start to finish .....
 
 /// The flow the refusals below are measured against.
@@ -361,6 +512,16 @@ async fn the_browser_that_starts_an_orcid_sign_in_finishes_it(pool: PgPool) {
         unconsumed_flows(&pool, &state_token).await,
         0,
         "a finished flow cannot be replayed"
+    );
+    let cleared = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .any(|v| v.starts_with("__Host-noombat_oauth=;") && v.contains("Max-Age=0"));
+    assert!(
+        cleared,
+        "a finished flow clears the cookie tying it to the browser"
     );
 }
 
@@ -463,13 +624,8 @@ async fn linking_an_orcid_id_pushes_it_to_followers(pool: PgPool) {
 
 // ..... A flow finished in another browser .....
 
-// Known defect: the state is bound to no cookie; remove `should_panic` once the callback checks
-// one.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(
-    expected = "known defect: an ORCID sign-in finished in another browser signs that browser in"
-)]
 async fn an_orcid_sign_in_finished_in_another_browser_is_refused(pool: PgPool) {
     // Mallory starts a sign-in to her own account and hands the callback
     // address, code and state included, to a browser holding none of her
@@ -480,13 +636,10 @@ async fn an_orcid_sign_in_finished_in_another_browser_is_refused(pool: PgPool) {
 
     let response = finish(&app, &state_token, "").await;
 
-    assert!(
-        !response.status().is_server_error(),
-        "the stand-in ORCID must answer the exchange"
-    );
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert!(
         !sets_a_session(&response),
-        "known defect: an ORCID sign-in finished in another browser signs that browser in"
+        "an ORCID sign-in finished in another browser must not sign that browser in"
     );
     assert_eq!(sessions_of(&pool, mallory).await, 0, "no session is stored");
     assert_eq!(
@@ -494,13 +647,19 @@ async fn an_orcid_sign_in_finished_in_another_browser_is_refused(pool: PgPool) {
         1,
         "a refused callback leaves the flow for the browser that started it"
     );
+    let page = text(response).await;
+    assert!(
+        page.contains("This sign-in or account link was started in another browser"),
+        "the refusal is a page saying why"
+    );
+    assert!(
+        page.contains(r#"<a href="/auth/login" class="text-text-brand">Go to sign-in</a>"#),
+        "and leading back to sign-in"
+    );
 }
 
-// Known defect: the state is bound to no cookie; remove `should_panic` once the callback checks
-// one.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a sign-in finished with another flow's cookies signs in")]
 async fn an_orcid_sign_in_finished_with_another_flows_cookies_is_refused(pool: PgPool) {
     // The victim's browser starts its own sign-in first, so it holds whatever
     // cookies a flow sets: only a check that they match this state refuses it.
@@ -511,13 +670,10 @@ async fn an_orcid_sign_in_finished_with_another_flows_cookies_is_refused(pool: P
 
     let response = finish(&app, &state_token, &victims_cookies).await;
 
-    assert!(
-        !response.status().is_server_error(),
-        "the stand-in ORCID must answer the exchange"
-    );
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
     assert!(
         !sets_a_session(&response),
-        "known defect: a sign-in finished with another flow's cookies signs in"
+        "a sign-in finished with another flow's cookies must not sign in"
     );
     assert_eq!(sessions_of(&pool, mallory).await, 0, "no session is stored");
     assert_eq!(
@@ -527,13 +683,8 @@ async fn an_orcid_sign_in_finished_with_another_flows_cookies_is_refused(pool: P
     );
 }
 
-// Known defect: any browser can finish a link flow; remove `should_panic` once the callback checks
-// the browser.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(
-    expected = "known defect: an ORCID link finished in another browser attaches the iD"
-)]
 async fn an_orcid_link_finished_in_another_browser_links_nothing(pool: PgPool) {
     // Mallory starts a link to her own account and has the victim authorise
     // at ORCID, so the callback arrives with the victim's iD and none of
@@ -550,7 +701,7 @@ async fn an_orcid_link_finished_in_another_browser_links_nothing(pool: PgPool) {
     assert_eq!(
         identities_for_the_orcid(&pool).await,
         0,
-        "known defect: an ORCID link finished in another browser attaches the iD"
+        "an ORCID link finished in another browser must not attach the iD"
     );
     assert!(!sets_a_session(&response), "no session is set");
     assert_eq!(
@@ -565,13 +716,8 @@ async fn an_orcid_link_finished_in_another_browser_links_nothing(pool: PgPool) {
     );
 }
 
-// Known defect: any browser can finish a link flow; remove `should_panic` once the callback checks
-// the browser.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(
-    expected = "known defect: a link finished with another flow's cookies attaches the iD"
-)]
 async fn an_orcid_link_finished_with_another_flows_cookies_links_nothing(pool: PgPool) {
     // The victim, signed in, has started a link of their own, so their browser
     // holds a session and whatever cookies a flow sets.
@@ -590,7 +736,7 @@ async fn an_orcid_link_finished_with_another_flows_cookies_links_nothing(pool: P
     assert_eq!(
         identities_for_the_orcid(&pool).await,
         0,
-        "known defect: a link finished with another flow's cookies attaches the iD"
+        "a link finished with another flow's cookies must not attach the iD"
     );
     assert_eq!(
         unconsumed_flows(&pool, &state_token).await,
@@ -783,13 +929,10 @@ async fn the_configuration_flag_still_closes_orcid_sign_up(pool: PgPool) {
     assert_eq!(local_accounts(&pool).await, 0, "no account is created");
 }
 
-// Known defect: the callback deletes the state before anything else, so a callback from any
-// browser spends the flow. With no client registered every callback fails after that, so this
-// shows only that a refused callback leaves the state, not that the browser was checked. Remove
-// `should_panic` once fixed.
+/// A Mastodon callback in a browser that holds no cookie for its flow is
+/// refused before the state is spent, so the flow stays for its own browser.
 #[sqlx::test(migrations = "../../migrations")]
 #[ignore = "requires a database; run with --include-ignored"]
-#[should_panic(expected = "known defect: a Mastodon callback from another browser spends the flow")]
 async fn a_mastodon_callback_from_another_browser_spends_nothing(pool: PgPool) {
     sqlx::query(
         "INSERT INTO oauth_states (state, provider, instance_domain, expires_at) \
@@ -811,7 +954,41 @@ async fn a_mastodon_callback_from_another_browser_spends_nothing(pool: PgPool) {
     assert_eq!(
         unconsumed_flows(&pool, "mastodon-state").await,
         1,
-        "known defect: a Mastodon callback from another browser spends the flow"
+        "a Mastodon callback from another browser must not spend the flow"
+    );
+}
+
+/// A Mastodon callback in the browser holding its flow's cookie gets past
+/// the check and spends the flow; the exchange then fails, with no client
+/// registered, which is not the refusal page.
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_mastodon_callback_in_its_own_browser_spends_its_flow(pool: PgPool) {
+    sqlx::query(
+        "INSERT INTO oauth_states (state, provider, instance_domain, expires_at) \
+         VALUES ('mastodon-state', 'mastodon', 'mastodon.example', now() + interval '10 minutes')",
+    )
+    .execute(&pool)
+    .await
+    .expect("flow fixture");
+    let app = test_state(pool.clone()).await;
+
+    let response = get(
+        &app,
+        "/api/v1/auth/mastodon/callback?code=stand-in-code&state=mastodon-state",
+        "__Host-noombat_oauth=mastodon-state",
+    )
+    .await;
+
+    assert!(!sets_a_session(&response), "no session is set");
+    assert!(
+        !text(response).await.contains("Not finished"),
+        "not refused"
+    );
+    assert_eq!(
+        unconsumed_flows(&pool, "mastodon-state").await,
+        0,
+        "the flow is spent"
     );
 }
 

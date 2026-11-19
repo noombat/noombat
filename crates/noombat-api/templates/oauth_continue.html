@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+
+<!-- SPDX-License-Identifier: AGPL-3.0-or-later -->
+<!-- SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes -->
+
+{% block title %}{{ i18n.t("oauth_continue_title") }}{% endblock %}
+
+{% block head %}
+<meta http-equiv="refresh" content="0;url={{ url }}">
+{% endblock %}
+
+{% block content %}
+        <h1 class="text-2xl font-bold mb-4">{{ i18n.t("oauth_continue_title") }}</h1>
+        <p><a href="{{ url }}" class="text-text-brand">{{ i18n.t("oauth_continue") }} {{ host }}</a></p>
+{% endblock %}

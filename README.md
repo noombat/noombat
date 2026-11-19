@@ -162,10 +162,12 @@ Environment variables take precedence.
 
 ### ORCID integration
 
-| Key                   | Env Var                       | Description                                                            |
-|-----------------------|-------------------------------|------------------------------------------------------------------------|
-| `orcid_client_id`     | `NOOMBAT_ORCID_CLIENT_ID`     | ORCID OAuth application ID (from <https://orcid.org/developer-tools>). |
-| `orcid_client_secret` | `NOOMBAT_ORCID_CLIENT_SECRET` | ORCID OAuth application secret.                                        |
+| Key                   | Env Var                       | Description                                                                   |
+|-----------------------|-------------------------------|-------------------------------------------------------------------------------|
+| `orcid_client_id`     | `NOOMBAT_ORCID_CLIENT_ID`     | ORCID OAuth application ID (from <https://orcid.org/developer-tools>).        |
+| `orcid_client_secret` | `NOOMBAT_ORCID_CLIENT_SECRET` | ORCID OAuth application secret.                                               |
+| `orcid_base_uri`      | `NOOMBAT_ORCID_BASE_URI`      | ORCID's address (default `https://orcid.org`), for its sandbox or a stand-in. |
+| `orcid_pub_api_uri`   | `NOOMBAT_ORCID_PUB_API_URI`   | ORCID's public API (default `https://pub.orcid.org`), for its sandbox.        |
 
 ### Encrypted chat (Chatmail)
 
@@ -233,9 +235,11 @@ Do not use `SSL_CERT_FILE` for this. It replaces the trust store rather than ext
 | `/api/v1/auth/totp/enrol`                 | POST   | Begin TOTP enrolment.                     |
 | `/api/v1/auth/totp/verify`                | POST   | Verify and enable TOTP.                   |
 | `/api/v1/auth/totp`                       | DELETE | Disable TOTP.                             |
-| `/api/v1/auth/mastodon`                   | GET    | Initiate Mastodon OAuth flow.             |
+| `/api/v1/auth/mastodon`                   | POST   | Initiate Mastodon OAuth sign-in.          |
+| `/api/v1/auth/mastodon/link`              | POST   | Link a Mastodon account.                  |
 | `/api/v1/auth/mastodon/callback`          | GET    | Mastodon OAuth callback.                  |
-| `/api/v1/auth/orcid`                      | GET    | Initiate ORCID OAuth flow.                |
+| `/api/v1/auth/orcid`                      | POST   | Initiate ORCID OAuth sign-in.             |
+| `/api/v1/auth/orcid/link`                 | POST   | Link an ORCID iD.                         |
 | `/api/v1/auth/orcid/callback`             | GET    | ORCID OAuth callback.                     |
 | `/api/v1/me/chatmail_cred`                | GET    | Retrieve encrypted credential blob.       |
 | `/api/v1/me/chatmail_cred`                | PUT    | Store encrypted credential blob.          |

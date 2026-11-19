@@ -266,7 +266,8 @@ pub async fn build_authorise_url(
     let state = crate::oauth_util::generate_state_token();
 
     // Persist the OAuth state for CSRF validation on callback.
-    let expires = chrono::Utc::now() + chrono::Duration::minutes(10);
+    let expires =
+        chrono::Utc::now() + chrono::Duration::seconds(crate::oauth_util::STATE_LIFETIME_SECS);
     sqlx::query(
         r#"INSERT INTO oauth_states (state, provider, instance_domain, link_actor_id, expires_at)
            VALUES ($1, 'mastodon', $2, $3, $4)"#,

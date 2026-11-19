@@ -5,6 +5,10 @@
 use noombat_core::error::{NoombatError, Result};
 use sqlx::PgPool;
 
+/// How long an OAuth flow's state lasts, and with it the cookie tying the
+/// flow to the browser that started it.
+pub const STATE_LIFETIME_SECS: i64 = 600;
+
 /// Generate a cryptographically random OAuth state token.
 pub fn generate_state_token() -> String {
     use base64::Engine as _;

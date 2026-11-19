@@ -4,7 +4,7 @@
 //!
 //! Flow:
 //! 1. The user clicks "Sign in with ORCID."
-//! 2. Noombat redirects to `https://orcid.org/oauth/authorize`.
+//! 2. Noombat sends the browser on to ORCID's `/oauth/authorize`.
 //! 3. On callback, Noombat exchanges the code for an access token and
 //!    the authenticated ORCID iD.
 //! 4. The ORCID iD is stored in the `orcid` column; if no local
@@ -75,7 +75,8 @@ pub async fn build_authorise_url(
     let redirect_uri = format!("https://{our_domain}/api/v1/auth/orcid/callback");
     let state = crate::oauth_util::generate_state_token();
 
-    let expires = chrono::Utc::now() + chrono::Duration::minutes(10);
+    let expires =
+        chrono::Utc::now() + chrono::Duration::seconds(crate::oauth_util::STATE_LIFETIME_SECS);
     sqlx::query(
         r#"INSERT INTO oauth_states (state, provider, instance_domain, link_actor_id, expires_at)
            VALUES ($1, 'orcid', NULL, $2, $3)"#,

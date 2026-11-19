@@ -9,13 +9,16 @@
 use axum::Json;
 use axum::Router;
 use axum::extract::{Query, State};
-use axum::http::StatusCode;
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Redirect, Response};
 use axum::routing::{delete, get, post};
 use noombat_core::error::NoombatError;
 use serde::{Deserialize, Serialize};
+use subtle::ConstantTimeEq;
 
+use crate::csrf::CsrfToken;
 use crate::error::ApiError;
+use crate::i18n::{I18n, negotiate_locale};
 use crate::middleware::Viewer;
 use crate::routes::body::JsonOrForm;
 use crate::state::AppState;
@@ -29,10 +32,10 @@ pub fn router() -> Router<AppState> {
         .route("/api/v1/auth/totp/enrol", post(totp_enrol))
         .route("/api/v1/auth/totp/verify", post(totp_verify))
         .route("/api/v1/auth/totp", delete(totp_disable))
-        .route("/api/v1/auth/mastodon", get(mastodon_init))
+        .route("/api/v1/auth/mastodon", post(mastodon_init))
         .route("/api/v1/auth/mastodon/link", post(mastodon_link_init))
         .route("/api/v1/auth/mastodon/callback", get(mastodon_callback))
-        .route("/api/v1/auth/orcid", get(orcid_init))
+        .route("/api/v1/auth/orcid", post(orcid_init))
         .route("/api/v1/auth/orcid/link", post(orcid_link_init))
         .route("/api/v1/auth/orcid/callback", get(orcid_callback))
         .route("/api/v1/auth/password", post(set_password))
@@ -386,6 +389,69 @@ async fn totp_disable(
     Ok(StatusCode::NO_CONTENT.into_response())
 }
 
+// ..... OAuth flows .....
+
+/// The page a start answers with, moving on to the provider at `url`.
+#[derive(askama::Template, askama_web::WebTemplate)]
+#[template(path = "oauth_continue.html")]
+struct ContinuePage {
+    i18n: I18n,
+    theme: crate::theme::Theme,
+    contrast: crate::theme::Contrast,
+    csrf: CsrfToken,
+    url: String,
+    host: String,
+}
+
+/// Start an OAuth flow at `url`, with the cookie tying the flow to this
+/// browser. A page that moves on to the provider rather than a redirect:
+/// the start is a form's POST, and `form-action 'self'`, which Chromium
+/// applies to a redirect too, would refuse one to another site.
+fn start_flow(headers: &HeaderMap, url: &str, state_token: &str) -> Response {
+    let host = url
+        .parse::<axum::http::Uri>()
+        .ok()
+        .and_then(|uri| uri.host().map(str::to_owned))
+        .unwrap_or_default();
+    let page = ContinuePage {
+        i18n: I18n {
+            locale: negotiate_locale(headers),
+        },
+        theme: crate::theme::from_headers(headers),
+        contrast: crate::theme::contrast_from_headers(headers),
+        csrf: CsrfToken::absent(),
+        url: url.to_owned(),
+        host,
+    };
+    let mut response = page.into_response();
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        crate::cookie::set_oauth_cookie(state_token),
+    );
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    response
+}
+
+/// The page refusing a callback that arrives anywhere but in the browser
+/// that started its flow, whose cookie holds `state`; none in that browser.
+/// Checked before the state is spent, so a callback from elsewhere leaves
+/// the flow to its own browser.
+fn from_another_browser(headers: &HeaderMap, state: &str) -> Option<Response> {
+    let same = crate::cookie::oauth_state(headers)
+        .is_some_and(|held| bool::from(held.as_bytes().ct_eq(state.as_bytes())));
+    (!same).then(|| {
+        crate::csrf::refused_page(
+            headers,
+            "oauth_refused_title",
+            "oauth_refused",
+            ("/auth/login", "oauth_refused_sign_in"),
+        )
+    })
+}
+
 // ..... Mastodon OAuth .....
 
 #[derive(Deserialize)]
@@ -393,11 +459,20 @@ struct MastodonInitQuery {
     handle: String,
 }
 
+/// `POST /api/v1/auth/mastodon`
+///
+/// Start a sign-in, from this instance's own pages only, signed in or not:
+/// a sign-in another site could start would let it, running its own
+/// Mastodon server as the provider, sign the visitor in as itself.
 async fn mastodon_init(
     State(state): State<AppState>,
-    Query(query): Query<MastodonInitQuery>,
+    headers: HeaderMap,
+    JsonOrForm { value: query, .. }: JsonOrForm<MastodonInitQuery>,
 ) -> Result<Response, ApiError> {
-    let (url, _state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
+    if !crate::csrf::shown_from_own_pages(&state, &headers) {
+        return Ok(crate::csrf::refused_elsewhere(&headers));
+    }
+    let (url, state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
         &state.pool,
         &state.http_client,
         &query.handle,
@@ -406,7 +481,7 @@ async fn mastodon_init(
     )
     .await?;
 
-    Ok(Redirect::temporary(&url).into_response())
+    Ok(start_flow(&headers, &url, &state_token))
 }
 
 /// `POST /api/v1/auth/mastodon/link`
@@ -421,6 +496,7 @@ async fn mastodon_init(
 /// server's, to whoever followed the link.
 async fn mastodon_link_init(
     State(state): State<AppState>,
+    headers: HeaderMap,
     viewer: Option<axum::Extension<Viewer>>,
     JsonOrForm { value: query, .. }: JsonOrForm<MastodonInitQuery>,
 ) -> Result<Response, ApiError> {
@@ -428,7 +504,7 @@ async fn mastodon_link_init(
     // A link adds a way in, which only an account that may sign in gains.
     noombat_identity::login::may_sign_in(&state.pool, actor_id).await?;
 
-    let (url, _state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
+    let (url, state_token) = noombat_identity::oauth_mastodon::build_authorise_url(
         &state.pool,
         &state.http_client,
         &query.handle,
@@ -437,8 +513,7 @@ async fn mastodon_link_init(
     )
     .await?;
 
-    // 303, so the browser follows it to the instance with a GET.
-    Ok(Redirect::to(&url).into_response())
+    Ok(start_flow(&headers, &url, &state_token))
 }
 
 #[derive(Deserialize)]
@@ -449,8 +524,12 @@ struct OAuthCallbackQuery {
 
 async fn mastodon_callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> Result<Response, ApiError> {
+    if let Some(page) = from_another_browser(&headers, &query.state) {
+        return Ok(page);
+    }
     let result = noombat_identity::oauth_mastodon::handle_callback(
         &state.pool,
         &state.http_client,
@@ -486,19 +565,34 @@ async fn mastodon_callback(
     response
         .headers_mut()
         .insert(axum::http::header::SET_COOKIE, cookie);
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        crate::cookie::clear_oauth_cookie(),
+    );
     Ok(response)
 }
 
 // ..... ORCID OAuth .....
 
-async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError> {
+/// `POST /api/v1/auth/orcid`
+///
+/// Start a sign-in, from this instance's own pages only, as for Mastodon:
+/// one another site starts would sign the visitor in, or up, with their iD
+/// without their asking.
+async fn orcid_init(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, ApiError> {
+    if !crate::csrf::shown_from_own_pages(&state, &headers) {
+        return Ok(crate::csrf::refused_elsewhere(&headers));
+    }
     let orcid_config = state.orcid_config.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
             "ORCID not configured".into(),
         ))
     })?;
 
-    let (url, _state_token) = noombat_identity::oauth_orcid::build_authorise_url(
+    let (url, state_token) = noombat_identity::oauth_orcid::build_authorise_url(
         &state.pool,
         orcid_config,
         &state.domain,
@@ -506,7 +600,7 @@ async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError>
     )
     .await?;
 
-    Ok(Redirect::temporary(&url).into_response())
+    Ok(start_flow(&headers, &url, &state_token))
 }
 
 /// `POST /api/v1/auth/orcid/link`
@@ -515,6 +609,7 @@ async fn orcid_init(State(state): State<AppState>) -> Result<Response, ApiError>
 /// links rather than creating; a POST for the reason the Mastodon link is.
 async fn orcid_link_init(
     State(state): State<AppState>,
+    headers: HeaderMap,
     viewer: Option<axum::Extension<Viewer>>,
 ) -> Result<Response, ApiError> {
     let actor_id = require_actor(&viewer)?;
@@ -526,7 +621,7 @@ async fn orcid_link_init(
         ))
     })?;
 
-    let (url, _state_token) = noombat_identity::oauth_orcid::build_authorise_url(
+    let (url, state_token) = noombat_identity::oauth_orcid::build_authorise_url(
         &state.pool,
         orcid_config,
         &state.domain,
@@ -534,13 +629,17 @@ async fn orcid_link_init(
     )
     .await?;
 
-    Ok(Redirect::to(&url).into_response())
+    Ok(start_flow(&headers, &url, &state_token))
 }
 
 async fn orcid_callback(
     State(state): State<AppState>,
+    headers: HeaderMap,
     Query(query): Query<OAuthCallbackQuery>,
 ) -> Result<Response, ApiError> {
+    if let Some(page) = from_another_browser(&headers, &query.state) {
+        return Ok(page);
+    }
     let orcid_config = state.orcid_config.as_ref().ok_or_else(|| {
         ApiError(NoombatError::ServiceUnavailable(
             "ORCID not configured".into(),
@@ -607,6 +706,10 @@ async fn orcid_callback(
     response
         .headers_mut()
         .insert(axum::http::header::SET_COOKIE, cookie);
+    response.headers_mut().append(
+        axum::http::header::SET_COOKIE,
+        crate::cookie::clear_oauth_cookie(),
+    );
     Ok(response)
 }
 

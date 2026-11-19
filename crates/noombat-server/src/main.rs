@@ -116,6 +116,12 @@ struct Config {
     orcid_client_id: Option<String>,
     /// ORCID OAuth client secret.
     orcid_client_secret: Option<Secret>,
+    /// ORCID's address (default `https://orcid.org`), for its sandbox or a
+    /// stand-in.
+    orcid_base_uri: Option<String>,
+    /// ORCID's public API (default `https://pub.orcid.org`), for its
+    /// sandbox.
+    orcid_pub_api_uri: Option<String>,
     /// Whether FEP-8b32 integrity proofs (`eddsa-jcs-2022`) are
     /// attached to all outbound activities (default `true`).
     #[serde(default = "default_true")]
@@ -297,6 +303,20 @@ impl Config {
     /// HS256 under an empty key signs tokens anyone can forge.
     fn jwt_secret(&self) -> Option<&str> {
         self.jwt_secret.as_ref().and_then(Secret::non_empty)
+    }
+
+    /// ORCID's address, treating blank as absent so the default stands.
+    fn orcid_base_uri(&self) -> Option<&str> {
+        self.orcid_base_uri
+            .as_deref()
+            .filter(|uri| !uri.trim().is_empty())
+    }
+
+    /// ORCID's public API, likewise.
+    fn orcid_pub_api_uri(&self) -> Option<&str> {
+        self.orcid_pub_api_uri
+            .as_deref()
+            .filter(|uri| !uri.trim().is_empty())
     }
 }
 
@@ -644,20 +664,12 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // ORCID configuration (optional).
-    let orcid_config = match (&config.orcid_client_id, &config.orcid_client_secret) {
-        (Some(id), Some(secret)) => {
-            info!("ORCID OAuth enabled");
-            Some(noombat_identity::oauth_orcid::OrcidConfig {
-                client_id: id.clone(),
-                client_secret: secret.expose().to_string(),
-                ..Default::default()
-            })
-        }
-        _ => {
-            info!("ORCID OAuth not configured (Sign in with ORCID disabled)");
-            None
-        }
-    };
+    let orcid_config = orcid_config(&config);
+    if orcid_config.is_some() {
+        info!("ORCID OAuth enabled");
+    } else {
+        info!("ORCID OAuth not configured (Sign in with ORCID disabled)");
+    }
 
     // Pre-construct shared resources before AppState consumes pool.
     let trending_cache = noombat_api::trending::TrendingCache::new();
@@ -1098,6 +1110,16 @@ fn validate_production_config(config: &Config) {
         fatal = true;
     }
 
+    for (setting, uri) in [
+        ("NOOMBAT_ORCID_BASE_URI", config.orcid_base_uri()),
+        ("NOOMBAT_ORCID_PUB_API_URI", config.orcid_pub_api_uri()),
+    ] {
+        if let Some(problem) = orcid_uri_problem(setting, uri) {
+            error!("{problem}");
+            fatal = true;
+        }
+    }
+
     if fatal {
         error!(
             "aborting: one or more insecure configuration defaults \
@@ -1142,6 +1164,46 @@ fn chatmail_secret_problem(secret: Option<&str>) -> Option<String> {
     })
 }
 
+/// ORCID's sign-in settings, or `None` when no client is configured, a
+/// blank ID or secret counting as none.
+fn orcid_config(config: &Config) -> Option<noombat_identity::oauth_orcid::OrcidConfig> {
+    let id = config
+        .orcid_client_id
+        .as_ref()
+        .filter(|id| !id.trim().is_empty())?;
+    let secret = config
+        .orcid_client_secret
+        .as_ref()
+        .filter(|secret| secret.non_empty().is_some())?;
+    let defaults = noombat_identity::oauth_orcid::OrcidConfig::default();
+    Some(noombat_identity::oauth_orcid::OrcidConfig {
+        client_id: id.clone(),
+        client_secret: secret.expose().to_string(),
+        base_uri: config
+            .orcid_base_uri()
+            .map_or(defaults.base_uri, str::to_owned),
+        pub_api_uri: config
+            .orcid_pub_api_uri()
+            .map_or(defaults.pub_api_uri, str::to_owned),
+    })
+}
+
+/// What makes an ORCID address unfit for production, if anything: the
+/// sign-in's code and client secret travel to the one, and the works an
+/// import takes in come from the other.
+fn orcid_uri_problem(setting: &str, uri: Option<&str>) -> Option<String> {
+    let uri = uri?;
+    let https = uri
+        .get(..8)
+        .is_some_and(|scheme| scheme.eq_ignore_ascii_case("https://"));
+    (!https).then(|| {
+        format!(
+            "{setting} is {uri:?}, not an https:// address. Point it at ORCID \
+             over HTTPS, or set domain = \"localhost\" for a stand-in."
+        )
+    })
+}
+
 /// Wait for SIGINT or SIGTERM for graceful shutdown.
 // SPDX-SnippetBegin
 // SPDX-License-Identifier: MIT
@@ -1177,7 +1239,7 @@ async fn shutdown_signal() {
 mod tests {
     use super::{
         Config, INSECURE_CHATMAIL_SECRET, MIN_CHATMAIL_SECRET_LEN, chatmail_secret_problem,
-        embedded_migrations, parse_relay_policy, session_config,
+        embedded_migrations, orcid_config, orcid_uri_problem, parse_relay_policy, session_config,
     };
     use figment::Figment;
     use figment::providers::{Format, Toml};
@@ -1203,6 +1265,69 @@ mod tests {
             );
         }
         assert!(session_config(&config_with_jwt_secret(&"k".repeat(32))).is_some());
+    }
+
+    /// ORCID's addresses as configured, with a client to sign in with.
+    fn orcid_addresses(base: &str, pub_api: &str) -> (String, String) {
+        let toml = format!(
+            "domain = \"localhost\"\ndatabase_url = \"postgres://db/x\"\n\
+             orcid_client_id = \"APP-1\"\norcid_client_secret = \"s\"\n\
+             orcid_base_uri = {base:?}\norcid_pub_api_uri = {pub_api:?}"
+        );
+        let config: Config = Figment::new().merge(Toml::string(&toml)).extract().unwrap();
+        let orcid = orcid_config(&config).expect("a client configured");
+        (orcid.base_uri, orcid.pub_api_uri)
+    }
+
+    #[test]
+    fn orcids_addresses_are_the_settings_and_blank_leaves_the_default() {
+        assert_eq!(
+            orcid_addresses("https://sandbox.orcid.org", "https://pub.sandbox.orcid.org"),
+            (
+                "https://sandbox.orcid.org".to_owned(),
+                "https://pub.sandbox.orcid.org".to_owned()
+            )
+        );
+        assert_eq!(
+            orcid_addresses(" ", ""),
+            (
+                "https://orcid.org".to_owned(),
+                "https://pub.orcid.org".to_owned()
+            )
+        );
+    }
+
+    #[test]
+    fn a_blank_orcid_client_enables_no_sign_in() {
+        let config = |id: &str, secret: &str| -> Config {
+            let toml = format!(
+                "domain = \"localhost\"\ndatabase_url = \"postgres://db/x\"\n\
+                 orcid_client_id = {id:?}\norcid_client_secret = {secret:?}"
+            );
+            Figment::new().merge(Toml::string(&toml)).extract().unwrap()
+        };
+        assert!(orcid_config(&config("APP-1", "s")).is_some());
+        assert!(orcid_config(&config(" ", "s")).is_none(), "a blank ID");
+        assert!(
+            orcid_config(&config("APP-1", "")).is_none(),
+            "a blank secret"
+        );
+    }
+
+    #[test]
+    fn only_an_https_orcid_address_is_fit_for_production() {
+        assert_eq!(orcid_uri_problem("NOOMBAT_ORCID_BASE_URI", None), None);
+        for fit in ["https://sandbox.orcid.org", "HTTPS://orcid.org"] {
+            assert_eq!(orcid_uri_problem("NOOMBAT_ORCID_BASE_URI", Some(fit)), None);
+        }
+        for unfit in ["http://orcid.org", "orcid.org", "https:/orcid.org"] {
+            let problem =
+                orcid_uri_problem("NOOMBAT_ORCID_BASE_URI", Some(unfit)).expect("refused");
+            assert!(
+                problem.starts_with("NOOMBAT_ORCID_BASE_URI is") && problem.contains(unfit),
+                "{problem}"
+            );
+        }
     }
 
     #[test]

@@ -160,7 +160,7 @@ fn private(mut response: Response) -> Response {
 /// this instance's own origin only; without it, an `Origin` that is this
 /// instance's. A request with neither is not a browser's, or is an old
 /// one's, and is left to the token.
-fn from_own_pages(state: &AppState, headers: &HeaderMap) -> bool {
+pub(crate) fn from_own_pages(state: &AppState, headers: &HeaderMap) -> bool {
     if let Some(site) = headers.get("sec-fetch-site") {
         return site == "same-origin";
     }
@@ -168,6 +168,14 @@ fn from_own_pages(state: &AppState, headers: &HeaderMap) -> bool {
         origin.as_bytes()
             == crate::middleware::http_origin(&state.domain, state.public_port).as_bytes()
     })
+}
+
+/// As [`from_own_pages`], but a request saying neither where it came from
+/// is refused too: for a request no session's token backs, as a sign-in's
+/// start, only the browser's own account counts.
+pub(crate) fn shown_from_own_pages(state: &AppState, headers: &HeaderMap) -> bool {
+    (headers.contains_key("sec-fetch-site") || headers.contains_key(ORIGIN))
+        && from_own_pages(state, headers)
 }
 
 #[derive(Deserialize)]
@@ -272,7 +280,39 @@ struct RefusedPage {
     theme: Theme,
     contrast: Contrast,
     csrf: CsrfToken,
+    title: String,
     message: String,
+    back_href: &'static str,
+    back_label: String,
+}
+
+/// A refusal as a page, in the asker's language and theme: its title and
+/// message, and a link on, by their translation keys.
+pub(crate) fn refused_page(
+    headers: &HeaderMap,
+    title_key: &str,
+    message_key: &str,
+    back: (&'static str, &str),
+) -> Response {
+    let i18n = I18n {
+        locale: negotiate_locale(headers),
+    };
+    let page = RefusedPage {
+        theme: crate::theme::from_headers(headers),
+        contrast: crate::theme::contrast_from_headers(headers),
+        csrf: CsrfToken::absent(),
+        title: i18n.t(title_key),
+        message: i18n.t(message_key),
+        back_href: back.0,
+        back_label: i18n.t(back.1),
+        i18n,
+    };
+    (StatusCode::FORBIDDEN, page).into_response()
+}
+
+/// Refused as coming from elsewhere, in the form its asker reads.
+pub(crate) fn refused_elsewhere(headers: &HeaderMap) -> Response {
+    refuse(headers, Refusal::Elsewhere)
 }
 
 /// Refused, in the form the asker reads: htmx gets the message as text,
@@ -295,14 +335,12 @@ fn refuse(headers: &HeaderMap, refusal: Refusal) -> Response {
         .and_then(|v| v.to_str().ok())
         .is_some_and(|accept| accept.contains("text/html"));
     if wants_page {
-        let page = RefusedPage {
-            theme: crate::theme::from_headers(headers),
-            contrast: crate::theme::contrast_from_headers(headers),
-            csrf: CsrfToken::absent(),
-            message,
-            i18n,
-        };
-        return (StatusCode::FORBIDDEN, page).into_response();
+        return refused_page(
+            headers,
+            "csrf_refused_title",
+            refusal.message_key(),
+            ("/", "csrf_refused_home"),
+        );
     }
     (
         StatusCode::FORBIDDEN,
