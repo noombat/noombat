@@ -29,7 +29,7 @@ import { KeyLookups, keyShown, resolveRecipient, type FoundKey } from "./recipie
 import { deriveBlobKey, deriveBothKeys } from "../auth";
 import { provisionChat, type ProvisionResult } from "./provision";
 import { Received } from "./received";
-import { authHeaders } from "./session";
+import { reportMessage } from "./report";
 import { describeServerError } from "./server-error";
 
 // ..... Base64 helpers .....
@@ -997,23 +997,6 @@ export default function Chat(props: ChatProps): JSX.Element {
     }
   }
 
-  function reportMessage(msg: ChatMessage): void {
-    // The bearer token only when one is stored: an empty one would hide
-    // the session cookie of a member signed in by OAuth.
-    fetch("/api/v1/chat/reports", {
-      method: "POST",
-      headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({
-        target_addr: msg.from,
-        message_content: msg.body,
-        message_date: new Date(msg.timestamp * 1000).toISOString(),
-        reason: "other",
-      }),
-    }).catch(() => {
-      /* best-effort */
-    });
-  }
-
   // ..... Render .....
 
   const filteredMessages = () => {
@@ -1303,7 +1286,7 @@ export default function Chat(props: ChatProps): JSX.Element {
                             <button
                               type="button"
                               class="text-xs text-text-secondary hover:text-text-danger"
-                              onClick={() => reportMessage(msg)}
+                              onClick={() => void reportMessage(msg)}
                             >
                               {strings().report}
                             </button>

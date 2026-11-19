@@ -5,16 +5,15 @@
  * Session header construction for authenticated API requests.
  *
  * Noombat accepts two session carriers: an `Authorization: Bearer`
- * header and the `__Host-noombat_session` cookie. The server resolves the
- * header first and only falls back to the cookie when no header is
- * present, so an `Authorization: Bearer ` header with an empty
- * token *shadows* an otherwise valid cookie and produces an
- * unauthenticated request.
+ * header and the `__Host-noombat_session` cookie. The server reads the
+ * header first and falls back to the cookie when it names no token, as an
+ * empty `Bearer ` does once `fetch` trims it, and a write the cookie
+ * authenticates must also carry the page's CSRF token.
  *
  * Password-derived flows (registration) hold a bearer token in
  * `sessionStorage`; cookie-only flows (OAuth account upgrade) do
- * not. This helper therefore emits the header only when a non-empty
- * token exists, leaving the cookie to authenticate otherwise.
+ * not. This helper therefore sends the bearer token when one is stored,
+ * and otherwise the CSRF token, leaving the cookie to authenticate.
  * Cookies are attached automatically because `fetch` defaults to
  * `credentials: "same-origin"`.
  */
