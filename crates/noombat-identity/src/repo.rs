@@ -268,7 +268,8 @@ pub async fn find_by_public_key_id(pool: &PgPool, public_key_id: &str) -> Result
         r#"SELECT
                id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key,
+               ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -289,7 +290,8 @@ pub async fn find_local_by_username(pool: &PgPool, username: &str) -> Result<Act
         r#"SELECT
                id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key,
+               ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -349,7 +351,8 @@ pub async fn find_by_ap_id(pool: &PgPool, ap_id: &str) -> Result<Option<Actor>> 
         r#"SELECT
                id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key,
+               ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -536,31 +539,24 @@ pub struct RemoteActor {
 
 /// Insert or update a remote actor in the `actors` table.
 ///
-/// On conflict (same `ap_id`) the remote-owned columns are refreshed
-/// from the remote instance: `public_key_pem`, `display_name`,
-/// `summary_html`, `inbox_url`, `shared_inbox_url`, `ed25519_public_key`
-/// and `actor_privacy`.
+/// On conflict (same `ap_id`) the remote-owned columns are refreshed from the
+/// remote instance: `public_key_pem`, `public_key_id`, `display_name`,
+/// `summary_html`, `inbox_url`, `shared_inbox_url`, `ed25519_public_key` and
+/// `actor_privacy`, the last for one reason: it carries the actor's own
+/// `discoverable` and `indexable`, and an opt-out made after this instance
+/// first saw the actor must reach the row, where setting it only on insert
+/// would honour only the first document fetched.
 ///
-/// `actor_privacy` is refreshed for one reason: it carries the actor's
-/// own `discoverable` and `indexable`, and an actor who opts out after
-/// this instance first saw them must have that reach the row. Setting it
-/// only on insert would honour the first document ever fetched and no
-/// later one.
+/// **A conflicting LOCAL row is never modified.** The `ON CONFLICT` is
+/// guarded by `WHERE actors.is_local = FALSE`, so a remote document claiming
+/// a local actor's `ap_id` cannot overwrite that actor's published signing
+/// key; the function then answers [`NoombatError::Forbidden`], the caller's
+/// only sign that the write did not happen.
 ///
-/// **A conflicting LOCAL row is never modified.** The `ON CONFLICT`
-/// clause is guarded by `WHERE actors.is_local = FALSE`, so a remote
-/// document claiming a local actor's `ap_id` cannot overwrite that
-/// actor's published signing key.
-///
-/// A local `ap_id` is [`NoombatError::Forbidden`]. Postgres skips a
-/// guarded `DO UPDATE` silently rather than erroring, so that is the only
-/// signal a caller gets that the write did not happen.
-///
-/// **An older document is not stored over a newer one.** Two fetches at
-/// once can finish in either order, so when both documents state
-/// `updated` and this one's is earlier than the one stored, the row is
-/// left as it is and [`Upserted::stored`] is false. A document stating
-/// none is stored, and the stamp held stays.
+/// **An older document is not stored over a newer one.** Two fetches at once
+/// can finish in either order: when both state `updated` and this one's is
+/// earlier than the one stored, nothing is written and [`Upserted::stored`]
+/// is false. A document stating none is stored, and the stamp held stays.
 pub async fn upsert_remote_actor(pool: &PgPool, remote: &RemoteActor) -> Result<Upserted> {
     let id = Uuid::new_v4();
 
@@ -947,7 +943,8 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Actor> {
         r#"SELECT
                id, actor_type, org_kind, ap_id, username, display_name,
                headline, location, avatar_url, header_url, summary_md, summary_html,
-               public_key_pem, public_key_id, private_key_pem, ed25519_public_key, ed25519_private_key, domain, is_local,
+               public_key_pem, public_key_id, private_key_pem, ed25519_public_key,
+               ed25519_private_key, domain, is_local,
                inbox_url, instance_role, actor_status,
                chat_requires_reprovisioning,
                chatmail_addr, orcid, moved_to, actor_privacy,
@@ -1044,10 +1041,9 @@ pub async fn set_org_kind(pool: &PgPool, actor_id: Uuid, kind: OrgKind) -> Resul
 /// `public_key_pem`, with `actor_status` set to `"suspended"`, so that the
 /// `Delete` can still be signed with the actor's key, `tombstoned_actors`
 /// can answer `410 Gone`, and the grace period can be cancelled before any
-/// irreversible loss.
-///
-/// `moved_to` is deliberately not cleared: followers who have not yet
-/// processed an earlier `Move` still need the pointer to find the target.
+/// irreversible loss. `moved_to` is deliberately not cleared: followers
+/// who have not yet processed an earlier `Move` still need the pointer to
+/// find the target.
 ///
 /// Every step runs in one transaction, so a crash part-way rolls back
 /// rather than leaving the actor partly tombstoned.
@@ -1099,7 +1095,10 @@ pub async fn tombstone_actor(pool: &PgPool, actor_id: Uuid) -> Result<Actor> {
                -- inferred from actor_status, which erasure and
                -- suspension would otherwise share.
                erased_at = COALESCE(erased_at, now()),
-               actor_privacy = '{"discoverable":false,"indexable":false,"require_follow_approval":true,"federate_profile":false,"chatmail_visible":false,"show_followers_count":false,"cv_download":"self"}'
+               actor_privacy = '{"discoverable":false,"indexable":false,
+                                 "require_follow_approval":true,"federate_profile":false,
+                                 "chatmail_visible":false,"show_followers_count":false,
+                                 "cv_download":"self"}'
            WHERE id = $1"#,
     )
     .bind(actor_id)
