@@ -253,6 +253,12 @@ pub struct NewActor {
     pub ed25519_private_key: String,
 }
 
+/// The origin of this instance's actor and posting ids: https, on a local
+/// domain too, and with the domain's port when it names one.
+pub fn ap_origin(domain: &str) -> String {
+    format!("https://{domain}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ActorStatus, ActorType};

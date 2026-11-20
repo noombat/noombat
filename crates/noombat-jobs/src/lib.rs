@@ -8,7 +8,7 @@
 pub mod applications;
 
 use chrono::{DateTime, Utc};
-use noombat_core::actor::OrgKind;
+use noombat_core::actor::{OrgKind, ap_origin};
 use noombat_core::error::{NoombatError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -80,7 +80,7 @@ pub async fn create_job(
     params: &NewJobPosting,
 ) -> Result<JobPosting> {
     let id = Uuid::new_v4();
-    let ap_id = format!("https://{domain}/jobs/{id}");
+    let ap_id = format!("{}/jobs/{id}", ap_origin(domain));
     let output = noombat_markup::render_async(params.description_md.clone()).await?;
 
     let requirements_json = params

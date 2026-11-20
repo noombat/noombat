@@ -2,7 +2,9 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 //! Actor repository: CRUD operations against the `actors` table.
 
-use noombat_core::actor::{Actor, ActorStatus, ActorType, InstanceRole, NewActor, OrgKind};
+use noombat_core::actor::{
+    Actor, ActorStatus, ActorType, InstanceRole, NewActor, OrgKind, ap_origin,
+};
 use noombat_core::envelope;
 use noombat_core::error::{NoombatError, Result};
 use noombat_core::privacy::ActorPrivacy;
@@ -186,7 +188,7 @@ where
     E: sqlx::Executor<'e, Database = sqlx::Postgres>,
 {
     let id = Uuid::new_v4();
-    let ap_id = format!("https://{}/users/{}", params.domain, params.username);
+    let ap_id = format!("{}/users/{}", ap_origin(&params.domain), params.username);
     let actor_type_str = params.actor_type.as_str();
     let privacy = ActorPrivacy::default();
     let privacy_json = serde_json::to_value(&privacy)?;

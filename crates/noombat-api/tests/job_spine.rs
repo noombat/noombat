@@ -14,6 +14,7 @@ use axum::http::{Request, StatusCode};
 use noombat_api::build_router;
 use noombat_api::rate_limit::FallbackRateLimiter;
 use noombat_api::state::AppState;
+use noombat_core::actor::{ActorType, NewActor};
 use noombat_federation::nodeinfo::NodeInfoFeatures;
 use sqlx::PgPool;
 use tower::ServiceExt;
@@ -23,9 +24,13 @@ const DOMAIN: &str = "noombat.example";
 const JWT_SECRET: &str = "test-secret-that-is-at-least-32-bytes-long";
 
 fn test_state(pool: PgPool) -> AppState {
+    state_on(pool, DOMAIN)
+}
+
+fn state_on(pool: PgPool, domain: &str) -> AppState {
     AppState {
         pool,
-        domain: DOMAIN.to_owned(),
+        domain: domain.to_owned(),
         public_port: 8443,
         public_origin: None,
         http_client: reqwest::Client::new(),
@@ -35,7 +40,7 @@ fn test_state(pool: PgPool) -> AppState {
         redis: None,
         session_config: Some(noombat_identity::session::SessionConfig {
             jwt_secret: JWT_SECRET.to_owned(),
-            domain: DOMAIN.to_owned(),
+            domain: domain.to_owned(),
             access_ttl_secs: 900,
             refresh_ttl_secs: 2_592_000,
         }),
@@ -44,7 +49,7 @@ fn test_state(pool: PgPool) -> AppState {
         chatmail_domain: None,
         chatmail_admin_url: None,
         chatmail_admin_client: None,
-        contact_email: format!("admin@{DOMAIN}"),
+        contact_email: format!("admin@{domain}"),
         trending_cache: None,
         analytics: None,
         fallback_rate_limiter: FallbackRateLimiter::new(),
@@ -75,12 +80,42 @@ async fn insert_actor(pool: &PgPool, username: &str, actor_type: &str) -> Uuid {
     .expect("actor fixture")
 }
 
+/// An actor made by the repository, so its ActivityPub id is the one the
+/// instance mints rather than a fixture's copy of the template.
+async fn create_actor_at(
+    pool: &PgPool,
+    domain: &str,
+    username: &str,
+    actor_type: ActorType,
+) -> Uuid {
+    noombat_identity::repo::create_actor(
+        pool,
+        &NewActor {
+            actor_type,
+            username: username.to_owned(),
+            display_name: None,
+            domain: domain.to_owned(),
+            public_key_pem: "KEY".to_owned(),
+            private_key_pem: "KEY".to_owned(),
+            ed25519_public_key: "KEY".to_owned(),
+            ed25519_private_key: "KEY".to_owned(),
+        },
+    )
+    .await
+    .expect("actor created")
+    .id
+}
+
 async fn token_for(pool: &PgPool, actor_id: Uuid, username: &str) -> String {
+    token_on(pool, DOMAIN, actor_id, username).await
+}
+
+async fn token_on(pool: &PgPool, domain: &str, actor_id: Uuid, username: &str) -> String {
     noombat_identity::session::create_session(
         pool,
         &noombat_identity::session::SessionConfig {
             jwt_secret: JWT_SECRET.to_owned(),
-            domain: DOMAIN.to_owned(),
+            domain: domain.to_owned(),
             access_ttl_secs: 900,
             refresh_ttl_secs: 2_592_000,
         },
@@ -116,6 +151,16 @@ async fn send(
     bearer: Option<&str>,
     body: Option<&str>,
 ) -> (StatusCode, String) {
+    send_to(test_state(pool), method, uri, bearer, body).await
+}
+
+async fn send_to(
+    state: AppState,
+    method: &str,
+    uri: &str,
+    bearer: Option<&str>,
+    body: Option<&str>,
+) -> (StatusCode, String) {
     let mut builder = Request::builder().method(method).uri(uri);
     if body.is_some() {
         builder = builder.header("content-type", "application/json");
@@ -127,7 +172,7 @@ async fn send(
         .body(body.map_or_else(Body::empty, |b| Body::from(b.to_owned())))
         .expect("request");
 
-    let response = build_router(test_state(pool))
+    let response = build_router(state)
         .oneshot(request)
         .await
         .expect("the router is infallible");
@@ -437,6 +482,54 @@ async fn a_grant_is_bound_to_one_audience_origin(pool: PgPool) {
             .await
             .expect("readable");
     assert_eq!(remaining, 49, "a refusal must not charge the budget");
+}
+
+/// Applies on `domain` and has the employer dereference the grant.
+async fn redeem_on(pool: PgPool, domain: &str) -> StatusCode {
+    let org = create_actor_at(&pool, domain, "acme", ActorType::Organization).await;
+    let applicant = create_actor_at(&pool, domain, "alice", ActorType::Individual).await;
+    let job = noombat_jobs::create_job(&pool, org, None, domain, &posting())
+        .await
+        .expect("posting created");
+    let session = token_on(&pool, domain, applicant, "alice").await;
+
+    let (_, body) = send_to(
+        state_on(pool.clone(), domain),
+        "POST",
+        &format!("/jobs/{}/apply", job.id),
+        Some(&session),
+        Some(r#"{"include_cv":false}"#),
+    )
+    .await;
+    let parsed: serde_json::Value = serde_json::from_str(&body).expect("JSON");
+    let dereference = format!(
+        "/applications/{}?token={}",
+        parsed["id"].as_str().expect("id"),
+        parsed["grant_token"].as_str().expect("token")
+    );
+
+    let (status, _) = send_to(state_on(pool, domain), "GET", &dereference, None, None).await;
+    status
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_grant_is_redeemed_on_a_local_domain(pool: PgPool) {
+    assert_eq!(
+        redeem_on(pool, "localhost").await,
+        StatusCode::OK,
+        "the employer could not read the application on a local instance"
+    );
+}
+
+#[ignore = "requires a database; run with --include-ignored"]
+#[sqlx::test(migrations = "../../migrations")]
+async fn a_grant_is_redeemed_on_a_local_domain_naming_its_port(pool: PgPool) {
+    assert_eq!(
+        redeem_on(pool, "localhost:9000").await,
+        StatusCode::OK,
+        "the employer could not read the application on a local domain with a port"
+    );
 }
 
 #[ignore = "requires a database; run with --include-ignored"]
