@@ -53,7 +53,7 @@ RUN NOOMBAT_VERSION="$NOOMBAT_VERSION" NOOMBAT_COMMIT="$NOOMBAT_COMMIT" \
 # The `rust:1-trixie` tag tracks the latest stable Rust 1.x release,
 # matching the CI `stable` channel. The workspace MSRV (rust-version in
 # Cargo.toml) is verified separately by the CI `msrv` job.
-FROM rust:1-trixie@sha256:0b0ea86881537b3f645aace7e8e39556289f8787db057317c8d4978548213b9e AS builder
+FROM rust:1-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS builder
 
 WORKDIR /build
 COPY Cargo.toml rust-toolchain.toml ./
