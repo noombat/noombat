@@ -156,7 +156,7 @@ jsonwebtoken = { version = "12", features = ["aws_lc_rs"] }
 totp-rs = { version = "6", features = ["gen_secret", "otpauth"] }
 
 # QR code generation (TOTP enrolment).
-qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+qrcode = { version = "0.15", default-features = false, features = ["svg"] }
 
 # IMAP client (Chatmail relay).
 # default-features = false to avoid the discontinued async-std (RUSTSEC-2025-0052);
