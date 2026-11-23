@@ -18,7 +18,7 @@
 #
 # Builds both the sidecar daemon and the filtermail content filter
 # as release binaries.
-FROM rust:1-trixie@sha256:0b0ea86881537b3f645aace7e8e39556289f8787db057317c8d4978548213b9e AS rust-builder
+FROM rust:1-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS rust-builder
 
 WORKDIR /build
 COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
