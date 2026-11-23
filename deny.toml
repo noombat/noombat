@@ -92,7 +92,6 @@ skip = [
     { crate = "rand_core@0.9" },
     { crate = "reqwest@0.12" },
     { crate = "sha1@0.10" },
-    { crate = "sha2@0.10" },
     { crate = "signature@2" },
     { crate = "syn@2" },
     { crate = "thiserror@1" },
