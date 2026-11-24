@@ -30,7 +30,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 export NOOMBAT_DOMAIN="${NOOMBAT_DOMAIN:-noombat.test}"
 CHAT_DOMAIN="chat.${NOOMBAT_DOMAIN}"

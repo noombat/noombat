@@ -1,0 +1,41 @@
+# Lint the shell scripts that make up most of the repository's gates.
+#
+# At warning level: an error or a warning fails, a style note does not.
+# Its own workflow, so a change to any script, the test harnesses
+# included, runs it without starting the Rust suite.
+
+name: Shell scripts
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/shellcheck.yml"
+      - "scripts/**"
+      - "tests/**/*.sh"
+      - "chatmail-config/**/*.sh"
+      - "frontend/*.sh"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/shellcheck.yml"
+      - "scripts/**"
+      - "tests/**/*.sh"
+      - "chatmail-config/**/*.sh"
+      - "frontend/*.sh"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # shellcheck ships on GitHub's Ubuntu image.
+      - name: "Reject shell script errors and warnings"
+        run: |
+          shellcheck --version
+          shellcheck -S warning scripts/*.sh tests/*/*.sh chatmail-config/*.sh frontend/*.sh

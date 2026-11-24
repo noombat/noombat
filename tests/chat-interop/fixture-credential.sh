@@ -31,6 +31,8 @@
 # passwords; `frontend/src/auth.spec.ts` checks that they still are, and
 # a failure there prints the keys to commit.
 
+# Only assignments, read by the bash scripts that source this file.
+# shellcheck shell=bash disable=SC2034
 CHAT_ALICE_AUTH_KEY="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 CHAT_ALICE_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$g8hhtkSUN9WveG+7LxCLEw$6gSprdlVzTyv5sVm+egpOkkeq8flK63U+0BMfNDY+2U'
 CHAT_BOB_AUTH_KEY="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"

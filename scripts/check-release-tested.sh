@@ -38,9 +38,9 @@ INTERVAL=30
 REF="${GITHUB_REF_NAME:-<the tag>}"
 
 # Every workflow that tests a commit on main: its name, then its file.
-# The scheduled checks are left out (toolchain freshness, the startup
-# watch, interop against the latest GoToSocial): their answers depend
-# on the date, not the commit.
+# The scheduled checks are left out (toolchain freshness, advisories,
+# the startup watch, interop against the latest GoToSocial): their
+# answers depend on the date, not the commit.
 WORKFLOWS="${RELEASE_WORKFLOWS:-CI|ci.yml
 E2E & interop|ci-e2e.yml
 CI (Frontend)|ci-frontend.yml
@@ -48,7 +48,8 @@ Container build verification|verify.yml
 Accessibility|ci-accessibility.yml
 REUSE|ci-reuse.yml
 CodeQL|codeql.yml
-Typst injection|typst.yml}"
+Typst injection|typst.yml
+Shell scripts|shellcheck.yml}"
 
 SHA=$(git rev-parse --verify --quiet "${1:-}^{commit}" 2>/dev/null) || SHA=""
 if ! printf '%s' "$SHA" | grep -qE '^[0-9a-f]{40}$'; then

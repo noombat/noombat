@@ -70,6 +70,8 @@ NOTE_ID="00000000-0000-4000-8000-000000000002"
 # values are duplicated in tests/e2e/session.ts and in ci-e2e.yml, and
 # all three have to agree.
 E2E_ADMIN_USER="e2e_admin"
+# Read by crates/noombat-identity/tests/interop_fixture.rs, not here.
+# shellcheck disable=SC2034
 E2E_AUTH_KEY="e2e5e551043a4d7b8c6f1e2d3c4b5a69788796a5b4c3d2e1f00112233445566f"
 # The Argon2id hash of the key above, which is what login verifies
 # against. Committed because this script cannot run Argon2; pinned by

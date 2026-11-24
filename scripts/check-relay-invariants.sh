@@ -29,7 +29,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 IMAGE="${IMAGE:-noombat-chatmail:verify}"
 CONTAINER="noombat-relay-invariants"
@@ -635,7 +635,7 @@ for _ in $(seq 1 15); do
     [[ "$status" == *"status=bounced"* ]] && break
     sleep 1
 done
-if [[ "$status" == *"status=bounced (host $MAIL_DOMAIN[127.0.0.1] said: "*"(in reply to RCPT TO command))"* ]]; then
+if [[ "$status" == *"status=bounced (host ${MAIL_DOMAIN}[127.0.0.1] said: "*"(in reply to RCPT TO command))"* ]]; then
     say "a peer whose certificate verifies is reached"
 else
     fail "a peer with a verifiable certificate was not reached: ${status:-no attempt logged}"

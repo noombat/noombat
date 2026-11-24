@@ -1,0 +1,35 @@
+# Check main's lockfile against the RustSec advisory database every day.
+#
+# Cargo Deny in ci.yml runs on pushes and pull requests that change what
+# it reads, and on no schedule, so an advisory published against a locked
+# crate fails nothing until the next such change.
+
+name: Advisories
+
+on:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  advisories:
+    name: RustSec advisories
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Cache cargo-deny
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cargo/bin/cargo-deny
+          key: cargo-deny-bin-0.20.2
+      # The version ci.yml's deny job pins: other releases reject keys
+      # deny.toml uses.
+      - name: Install cargo-deny
+        run: |
+          cargo deny --version 2>/dev/null | grep -qx 'cargo-deny 0.20.2' \
+            || cargo install cargo-deny --locked --version 0.20.2 --force
+      - name: "Check the lockfile against today's advisories"
+        run: cargo deny check advisories

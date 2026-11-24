@@ -65,7 +65,7 @@ After cleaning, run `build.sh` to rebuild from scratch.
 ## `test.sh`
 
 Runs the checks CI runs that can run without a server: formatting, lints and unit tests for the Rust workspace, the repository's own gates (image pins, compose, locales, templates, contrast, migrations, workflows, CodeQL configuration), the frontend's type-checking, linting, formatting and unit tests, and the end-to-end project's type-checking and linting.
-Gates that need docker, a built image, cargo-deny 0.20.2, a signed-in `gh` or `reuse` run only when those are present, and say so when skipped.
+Gates that need docker, a built image, cargo-deny 0.20.2, shellcheck, a signed-in `gh` or `reuse` run only when those are present, and say so when skipped.
 CI also runs the browser and interop suites, the image builds, the Typst CV tests that need its binary, the safe-Rust check, the MSRV and reproducible builds, CodeQL and the database-backed tests, which this does not.
 
 ```sh

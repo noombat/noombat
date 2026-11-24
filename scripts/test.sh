@@ -6,12 +6,12 @@
 # tests, the repository's own gates, the frontend's type-checking,
 # linting, formatting and unit tests, and the end-to-end project's
 # type-checking and linting. Gates that need docker, a built image,
-# cargo-deny 0.20.2, a signed-in gh or reuse run only when those are
-# present, and say so when skipped. Does not require a prior build or
-# clean. CI also runs the browser and interop suites, the image builds,
-# the Typst CV tests that need its binary, the safe-Rust check, the MSRV
-# and reproducible builds, CodeQL and the database-backed tests, which
-# this does not.
+# cargo-deny 0.20.2, shellcheck, a signed-in gh or reuse run only when
+# those are present, and say so when skipped. Does not require a prior
+# build or clean. CI also runs the browser and interop suites, the image
+# builds, the Typst CV tests that need its binary, the safe-Rust check,
+# the MSRV and reproducible builds, CodeQL and the database-backed
+# tests, which this does not.
 #
 # Usage:
 #   ./scripts/test.sh          # all checks
@@ -141,6 +141,15 @@ run python3 ./scripts/check-contrast.py --self-test
 # deployment tries to roll back.
 step "Checking migration shape"
 run ./scripts/check-migrations.sh
+
+# ..... Shell scripts .....
+
+if command -v shellcheck > /dev/null 2>&1; then
+    step "Linting shell scripts (shellcheck, warnings and errors)"
+    run shellcheck -S warning scripts/*.sh tests/*/*.sh chatmail-config/*.sh frontend/*.sh
+else
+    step "Skipping shellcheck: it is not installed"
+fi
 
 # ..... Workflows .....
 

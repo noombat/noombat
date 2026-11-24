@@ -31,7 +31,7 @@
 set -uo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$REPO_ROOT"
+cd "$REPO_ROOT" || exit 1
 
 ENTRYPOINT="chatmail-config/entrypoint.sh"
 WIZARD="scripts/chatmail-setup.sh"

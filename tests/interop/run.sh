@@ -199,7 +199,6 @@ echo ""
 # compares the resource against and what every generated id is built
 # from, and in this topology it carries the port.
 NOOMBAT_AUTHORITY="${NOOMBAT#*://}"
-GTS_AUTHORITY="${GOTOSOCIAL#*://}"
 
 # 1. WebFinger.
 echo "WebFinger:"

@@ -25,5 +25,7 @@
 #
 #     cargo test -p noombat-identity interop_fixture
 
+# Only assignments, read by the bash scripts that source this file.
+# shellcheck shell=bash disable=SC2034
 FIXTURE_AUTH_KEY="6e6f6f6d6261742d696e7465726f702d666978747572652d6b65792d30303031"
 FIXTURE_AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$OrYtSXsp6m7JgG8s4LWwjA$Rgj/6eac1RI2cZVsmB9NBMX4KqOy2Mj6x5oyLz9cqNI'
