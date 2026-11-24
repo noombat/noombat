@@ -119,7 +119,7 @@ Every asset should report `ok`.
 A mismatch means the instance is serving something other than the released build.
 That is not proof of an attack, i.e. the operator may be running a fork, an older release, or a patched build, but it does mean the released signature says nothing about what you are executing, and you should find out why before trusting the instance with anything.
 
-The release job summary records the digest of the published image, so an operator can confirm that the image they are running is the one the manifest was taken from.
+The release workflow's run summary (its `publish` job) records the digest of each published image, so an operator can confirm that the image they are running is the one the manifest was taken from.
 
 An instance may also expose its own copy of the manifest at `/.well-known/noombat/assets.json`.
 That copy is a convenience for monitoring tools, **not** evidence:

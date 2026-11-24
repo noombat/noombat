@@ -19,6 +19,7 @@ on:
       - ".github/workflows/verify.yml"
       - "Dockerfile"
       - "Dockerfile.chatmail"
+      - ".nvmrc"
       - "chatmail-config/**"
       - "compose.yml"
       # The certificate gate's own inputs. Without these a change to the
@@ -41,6 +42,7 @@ on:
       - ".github/workflows/verify.yml"
       - "Dockerfile"
       - "Dockerfile.chatmail"
+      - ".nvmrc"
       - "chatmail-config/**"
       - "compose.yml"
       # The certificate gate's own inputs. Without these a change to the
@@ -152,6 +154,31 @@ jobs:
           esac
           test "$(echo "$manifest" | grep -c '\": \"')" -gt 3 \
             || { echo "::error::asset manifest lists no assets"; exit 1; }
+
+      - name: Install Node (version from .nvmrc)
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: .nvmrc
+
+      - name: Confirm a host build reproduces the image build
+        # release.yml gates its signature on this agreement; asserting it
+        # here shows host and image toolchain drift on the next push that
+        # runs this workflow, not at release time.
+        run: |
+          scripts/install-pnpm.sh frontend/package.json
+          (cd frontend && pnpm install --frozen-lockfile && pnpm build)
+          cid=$(docker create noombat-server:verify)
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/opt/noombat/frontend/dist/assets-manifest.json" \
+            image-assets-manifest.json
+          scripts/asset-manifest.sh > host-manifest.json
+          if ! diff -u \
+              <(jq -S '.assets' image-assets-manifest.json) \
+              <(jq -S '.assets' host-manifest.json); then
+            echo "::error::image and host builds disagree; the rebuild procedure in docs/verifying-builds.md would report a false mismatch on an honest instance"
+            exit 1
+          fi
+          echo "Image and host builds agree on every asset hash."
 
       - name: Generate the image content manifests
         # Exercises scripts/image-manifest.sh on both images, so a

@@ -16,6 +16,20 @@
 # every workflow scripts/check-release-tested.sh lists passed on it: a
 # tag can name any commit, and the release runs no tests of its own.
 #
+# The build runs in one job and the signing and publishing in another.
+# The build job runs the whole toolchain, so it has a read-only token and
+# no OIDC token; the publish job holds the signing identity and the
+# write rights and runs no repository code. A compromised build
+# dependency can still choose what is built, and so what this run signs
+# and pushes, but it holds no token that signs, pushes or edits a
+# release: it cannot sign other bytes, push other tags or alter another
+# release.
+#
+# A tag push leaves the GitHub release as a draft, its signed manifests
+# attached, for the maintainer to check and publish. Releases here are
+# immutable once published: a mistake in one cannot be corrected, and its
+# tag name cannot be used again.
+#
 # Three properties this workflow is arranged to hold:
 #
 #   1. One build. The manifests are extracted from the images that are
@@ -64,29 +78,54 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: scripts/check-release-tested.sh "$GITHUB_SHA"
 
-  release:
-    name: Attest, sign, and publish
+  build:
+    name: Build and attest
     needs: gate
     runs-on: ubuntu-latest
+    # This job runs the build toolchain: pnpm, Vite and its plugins, and
+    # both image builds. So it holds no write permission and no OIDC
+    # token, and keeps no credential on disk.
     permissions:
-      # Keyless signing: the OIDC token is what Fulcio exchanges for a
-      # short-lived certificate.
-      id-token: write
-      # Attaching artefacts to the release.
-      contents: write
-      # Pushing images to ghcr.io.
-      packages: write
+      contents: read
     defaults:
       run:
         shell: bash
     env:
       SERVER_IMAGE: noombat-server:release
       CHATMAIL_IMAGE: noombat-chatmail:release
+    outputs:
+      server-id: ${{ steps.save.outputs.server-id }}
+      chatmail-id: ${{ steps.save.outputs.chatmail-id }}
+      prerelease: ${{ steps.label.outputs.prerelease }}
+      move-latest: ${{ steps.label.outputs.move-latest }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # `git describe` needs tags to label the manifests.
           fetch-depth: 0
+          persist-credentials: false
+
+      - name: Decide whether this is a pre-release and whether it moves latest
+        # `latest` follows the highest final version: a pre-release tag
+        # (one with a suffix) never moves it, nor does a tag lower than an
+        # existing final tag, such as a fix to an older line, nor whichever
+        # of two tags happens to finish last. The lookup tolerates no final
+        # tag at all, as on a dry run before the first release: under
+        # pipefail a grep that matches nothing would end the step.
+        id: label
+        run: |
+          prerelease=false
+          move_latest=false
+          case "$GITHUB_REF_NAME" in
+            *-*) prerelease=true ;;
+            *)
+              highest=$(git tag --list 'v*' --sort=-v:refname | { grep -v -- - || true; } | sed -n 1p)
+              [ "$GITHUB_REF_NAME" = "$highest" ] && move_latest=true
+              ;;
+          esac
+          echo "prerelease=$prerelease" >> "$GITHUB_OUTPUT"
+          echo "move-latest=$move_latest" >> "$GITHUB_OUTPUT"
+          echo "pre-release: $prerelease; moves latest: $move_latest"
 
       - name: Install Node (version from .nvmrc)
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
@@ -146,7 +185,7 @@ jobs:
         run: |
           for m in assets-manifest.json server-image-manifest.json chatmail-image-manifest.json; do
             if ! jq -e \
-                --arg v "${{ github.ref_name }}" --arg c "${{ github.sha }}" \
+                --arg v "$GITHUB_REF_NAME" --arg c "$GITHUB_SHA" \
                 '.version == $v and .commit == $c' "$m" > /dev/null; then
               echo "::error::$m does not name this release"
               jq 'del(.files, .assets, .packages)' "$m"
@@ -180,6 +219,101 @@ jobs:
           fi
           echo "Image and host builds agree on every asset hash."
 
+      - name: Save the images for the publish job
+        id: save
+        run: |
+          docker save "$SERVER_IMAGE" "$CHATMAIL_IMAGE" -o images.tar
+          echo "server-id=$(docker image inspect --format '{{.Id}}' "$SERVER_IMAGE")" >> "$GITHUB_OUTPUT"
+          echo "chatmail-id=$(docker image inspect --format '{{.Id}}' "$CHATMAIL_IMAGE")" >> "$GITHUB_OUTPUT"
+
+      - name: Upload the images and their manifests
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-build
+          # A re-run of this job replaces the first attempt's artifact.
+          overwrite: true
+          path: |
+            images.tar
+            assets-manifest.json
+            server-image-manifest.json
+            chatmail-image-manifest.json
+          retention-days: 1
+
+  publish:
+    name: Sign and publish
+    needs: build
+    runs-on: ubuntu-latest
+    # Holds the signing identity and the write rights, and runs no
+    # repository code: no checkout, no build, only cosign, docker and gh
+    # on what the build job produced.
+    permissions:
+      # Keyless signing: the OIDC token is what Fulcio exchanges for a
+      # short-lived certificate.
+      id-token: write
+      # Attaching artefacts to the release.
+      contents: write
+      # Pushing images to ghcr.io.
+      packages: write
+      # Fetching this run's artefact with gh.
+      actions: read
+    defaults:
+      run:
+        shell: bash
+    env:
+      SERVER_IMAGE: noombat-server:release
+      CHATMAIL_IMAGE: noombat-chatmail:release
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Fetch what the build job produced
+        # gh, not actions/download-artifact: that action is not in the
+        # Actions allowlist, and this job holds the signing identity. The
+        # artifact keeps for one day: after that, re-run all jobs, not
+        # only the failed ones.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run download "$GITHUB_RUN_ID" --name release-build --dir .
+
+      - name: Load the images the manifests were extracted from
+        # Property 1 holds across the two jobs only if these are the
+        # images the build job attested, so their IDs must match.
+        env:
+          SERVER_ID: ${{ needs.build.outputs.server-id }}
+          CHATMAIL_ID: ${{ needs.build.outputs.chatmail-id }}
+        run: |
+          docker load -i images.tar
+          for pair in "$SERVER_IMAGE=$SERVER_ID" "$CHATMAIL_IMAGE=$CHATMAIL_ID"; do
+            image=${pair%%=*}
+            want=${pair#*=}
+            got=$(docker image inspect --format '{{.Id}}' "$image")
+            if [ -z "$want" ] || [ "$got" != "$want" ]; then
+              echo "::error::$image loaded as '$got', but the build job attested '$want'"
+              exit 1
+            fi
+          done
+          echo "Both images match the build job's."
+
+      - name: Check the manifests name this release and match the image
+        # Repeated here, out of the build toolchain's reach: the manifests
+        # to be signed must name this tag and commit, and the asset
+        # manifest must be the one the loaded server image serves.
+        # `docker create` copies it out without running the image.
+        run: |
+          for m in assets-manifest.json server-image-manifest.json chatmail-image-manifest.json; do
+            if ! jq -e --arg v "$GITHUB_REF_NAME" --arg c "$GITHUB_SHA" \
+                '.version == $v and .commit == $c' "$m" > /dev/null; then
+              echo "::error::$m does not name this release"
+              exit 1
+            fi
+          done
+          cid=$(docker create "$SERVER_IMAGE")
+          trap 'docker rm -f "$cid" >/dev/null 2>&1 || true' EXIT
+          docker cp "$cid:/opt/noombat/frontend/dist/assets-manifest.json" served-assets-manifest.json
+          if ! cmp -s served-assets-manifest.json assets-manifest.json; then
+            echo "::error::the asset manifest to be signed is not the one the server image serves"
+            exit 1
+          fi
+          echo "The manifests name $GITHUB_REF_NAME at $GITHUB_SHA, and the server image serves the asset manifest."
+
       - name: Install cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
 
@@ -211,12 +345,93 @@ jobs:
               "$m"
           done
 
+      - name: Upload the manifests as workflow artefacts
+        # Before anything is pushed, so the signed manifests and their
+        # bundles are kept even if a later step fails; and the only output
+        # of a dry run, where no release exists to attach to.
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: release-manifests
+          # A re-run of this job replaces the first attempt's artifact.
+          overwrite: true
+          path: |
+            assets-manifest.json
+            assets-manifest.sigstore.json
+            server-image-manifest.json
+            server-image-manifest.sigstore.json
+            chatmail-image-manifest.json
+            chatmail-image-manifest.sigstore.json
+          retention-days: 90
+
+      - name: Prepare the draft release with the manifests and bundles
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        id: draft
+        # Before the push, and left as a draft for the maintainer to publish.
+        # A draft is not yet immutable, so a re-run replaces its assets. A
+        # re-run that finds the release published compares its manifests
+        # with this run's and refuses, before anything is pushed, unless they
+        # are the same: other images under its tags would break what it
+        # attests.
+        #
+        # `gh` rather than an action, because this job holds id-token,
+        # contents and packages write: anything running here can sign as
+        # this repository and push to the registry, so it is the last
+        # place to take a dependency that is not already required. `gh`
+        # is preinstalled on the runner.
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRERELEASE: ${{ needs.build.outputs.prerelease }}
+        run: |
+          set -eu
+          manifests="assets-manifest.json server-image-manifest.json chatmail-image-manifest.json"
+          files=""
+          for m in $manifests; do
+            files="$files $m ${m%.json}.sigstore.json"
+          done
+          if state=$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>err); then
+            :
+          elif grep -q 'release not found' err; then
+            state=none
+          else
+            echo "::error::could not look up the release $GITHUB_REF_NAME: $(cat err)"
+            exit 1
+          fi
+          echo "state=$state" >> "$GITHUB_OUTPUT"
+          # shellcheck disable=SC2086
+          case "$state" in
+            true)
+              gh release upload "$GITHUB_REF_NAME" $files --clobber
+              ;;
+            false)
+              mkdir -p published
+              for m in $manifests; do
+                gh release download "$GITHUB_REF_NAME" --dir published --pattern "$m" --clobber
+                if ! cmp -s "$m" "published/$m"; then
+                  echo "::error::$GITHUB_REF_NAME is published with a different $m;" \
+                    "refusing to push other images under its tags"
+                  exit 1
+                fi
+              done
+              echo "$GITHUB_REF_NAME is published with this run's manifests; its assets stay."
+              ;;
+            none)
+              flags=""
+              [ "$PRERELEASE" = true ] && flags="--prerelease"
+              gh release create "$GITHUB_REF_NAME" --draft --generate-notes $flags $files
+              ;;
+            *)
+              echo "::error::unexpected release state '$state' for $GITHUB_REF_NAME"
+              exit 1
+              ;;
+          esac
+
       - name: Log in to GitHub Container Registry
         # Only a tag push publishes. A manual run is a dry run that
-        # builds, attests, and signs but pushes nothing, because
-        # github.ref_name is a branch name there and must not become an
-        # image tag or move `latest`.
-        if: startsWith(github.ref, 'refs/tags/v')
+        # builds, attests, and signs but pushes nothing, even when started
+        # on a tag: github.ref_name would otherwise become an image tag
+        # from a run nobody released. A re-run of a tag push is still a
+        # push, so it still publishes.
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -226,15 +441,19 @@ jobs:
       - name: Push both images
         # Last of the publishing steps that can fail closed: every gate
         # has passed and every manifest is signed and verified.
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          MOVE_LATEST: ${{ needs.build.outputs.move-latest }}
         run: |
           push_one() {
             local local_tag="$1" name="$2"
             local repo="ghcr.io/${GITHUB_REPOSITORY}/${name}"
             docker tag "$local_tag" "${repo}:${GITHUB_REF_NAME}"
-            docker tag "$local_tag" "${repo}:latest"
             docker push "${repo}:${GITHUB_REF_NAME}"
-            docker push "${repo}:latest"
+            if [ "$MOVE_LATEST" = true ]; then
+              docker tag "$local_tag" "${repo}:latest"
+              docker push "${repo}:latest"
+            fi
             local digest
             digest=$(docker image inspect --format '{{index .RepoDigests 0}}' \
               "${repo}:${GITHUB_REF_NAME}")
@@ -252,48 +471,28 @@ jobs:
           echo "The signed manifests were extracted from these images." \
             >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Attach the manifests and bundles to the release
-        if: startsWith(github.ref, 'refs/tags/v')
-        # `gh` rather than an action, because this job holds id-token,
-        # contents and packages write: anything running here can sign as
-        # this repository and push to the registry, so it is the last
-        # place to take a dependency that is not already required. `gh`
-        # is preinstalled on the runner and the checkout is already done.
-        #
-        # Create or upload, because a tag push does not itself make a
-        # release and a re-run finds one already there. `gh` exits
-        # non-zero on a missing file either way, which is the behaviour
-        # being preserved here.
+      - name: Say how to publish the draft release
+        if: >-
+          github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+          && steps.draft.outputs.state != 'false'
+        # Publishing a draft marks it the latest release unless told not to,
+        # so both routes carry the build job's decision.
         env:
-          GH_TOKEN: ${{ github.token }}
+          MOVE_LATEST: ${{ needs.build.outputs.move-latest }}
         run: |
-          set -eu
-          files="
-            assets-manifest.json
-            assets-manifest.sigstore.json
-            server-image-manifest.json
-            server-image-manifest.sigstore.json
-            chatmail-image-manifest.json
-            chatmail-image-manifest.sigstore.json
-          "
-          # shellcheck disable=SC2086
-          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
-            gh release upload "$GITHUB_REF_NAME" $files --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" --generate-notes $files
+          cmd="gh release edit $GITHUB_REF_NAME --draft=false"
+          latest="tick"
+          if [ "$MOVE_LATEST" != true ]; then
+            cmd="$cmd --latest=false"
+            latest="untick"
           fi
-
-      - name: Upload the manifests as workflow artefacts
-        # The only output of a dry run, where no release exists to
-        # attach to.
-        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
-        with:
-          name: release-manifests
-          path: |
-            assets-manifest.json
-            assets-manifest.sigstore.json
-            server-image-manifest.json
-            server-image-manifest.sigstore.json
-            chatmail-image-manifest.json
-            chatmail-image-manifest.sigstore.json
-          retention-days: 90
+          web="Releases, the draft $GITHUB_REF_NAME, Edit, $latest \"Set as the latest release\""
+          web="$web, Publish release"
+          echo "::notice::the release is a draft; check it, then publish it: $web; or $cmd"
+          {
+            echo "### The release is a draft"
+            echo ""
+            echo "Check it, then publish it on the web: $web."
+            echo "Or with gh: \`$cmd\`."
+            echo "Once published, its assets and tag are locked."
+          } >> "$GITHUB_STEP_SUMMARY"
