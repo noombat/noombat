@@ -117,6 +117,7 @@ jobs:
   fmt:
     name: Formatting
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - run: rustup component add rustfmt
@@ -125,6 +126,7 @@ jobs:
   safe-rust:
     name: Safe Rust only
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Every crate root, not one per crate directory. The attribute is
@@ -135,6 +137,7 @@ jobs:
   markup-conventions:
     name: Markup conventions
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: "Reject inline script, inline style, and javascript: URLs"
@@ -149,6 +152,7 @@ jobs:
   dependency-hygiene:
     name: Dependency hygiene
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A workflow `services:` or `container:` image is the one image
@@ -174,6 +178,7 @@ jobs:
   actions-policy:
     name: Actions policy
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # A `uses:` the policy refuses does not fail a job, it makes the
@@ -193,6 +198,7 @@ jobs:
   migration-shape:
     name: Migration shape
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: "Reject duplicate versions and irreversible migrations"
@@ -201,6 +207,7 @@ jobs:
   config-secrets:
     name: Config secrets
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # `Secret` is what redacts a credential from Debug output and what
@@ -213,6 +220,7 @@ jobs:
   deny:
     name: Cargo Deny
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
@@ -240,6 +248,7 @@ jobs:
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
@@ -261,6 +270,7 @@ jobs:
   test:
     name: Unit tests
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
@@ -280,6 +290,7 @@ jobs:
   msrv:
     name: MSRV (from Cargo.toml)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Read, not repeated. The floor was written here as well as in
@@ -346,6 +357,7 @@ jobs:
   integration:
     name: Integration tests
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     env:
       NOOMBAT_DATABASE_URL: postgres://noombat:noombat@localhost/noombat
       DATABASE_URL: postgres://noombat:noombat@localhost/noombat
@@ -422,6 +434,7 @@ jobs:
     name: Release build
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.release == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

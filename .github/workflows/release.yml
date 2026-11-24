@@ -82,6 +82,7 @@ jobs:
     name: Build and attest
     needs: gate
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # This job runs the build toolchain: pnpm, Vite and its plugins, and
     # both image builds. So it holds no write permission and no OIDC
     # token, and keeps no credential on disk.
@@ -243,6 +244,7 @@ jobs:
     name: Sign and publish
     needs: build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # Holds the signing identity and the write rights, and runs no
     # repository code: no checkout, no build, only cosign, docker and gh
     # on what the build job produced.

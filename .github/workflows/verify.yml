@@ -72,6 +72,7 @@ jobs:
   conventions:
     name: Chatmail conventions
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # The relay entrypoint and the setup wizard both name the DKIM
@@ -88,6 +89,7 @@ jobs:
   verify:
     name: Build both images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     defaults:
       run:
         shell: bash

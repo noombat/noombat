@@ -72,6 +72,7 @@ jobs:
   e2e:
     name: End-to-end tests (Firefox, Chromium, WebKit)
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     container:
       image: mcr.microsoft.com/playwright:v1.65.1-noble@sha256:1507cbfc550a63a6b7396791ca4f00df17beb56342d2447b3f106c306f525579
       options: "--shm-size=2g --ipc=host"
@@ -509,6 +510,7 @@ jobs:
   interop-images:
     name: Build the interop images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -584,6 +586,7 @@ jobs:
     name: Federation interop (GotoSocial)
     needs: interop-images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: read
@@ -631,6 +634,7 @@ jobs:
     name: Chat interop (Chatmail)
     needs: interop-images
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     permissions:
       contents: read
       actions: read

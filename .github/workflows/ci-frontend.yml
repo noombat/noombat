@@ -45,6 +45,7 @@ jobs:
   typecheck:
     name: TypeScript
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -76,6 +77,7 @@ jobs:
   lint:
     name: ESLint
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -113,6 +115,7 @@ jobs:
   typecheck-e2e:
     name: TypeScript (e2e specs)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: tests/e2e
@@ -146,6 +149,7 @@ jobs:
   lint-e2e:
     name: ESLint (e2e specs)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: tests/e2e
@@ -177,6 +181,7 @@ jobs:
   format:
     name: Prettier
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -208,6 +213,7 @@ jobs:
   test:
     name: Vitest
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
@@ -239,6 +245,7 @@ jobs:
   reproducible:
     name: Build determinism
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
