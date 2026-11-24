@@ -54,10 +54,11 @@ jobs:
         run: python3 scripts/check-contrast.py --self-test
 
       # A locale missing a key renders that key's name to a reader, in
-      # the middle of otherwise translated text. The build succeeds, the
-      # server boots, and the page returns 200, so nothing else here
+      # the middle of otherwise translated text, and one with a renamed
+      # placeholder shows the placeholder as written. The build succeeds,
+      # the server boots, and the page returns 200, so nothing else here
       # would report it.
-      - name: Assert every locale defines the same keys
+      - name: Assert every locale defines the same keys and placeholders
         run: python3 scripts/check-locale-parity.py
 
       # Both spellings compile and render, so nothing else distinguishes

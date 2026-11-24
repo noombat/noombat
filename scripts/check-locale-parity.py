@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
-"""Assert that every locale defines exactly the keys the baseline does.
+"""Assert that every locale defines exactly the keys the baseline does, with the same placeholders.
 
 A missing key does not fail at build time or at boot. It fails when a
 reader in that locale reaches the page that uses it, and what they see is
@@ -14,6 +14,11 @@ Extra keys fail too. An extra key is either a rename that only half
 happened, in which case the other half is a missing key somewhere, or a
 translation for something that no longer exists, in which case it is
 carrying weight for nothing.
+
+So does a translation whose `%{name}` placeholders differ from the
+baseline's. The code that fills them, `tf` or a script reading the
+string, matches by exact name: a name it does not pass reaches the page
+as written, and a placeholder the translation lacks drops its value.
 
 The set of locales is read from `AVAILABLE_LOCALES`, not from the
 directory listing. Those two disagreed for months: seven files existed
@@ -37,7 +42,22 @@ I18N_SOURCE = Path("crates/noombat-api/src/i18n.rs")
 # A top-level key: no indentation, no comment, no list item. The files
 # are flat by convention, and an indented line is reported rather than
 # skipped, so the convention cannot quietly stop holding.
-TOP_LEVEL_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:")
+TOP_LEVEL_KEY = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)\s*:(.*)$")
+
+PLACEHOLDER = re.compile(r"%\{([^}]*)\}")
+
+# The value of a top-level line: a double- or single-quoted scalar, or a
+# plain one up to a comment. Placeholders are read from the value alone,
+# so a trailing comment that names one is not mistaken for it.
+QUOTED = re.compile(r'\s*(?:"((?:[^"\\]|\\.)*)"|\'((?:[^\']|\'\')*)\')')
+
+
+def value_of(rest: str) -> str:
+    """The scalar after a key's colon, without quotes or a trailing comment."""
+    match = QUOTED.match(rest)
+    if match:
+        return match.group(1) if match.group(1) is not None else match.group(2)
+    return re.split(r"\s#", rest, maxsplit=1)[0].strip()
 
 
 def available_locales(source: str) -> list[str]:
@@ -56,9 +76,9 @@ def default_locale(source: str) -> str:
     return match.group(1)
 
 
-def keys_of(path: Path) -> tuple[set[str], list[str]]:
-    """Top-level keys, and any line that is indented under one."""
-    keys, nested = set(), []
+def keys_of(path: Path) -> tuple[dict[str, set[str]], list[str]]:
+    """Top-level keys with the placeholders each value names, and any line indented under one."""
+    keys, nested = {}, []
     for number, line in enumerate(path.read_text().split("\n"), start=1):
         if not line.strip() or line.lstrip().startswith("#"):
             continue
@@ -67,7 +87,7 @@ def keys_of(path: Path) -> tuple[set[str], list[str]]:
             continue
         match = TOP_LEVEL_KEY.match(line)
         if match:
-            keys.add(match.group(1))
+            keys[match.group(1)] = set(PLACEHOLDER.findall(value_of(match.group(2))))
     return keys, nested
 
 
@@ -138,20 +158,29 @@ def main() -> int:
             print(f"::error::{location} is indented, and is not compared", file=sys.stderr)
             failures += 1
 
-        for key in sorted(baseline - keys):
+        for key in sorted(baseline.keys() - keys.keys()):
             print(
                 f"::error file={LOCALE_DIR / f'{tag}.yml'}::{tag} is missing '{key}', "
                 f"which {baseline_tag} defines; readers see the key name",
                 file=sys.stderr,
             )
             failures += 1
-        for key in sorted(keys - baseline):
+        for key in sorted(keys.keys() - baseline.keys()):
             print(
                 f"::error file={LOCALE_DIR / f'{tag}.yml'}::{tag} defines '{key}', "
                 f"which {baseline_tag} does not",
                 file=sys.stderr,
             )
             failures += 1
+        for key in sorted(baseline.keys() & keys.keys()):
+            if keys[key] != baseline[key]:
+                print(
+                    f"::error file={LOCALE_DIR / f'{tag}.yml'}::{tag}'s '{key}' has placeholders "
+                    f"{sorted(keys[key])} and {baseline_tag}'s {sorted(baseline[key])}: a name the "
+                    "code does not pass shows as written, and a missing one drops its value",
+                    file=sys.stderr,
+                )
+                failures += 1
 
     if failures:
         print(f"::error::{failures} locale parity failure(s)", file=sys.stderr)
