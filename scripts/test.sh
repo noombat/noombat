@@ -2,12 +2,20 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Run all verification steps: formatting, lints, tests, and
-# frontend type-checking. Does not require a prior build or clean.
+# Run the checks CI runs that can run here: formatting, lints, unit
+# tests, the repository's own gates, the frontend's type-checking,
+# linting, formatting and unit tests, and the end-to-end project's
+# type-checking and linting. Gates that need docker, a built image,
+# cargo-deny 0.20.2 or reuse run only when those are present, and say
+# so when skipped. Does not require a prior build or clean. CI also runs
+# the browser and interop suites, the image builds, the Typst CV tests
+# that need its binary, the safe-Rust check, the MSRV and reproducible
+# builds, CodeQL and the database-backed tests, which this does not.
 #
 # Usage:
 #   ./scripts/test.sh          # all checks
-#   ./scripts/test.sh --quick  # Rust checks only (skip frontend)
+#   ./scripts/test.sh --quick  # skip the frontend, the end-to-end
+#                              # project and the slow docker checks
 
 set -euo pipefail
 
@@ -44,7 +52,8 @@ step "Checking formatting (cargo fmt)"
 run cargo fmt --all -- --check
 
 step "Running clippy (cargo clippy)"
-run cargo clippy --workspace -- -D warnings
+# `--all-targets`, as CI has it, so code under `#[cfg(test)]` is linted.
+run cargo clippy --workspace --all-targets -- -D warnings
 
 step "Running tests (cargo test)"
 # Database-backed tests are #[ignore]d so this stays runnable without a
@@ -54,6 +63,18 @@ step "Running tests (cargo test)"
 run cargo test --workspace
 
 # ..... Manifests .....
+
+# cargo-deny releases change what deny.toml may contain, so only the
+# version CI pins can stand in for CI's job.
+if [ "$(cargo deny --version 2>/dev/null)" = "cargo-deny 0.20.2" ]; then
+    step "Checking advisories, licences, bans and sources (cargo deny)"
+    run cargo deny check
+else
+    step "Skipping cargo deny: cargo-deny 0.20.2, the version CI pins, is not installed"
+fi
+
+step "Checking that every credential field on Config is a Secret"
+run python3 ./scripts/check-config-secrets.py
 
 # Neither Cargo nor npm warns when a declaration outlives the code that
 # needed it, so nothing else here would notice.
@@ -150,7 +171,9 @@ fi
 if [ "$QUICK" = false ]; then
     step "Installing frontend dependencies"
     cd frontend
-    pnpm install --frozen-lockfile 2>/dev/null || pnpm install
+    # Frozen, as CI installs: a fallback to a plain install would rewrite
+    # pnpm-lock.yaml and hide the mismatch CI then fails on.
+    run pnpm install --frozen-lockfile
     cd "$REPO_ROOT"
 
     step "Checking TypeScript (tsc --noEmit)"
@@ -160,6 +183,28 @@ if [ "$QUICK" = false ]; then
 
     step "Linting frontend (eslint)"
     cd frontend
+    run pnpm lint
+    cd "$REPO_ROOT"
+
+    step "Checking formatting (prettier, frontend and tests/e2e)"
+    cd frontend
+    run pnpm format:check
+    cd "$REPO_ROOT"
+
+    step "Running frontend unit tests (vitest)"
+    cd frontend
+    run pnpm test
+    cd "$REPO_ROOT"
+
+    step "Installing end-to-end dependencies"
+    cd tests/e2e
+    # --ignore-scripts, as CI installs, so no browser is downloaded.
+    run pnpm install --frozen-lockfile --ignore-scripts
+    cd "$REPO_ROOT"
+
+    step "Checking end-to-end TypeScript and lint"
+    cd tests/e2e
+    run pnpm typecheck
     run pnpm lint
     cd "$REPO_ROOT"
 fi
@@ -226,9 +271,14 @@ fi
 echo ""
 echo "=============================="
 if [ "$FAIL" -eq 0 ]; then
-    echo "  All checks passed."
+    echo "  All local checks passed. CI also runs the browser and interop"
+    echo "  suites, the image builds, the Typst CV tests, the safe-Rust check,"
+    echo "  the MSRV and reproducible builds, CodeQL and the database tests."
 else
     echo "  $FAIL check(s) failed."
+fi
+if [ "$QUICK" = true ]; then
+    echo "  (--quick: the frontend, end-to-end and slow docker checks were skipped.)"
 fi
 echo "=============================="
 
