@@ -6,11 +6,12 @@
 # tests, the repository's own gates, the frontend's type-checking,
 # linting, formatting and unit tests, and the end-to-end project's
 # type-checking and linting. Gates that need docker, a built image,
-# cargo-deny 0.20.2 or reuse run only when those are present, and say
-# so when skipped. Does not require a prior build or clean. CI also runs
-# the browser and interop suites, the image builds, the Typst CV tests
-# that need its binary, the safe-Rust check, the MSRV and reproducible
-# builds, CodeQL and the database-backed tests, which this does not.
+# cargo-deny 0.20.2, a signed-in gh or reuse run only when those are
+# present, and say so when skipped. Does not require a prior build or
+# clean. CI also runs the browser and interop suites, the image builds,
+# the Typst CV tests that need its binary, the safe-Rust check, the MSRV
+# and reproducible builds, CodeQL and the database-backed tests, which
+# this does not.
 #
 # Usage:
 #   ./scripts/test.sh          # all checks
@@ -148,6 +149,13 @@ run ./scripts/check-migrations.sh
 # commit reading green while nothing ran.
 step "Checking the GitHub Actions allowlist"
 run ./scripts/check-action-allowlist.sh
+
+if command -v gh > /dev/null 2>&1 && gh auth status > /dev/null 2>&1; then
+    step "Checking every pinned action is the release its comment names"
+    run ./scripts/check-action-tags.sh
+else
+    step "Skipping the action release check: gh is not signed in"
+fi
 
 # A `paths-ignore` pattern that empties a language fails the CodeQL job,
 # and one that quietly reaches further shrinks what is scanned with

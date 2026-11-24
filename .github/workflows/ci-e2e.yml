@@ -339,9 +339,9 @@ jobs:
       # The suite runs over HTTPS, as production does behind Caddy: WebKit
       # keeps no `Secure` cookie, the session's included, over plain HTTP.
       # The job container has no Docker, so Caddy is a release binary, checked
-      # against the SHA-512 its release publishes: 2.11.9, the version
-      # compose.prod.yml's pinned image ran when this was written. Update this
-      # binary when that image moves.
+      # against the SHA-512 its release publishes. Its version is the one the
+      # compose files' Caddy tag names, which check-image-pins.sh enforces:
+      # move the URL and the hash with a bump of that image.
       - name: Start Caddy in front of the server
         run: |
           curl -fsSL --retry 3 --retry-all-errors -o /tmp/caddy.tar.gz \

@@ -22,6 +22,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `check-logical-properties.sh` | Reject physical-direction utilities    | After writing markup that positions anything               |
 | `check-contrast.py`           | Measure every semantic colour pair     | After changing any colour token                            |
 | `check-action-allowlist.sh`   | Reject actions the policy refuses      | After adding or repinning any `uses:` in a workflow        |
+| `check-action-tags.sh`        | Check each pin is the release it names | After repinning any `uses:` by hand                        |
 | `check-workflow-startup.sh`   | Find workflows rejected before running | After a push, when a workflow seems not to have run        |
 | `check-release-tested.sh`     | Refuse a release main did not test     | Run by `release.yml`; by hand before tagging               |
 | `chatmail-setup.sh`           | Chatmail DNS verification              | Before deploying a Chatmail relay on a new domain          |
@@ -64,7 +65,7 @@ After cleaning, run `build.sh` to rebuild from scratch.
 ## `test.sh`
 
 Runs the checks CI runs that can run without a server: formatting, lints and unit tests for the Rust workspace, the repository's own gates (image pins, compose, locales, templates, contrast, migrations, workflows, CodeQL configuration), the frontend's type-checking, linting, formatting and unit tests, and the end-to-end project's type-checking and linting.
-Gates that need docker, a built image, cargo-deny 0.20.2 or `reuse` run only when those are present, and say so when skipped.
+Gates that need docker, a built image, cargo-deny 0.20.2, a signed-in `gh` or `reuse` run only when those are present, and say so when skipped.
 CI also runs the browser and interop suites, the image builds, the Typst CV tests that need its binary, the safe-Rust check, the MSRV and reproducible builds, CodeQL and the database-backed tests, which this does not.
 
 ```sh
@@ -132,13 +133,13 @@ That is not hypothetical: an early version read clean because its file list incl
 
 ## `check-image-pins.sh`
 
-Asserts that container images named in workflows are pinned by digest, that they agree with the compose file naming the same image, and that the Playwright job container's tag names the exact `@playwright/test` version in `tests/e2e`.
+Asserts that container images named in workflows are pinned by digest, that they agree with the compose file naming the same image, that the Playwright job container's tag names the exact `@playwright/test` version in `tests/e2e`, that the Caddy release the e2e job downloads is the one every compose file's Caddy tag names, and that the Dockerfile's Node major is the one `.nvmrc` and the lower bound of `frontend/package.json`'s `engines` name.
 
 ```sh
 ./scripts/check-image-pins.sh
 ```
 
-Exit `0` means pinned and in agreement, `1` means a disagreement, an unpinned image or a Playwright mismatch, and `2` means a parser matched nothing and the run proves nothing.
+Exit `0` means pinned and in agreement, `1` means a disagreement, an unpinned image, or a Playwright, Caddy or Node mismatch, and `2` means a parser matched nothing and the run proves nothing.
 
 This exists because a workflow `services:` or `container:` image is the one image reference no updater reaches.
 Dependabot's docker ecosystem reads Dockerfiles, docker-compose reads compose files, and github-actions reads `uses:`.
@@ -147,16 +148,16 @@ On 2026-08-17 PR #48 raised Meilisearch in `compose.yml` and could not touch the
 The durable half of the fix was to stop naming those images twice: `ci.yml`'s integration job now starts `db`, `redis` and `meilisearch` from `compose.yml` plus `compose.dev.yml` rather than repeating them in a `services:` block.
 This check covers what could not move, and pins what stayed.
 
-Two images are allowlisted, each with its reason printed on every run.
+One image may be unpinned, with its reason printed on every run: GoToSocial floats in `tests/interop/compose.latest.yml`, which `ci-interop-latest.yml` runs on a schedule, and is pinned by digest in `tests/interop/compose.yml`.
 The Playwright job container cannot come from compose and must equal the `@playwright/test` version in `tests/e2e`, which the check enforces.
-GoToSocial tracks `latest` in both the workflow and `tests/interop/compose.yml`, and the reason is unrecorded, so that one is a decision waiting to be made rather than a settled exemption.
+The e2e job has no Docker either, so it downloads Caddy as a release binary, and the check holds that download to the compose files' Caddy tag; a Dependabot bump of the image fails it until the URL and hash in `ci-e2e.yml` move too.
 
 It compares what the files say, not what a registry resolves them to; a digest that has been withdrawn upstream passes here and fails at `docker pull`.
 
-**This runs in CI, in the `dependency-hygiene` job of `ci.yml`, and from `test.sh`.**
+**This runs in CI, in the `dependency-hygiene` job of `ci.yml` and as the first step of the e2e job in `ci-e2e.yml`, and from `test.sh`.**
 
 No workflow runs `test.sh`, so being listed there gates nothing on its own; a check needs a step in a workflow to fail a pull request.
-Every check now has one: `check-inline-scripts.sh`, `check-template-comments.sh` and `check-logical-properties.sh` in `markup-conventions`, `check-contrast.py` in `contrast`, `check-migrations.sh` in `migration-shape`, `check-typst-injection.sh` in `typst-injection`, `check-reproducible.sh` in `ci-frontend.yml` and `release.yml`, and this one with `check-unused-deps.sh` in `dependency-hygiene`.
+Every check now has one: `check-inline-scripts.sh` and `check-template-comments.sh` in `markup-conventions`, `check-logical-properties.sh` and `check-contrast.py` in `ci-accessibility.yml`, `check-migrations.sh` in `migration-shape`, `check-typst-injection.sh` in `typst.yml`, `check-reproducible.sh` in `ci-frontend.yml` and `release.yml`, and this one with `check-unused-deps.sh` in `dependency-hygiene`.
 `check-unused-deps.sh` is the one that does not block: it carries `continue-on-error: true`, because it reports candidates rather than conclusions.
 
 When pinning a digest by hand, take the **manifest list** digest and not a platform one.
@@ -187,6 +188,19 @@ The policy permits actions owned by `noombat` plus a short list of patterns.
 This exists because the failure is invisible. A refused `uses:` does not fail a job, it makes the whole workflow report `startup_failure`, which creates no jobs and therefore no check runs, so the commit shows every other check green while nothing ran. On 2026-08-17 `ci-e2e.yml` was in that state and all three of its jobs silently did not execute, alongside 35 green checks on the same commit.
 
 `actionlint` does not cover this. It validates the workflow schema and knows nothing about the policy.
+
+## `check-action-tags.sh`
+
+Asserts that every pinned action's SHA is the release its trailing comment names (`@<sha> # v7.0.1`), resolving each tag through the API.
+
+```sh
+./scripts/check-action-tags.sh   # every workflow; needs gh with a token
+```
+
+Exit `0` means every pin matches, `1` means a SHA is not the release named or a comment names no exact release (such as a moving `v4`), and `2` means a setup or API error.
+
+A reader trusts the comment, and Dependabot moves the SHA and the comment together, but a hand edit can leave them apart.
+It runs in the `actions-policy` job of `ci.yml`, and from `test.sh` when `gh` is signed in.
 
 ## `check-workflow-startup.sh`
 

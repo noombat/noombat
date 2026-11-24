@@ -62,15 +62,21 @@ archive="$DESTINATION/caddy-data-$stamp.tar.gz"
 # /var/lib/docker: the path is not stable across engines, and on a
 # rootless or Podman host it does not exist at all.
 #
-# The image is the one already pulled for the reverse proxy, so this adds
-# no download. Its digest is a copy of `compose.prod.yml`'s that
-# `check-image-pins.sh` does not read: bump the two together.
+# The image is the one compose.prod.yml runs for the reverse proxy, read
+# from that file so the two cannot drift, and already pulled, so this adds
+# no download.
 #
 # The archive is streamed to stdout and redirected, rather than written
 # through a bind mount. A container writing into a mounted directory
 # writes as root, and the host user then cannot chmod its own backup.
-CADDY_IMAGE=docker.io/library/caddy:2-alpine
-CADDY_IMAGE+=@sha256:de23def33b17fb5d1290b0f6c2add1d70780e52341896c00a4c8a2a2fe9d355e
+image_line='^[[:space:]]*image:[[:space:]]*'
+caddy_ref='((docker\.io/)?(library/)?caddy:[^[:space:]@]*@sha256:[0-9a-f]{64})'
+CADDY_IMAGE="$(sed -nE "s|${image_line}${caddy_ref}.*|\\1|p" compose.prod.yml)"
+if [ "$(printf '%s\n' "$CADDY_IMAGE" | grep -c .)" -ne 1 ]; then
+    echo "::error::need one digest-pinned caddy image in compose.prod.yml," \
+        "found: ${CADDY_IMAGE:-none}" >&2
+    exit 1
+fi
 umask 077
 docker run --rm \
     -v "$VOLUME:/data:ro" \

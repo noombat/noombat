@@ -39,6 +39,7 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
+      - "scripts/check-action-tags.sh"
       - "scripts/check-image-pins.sh"
       - "scripts/check-compose-config.sh"
       - "compose*.yml"
@@ -66,6 +67,7 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
+      - "scripts/check-action-tags.sh"
       - "scripts/check-image-pins.sh"
       - "scripts/check-compose-config.sh"
       - "compose*.yml"
@@ -180,6 +182,13 @@ jobs:
       # reports it before a push.
       - name: "Reject actions the repository policy will not run"
         run: scripts/check-action-allowlist.sh
+      # A reader trusts a pin's release comment, and a hand edit can leave
+      # a SHA that is not the release named.
+      - name: "Reject a pinned SHA that is not the release its comment names"
+        if: ${{ !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-action-tags.sh
 
   migration-shape:
     name: Migration shape
