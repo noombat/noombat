@@ -40,6 +40,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # A smaller target/: no incremental state, and line tables rather
+  # than full debug information, which keeps file and line in a test's
+  # backtrace.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+# Caches that hold target/ are skipped on pull requests, which build
+# cold: a pull request's entry counts against the repository's cache
+# budget although main cannot restore it. Elsewhere they are restored
+# by their exact key only, because restoring an older target/ and saving
+# it again grows the entry on every lockfile change.
 
 jobs:
   typst-injection:
@@ -48,6 +59,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -55,8 +67,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-typst-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-typst-
+          key: cargo-typst-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
       # Compiles the emitter's corpus with the real Typst binary. The
       # unit tests assert that no user text leaves a string literal in
       # the generated source; only the compiler can say what Typst then

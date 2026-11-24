@@ -99,6 +99,17 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: -D warnings
+  # A smaller target/: no incremental state, and line tables rather
+  # than full debug information, which keeps file and line in a test's
+  # backtrace.
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+
+# Caches that hold target/ are skipped on pull requests, which build
+# cold: a pull request's entry counts against the repository's cache
+# budget although main cannot restore it. Elsewhere they are restored
+# by their exact key only, because restoring an older target/ and saving
+# it again grows the entry on every lockfile change.
 
 jobs:
   fmt:
@@ -220,6 +231,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -227,8 +239,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-clippy-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-clippy-
+          key: cargo-clippy-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
       # `--all-targets` so test and bench code is linted too. Without it
       # everything under `#[cfg(test)]` is never compiled by this job,
       # which is how a `nonminimal_bool` in middleware.rs stayed green
@@ -241,6 +252,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -248,8 +260,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-test-
+          key: cargo-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
       # No database here, so the `#[ignore]`d `#[sqlx::test]` tests are
       # skipped. The `integration` job below runs them.
       - run: cargo test --workspace
@@ -275,6 +286,7 @@ jobs:
       - name: Install MSRV toolchain
         run: rustup install "${{ steps.msrv.outputs.version }}" --profile minimal
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -284,7 +296,6 @@ jobs:
             ~/.rustup/toolchains
             target
           key: cargo-msrv-${{ steps.msrv.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-msrv-${{ steps.msrv.outputs.version }}-
       # RUSTUP_TOOLCHAIN rather than `rustup default`: rust-toolchain.toml
       # outranks the default, so the job that set the default compiled on
       # whatever that file names and never once exercised the floor.
@@ -335,26 +346,36 @@ jobs:
       # Consumed by compose.yml's `${MEILI_MASTER_KEY:-noombat-dev-key}`,
       # so the key the services start with is the one MEILI_KEY presents.
       MEILI_MASTER_KEY: ci-test-key
+      SQLX_CLI_VERSION: "0.9.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Start services (compose.yml, the same images deployments use)
         run: |
           docker compose -f compose.yml -f compose.dev.yml \
             up -d --wait db redis meilisearch
+      # The test job's entry: the same paths and key, because both jobs
+      # compile the same artefacts (`--include-ignored` changes what runs,
+      # not what is built), so one entry serves both.
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
-            ~/.cargo/bin
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-integration-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-integration-
+          key: cargo-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Cache sqlx-cli
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: |
+            ~/.cargo/bin/sqlx
+            ~/.cargo/bin/cargo-sqlx
+          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}
       - name: Install sqlx-cli
         run: |
-          command -v sqlx >/dev/null || cargo install sqlx-cli@0.9.0 \
+          command -v sqlx >/dev/null || cargo install "sqlx-cli@$SQLX_CLI_VERSION" \
             --locked --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source migrations
@@ -373,6 +394,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Cache Cargo artefacts
+        if: github.event_name != 'pull_request'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
@@ -380,8 +402,7 @@ jobs:
             ~/.cargo/registry/cache
             ~/.cargo/git/db
             target
-          key: cargo-release-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-release-
+          key: cargo-release-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
 
       - name: Build release binary
         run: cargo build --release --bin noombat
