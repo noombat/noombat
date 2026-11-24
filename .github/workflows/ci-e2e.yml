@@ -137,10 +137,23 @@ jobs:
           apt-get install -y --no-install-recommends \
             build-essential pkg-config postgresql-client
 
+      # The job container has no Rust. rustup-init is downloaded and checked
+      # against the SHA-256 published beside it, which proves the download
+      # rather than the publisher, and set to install no default toolchain:
+      # the explicit install below reads rust-toolchain.toml. Downloaded to a
+      # file rather than piped into sh, so a failed download fails the step.
+      # Each download retries a transient failure three times.
       - name: Install Rust
         run: |
-          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs \
-            | sh -s -- -y --default-toolchain stable --profile minimal
+          set -eu
+          url=https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-gnu/rustup-init
+          get() { curl --proto '=https' --tlsv1.2 -sSfL --retry 3 --retry-all-errors "$@"; }
+          get -o /tmp/rustup-init "$url"
+          expected=$(get "$url.sha256" | cut -d' ' -f1)
+          echo "$expected  /tmp/rustup-init" | sha256sum -c -
+          chmod +x /tmp/rustup-init
+          /tmp/rustup-init -y --default-toolchain none --profile minimal
+          "$HOME/.cargo/bin/rustup" toolchain install
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
 
       - name: Cache Cargo artefacts
@@ -155,10 +168,29 @@ jobs:
             target
           key: cargo-e2e-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
 
-      - name: Install sqlx-cli and run migrations
+      - name: Read the sqlx version from Cargo.lock
+        # sqlx-cli is released with sqlx under the same version, so the CLI
+        # that runs the migrations follows the library a bump moves.
+        id: sqlx
         run: |
-          command -v sqlx >/dev/null || cargo install sqlx-cli@0.9.0 \
-            --locked --no-default-features --features postgres,rustls
+          version=$(awk '/^name = "sqlx"$/ { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)
+          # Exactly one version: two locked copies would print two lines.
+          case "$version" in
+            "" | *[!0-9.]*)
+              echo "::error::need one sqlx version in Cargo.lock, found: ${version:-none}"
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install sqlx-cli and run migrations
+        env:
+          SQLX_CLI_VERSION: ${{ steps.sqlx.outputs.version }}
+        run: |
+          # The cached binary is used only at the version wanted.
+          sqlx --version 2>/dev/null | grep -qwF -- "$SQLX_CLI_VERSION" \
+            || cargo install "sqlx-cli@$SQLX_CLI_VERSION" --locked --force \
+              --no-default-features --features postgres,rustls
           sqlx migrate run --source migrations
 
       - name: Build Noombat server
@@ -312,7 +344,7 @@ jobs:
       # binary when that image moves.
       - name: Start Caddy in front of the server
         run: |
-          curl -fsSL -o /tmp/caddy.tar.gz \
+          curl -fsSL --retry 3 --retry-all-errors -o /tmp/caddy.tar.gz \
             https://github.com/caddyserver/caddy/releases/download/v2.11.9/caddy_2.11.9_linux_amd64.tar.gz
           echo "0e85544340290a16ce4bfb76fe7d65e9de1bf3a6e67f5ccfff30b30d27ea4c73e078077b7bf3e58ae60b6b12e44327705287059c775bca5782e8ee85ea7edd75  /tmp/caddy.tar.gz" \
             | sha512sum -c -

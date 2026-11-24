@@ -349,7 +349,6 @@ jobs:
       # Consumed by compose.yml's `${MEILI_MASTER_KEY:-noombat-dev-key}`,
       # so the key the services start with is the one MEILI_KEY presents.
       MEILI_MASTER_KEY: ci-test-key
-      SQLX_CLI_VERSION: "0.9.0"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Start services (compose.yml, the same images deployments use)
@@ -369,17 +368,35 @@ jobs:
             ~/.cargo/git/db
             target
           key: cargo-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
+      - name: Read the sqlx version from Cargo.lock
+        # sqlx-cli is released with sqlx under the same version, so the CLI
+        # that runs the migrations follows the library a bump moves.
+        id: sqlx
+        run: |
+          version=$(awk '/^name = "sqlx"$/ { getline; gsub(/"/, "", $3); print $3 }' Cargo.lock)
+          # Exactly one version: two locked copies would print two lines.
+          case "$version" in
+            "" | *[!0-9.]*)
+              echo "::error::need one sqlx version in Cargo.lock, found: ${version:-none}"
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache sqlx-cli
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: |
             ~/.cargo/bin/sqlx
             ~/.cargo/bin/cargo-sqlx
-          key: sqlx-cli-${{ env.SQLX_CLI_VERSION }}
+          key: sqlx-cli-${{ steps.sqlx.outputs.version }}
       - name: Install sqlx-cli
+        env:
+          SQLX_CLI_VERSION: ${{ steps.sqlx.outputs.version }}
         run: |
-          command -v sqlx >/dev/null || cargo install "sqlx-cli@$SQLX_CLI_VERSION" \
-            --locked --no-default-features --features postgres,rustls
+          # The cached binary is used only at the version wanted.
+          sqlx --version 2>/dev/null | grep -qwF -- "$SQLX_CLI_VERSION" \
+            || cargo install "sqlx-cli@$SQLX_CLI_VERSION" --locked --force \
+              --no-default-features --features postgres,rustls
       - name: Run migrations
         run: sqlx migrate run --source migrations
       # `--include-ignored` picks up the `#[sqlx::test]` tests that the
