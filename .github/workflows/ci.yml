@@ -2,8 +2,9 @@
 #
 # Gated on paths that affect Rust compilation, linting, formatting,
 # dependency auditing, or database-backed integration tests. Commits
-# that touch only documentation, licence files, shell scripts, or CI
-# infrastructure that does not affect the Rust build are skipped.
+# that touch only documentation, licence files, or shell scripts no job
+# here reads are skipped. Every workflow change runs it, because the
+# `actions-policy` job checks every workflow's `uses:`.
 #
 # The compose files are in the list even though they compile nothing.
 # Two jobs here read them: `dependency-hygiene` runs
@@ -30,7 +31,6 @@ on:
   push:
     branches: [main]
     paths:
-      - ".github/workflows/ci.yml"
       - "crates/**"
       - "migrations/**"
       - "Cargo.toml"
@@ -39,8 +39,6 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
-      - "scripts/check-codeql-config.py"
-      - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-compose-config.sh"
       - "compose*.yml"
@@ -51,12 +49,15 @@ on:
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-unused-deps.sh"
+      - "frontend/vite.config.ts"
+      - "tests/interop/fixture-credential.sh"
+      - "tests/chat-interop/fixture-credential.sh"
+      - "scripts/e2e-stack.sh"
       - "templates/**"
       - ".github/workflows/**"
   pull_request:
     branches: [main]
     paths:
-      - ".github/workflows/ci.yml"
       - "crates/**"
       - "migrations/**"
       - "Cargo.toml"
@@ -65,8 +66,6 @@ on:
       - "deny.toml"
       - "rustfmt.toml"
       - "scripts/check-action-allowlist.sh"
-      - "scripts/check-codeql-config.py"
-      - ".github/codeql/**"
       - "scripts/check-image-pins.sh"
       - "scripts/check-compose-config.sh"
       - "compose*.yml"
@@ -77,6 +76,10 @@ on:
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
       - "scripts/check-unused-deps.sh"
+      - "frontend/vite.config.ts"
+      - "tests/interop/fixture-credential.sh"
+      - "tests/chat-interop/fixture-credential.sh"
+      - "scripts/e2e-stack.sh"
       - "templates/**"
       - ".github/workflows/**"
   workflow_dispatch:
@@ -163,11 +166,6 @@ jobs:
       # reports it before a push.
       - name: "Reject actions the repository policy will not run"
         run: scripts/check-action-allowlist.sh
-      # A pattern that excludes every file of a language fails the CodeQL
-      # job outright; one that reaches further than intended shrinks what
-      # is scanned and reports nothing at all.
-      - name: "Reject a CodeQL exclusion that empties or narrows a language"
-        run: python3 scripts/check-codeql-config.py
 
   migration-shape:
     name: Migration shape

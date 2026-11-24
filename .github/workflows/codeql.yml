@@ -7,14 +7,13 @@
 # action is SHA-pinned like every other action here and tracked by
 # Dependabot, and the CodeQL version stops moving without a commit.
 #
-# ENABLING THIS REQUIRES TWO THINGS OUTSIDE THIS FILE.
+# TWO SETTINGS OUTSIDE THIS FILE KEEP IT RUNNING.
 #   1. `github/codeql-action/init` and `github/codeql-action/analyze` must
-#      be added to the repository's Actions policy. Without them the whole
+#      stay in the repository's Actions policy. Without them the whole
 #      workflow reports startup_failure, which creates no check runs, so
 #      the commit still reads green while nothing is analysed.
-#   2. Default setup must be turned off first, in Settings, Code security.
-#      GitHub refuses to run both, and the failure is silent in the same
-#      way.
+#   2. Default setup must stay off, in Settings, Code security. GitHub
+#      refuses to run both, and the failure is silent in the same way.
 #
 # Related workflows:
 #   ci.yml                  Rust build, lint, test and the schema gates.
@@ -41,6 +40,19 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  config:
+    name: CodeQL configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # A pattern that excludes every file of a language fails the CodeQL
+      # job outright; one that reaches further than intended shrinks what
+      # is scanned and reports nothing at all. Here, where every change
+      # runs it, because a change under tests/ can alter what the
+      # exclusions match.
+      - name: "Reject a CodeQL exclusion that empties or narrows a language"
+        run: python3 scripts/check-codeql-config.py
+
   analyse:
     name: Analyse ${{ matrix.language }}
     runs-on: ubuntu-latest

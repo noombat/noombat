@@ -29,6 +29,9 @@ on:
       - "rust-toolchain.toml"
       - "scripts/asset-manifest.sh"
       - "scripts/install-pnpm.sh"
+      - ".nvmrc"
+      - ".dockerignore"
+      - "noombat.toml"
   pull_request:
     branches: [main]
     paths:
@@ -48,6 +51,9 @@ on:
       - "rust-toolchain.toml"
       - "scripts/asset-manifest.sh"
       - "scripts/install-pnpm.sh"
+      - ".nvmrc"
+      - ".dockerignore"
+      - "noombat.toml"
 
 permissions:
   contents: read
@@ -113,8 +119,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # Also run by ci.yml, whose paths leave out tests/e2e/** and this
-      # file: the two its Playwright rule compares. This job starts on both.
+      # Also run by ci.yml, whose paths leave out tests/e2e/**, so a change
+      # to tests/e2e/package.json alone, one side of the Playwright rule,
+      # reaches only this job.
       - name: "Assert the job container matches @playwright/test"
         run: scripts/check-image-pins.sh
 
@@ -332,8 +339,9 @@ jobs:
       #
       # The usernames and key are duplicated in tests/e2e/session.ts and
       # scripts/e2e-stack.sh; all three have to agree. The hash is the
-      # Argon2id hash of that key, which `cargo test -p noombat-identity
-      # interop_fixture` proves still verifies.
+      # Argon2id hash of that key. `cargo test -p noombat-identity
+      # interop_fixture` proves the copy in scripts/e2e-stack.sh still
+      # verifies; nothing checks this one against it.
       - name: Seed the accounts the suite signs in as
         run: |
           AUTH_KEY_HASH='$argon2id$v=19$m=19456,t=2,p=1$CJK75/eF2NFDNvNV5I+DGQ$Eqae0tHj4wJ7vBCko4z+1OXz6HVocGWc8K3NAJibjL8'
@@ -532,8 +540,9 @@ jobs:
   # deletion and transport_maps can all be dead while the container
   # reports healthy, so the suite asserts the sidecar directly.
   #
-  # The e2e job above runs a server with no Chatmail domain set and never
-  # calls the chat API, so registration on a chat-enabled instance, the
+  # The e2e job above starts the server from the checkout, so it reads
+  # noombat.toml's Chatmail settings with no relay behind them, and it
+  # never calls the chat API: registration against a running relay, the
   # chat WebSocket route and chat reports are exercised only here.
   chat-interop:
     name: Chat interop (Chatmail)

@@ -1,13 +1,13 @@
 # GitHub Actions CI pipeline for frontend jobs.
 #
-# Runs TypeScript type checking, ESLint linting, Prettier format
-# checking, and the Vitest unit suite on changes to frontend source,
-# configuration, or this workflow file.
+# Type-checks and lints the frontend and the e2e specs, checks both with
+# Prettier, runs the Vitest unit suite, and builds the frontend twice to
+# compare the output, on changes to frontend source, configuration,
+# tests/e2e, or this workflow file.
 #
-# The Prettier job also covers tests/e2e, which is why this workflow
-# triggers on that path too. Path filters are per-workflow rather than
-# per-job, so an e2e-only change runs the other jobs as well; that is
-# cheaper than leaving those specs unformatted and unchecked.
+# Path filters are per-workflow rather than per-job, so an e2e-only
+# change runs the frontend jobs as well; that is cheaper than leaving
+# those specs unchecked.
 # Complements ci.yml (Rust-focused) and ci-e2e.yml
 # (browser integration tests).
 
@@ -25,6 +25,7 @@ on:
       - ".prettierignore"
       - "scripts/check-reproducible.sh"
       - "scripts/install-pnpm.sh"
+      - ".nvmrc"
   pull_request:
     branches: [main]
     paths:
@@ -35,6 +36,7 @@ on:
       - ".prettierignore"
       - "scripts/check-reproducible.sh"
       - "scripts/install-pnpm.sh"
+      - ".nvmrc"
 
 permissions:
   contents: read
