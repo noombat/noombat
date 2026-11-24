@@ -59,10 +59,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
-      # The three the action actually needs. `security-events: write` is
-      # what uploads the SARIF; the analysis is unreachable without it.
+      # What the action needs: `security-events: write` uploads the SARIF,
+      # and `contents: read` checks out the code. No `packages: read`,
+      # which fetches private query packs: the configuration uses none.
       security-events: write
-      packages: read
       contents: read
     strategy:
       fail-fast: false

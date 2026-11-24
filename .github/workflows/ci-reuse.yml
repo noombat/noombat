@@ -22,6 +22,14 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # reuse and every package it needs, each at an exact version and
+      # hash (.github/reuse/requirements.txt), installed as wheels into a
+      # venv of their own: the runner's system packages are neither used
+      # nor replaced, and nothing is built from source.
       - name: Install reuse
-        run: pip install --break-system-packages reuse==6.2.0
+        run: |
+          python3 -m venv "$RUNNER_TEMP/reuse"
+          "$RUNNER_TEMP/reuse/bin/pip" install --require-hashes --only-binary=:all: \
+            -r .github/reuse/requirements.txt
+          echo "$RUNNER_TEMP/reuse/bin" >> "$GITHUB_PATH"
       - run: reuse lint
