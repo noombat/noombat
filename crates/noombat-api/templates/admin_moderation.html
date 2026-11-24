@@ -28,16 +28,16 @@
                     <span class="text-sm font-semibold">{{ report.reason }}</span>
                     <span class="text-xs text-text-secondary ms-auto">{{ report.created_at }}</span>
                 </div>
-                <p class="text-sm mb-1">
+                <p class="text-sm mb-1 wrap-anywhere">
                     <span class="text-text-secondary">{{ i18n.t("admin_report_by") }}</span>
                     {{ report.reporter_name }}
                 </p>
-                <p class="text-sm mb-1">
+                <p class="text-sm mb-1 wrap-anywhere">
                     <span class="text-text-secondary">{{ i18n.t("admin_report_target") }}</span>
                     {{ report.target_description }}
                 </p>
                 {% if !report.comment.is_empty() %}
-                <p class="text-sm text-text-secondary italic">{{ report.comment }}</p>
+                <p class="text-sm text-text-secondary italic wrap-anywhere">{{ report.comment }}</p>
                 {% endif %}
 
                 <!-- Resolution actions -->

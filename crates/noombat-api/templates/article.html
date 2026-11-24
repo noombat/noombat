@@ -13,9 +13,9 @@
         <article aria-label="{{ aria_article_label }}">
             <header class="mb-6">
                 <h1 class="text-3xl font-bold mb-2 leading-tight">{{ article_title }}</h1>
-                <div class="flex items-baseline gap-2 text-sm text-text-secondary">
+                <div class="flex flex-wrap items-baseline gap-x-2 text-sm text-text-secondary">
                     <a href="/users/{{ author }}"
-                       class="text-text-brand font-semibold no-underline hover:underline">
+                       class="text-text-brand font-semibold no-underline hover:underline wrap-anywhere">
                         {{ author_display }}
                     </a>
                     <time datetime="{{ created_at }}">{{ created_at }}</time>

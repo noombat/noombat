@@ -18,9 +18,9 @@
 {% for post in posts %}
 <article aria-label="{{ post.aria_label }}"
          class="border-b border-border-default py-4">
-    <header class="flex items-baseline gap-2 mb-1">
+    <header class="flex flex-wrap items-baseline gap-x-2 mb-1">
         <a href="/users/{{ post.author }}"
-           class="text-text-brand font-semibold no-underline hover:underline">
+           class="text-text-brand font-semibold no-underline hover:underline wrap-anywhere">
             {{ post.author_display }}
         </a>
         <time datetime="{{ post.created_at }}"

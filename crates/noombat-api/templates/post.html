@@ -7,9 +7,9 @@
 
 {% block content %}
         <article aria-label="{{ aria_post_label }}">
-            <header class="flex items-baseline gap-2 mb-2">
+            <header class="flex flex-wrap items-baseline gap-x-2 mb-2">
                 <a href="/users/{{ author }}"
-                   class="text-text-brand font-semibold no-underline hover:underline">
+                   class="text-text-brand font-semibold no-underline hover:underline wrap-anywhere">
                     {{ author_display }}
                 </a>
                 <time datetime="{{ created_at }}"

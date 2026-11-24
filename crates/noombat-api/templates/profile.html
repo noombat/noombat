@@ -15,14 +15,14 @@
 
 {% block content %}
         <header class="mb-6">
-            <h1 class="text-2xl font-bold">{{ display_name }}</h1>
+            <h1 class="text-2xl font-bold wrap-anywhere">{{ display_name }}</h1>
             {% if !headline.is_empty() %}
-            <p class="text-base text-text-secondary mt-1">{{ headline }}</p>
+            <p class="text-base text-text-secondary mt-1 wrap-anywhere">{{ headline }}</p>
             {% endif %}
             {% if !location.is_empty() %}
-            <p class="text-sm text-text-secondary mt-1">📍 {{ location }}</p>
+            <p class="text-sm text-text-secondary mt-1 wrap-anywhere">📍 {{ location }}</p>
             {% endif %}
-            <p class="text-text-secondary text-sm"
+            <p class="text-text-secondary text-sm wrap-anywhere"
                aria-label="{{ i18n.t("aria_fediverse_handle") }}">
                 @{{ username }}@{{ domain }}
             </p>
@@ -148,7 +148,7 @@
                 {% for link in verified_links %}
                 <li>
                     <a href="{{ link.url }}" rel="me noopener noreferrer" target="_blank"
-                       class="text-text-brand no-underline hover:underline">
+                       class="text-text-brand no-underline hover:underline wrap-anywhere">
                         {{ link.url }}
                     </a>
                     {% if link.verified_at.is_some() %}

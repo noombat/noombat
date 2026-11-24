@@ -136,6 +136,48 @@ test.describe("Reflow at 320 pixels, admin pages", () => {
   }
 });
 
+/**
+ * Usernames run to 30 characters with no break point, and display names and
+ * a remote author's name to any length; the seeded ones are short. Each test
+ * writes a long name into the served page and requires that it wraps.
+ */
+test.describe("Reflow at 320 pixels, long names", () => {
+  const NAME = "m".repeat(30);
+
+  async function widen(page: Page, selector: string, text: string): Promise<void> {
+    const targets = page.locator(selector);
+    expect(await targets.count(), `${selector} on ${page.url()}`).toBeGreaterThan(0);
+    await targets.evaluateAll((elements, value) => {
+      for (const element of elements) element.textContent = value;
+    }, text);
+  }
+
+  test("profile heading and handle", async ({ page }) => {
+    await page.goto("/users/testuser");
+    await widen(page, "main header h1", "m".repeat(40));
+    await widen(page, "main header p[aria-label]", `@${NAME}@example.org`);
+    expect(await pageWidth(page)).toBeLessThanOrEqual(WIDTH);
+  });
+
+  test("feed post headers", async ({ page }) => {
+    await page.goto("/");
+    await expect(page.locator(PARTIALS["/"]).first()).toBeAttached({ timeout: 10_000 });
+    await widen(page, "#feed-items article header a[href^='/users/']", NAME);
+    expect(await pageWidth(page)).toBeLessThanOrEqual(WIDTH);
+  });
+
+  for (const [kind, path] of [
+    ["note", NOTE_PATH],
+    ["article", ARTICLE_PATH],
+  ]) {
+    test(`${kind} permalink header`, async ({ page }) => {
+      await page.goto(path);
+      await widen(page, "main article a[href^='/users/']", NAME);
+      expect(await pageWidth(page)).toBeLessThanOrEqual(WIDTH);
+    });
+  }
+});
+
 test.describe("The navigation menu", () => {
   function signIn(page: Page) {
     return page.locator("body > nav").getByRole("link", { name: "Sign in" });
@@ -168,7 +210,6 @@ test.describe("The navigation menu", () => {
   }, testInfo) => {
     await authenticateBrowser(context, await requireSession(request, testInfo.workerIndex));
     await page.goto("/settings");
-    // Usernames run to 30 characters with no break point; the seeded ones are shorter.
     await page.locator('body > nav a[href^="/@"]').evaluate((link) => {
       link.textContent = `@${"m".repeat(30)}`;
     });

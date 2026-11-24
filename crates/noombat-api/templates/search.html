@@ -42,7 +42,7 @@
         <ul class="space-y-4">
             {% for result in results %}
             <li class="border-b border-border-default pb-4">
-                <a href="{{ result.url }}" class="text-text-brand no-underline hover:underline font-semibold">
+                <a href="{{ result.url }}" class="text-text-brand no-underline hover:underline font-semibold wrap-anywhere">
                     {{ result.title }}
                 </a>
                 {% if !result.org_kind_key.is_empty() %}
@@ -51,7 +51,7 @@
                 </span>
                 {% endif %}
                 {% if !result.subtitle.is_empty() %}
-                <p class="text-text-secondary text-sm">{{ result.subtitle }}</p>
+                <p class="text-text-secondary text-sm wrap-anywhere">{{ result.subtitle }}</p>
                 {% endif %}
             </li>
             {% endfor %}
