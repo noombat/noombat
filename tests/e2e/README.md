@@ -4,19 +4,22 @@ Playwright suite driving real browsers against a running Noombat stack. It cover
 
 ## Components
 
-| File                        | Purpose                                                 |
-| --------------------------- | ------------------------------------------------------- |
-| `smoke.spec.ts`             | Pages render and permalinks resolve                     |
-| `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                     |
-| `security-headers.spec.ts`  | Response headers and the CSP                            |
-| `settings-lists.spec.ts`    | A settings list's add and remove, as htmx swaps them    |
-| `compose-form.spec.ts`      | The compose page's plain form, with its CSRF token      |
-| `session.ts`                | Registers and signs in the accounts the specs use       |
-| `axe-fixture.ts`            | Wires axe-core into the Playwright fixture              |
-| `playwright.config.ts`      | Six browser projects, three desktop and three mobile    |
-| `Caddyfile`                 | The stack's TLS front, on the host network (Linux only) |
-| `playwright.chat.config.ts` | The chat stack's config, for `chat/` alone              |
-| `chat/two-browsers.chat.ts` | Chat in two contexts: chat-interop check 19             |
+| File                        | Purpose                                                    |
+| --------------------------- | ---------------------------------------------------------- |
+| `smoke.spec.ts`             | Pages render and permalinks resolve                        |
+| `accessibility.spec.ts`     | WCAG 2.2 AA, asserted with axe-core                        |
+| `security-headers.spec.ts`  | Response headers and the CSP                               |
+| `settings-lists.spec.ts`    | A settings list's add and remove, as htmx swaps them       |
+| `compose-form.spec.ts`      | The compose page's plain form, with its CSRF token         |
+| `reflow.spec.ts`            | No page scrolls sideways at 320 px; the navigation menu    |
+| `island-styles.spec.ts`     | The chat and editor islands' stylesheets reach their pages |
+| `oauth-start.spec.ts`       | The login page's ORCID button reaches the provider         |
+| `session.ts`                | Registers and signs in the accounts the specs use          |
+| `axe-fixture.ts`            | Wires axe-core into the Playwright fixture                 |
+| `playwright.config.ts`      | Six browser projects, three desktop and three mobile       |
+| `Caddyfile`                 | The stack's TLS front, on the host network (Linux only)    |
+| `playwright.chat.config.ts` | The chat stack's config, for `chat/` alone                 |
+| `chat/two-browsers.chat.ts` | Chat in two contexts: chat-interop check 19                |
 
 This directory is its own pnpm project, `noombat-e2e`, separate from `frontend/` and with its own lockfile, `tsconfig.json` and ESLint config. Run `pnpm lint` and `pnpm typecheck` here; the frontend's do not cover it.
 
@@ -41,15 +44,15 @@ scripts/e2e-stack.sh down
 
 The stack serves the suite at `https://localhost:8443` through Caddy (`Caddyfile` here), with the server behind it on 8444, as production serves it behind TLS: WebKit keeps no `Secure` cookie over plain HTTP, so the session cookie would never reach it there.
 
-## Fixtures three files have to agree on
+## Fixtures the specs and the stack have to agree on
 
 The suite does not create its own data, but for `settings-lists.spec.ts`, which adds two skills to a seeded account and removes them, and `compose-form.spec.ts`, which publishes one note to followers each run and leaves it, posts having no route that deletes them. `scripts/e2e-stack.sh` seeds it and the specs address it by hard-coded value, so changing one place and not the others breaks the run as a timeout or a missing element rather than as a visible mismatch.
 
-| Fixture                      | Also hard-coded in                                                    |
-| ---------------------------- | --------------------------------------------------------------------- |
-| `e2e_admin` and its auth key | `session.ts`, `scripts/e2e-stack.sh`, and the workflow's seeding step |
-| The article permalink id     | `smoke.spec.ts`, `scripts/e2e-stack.sh`                               |
-| The note permalink id        | `smoke.spec.ts`, `scripts/e2e-stack.sh`                               |
+| Fixture                      | Also hard-coded in                                                                                                                              |
+| ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `e2e_admin` and its auth key | `session.ts`, `scripts/e2e-stack.sh`, and the workflow's seeding step                                                                           |
+| The article permalink id     | `smoke.spec.ts`, `accessibility.spec.ts`, `security-headers.spec.ts`, `reflow.spec.ts`, `scripts/e2e-stack.sh`, and the workflow's seeding step |
+| The note permalink id        | `smoke.spec.ts`, `accessibility.spec.ts`, `security-headers.spec.ts`, `reflow.spec.ts`, `scripts/e2e-stack.sh`, and the workflow's seeding step |
 
 The ids are fixed so that a spec can address a permalink without discovering it first. Article and note are separate fixtures because a note permalink takes a different template branch, and exercising only one of them leaves the other template rendered by nothing.
 

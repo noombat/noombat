@@ -8,7 +8,7 @@
 
   Templates for pages that require or expect authentication extend
   this template instead of base.html to get the authenticated
-  navigation bar (Messages, Settings, Sign out).
+  navigation bar (Messages, the profile link, Settings).
 
   Required template fields (in addition to base.html fields):
     nav_username: String (the authenticated user's username)
@@ -20,7 +20,7 @@
             {{ i18n.t("chat_title") }}
         </a>
         <a href="/@{{ nav_username }}"
-           class="text-sm text-text-secondary no-underline hover:text-text-primary">
+           class="text-sm text-text-secondary no-underline hover:text-text-primary wrap-anywhere">
             @{{ nav_username }}
         </a>
         <a href="/settings"

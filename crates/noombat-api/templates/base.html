@@ -69,60 +69,78 @@
       the node would reintroduce the very problem it solves.
     -->
     <div id="a11y-status" class="sr-only" role="status"></div>
+    <!--
+      Below the lg breakpoint the bar may not fit on one line (a long
+      username in pt-BR needs nearly all of lg), so its links and
+      controls sit behind a Menu disclosure, which needs no script. The
+      disclosure holds only its summary; the items follow it and are
+      hidden while it is closed. That rule uses :has(), because
+      Playwright's WebKit does not lay out items a sibling selector
+      shows when a click opens the disclosure. A browser without :has()
+      drops the rule, shows the full bar and hides the Menu. flex-wrap
+      keeps the bar from scrolling sideways.
+    -->
     <nav aria-label="{{ i18n.t("aria_nav_main") }}"
-         class="border-b border-border-default px-4 py-3 flex items-center gap-4">
+         class="border-b border-border-default px-4 py-3 flex flex-wrap items-center gap-x-4 gap-y-3">
         <a href="/"
            class="text-text-brand no-underline hover:underline">
             {{ i18n.t("nav_brand") }}
         </a>
         <span class="flex-1"></span>
-        {% block nav_links %}
-        <a href="/auth/login"
-           class="text-sm text-text-secondary no-underline hover:text-text-primary">
-            {{ i18n.t("auth_login_title") }}
-        </a>
-        {% endblock %}
-        <!--
-          Theme control. A form, so it works with no script at all: the
-          server records the choice and redirects back.
+        <details class="lg:hidden [@supports_not_selector(:has(*))]:hidden">
+            <summary class="-my-2.5 py-3 focus-visible:outline-offset-0 text-sm text-text-secondary cursor-pointer hover:text-text-primary">
+                {{ i18n.t("nav_menu") }}
+            </summary>
+        </details>
+        <div class="flex max-lg:[nav:not(:has(>details[open]))>&]:hidden basis-full lg:basis-auto flex-col lg:flex-row flex-wrap items-start lg:items-center gap-3 lg:gap-4">
+            {% block nav_links %}
+            <a href="/auth/login"
+               class="text-sm text-text-secondary no-underline hover:text-text-primary">
+                {{ i18n.t("auth_login_title") }}
+            </a>
+            {% endblock %}
+            <!--
+              Theme control. A form, so it works with no script at all: the
+              server records the choice and redirects back.
 
-          These are three states of one setting and exactly one is on,
-          which is aria-pressed rather than aria-current.
-        -->
-        <form method="post" action="/settings/theme"
-              class="flex items-center gap-2"
-              aria-label="{{ i18n.t("theme_group_label") }}">
-            <button type="submit" name="theme" value="light"
-                    aria-pressed="{% if theme.as_str() == "light" %}true{% else %}false{% endif %}"
-                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
-                {{ i18n.t("theme_light") }}
-            </button>
-            <button type="submit" name="theme" value="dark"
-                    aria-pressed="{% if theme.as_str() == "dark" %}true{% else %}false{% endif %}"
-                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
-                {{ i18n.t("theme_dark") }}
-            </button>
-            <button type="submit" name="theme" value="system"
-                    aria-pressed="{% if theme.as_str() == "system" %}true{% else %}false{% endif %}"
-                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
-                {{ i18n.t("theme_system") }}
-            </button>
-        </form>
-        <!-- A second axis, not a fourth theme, so a control of its own. -->
-        <form method="post" action="/settings/contrast"
-              class="flex items-center gap-2"
-              aria-label="{{ i18n.t("contrast_group_label") }}">
-            <button type="submit" name="contrast" value="standard"
-                    aria-pressed="{% if contrast.as_str() == "standard" %}true{% else %}false{% endif %}"
-                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
-                {{ i18n.t("contrast_standard") }}
-            </button>
-            <button type="submit" name="contrast" value="high"
-                    aria-pressed="{% if contrast.as_str() == "high" %}true{% else %}false{% endif %}"
-                    class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
-                {{ i18n.t("contrast_high") }}
-            </button>
-        </form>
+              These are three states of one setting and exactly one is on,
+              which is aria-pressed rather than aria-current.
+            -->
+            <form method="post" action="/settings/theme"
+                  class="flex items-center gap-2"
+                  aria-label="{{ i18n.t("theme_group_label") }}">
+                <button type="submit" name="theme" value="light"
+                        aria-pressed="{% if theme.as_str() == "light" %}true{% else %}false{% endif %}"
+                        class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                    {{ i18n.t("theme_light") }}
+                </button>
+                <button type="submit" name="theme" value="dark"
+                        aria-pressed="{% if theme.as_str() == "dark" %}true{% else %}false{% endif %}"
+                        class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                    {{ i18n.t("theme_dark") }}
+                </button>
+                <button type="submit" name="theme" value="system"
+                        aria-pressed="{% if theme.as_str() == "system" %}true{% else %}false{% endif %}"
+                        class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                    {{ i18n.t("theme_system") }}
+                </button>
+            </form>
+            <!-- A second axis, not a fourth theme, so a control of its own. -->
+            <form method="post" action="/settings/contrast"
+                  class="flex items-center gap-2"
+                  aria-label="{{ i18n.t("contrast_group_label") }}">
+                <button type="submit" name="contrast" value="standard"
+                        aria-pressed="{% if contrast.as_str() == "standard" %}true{% else %}false{% endif %}"
+                        class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                    {{ i18n.t("contrast_standard") }}
+                </button>
+                <button type="submit" name="contrast" value="high"
+                        aria-pressed="{% if contrast.as_str() == "high" %}true{% else %}false{% endif %}"
+                        class="text-sm text-text-secondary hover:text-text-primary aria-pressed:text-text-primary">
+                    {{ i18n.t("contrast_high") }}
+                </button>
+            </form>
+        </div>
     </nav>
     <main id="main-content" role="main"
           class="max-w-2xl mx-auto px-4 py-8">

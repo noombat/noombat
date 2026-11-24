@@ -55,9 +55,9 @@ SERVICES=(db redis meilisearch)
 # permalinks without discovering them first.
 #
 # Both values are hard-coded in .github/workflows/ci-e2e.yml, in
-# tests/e2e/smoke.spec.ts, in tests/e2e/accessibility.spec.ts and in
-# tests/e2e/security-headers.spec.ts. Nothing gates the drift, so change
-# them everywhere together.
+# tests/e2e/smoke.spec.ts, in tests/e2e/accessibility.spec.ts, in
+# tests/e2e/security-headers.spec.ts and in tests/e2e/reflow.spec.ts.
+# Nothing gates the drift, so change them everywhere together.
 #
 # Two posts, not one, because `post_type` selects the template:
 # posts.rs renders article.html for 'article' and post.html for anything
