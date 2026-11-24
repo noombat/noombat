@@ -23,6 +23,7 @@ Development and maintenance scripts for the Noombat workspace.
 | `check-contrast.py`           | Measure every semantic colour pair     | After changing any colour token                            |
 | `check-action-allowlist.sh`   | Reject actions the policy refuses      | After adding or repinning any `uses:` in a workflow        |
 | `check-workflow-startup.sh`   | Find workflows rejected before running | After a push, when a workflow seems not to have run        |
+| `check-release-tested.sh`     | Refuse a release main did not test     | Run by `release.yml`; by hand before tagging               |
 | `chatmail-setup.sh`           | Chatmail DNS verification              | Before deploying a Chatmail relay on a new domain          |
 | `backup.sh`                   | Back up a Compose deployment           | On a schedule, on a deployed instance                      |
 
@@ -201,6 +202,20 @@ A rejected workflow concludes `startup_failure`: no jobs, so no check runs, so n
 `.github/workflows/startup-watch.yml` runs it daily against `main`, scheduled rather than on push because one workflow cannot see whether another has concluded yet.
 
 It reads the public API, so no token is needed, though one raises the rate limit. A token that is present but rejected is ignored rather than treated as a failure.
+
+## `check-release-tested.sh`
+
+Refuses to release a commit that is not on main, or that main's workflows did not pass. The `gate` job in `release.yml` runs it on the tagged commit before anything is built.
+
+```sh
+./scripts/check-release-tested.sh <sha> [timeout-seconds]   # needs gh with a token
+```
+
+Exit `0` means the commit is on main and every listed workflow has a successful push or manual run on it, `1` means the release is refused, and `2` means a usage or API error.
+
+A tag can name any commit, and a push runs a path-filtered workflow once, on its last commit, and only when its paths changed, so a workflow can have no run on the commit being released.
+The script then names the command that starts one (`gh workflow run <file> --ref <tag>`), and waits for runs still going, up to the timeout.
+The workflows it requires are listed in the script: a new workflow that tests each commit belongs there.
 
 ## `check-template-comments.sh`
 

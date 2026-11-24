@@ -12,6 +12,10 @@
 # SECURITY.md; the limits are real and are stated there rather than
 # implied away here.
 #
+# Nothing is built until the `gate` job has found the commit on main and
+# every workflow scripts/check-release-tested.sh lists passed on it: a
+# tag can name any commit, and the release runs no tests of its own.
+#
 # Three properties this workflow is arranged to hold:
 #
 #   1. One build. The manifests are extracted from the images that are
@@ -40,8 +44,29 @@ permissions:
   contents: read
 
 jobs:
+  gate:
+    name: The commit is on main and tested
+    runs-on: ubuntu-latest
+    # Waits for main's runs on this commit, which can still be going when
+    # a tag follows the push closely.
+    timeout-minutes: 40
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The ancestry check needs main's history.
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Refuse a commit that is not on main or did not pass there
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: scripts/check-release-tested.sh "$GITHUB_SHA"
+
   release:
     name: Attest, sign, and publish
+    needs: gate
     runs-on: ubuntu-latest
     permissions:
       # Keyless signing: the OIDC token is what Fulcio exchanges for a
