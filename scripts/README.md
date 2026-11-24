@@ -188,18 +188,20 @@ This exists because the failure is invisible. A refused `uses:` does not fail a 
 
 ## `check-workflow-startup.sh`
 
-Reports a workflow GitHub rejected before it ran, for a commit.
+Reports a workflow GitHub rejected before it ran, for one commit or for every run since a time.
 
 ```sh
 ./scripts/check-workflow-startup.sh          # HEAD
 ./scripts/check-workflow-startup.sh <sha>
+./scripts/check-workflow-startup.sh --since 2026-11-22T06:00:00Z   # every branch, runs created since then
 ```
 
-Exit `0` means nothing was rejected, `1` means at least one was, and `2` means the API gave no usable answer, which must not read as a clean commit.
+Exit `0` means nothing was rejected, `1` means at least one was, and `2` means the API gave no usable answer, which must not read as a clean result, or the arguments were malformed.
 
 A rejected workflow concludes `startup_failure`: no jobs, so no check runs, so nothing on the commit page distinguishes it from a workflow that was never triggered.
 `check-action-allowlist.sh` catches the usual cause before a push; this catches the symptom afterwards whatever the cause.
-`.github/workflows/startup-watch.yml` runs it daily against `main`, scheduled rather than on push because one workflow cannot see whether another has concluded yet.
+`.github/workflows/startup-watch.yml` runs it daily with `--since` two days back, across every branch: a path-filtered workflow creates no run on a commit outside its paths, so main's head alone can miss a rejection.
+It is scheduled rather than run on push because one workflow cannot see whether another has concluded yet.
 
 It reads the public API, so no token is needed, though one raises the rate limit. A token that is present but rejected is ignored rather than treated as a failure.
 

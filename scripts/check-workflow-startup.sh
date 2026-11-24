@@ -18,12 +18,75 @@
 # limit from 60 requests an hour to 5000. Set GH_TOKEN or GITHUB_TOKEN.
 #
 # Usage: scripts/check-workflow-startup.sh [ref]
-#        Defaults to the current HEAD.
+#        scripts/check-workflow-startup.sh --since TIMESTAMP
+#        The first checks one commit, the current HEAD by default. The
+#        second checks every run created since TIMESTAMP (UTC, as
+#        2026-11-22T06:00:00Z) on any branch, which is what a periodic
+#        watch needs: a path-filtered workflow creates no run on a commit
+#        outside its paths, so one commit can miss a rejection on an
+#        earlier commit or a pull request branch.
 
 set -eu
 
 REPO="${NOOMBAT_REPO:-noombat/noombat}"
 SHA="${1:-HEAD}"
+
+fetch() {
+    if [ -n "${1:-}" ]; then
+        curl -sS --max-time 30 -H 'Accept: application/vnd.github+json' \
+            -H "Authorization: Bearer $1" "$API"
+    else
+        curl -sS --max-time 30 -H 'Accept: application/vnd.github+json' "$API"
+    fi
+}
+
+# The payload, retried without a stale token: the endpoint is public, so a
+# rejected credential must not be reported as a finding.
+query() {
+    # A transport failure leaves BODY empty, which the count check below
+    # reports with exit 2 rather than curl's own code.
+    BODY=$(fetch "${GH_TOKEN:-${GITHUB_TOKEN:-}}") || BODY=""
+    case "$BODY" in
+        *'"Bad credentials"'*|*'"message": "Requires authentication"'*)
+            echo "  (ignoring a rejected token and retrying without one)"
+            BODY=$(fetch "") || BODY=""
+            ;;
+    esac
+    # An empty or error payload must not read as a clean result.
+    COUNT=$(printf '%s' "$BODY" |
+        sed -n 's/.*"total_count"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
+    if [ -z "$COUNT" ]; then
+        echo "::error::no usable response from the runs API" >&2
+        printf '%s\n' "$BODY" | head -5 >&2
+        exit 2
+    fi
+}
+
+if [ "$SHA" = "--since" ]; then
+    SINCE="${2:-}"
+    stamp='^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$'
+    if ! printf '%s' "$SINCE" | grep -qE "$stamp"; then
+        echo "::error::--since needs a UTC timestamp such as 2026-11-22T06:00:00Z, not '$SINCE'" >&2
+        exit 2
+    fi
+    # `>=` URL-encoded; zero is the clean answer here, unlike for one commit.
+    API="https://api.github.com/repos/$REPO/actions/runs"
+    API="$API?status=startup_failure&created=%3E%3D$SINCE&per_page=100"
+    query
+    if [ "$COUNT" != "0" ]; then
+        echo "::error::$COUNT run(s) rejected before they ran since $SINCE," \
+            "so they produced no check runs:"
+        printf '%s' "$BODY" |
+            grep -oE '"html_url"[[:space:]]*:[[:space:]]*"[^"]*/actions/runs/[0-9]+"' |
+            sed 's/.*"\(https[^"]*\)"/  \1/'
+        echo "  Each has an empty job list and a banner naming the reason. A"
+        echo "  disallowed or unpinned 'uses:' is the usual cause;"
+        echo "  scripts/check-action-allowlist.sh reports that one before a push."
+        exit 1
+    fi
+    echo "No workflow was rejected at startup since $SINCE."
+    exit 0
+fi
 
 # `head_sha` matches exactly, and the API answers `total_count: 0` for
 # anything shorter rather than refusing, so an abbreviated SHA reads as a
@@ -37,35 +100,7 @@ fi
 
 API="https://api.github.com/repos/$REPO/actions/runs?head_sha=$SHA&per_page=100"
 
-fetch() {
-    if [ -n "${1:-}" ]; then
-        curl -sS --max-time 30 -H 'Accept: application/vnd.github+json' \
-            -H "Authorization: Bearer $1" "$API"
-    else
-        curl -sS --max-time 30 -H 'Accept: application/vnd.github+json' "$API"
-    fi
-}
-
-TOKEN="${GH_TOKEN:-${GITHUB_TOKEN:-}}"
-BODY=$(fetch "$TOKEN")
-
-# A stale token in the environment is common and must not be reported as
-# a broken commit: the endpoint is public, so drop the credential and
-# ask again rather than failing.
-case "$BODY" in
-    *'"Bad credentials"'*|*'"message": "Requires authentication"'*)
-        echo "  (ignoring a rejected token and retrying without one)"
-        BODY=$(fetch "")
-        ;;
-esac
-
-# An empty or error payload must not read as a clean commit.
-COUNT=$(printf '%s' "$BODY" | sed -n 's/.*"total_count"[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p' | head -1)
-if [ -z "$COUNT" ]; then
-    echo "::error::no usable response from the runs API for $SHA" >&2
-    printf '%s\n' "$BODY" | head -5 >&2
-    exit 2
-fi
+query
 
 echo "Checked $COUNT workflow run(s) for $SHA."
 

@@ -8,15 +8,18 @@
 #
 # Scheduled rather than triggered by push, deliberately: a job in one
 # workflow cannot see whether another has concluded yet, so checking on
-# the same event would race. This looks at main's head some time after
-# the fact, which is when the answer is stable.
+# the same event would race. This looks some time after the fact, which
+# is when the answer is stable, at every run of the last two days on any
+# branch: a path-filtered workflow creates no run on a commit outside its
+# paths, so main's head alone misses a rejection on an earlier commit or
+# a pull request branch.
 
 name: Startup watch
 
 on:
   schedule:
-    # Daily. A rejected workflow stays rejected until someone changes it,
-    # so detection latency costs only the delay in noticing.
+    # Daily. The two-day window covers the hours a scheduled run can
+    # start late, at the cost of reporting a rejection on two days.
     - cron: "17 6 * * *"
   workflow_dispatch:
 
@@ -29,7 +32,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: "Report any workflow rejected at startup on main"
+      - name: "Report any workflow rejected at startup in the last two days"
         env:
           GH_TOKEN: ${{ github.token }}
-        run: scripts/check-workflow-startup.sh "$(git rev-parse HEAD)"
+        run: scripts/check-workflow-startup.sh --since "$(date -u -d '-2 days' +%Y-%m-%dT%H:%M:%SZ)"
