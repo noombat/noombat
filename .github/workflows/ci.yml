@@ -22,6 +22,7 @@
 #   ci-reuse.yml            REUSE licence compliance (unconditional).
 #   ci-e2e.yml              Playwright end-to-end and federation interop tests.
 #   verify.yml              Server and chatmail container image builds.
+#   typst.yml               The CV renderer against the image's Typst binary.
 
 name: CI
 
@@ -49,7 +50,6 @@ on:
       - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
-      - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
       - "templates/**"
       - ".github/workflows/**"
@@ -76,7 +76,6 @@ on:
       - "scripts/check-safe-rust.sh"
       - "scripts/check-config-secrets.py"
       - "scripts/check-template-comments.sh"
-      - "scripts/check-typst-injection.sh"
       - "scripts/check-unused-deps.sh"
       - "templates/**"
       - ".github/workflows/**"
@@ -189,66 +188,6 @@ jobs:
       # setting works. Only a name check catches it.
       - name: "Reject a credential-bearing Config field that is not Secret"
         run: python3 scripts/check-config-secrets.py
-
-  typst-injection:
-    name: Typst injection
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - name: Cache Cargo artefacts
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: cargo-typst-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: cargo-typst-
-      # Compiles the emitter's corpus with the real Typst binary. The
-      # unit tests assert that no user text leaves a string literal in
-      # the generated source; only the compiler can say what Typst then
-      # does with it.
-      - name: "Assert hostile CV markup compiles to inert text"
-        run: scripts/check-typst-injection.sh
-      # The compile bounds need typst on PATH inside the test process,
-      # which the script's container cannot provide. This is the only
-      # job where that test actually runs: everywhere else it skips.
-      - name: Install the pinned typst binary
-        run: |
-          # Read from the Dockerfile so the binary under test is the one
-          # the runtime ships. See scripts/check-typst-injection.sh.
-          image=$(sed -n 's/^FROM \(ghcr\.io\/typst\/typst:[^ ]*\) AS typst$/\1/p' Dockerfile)
-          [ -n "$image" ] || { echo "no typst stage in Dockerfile" >&2; exit 1; }
-          cid=$(docker create "$image")
-          docker cp "$cid:/bin/typst" /usr/local/bin/typst
-          docker rm "$cid"
-          typst --version
-      # The test skips itself when typst is absent, because
-      # `--include-ignored` also runs it in the integration job and in the
-      # build image, neither of which has the binary. This is the one job
-      # that installs it, so this is the one job that refuses the skip:
-      # without the variable, a broken install step above would leave the
-      # timeout unmeasured and the job green.
-      - name: "Assert a slow compilation is killed, not abandoned"
-        env:
-          NOOMBAT_REQUIRE_TYPST: "1"
-        run: cargo test -p noombat-identity --lib -- --include-ignored a_slow_compile
-      # The CV render test reads the typeset PDF back with pdftotext,
-      # which the runner image may lack.
-      - name: Install pdftotext
-        run: |
-          command -v pdftotext || {
-            sudo apt-get update
-            sudo apt-get install -y --no-install-recommends poppler-utils
-          }
-          pdftotext -v
-      # Held to NOOMBAT_REQUIRE_TYPST for the reason the slow-compile
-      # step is.
-      - name: "Assert the default CV template typesets every section"
-        env:
-          NOOMBAT_REQUIRE_TYPST: "1"
-        run: cargo test -p noombat-identity --test cv_render -- --include-ignored
 
   deny:
     name: Cargo Deny
