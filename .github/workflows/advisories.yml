@@ -21,16 +21,29 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The release ci.yml's deny job pins, read from there: other
+      # releases reject keys deny.toml uses.
+      - name: Read the cargo-deny version ci.yml pins
+        id: deny
+        run: |
+          version=$(sed -n 's/^ *CARGO_DENY_VERSION: *"\([0-9][0-9.]*\)".*/\1/p' .github/workflows/ci.yml)
+          case "$version" in
+            "" | *[!0-9.]*)
+              echo "::error::need one CARGO_DENY_VERSION in ci.yml, found: ${version:-none}"
+              exit 1
+              ;;
+          esac
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache cargo-deny
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cargo/bin/cargo-deny
-          key: cargo-deny-bin-0.20.2
-      # The version ci.yml's deny job pins: other releases reject keys
-      # deny.toml uses.
+          key: cargo-deny-bin-${{ steps.deny.outputs.version }}
       - name: Install cargo-deny
+        env:
+          CARGO_DENY_VERSION: ${{ steps.deny.outputs.version }}
         run: |
-          cargo deny --version 2>/dev/null | grep -qx 'cargo-deny 0.20.2' \
-            || cargo install cargo-deny --locked --version 0.20.2 --force
+          cargo deny --version 2>/dev/null | grep -qx "cargo-deny $CARGO_DENY_VERSION" \
+            || cargo install cargo-deny --locked --version "$CARGO_DENY_VERSION" --force
       - name: "Check the lockfile against today's advisories"
         run: cargo deny check advisories

@@ -5,13 +5,13 @@
 # Run the checks CI runs that can run here: formatting, lints, unit
 # tests, the repository's own gates, the frontend's type-checking,
 # linting, formatting and unit tests, and the end-to-end project's
-# type-checking and linting. Gates that need docker, a built image,
-# cargo-deny 0.20.2, shellcheck, a signed-in gh or reuse run only when
-# those are present, and say so when skipped. Does not require a prior
-# build or clean. CI also runs the browser and interop suites, the image
-# builds, the Typst CV tests that need its binary, the safe-Rust check,
-# the MSRV and reproducible builds, CodeQL and the database-backed
-# tests, which this does not.
+# type-checking and linting. Gates that need docker, a built image, the
+# cargo-deny release CI pins, shellcheck, a signed-in gh or reuse run
+# only when those are present, and say so when skipped. Does not require
+# a prior build or clean. CI also runs the browser and interop suites,
+# the image builds, the Typst CV tests that need its binary, the
+# safe-Rust check, the MSRV and reproducible builds, CodeQL and the
+# database-backed tests, which this does not.
 #
 # Usage:
 #   ./scripts/test.sh          # all checks
@@ -66,12 +66,15 @@ run cargo test --workspace --no-fail-fast
 # ..... Manifests .....
 
 # cargo-deny releases change what deny.toml may contain, so only the
-# version CI pins can stand in for CI's job.
-if [ "$(cargo deny --version 2>/dev/null)" = "cargo-deny 0.20.2" ]; then
+# version CI pins (CARGO_DENY_VERSION in ci.yml) can stand in for CI's job.
+deny_version=$(sed -n 's/^ *CARGO_DENY_VERSION: *"\([0-9][0-9.]*\)".*/\1/p' \
+    .github/workflows/ci.yml)
+if [ -n "$deny_version" ] &&
+    [ "$(cargo deny --version 2>/dev/null)" = "cargo-deny $deny_version" ]; then
     step "Checking advisories, licences, bans and sources (cargo deny)"
     run cargo deny check
 else
-    step "Skipping cargo deny: cargo-deny 0.20.2, the version CI pins, is not installed"
+    step "Skipping cargo deny: cargo-deny ${deny_version:-?}, the version CI pins, is not installed"
 fi
 
 step "Checking that every credential field on Config is a Secret"
