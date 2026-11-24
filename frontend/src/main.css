@@ -17,7 +17,9 @@
  * @source tells Tailwind where to look for class names outside the
  * frontend/ tree: the Askama templates, and the handlers that build HTML
  * fragments in Rust. A class named only from an unscanned file generates
- * no rule and renders unstyled.
+ * no rule and renders unstyled. The Dockerfile's frontend stage must copy
+ * every path named here; verify.yml fails when the image's stylesheet
+ * differs from a host build's.
  *
  * Two layers, and the split is the point. Primitives below name colours
  * and nothing else; the semantic tokens in @theme name roles and are the

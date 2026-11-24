@@ -15,9 +15,13 @@ WORKDIR /build
 
 # Copy the source trees that the Vite/Tailwind build needs:
 # - frontend/ (Vite config, package.json, CSS entry point)
-# - crates/noombat-api/templates/ (scanned by Tailwind @source)
+# - crates/noombat-api/templates/ and crates/noombat-api/src/, both named by
+#   Tailwind's @source in frontend/src/main.css. A class written only in
+#   a handler that builds HTML in Rust gets no rule unless its file is
+#   here, and the image then serves a different stylesheet from a host build.
 COPY frontend/ frontend/
 COPY crates/noombat-api/templates/ crates/noombat-api/templates/
+COPY crates/noombat-api/src/ crates/noombat-api/src/
 COPY scripts/asset-manifest.sh scripts/asset-manifest.sh
 COPY scripts/install-pnpm.sh scripts/install-pnpm.sh
 
