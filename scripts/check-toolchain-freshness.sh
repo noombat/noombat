@@ -2,7 +2,8 @@
 # SPDX-License-Identifier: AGPL-3.0-or-later
 # SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 #
-# Report a pinned toolchain, or a declared MSRV, that has fallen behind.
+# Report a pinned toolchain, a declared MSRV, or a tool pin that has fallen
+# behind.
 #
 # rust-toolchain.toml names an exact version so that a Rust release cannot
 # turn CI red without a commit: `channel = "stable"` did exactly that on
@@ -20,17 +21,31 @@
 # a promise to whoever builds this, and a floor left untouched for years
 # forbids language features for no reason anybody still remembers.
 #
-# Neither half is a style rule, so both are configurable:
+# The tools half covers the two pins no updater moves: the cargo-deny
+# release ci.yml installs, and pnpm in package.json's packageManager.
+# Dependabot reads Cargo.lock and package.json's dependencies, not these.
+# They are reported, never bumped: a cargo-deny release can change what
+# deny.toml may say, and a pnpm major what the lockfile means. A new pnpm
+# major only warns, since taking it is a decision rather than upkeep.
+#
+# None of this is a style rule, so all of it is configurable:
 #   TOOLCHAIN_GRACE_DAYS   days a new stable may go untaken (default 21)
 #   MSRV_MAX_BEHIND        releases the floor may trail stable (default 6)
+#   TOOL_GRACE_DAYS        days a newer tool release may go untaken (default 21)
 #
 # Usage: scripts/check-toolchain-freshness.sh
+# Needs curl, jq and GNU date, as the runner provides.
 
 set -eu
 
 GRACE_DAYS="${TOOLCHAIN_GRACE_DAYS:-21}"
 MSRV_MAX_BEHIND="${MSRV_MAX_BEHIND:-6}"
+TOOL_GRACE_DAYS="${TOOL_GRACE_DAYS:-21}"
 MANIFEST_URL="https://static.rust-lang.org/dist/channel-rust-stable.toml"
+CRATES_URL="https://crates.io/api/v1/crates/cargo-deny"
+NPM_URL="https://registry.npmjs.org/pnpm"
+# crates.io asks every client to name itself.
+UA="noombat-toolchain-freshness (https://github.com/noombat/noombat)"
 
 problems=0
 
@@ -160,9 +175,84 @@ else
         "$msrv" "$behind" "$MSRV_MAX_BEHIND"
 fi
 
+# ..... Tools no updater moves .....
+
+# Is $1 a later version than $2?
+newer() {
+    [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" = "$1" ]
+}
+
+# The newest of "version<TAB>date" lines on stdin released by $cutoff.
+# Pure, like minor_of: it prints and counts nothing.
+due_of() {
+    awk -F'\t' -v cutoff="$cutoff" '$2 <= cutoff { print $1 }' | sort -V | tail -1
+}
+
+# Report tool $1, pinned at $2, against releases $3 ("version<TAB>date"
+# lines); $4 says what to do when the pin is behind.
+report_tool() {
+    newest=$(printf '%s\n' "$3" | cut -f1 | sort -V | tail -1)
+    due=$(printf '%s\n' "$3" | due_of)
+    if [ -z "$newest" ]; then
+        fail "read no releases of $1"
+    elif [ -n "$due" ] && newer "$due" "$2"; then
+        fail "$1 $2 trails $due, out longer than $TOOL_GRACE_DAYS days (newest $newest): $4"
+    elif newer "$newest" "$2"; then
+        printf '  ok  %s %s; %s is newer, inside the %s day grace window\n' \
+            "$1" "$2" "$newest" "$TOOL_GRACE_DAYS"
+    else
+        printf '  ok  %s %s is the newest release\n' "$1" "$2"
+    fi
+}
+
+printf '\n'
+if ! cutoff=$(date -u -d "$TOOL_GRACE_DAYS days ago" +%Y-%m-%dT%H:%M:%S 2>/dev/null); then
+    fail "cannot compute the tool grace cutoff; GNU date is required"
+    exit 1
+fi
+
+deny_pin=$(sed -n 's/^ *CARGO_DENY_VERSION: *"\([0-9][0-9.]*\)".*/\1/p' .github/workflows/ci.yml)
+if [ "$(printf '%s\n' "$deny_pin" | grep -c .)" -ne 1 ]; then
+    fail "need one CARGO_DENY_VERSION in .github/workflows/ci.yml, found: ${deny_pin:-none}"
+elif ! crate=$(curl -fsSL --max-time 30 -A "$UA" "$CRATES_URL"); then
+    fail "cannot read $CRATES_URL"
+elif ! releases=$(printf '%s' "$crate" | jq -r '.versions[] | select(.yanked | not)
+        | select(.num | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+        | "\(.num)\t\(.created_at[:19])"'); then
+    fail "cannot read cargo-deny's releases from crates.io's answer"
+else
+    report_tool cargo-deny "$deny_pin" "$releases" \
+        "read its release notes against deny.toml, then raise CARGO_DENY_VERSION in ci.yml"
+fi
+
+pnpm_pins=$(sed -n 's/^ *"packageManager": *"pnpm@\([0-9][0-9.]*\)+.*/\1/p' \
+    frontend/package.json tests/e2e/package.json | sort -u)
+if [ "$(printf '%s\n' "$pnpm_pins" | grep -c .)" -ne 1 ]; then
+    found=$(printf '%s ' $pnpm_pins)
+    fail "need one pnpm release in packageManager across frontend/ and tests/e2e, found: $found"
+elif ! packument=$(curl -fsSL --max-time 60 -A "$UA" "$NPM_URL"); then
+    fail "cannot read $NPM_URL"
+else
+    major=${pnpm_pins%%.*}
+    # Final releases only, from the registry's publication times.
+    if ! releases=$(printf '%s' "$packument" | jq -r '.time | to_entries[]
+            | select(.key | test("^[0-9]+\\.[0-9]+\\.[0-9]+$"))
+            | "\(.key)\t\(.value[:19])"'); then
+        fail "cannot read pnpm's releases from the registry's answer"
+    else
+        report_tool pnpm "$pnpm_pins" "$(printf '%s\n' "$releases" | grep "^$major\.")" \
+            "raise packageManager, with its sha512, in frontend/ and tests/e2e/package.json"
+        next_due=$(printf '%s\n' "$releases" | grep "^$((major + 1))\." | due_of)
+        if [ -n "$next_due" ]; then
+            printf '::warning::pnpm %s, a new major, is out longer than %s days; the pin is %s\n' \
+                "$next_due" "$TOOL_GRACE_DAYS" "$pnpm_pins"
+        fi
+    fi
+fi
+
 printf '\n'
 if [ "$problems" -gt 0 ]; then
     printf '%d toolchain freshness problem(s)\n' "$problems" >&2
     exit 1
 fi
-printf 'toolchain and floor are both current\n'
+printf 'toolchain, floor and tool pins are current\n'

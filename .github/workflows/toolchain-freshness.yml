@@ -1,4 +1,5 @@
-# Report a pinned toolchain, or a declared MSRV, that has fallen behind.
+# Report a pinned toolchain, a declared MSRV, or a tool pin no updater
+# moves (cargo-deny, pnpm) that has fallen behind.
 #
 # rust-toolchain.toml names an exact version, so a Rust release can no
 # longer redden CI without a commit. The cost is the opposite failure, and
@@ -32,12 +33,18 @@ on:
     paths:
       - "rust-toolchain.toml"
       - "Cargo.toml"
+      - ".github/workflows/ci.yml"
+      - "frontend/package.json"
+      - "tests/e2e/package.json"
       - "scripts/check-toolchain-freshness.sh"
       - ".github/workflows/toolchain-freshness.yml"
   pull_request:
     paths:
       - "rust-toolchain.toml"
       - "Cargo.toml"
+      - ".github/workflows/ci.yml"
+      - "frontend/package.json"
+      - "tests/e2e/package.json"
       - "scripts/check-toolchain-freshness.sh"
       - ".github/workflows/toolchain-freshness.yml"
   workflow_dispatch:
@@ -47,11 +54,12 @@ permissions:
 
 jobs:
   freshness:
-    name: Pinned toolchain and declared MSRV
+    name: Pinned toolchain, declared MSRV and tool pins
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # Reads the published stable manifest, which needs no credentials.
-      - name: "Report a toolchain or floor that has fallen behind"
+      # Reads the published stable manifest, crates.io and the npm
+      # registry, none of which needs credentials.
+      - name: "Report a toolchain, floor or tool pin that has fallen behind"
         run: scripts/check-toolchain-freshness.sh
