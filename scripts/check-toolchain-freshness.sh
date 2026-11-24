@@ -240,8 +240,9 @@ else
             | "\(.key)\t\(.value[:19])"'); then
         fail "cannot read pnpm's releases from the registry's answer"
     else
-        report_tool pnpm "$pnpm_pins" "$(printf '%s\n' "$releases" | grep "^$major\.")" \
-            "raise packageManager, with its sha512, in frontend/ and tests/e2e/package.json"
+        advice="raise packageManager, with its sha512, in frontend/ and tests/e2e/package.json,"
+        advice="$advice then relock both with pnpm install --lockfile-only"
+        report_tool pnpm "$pnpm_pins" "$(printf '%s\n' "$releases" | grep "^$major\.")" "$advice"
         next_due=$(printf '%s\n' "$releases" | grep "^$((major + 1))\." | due_of)
         if [ -n "$next_due" ]; then
             printf '::warning::pnpm %s, a new major, is out longer than %s days; the pin is %s\n' \

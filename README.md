@@ -54,8 +54,9 @@ their predecessors' data directories.
 - Redis ≥ 8
 - Meilisearch ≥ 1.52
 - Node.js 26 (pinned in `.nvmrc`; `frontend/package.json` declares `>=26 <27`)
-- pnpm 11, the release the `packageManager` field pins: `scripts/install-pnpm.sh` installs it
-  and checks it against the hash pinned there
+- pnpm 12, the release the `packageManager` field pins: `scripts/install-pnpm.sh` installs it
+  and checks it against the hash pinned there, and the native executable it runs against the hash
+  pnpm locks in `pnpm-lock.yaml`
 - Podman with `podman-compose` or Docker with Docker Compose
 
 ## Quick Start
