@@ -1,15 +1,16 @@
 # cargo-deny configuration, v2 schema.
 #
-# Verified against 0.20.2. cargo-deny 0.18.6 rejects the `unsound` key
-# below outright, so which version runs matters; ci.yml pins the one CI runs.
+# Verified against the release ci.yml pins (CARGO_DENY_VERSION). cargo-deny
+# 0.18.6 rejects the `unsound` key below outright, so which version runs
+# matters.
 # https://embarkstudios.github.io/cargo-deny/
 # https://embarkstudios.github.io/cargo-deny/checks/advisories/cfg.html
 # Run: cargo deny check
 
 [advisories]
 # `vulnerability` and `notice` always emit errors and are not configurable.
-# `unmaintained` (default: all) and `unsound` (default: workspace) control
-# which crates are checked; Values: "all", "workspace", "transitive", "none".
+# `unmaintained` and `unsound` (both default: workspace) control which crates
+# are checked; Values: "all", "workspace", "transitive", "none".
 unmaintained = "all"
 unsound = "workspace"
 yanked = "warn"
