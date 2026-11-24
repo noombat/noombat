@@ -503,6 +503,68 @@ jobs:
           path: tests/e2e/playwright-report/
           retention-days: 14
 
+  # The two interop stacks build Noombat from the same Dockerfile with
+  # nothing different, so one job builds every interop image, the server
+  # once, and the interop jobs load them instead of building their own.
+  interop-images:
+    name: Build the interop images
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build the federation stack's Noombat image
+        working-directory: tests/interop
+        run: |
+          # bake resolves a compose file's `context` and `dockerfile`
+          # against the WORKING DIRECTORY, while compose resolves them
+          # against the file. `context: ../..` therefore only means the
+          # repository root when bake runs from the file's own directory,
+          # which is why this step sets working-directory and passes a
+          # bare -f. From the root it reads a Dockerfile that is not
+          # there and fails with `transferring dockerfile: 2B`.
+          #
+          # --allow because that context is still outside the compose
+          # file's directory, which bake will not read unprompted. Only the
+          # repository root is granted, not `*` and not
+          # BUILDX_BAKE_ENTITLEMENTS_FS=0, so a context that later reaches
+          # past it fails rather than being read.
+          docker buildx bake --allow=fs.read=../.. -f compose.yml --load
+
+      # Two images: the server from Dockerfile, the relay and its sidecar
+      # from Dockerfile.chatmail.
+      #
+      # The tags are set explicitly. A compose service that names no
+      # image bakes to a dangling image, which `up` cannot find, so it
+      # would build the pair a second time. The names are the ones compose
+      # derives from the project, which is why every compose call in the
+      # chat-interop job pins `-p chat-interop` rather than letting it
+      # default to the directory name.
+      #
+      # This second bake reuses the server's layers from the first: same
+      # Dockerfile, same builder.
+      - name: Build the chat stack's images
+        working-directory: tests/chat-interop
+        run: |
+          docker buildx bake --allow=fs.read=../.. -f compose.yml --load \
+            --set 'noombat.tags=chat-interop-noombat' \
+            --set 'chatmail.tags=chat-interop-chatmail'
+
+      - name: Save the images for the interop jobs
+        run: docker save noombat-interop:ci chat-interop-noombat chat-interop-chatmail -o interop-images.tar
+
+      - name: Upload the images
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: interop-images
+          path: interop-images.tar
+          # A re-run of this job replaces the first attempt's artifact.
+          # Kept one day: after that, re-run all jobs, not only the
+          # interop ones, which load it.
+          overwrite: true
+          retention-days: 1
+
   # Runs the harness the repository documents, the invocation of
   # `run.sh` a developer runs locally, not a topology kept only here.
   #
@@ -517,86 +579,40 @@ jobs:
   # that runs, so proxy header handling and a scheme or port leaking into
   # generated URLs could not fail however broken they were.
   #
-  # The Rust build runs in Docker, so buildx with the GitHub Actions cache
-  # stands where `actions/cache` on `target/` would; the Dockerfile stages
-  # the dependency layers so they survive a source change.
+  # The Noombat image comes from the interop-images job.
   interop:
     name: Federation interop (GotoSocial)
+    needs: interop-images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Load the images the interop-images job built
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          gh run download "$GITHUB_RUN_ID" --name interop-images --dir "$RUNNER_TEMP"
+          docker load -i "$RUNNER_TEMP/interop-images.tar"
 
       # Caddy serves both names on the published port, so both have to
       # resolve to the runner.
       - name: Map the interop hostnames
         run: echo "127.0.0.1 noombat.localhost gotosocial.localhost" | sudo tee -a /etc/hosts
 
-      - name: Build the Noombat image
-        working-directory: tests/interop
-        run: |
-          # bake resolves a compose file's `context` and `dockerfile`
-          # against the WORKING DIRECTORY, while compose resolves them
-          # against the file. `context: ../..` therefore only means the
-          # repository root when bake runs from the file's own directory,
-          # which is why this step sets working-directory and passes a
-          # bare -f. From the root it reads a Dockerfile that is not
-          # there and fails with `transferring dockerfile: 2B`.
-          #
-          # --allow because that context is still outside the compose
-          # file's directory, which bake will not read unprompted.
-          # Granted rather than disabled via BUILDX_BAKE_ENTITLEMENTS_FS=0,
-          # so a context that later reaches somewhere unexpected still has
-          # to be granted.
-          docker buildx bake --allow=fs.read='*' -f compose.yml \
-            --load \
-            --set '*.cache-from=type=gha' \
-            --set '*.cache-to=type=gha,mode=max'
-
-      - name: Start the interop stack
-        run: docker compose -f tests/interop/compose.yml up -d --wait
-
-      # `--wait` returns as soon as the containers are up or healthy, which
-      # is not the same as Noombat having run its migrations and bound its
-      # port behind Caddy. Ask the endpoint the tests will use.
-      - name: Wait for Noombat through Caddy
-        run: |
-          for i in $(seq 1 30); do
-            if curl -ksf https://noombat.localhost:8443/healthz >/dev/null; then
-              echo "Noombat is ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Noombat did not become ready within 60 seconds"
-          docker compose -f tests/interop/compose.yml logs --no-color
-          exit 1
-
-      # Both accounts, on both instances. run.sh federates between them
-      # and neither instance will create them: Noombat has no open
-      # registration route and GoToSocial runs with registration closed.
-      # Seeding lives in the harness so that the ap_id matches the domain
-      # the server actually serves.
-      - name: Seed both instances
-        run: tests/interop/seed.sh tests/interop/compose.yml
-
-      # GitHub sets CI, and run.sh treats a skip as a failure and an
-      # unreachable peer as fatal when it is set. Both are assertions
-      # that did not run, which is not a suite that passed.
-      - name: Run interop tests
-        env:
-          # Caddy issues its own certificate for these names.
-          CURL_OPTS: "--insecure"
-        run: tests/interop/run.sh https://noombat.localhost:8443 https://gotosocial.localhost:8443
+      - name: Start, seed and test the interop stack
+        run: tests/interop/ci.sh run
 
       - name: Dump container logs on failure
         if: failure()
-        run: docker compose -f tests/interop/compose.yml logs --no-color
+        run: tests/interop/ci.sh logs
 
       - name: Tear down
         if: always()
-        run: docker compose -f tests/interop/compose.yml down -v
+        run: tests/interop/ci.sh down
 
   # The Chatmail half of the system: the relay image and the admin
   # sidecar the server talks to.
@@ -613,52 +629,26 @@ jobs:
   # chat WebSocket route and chat reports are exercised only here.
   chat-interop:
     name: Chat interop (Chatmail)
+    needs: interop-images
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      # Two images: the server from Dockerfile, the relay and its sidecar
-      # from Dockerfile.chatmail.
-      #
-      # The tags are set explicitly. A compose service that names no
-      # image bakes to a dangling image, which `up` cannot find, so it
-      # would build the pair a second time and out of this cache. The
-      # names are the ones compose derives from the project, which is why
-      # every compose call below pins `-p chat-interop` rather than
-      # letting it default to the directory name.
-      #
-      # The cache scope is this job's own: it bakes a different graph
-      # from the federation job and sharing a scope has them evict each
-      # other.
-      - name: Build the stack images
-        working-directory: tests/chat-interop
+      - name: Load the images the interop-images job built
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
-          # bake resolves a compose file's `context` and `dockerfile`
-          # against the WORKING DIRECTORY, while compose resolves them
-          # against the file. `context: ../..` therefore only means the
-          # repository root when bake runs from the file's own directory,
-          # which is why this step sets working-directory and passes a
-          # bare -f. From the root it reads a Dockerfile that is not
-          # there and fails with `transferring dockerfile: 2B`.
-          #
-          # --allow because that context is still outside the compose
-          # file's directory, which bake will not read unprompted.
-          # Granted rather than disabled via BUILDX_BAKE_ENTITLEMENTS_FS=0,
-          # so a context that later reaches somewhere unexpected still has
-          # to be granted.
-          docker buildx bake --allow=fs.read='*' -f compose.yml \
-            --load \
-            --set 'noombat.tags=chat-interop-noombat' \
-            --set 'chatmail.tags=chat-interop-chatmail' \
-            --set '*.cache-from=type=gha,scope=chat-interop' \
-            --set '*.cache-to=type=gha,scope=chat-interop,mode=max'
+          gh run download "$GITHUB_RUN_ID" --name interop-images --dir "$RUNNER_TEMP"
+          docker load -i "$RUNNER_TEMP/interop-images.tar"
 
       - name: Start the chat interop stack
         run: |
           docker compose -p chat-interop -f tests/chat-interop/compose.yml \
-            up -d --wait
+            up -d --wait --no-build
 
       # `--wait` returns once the containers are running, which is not the
       # same as Noombat having migrated or s6 having started the sidecar.

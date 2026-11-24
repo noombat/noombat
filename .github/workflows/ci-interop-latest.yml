@@ -64,55 +64,19 @@ jobs:
           # there and fails with `transferring dockerfile: 2B`.
           #
           # --allow because that context is still outside the compose
-          # file's directory, which bake will not read unprompted.
-          # Granted rather than disabled via BUILDX_BAKE_ENTITLEMENTS_FS=0,
-          # so a context that later reaches somewhere unexpected still has
-          # to be granted.
-          docker buildx bake --allow=fs.read='*' -f compose.yml \
-            --load \
-            --set '*.cache-from=type=gha' \
-            --set '*.cache-to=type=gha,mode=max'
+          # file's directory, which bake will not read unprompted. Only the
+          # repository root is granted, not `*` and not
+          # BUILDX_BAKE_ENTITLEMENTS_FS=0, so a context that later reaches
+          # past it fails rather than being read.
+          docker buildx bake --allow=fs.read=../.. -f compose.yml --load
 
-      - name: Start the interop stack against latest
-        run: |
-          docker compose -f tests/interop/compose.yml \
-            -f tests/interop/compose.latest.yml up -d --wait
-
-      - name: Wait for Noombat through Caddy
-        run: |
-          for i in $(seq 1 30); do
-            if curl -ksf https://noombat.localhost:8443/healthz >/dev/null; then
-              echo "Noombat is ready"
-              exit 0
-            fi
-            sleep 2
-          done
-          echo "::error::Noombat did not become ready within 60 seconds"
-          docker compose -f tests/interop/compose.yml \
-            -f tests/interop/compose.latest.yml logs --no-color
-          exit 1
-
-      # Both files, so `compose exec` resolves against the same
-      # configuration the stack was started with rather than relying on
-      # the project name happening to match.
-      - name: Seed both instances
-        run: |
-          tests/interop/seed.sh \
-            tests/interop/compose.yml tests/interop/compose.latest.yml
-
-      - name: Run interop tests
-        env:
-          CURL_OPTS: "--insecure"
-        run: tests/interop/run.sh https://noombat.localhost:8443 https://gotosocial.localhost:8443
+      - name: Start, seed and test the interop stack against latest
+        run: tests/interop/ci.sh run tests/interop/compose.latest.yml
 
       - name: Dump container logs on failure
         if: failure()
-        run: |
-          docker compose -f tests/interop/compose.yml \
-            -f tests/interop/compose.latest.yml logs --no-color
+        run: tests/interop/ci.sh logs tests/interop/compose.latest.yml
 
       - name: Tear down
         if: always()
-        run: |
-          docker compose -f tests/interop/compose.yml \
-            -f tests/interop/compose.latest.yml down -v
+        run: tests/interop/ci.sh down tests/interop/compose.latest.yml
