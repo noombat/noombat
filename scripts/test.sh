@@ -60,7 +60,7 @@ step "Running tests (cargo test)"
 # PostgreSQL instance. To run them too, start a database, point
 # DATABASE_URL at it, apply migrations, then:
 #     cargo test --workspace -- --include-ignored
-run cargo test --workspace
+run cargo test --workspace --no-fail-fast
 
 # ..... Manifests .....
 

@@ -141,6 +141,7 @@ jobs:
       # builds clean and swallows whatever follows it in the rendered
       # page, including markup inherited from the layout.
       - name: "Reject unbalanced HTML comment delimiters"
+        if: ${{ !cancelled() }}
         run: scripts/check-template-comments.sh
 
   dependency-hygiene:
@@ -156,6 +157,7 @@ jobs:
         run: scripts/check-image-pins.sh
       # Nothing else loads compose.prod.yml before a deployment does.
       - name: "Assert every compose combination loads"
+        if: ${{ !cancelled() }}
         run: scripts/check-compose-config.sh
       # Advisory: the scan reports candidates, not conclusions, because a
       # dependency can be load-bearing without being named anywhere, by
@@ -163,6 +165,7 @@ jobs:
       # heuristic would eventually block an urgent bump. Drop
       # `continue-on-error` to make it a gate.
       - name: "Report dependencies nothing imports"
+        if: ${{ !cancelled() }}
         continue-on-error: true
         run: scripts/check-unused-deps.sh
 
@@ -263,7 +266,7 @@ jobs:
           key: cargo-test-${{ hashFiles('**/Cargo.lock', 'rust-toolchain.toml') }}
       # No database here, so the `#[ignore]`d `#[sqlx::test]` tests are
       # skipped. The `integration` job below runs them.
-      - run: cargo test --workspace
+      - run: cargo test --workspace --no-fail-fast
 
   msrv:
     name: MSRV (from Cargo.toml)
@@ -382,7 +385,10 @@ jobs:
       # `--include-ignored` picks up the `#[sqlx::test]` tests that the
       # DB-less `test` job skips. Without it they would never run
       # anywhere, and would rot unnoticed.
-      - run: cargo test --workspace -- --include-ignored
+      - run: cargo test --workspace --no-fail-fast -- --include-ignored
+      - name: Dump the service logs on failure
+        if: failure()
+        run: docker compose -f compose.yml -f compose.dev.yml logs --no-color db redis meilisearch
 
   # ..... ON-DEMAND RELEASE BUILD .....
 

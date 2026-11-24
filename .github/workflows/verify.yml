@@ -98,12 +98,14 @@ jobs:
           fetch-depth: 0
 
       - name: Build the server image
+        id: server
         run: scripts/build-image.sh Dockerfile noombat-server:verify
 
       # Every other job that would notice an unbootable image needs a
       # database first, so this workflow can pass on one. Run as the
       # image's own user: the directory existing is not the question.
       - name: Assert the image provides a writable media root
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         run: |
           docker run --rm --entrypoint sh noombat-server:verify -c '
             set -e
@@ -116,9 +118,12 @@ jobs:
           '
 
       - name: Build the chatmail image
+        id: chatmail
+        if: ${{ !cancelled() }}
         run: scripts/build-image.sh Dockerfile.chatmail noombat-chatmail:verify
 
       - name: Assert the relay acquires, imports and reloads a certificate
+        if: ${{ !cancelled() && steps.chatmail.outcome == 'success' }}
         # Here rather than in ci.yml, which is gated on paths that
         # affect the Rust build and so would not run on a change to the
         # Caddyfile or the entrypoint. This job has already built the
@@ -132,6 +137,7 @@ jobs:
         run: scripts/check-chatmail-cert.sh
 
       - name: Assert the relay carries only encrypted mail, and signs it
+        if: ${{ !cancelled() && steps.chatmail.outcome == 'success' }}
         # Reuses the image built above, as the certificate gate does.
         #
         # Sends real mail through the relay: plaintext must be refused
@@ -143,6 +149,7 @@ jobs:
         run: scripts/check-relay-invariants.sh
 
       - name: Check the served asset manifest is labelled
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         # A manifest reporting "unknown" names no release, so nothing
         # can be compared against it; such an image is not releasable.
         run: |
@@ -158,11 +165,14 @@ jobs:
             || { echo "::error::asset manifest lists no assets"; exit 1; }
 
       - name: Install Node (version from .nvmrc)
+        id: node
+        if: ${{ !cancelled() && steps.server.outcome == 'success' }}
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: .nvmrc
 
       - name: Confirm a host build reproduces the image build
+        if: ${{ !cancelled() && steps.node.outcome == 'success' }}
         # release.yml gates its signature on this agreement; asserting it
         # here shows host and image toolchain drift on the next push that
         # runs this workflow, not at release time.
@@ -183,6 +193,7 @@ jobs:
           echo "Image and host builds agree on every asset hash."
 
       - name: Generate the image content manifests
+        if: ${{ !cancelled() && steps.server.outcome == 'success' && steps.chatmail.outcome == 'success' }}
         # Exercises scripts/image-manifest.sh on both images, so a
         # release is not the first time it runs.
         run: |

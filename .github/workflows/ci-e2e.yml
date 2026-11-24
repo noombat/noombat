@@ -390,6 +390,7 @@ jobs:
           echo "administrator and session accounts seeded"
 
       - name: Install Playwright test dependencies
+        id: deps
         working-directory: tests/e2e
         run: |
           ../../scripts/install-pnpm.sh package.json
@@ -400,39 +401,67 @@ jobs:
       # the most specific cause, so reporting it separately keeps a
       # header or policy regression from being buried in the full
       # cross-browser matrix below (which also runs it).
+      #
+      # Each run below goes ahead whatever an earlier one concluded, once
+      # the stack is up, and writes its own report and output folders:
+      # each run empties its output folder when it starts and its report
+      # folder when it writes the report, so shared folders kept only the
+      # last run's traces and report.
       - name: Run security header and CSP tests (Firefox)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test security-headers.spec.ts --project=firefox
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/security-headers
+        run: pnpm exec playwright test security-headers.spec.ts --project=firefox --output test-results/security-headers
 
       - name: Run Playwright tests (Firefox)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=firefox
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/firefox
+        run: pnpm exec playwright test --project=firefox --output test-results/firefox
 
       - name: Run Playwright tests (Chromium)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=chromium
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/chromium
+        run: pnpm exec playwright test --project=chromium --output test-results/chromium
 
       - name: Run Playwright tests (WebKit)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=webkit
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/webkit
+        run: pnpm exec playwright test --project=webkit --output test-results/webkit
 
       - name: Run Playwright tests (Firefox mobile viewport)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=firefox-mobile
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/firefox-mobile
+        run: pnpm exec playwright test --project=firefox-mobile --output test-results/firefox-mobile
 
       - name: Run Playwright tests (Chromium mobile viewport)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=chromium-mobile
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/chromium-mobile
+        run: pnpm exec playwright test --project=chromium-mobile --output test-results/chromium-mobile
 
       - name: Run Playwright tests (WebKit mobile viewport)
+        if: ${{ !cancelled() && steps.deps.outcome == 'success' }}
         working-directory: tests/e2e
-        run: pnpm exec playwright test --project=webkit-mobile
+        env:
+          PLAYWRIGHT_HTML_OUTPUT_DIR: playwright-report/webkit-mobile
+        run: pnpm exec playwright test --project=webkit-mobile --output test-results/webkit-mobile
 
       - name: Dump server log on failure
         if: failure()
         run: |
           cat /tmp/noombat.log
           cat /tmp/caddy.log 2>/dev/null || true
+          cat /tmp/stand-in-orcid.log 2>/dev/null || true
 
       - name: Upload Playwright report
         if: always()

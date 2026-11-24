@@ -51,6 +51,7 @@ jobs:
       # carry, so committed fixtures are what keep it from rotting
       # unnoticed between revisions of the design system.
       - name: Assert the design-system mode still works
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-contrast.py --self-test
 
       # A locale missing a key renders that key's name to a reader, in
@@ -59,6 +60,7 @@ jobs:
       # the server boots, and the page returns 200, so nothing else here
       # would report it.
       - name: Assert every locale defines the same keys and placeholders
+        if: ${{ !cancelled() }}
         run: python3 scripts/check-locale-parity.py
 
       # Both spellings compile and render, so nothing else distinguishes
@@ -66,4 +68,5 @@ jobs:
       # not. Right-to-left support is architecture, not polish, and this
       # is what stops it becoming a refactor.
       - name: Reject physical-direction utilities
+        if: ${{ !cancelled() }}
         run: scripts/check-logical-properties.sh

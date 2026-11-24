@@ -78,6 +78,8 @@ jobs:
       # which the script's container cannot provide. This is the only
       # job where that test actually runs: everywhere else it skips.
       - name: Install the pinned typst binary
+        id: typst
+        if: ${{ !cancelled() }}
         run: |
           # Read from the Dockerfile so the binary under test is the one
           # the runtime ships. See scripts/check-typst-injection.sh.
@@ -94,12 +96,15 @@ jobs:
       # without the variable, a broken install step above would leave the
       # timeout unmeasured and the job green.
       - name: "Assert a slow compilation is killed, not abandoned"
+        if: ${{ !cancelled() && steps.typst.outcome == 'success' }}
         env:
           NOOMBAT_REQUIRE_TYPST: "1"
         run: cargo test -p noombat-identity --lib -- --include-ignored a_slow_compile
       # The CV render test reads the typeset PDF back with pdftotext,
       # which the runner image may lack.
       - name: Install pdftotext
+        id: pdftotext
+        if: ${{ !cancelled() && steps.typst.outcome == 'success' }}
         run: |
           command -v pdftotext || {
             sudo apt-get update
@@ -109,6 +114,7 @@ jobs:
       # Held to NOOMBAT_REQUIRE_TYPST for the reason the slow-compile
       # step is.
       - name: "Assert the default CV template typesets every section"
+        if: ${{ !cancelled() && steps.pdftotext.outcome == 'success' }}
         env:
           NOOMBAT_REQUIRE_TYPST: "1"
         run: cargo test -p noombat-identity --test cv_render -- --include-ignored
