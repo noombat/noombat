@@ -38,14 +38,15 @@ export function withCsrf(headers: Record<string, string> = {}): Record<string, s
 export type RefusedRequest = Pick<XMLHttpRequest, "status" | "getResponseHeader" | "responseText">;
 
 /**
- * The message of a write the server refused for its CSRF token, which it
- * sends as text with the `X-CSRF-Refused` header; `null` for any other
- * answer.
+ * The message of a write the server refused for its CSRF token, or of a
+ * request made after the session ended, which the server sends as text
+ * marked by the `X-CSRF-Refused` or the `X-Signed-Out` header; `null` for
+ * any other answer.
  */
 export function refusalMessage(xhr: RefusedRequest): string | null {
-  return xhr.status === 403 && xhr.getResponseHeader("X-CSRF-Refused") !== null
-    ? xhr.responseText
-    : null;
+  const refused = xhr.status === 403 && xhr.getResponseHeader("X-CSRF-Refused") !== null;
+  const signedOut = xhr.status === 401 && xhr.getResponseHeader("X-Signed-Out") !== null;
+  return refused || signedOut ? xhr.responseText : null;
 }
 
 /**

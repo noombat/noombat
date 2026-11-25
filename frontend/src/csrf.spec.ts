@@ -79,4 +79,16 @@ describe("the CSRF token", () => {
     expect(refusalMessage(answer(403, false))).toBeNull();
     expect(refusalMessage(answer(500, true))).toBeNull();
   });
+
+  it("names the message of a request made after the session ended, and of nothing else", () => {
+    const answer = (status: number, header: string | null) => ({
+      status,
+      responseText: "Your session has ended.",
+      getResponseHeader: (name: string) => (name.toLowerCase() === header ? "1" : null),
+    });
+    expect(refusalMessage(answer(401, "x-signed-out"))).toBe("Your session has ended.");
+    expect(refusalMessage(answer(401, null))).toBeNull();
+    expect(refusalMessage(answer(403, "x-signed-out"))).toBeNull();
+    expect(refusalMessage(answer(401, "x-csrf-refused"))).toBeNull();
+  });
 });

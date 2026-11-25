@@ -25,6 +25,7 @@ pub mod rate_limit;
 pub mod routes;
 pub mod search_ops;
 pub mod search_sync;
+pub mod signed_out;
 pub mod state;
 pub mod theme;
 pub mod trending;
@@ -80,6 +81,7 @@ pub fn build_router(state: AppState) -> Router {
                 .fallback_service(ServeDir::new("frontend/dist/assets"))
                 .layer(axum::middleware::map_response(assets::caching)),
         )
+        .layer(axum::middleware::from_fn(signed_out::htmx_sign_in))
         .layer(axum::middleware::from_fn_with_state(
             state.clone(),
             csrf::protect,
