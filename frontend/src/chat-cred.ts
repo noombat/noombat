@@ -71,16 +71,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
     const prompt = document.createElement("div");
     prompt.className = "flex gap-2 items-center mt-2";
-    prompt.innerHTML = `
-      <input type="password" id="cred-password"
-             class="border border-border-default rounded px-3 py-2 text-sm bg-bg-raised text-text-primary">
-      <button type="button" id="cred-unlock"
-              class="bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm"></button>
-    `;
+    const passwordInput = document.createElement("input");
+    passwordInput.type = "password";
+    passwordInput.id = "cred-password";
+    passwordInput.className =
+      "border border-border-default rounded px-3 py-2 text-sm bg-bg-raised text-text-primary";
+    const unlockBtn = document.createElement("button");
+    unlockBtn.type = "button";
+    unlockBtn.id = "cred-unlock";
+    unlockBtn.className = "bg-bg-brand text-text-on-brand rounded px-4 py-2 text-sm";
+    prompt.append(passwordInput, unlockBtn);
     container.appendChild(prompt);
 
-    const passwordInput = document.getElementById("cred-password") as HTMLInputElement;
-    const unlockBtn = document.getElementById("cred-unlock") as HTMLButtonElement;
     passwordInput.placeholder = labels.passwordPlaceholder;
     unlockBtn.textContent = labels.unlock;
     passwordInput.focus();

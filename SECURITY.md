@@ -123,6 +123,11 @@ It parses each answer itself, without declarative shadow roots, and keeps only t
 htmx's configuration is the release's, frozen where the server cannot change it, and htmx never sees an `HX-*` response header, so an answer cannot move the page, push an address or redirect a swap.
 What an answer can still do is what an honest one does: arrange the release's own styles, which could imitate the page, and carry items whose `hx-get` or `hx-delete` asks for any path on the instance, to replace that item or the row or box it sits in.
 
+The policy also requires Trusted Types (`require-trusted-types-for 'script'`) and names the only three policies the page may make (`trusted-types noombat-parse noombat-solid default`).
+The browser then refuses a plain string wherever it would become markup or code, in the release's own script, in htmx, in a dependency, or in code added later, instead of trusting it.
+What passes is the allowlist's parse, Solid's templates (the exact strings the build finds in the islands), and text with no `<` in it, which cannot form an element.
+A page that arrives without the directive in a browser that has Trusted Types shows a notice saying so, and step 3 of the build guide checks for both directives.
+
 ## Supply chain
 
 - Container base images are pinned by digest, not by tag.

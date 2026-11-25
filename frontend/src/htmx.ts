@@ -18,6 +18,7 @@
 // `display` rather than htmx's `opacity`/`visibility`, so they are not a
 // copy of upstream and need no synchronisation with it.
 import htmx from "htmx.org";
+import "./trusted-types";
 import { addCsrfHeader, showRefusal, type HtmxRequestDetail } from "./csrf";
 import { parseAnswer } from "./fragment";
 import { RELEASE_CONFIG } from "./htmx-config";

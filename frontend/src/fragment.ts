@@ -22,6 +22,14 @@ const MATHML_NS = "http://www.w3.org/1998/Math/MathML";
 /** `DOMParser`'s own parse, kept before `htmx.ts` replaces it. */
 const parseFromString = DOMParser.prototype.parseFromString;
 
+/** Turns the string handed to the parse into what the page's policy admits. */
+let admit: (html: string) => string = (html) => html;
+
+/** Hand the parse its input through `convert`: Trusted Types' policy, where it is in force. */
+export function admitWith(convert: (html: string) => string): void {
+  admit = convert;
+}
+
 /** `table[key]` if the table itself has it, never a property every object inherits. */
 function own<T>(table: Record<string, T>, key: string): T | undefined {
   return Object.hasOwn(table, key) ? table[key] : undefined;
@@ -96,7 +104,7 @@ function removeAll(nodes: ChildNode[], removed: string[]): void {
  * else is a whole document, whose body is cleaned.
  */
 export function parseAnswer(html: string): Document {
-  const parse = (text: string) => parseFromString.call(new DOMParser(), text, "text/html");
+  const parse = (text: string) => parseFromString.call(new DOMParser(), admit(text), "text/html");
   const doc = parse(html);
   const removed: string[] = [];
   const body = bodyOf.call(doc);

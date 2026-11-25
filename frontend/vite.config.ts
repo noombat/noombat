@@ -4,9 +4,10 @@
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import solidPlugin from "vite-plugin-solid";
+import solidTemplates from "./solid-templates-plugin";
 
 export default defineConfig({
-  plugins: [tailwindcss(), solidPlugin()],
+  plugins: [tailwindcss(), solidPlugin(), solidTemplates()],
 
   build: {
     outDir: "dist",

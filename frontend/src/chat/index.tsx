@@ -11,9 +11,14 @@
  * the Autocrypt Level 1 state machine.
  */
 
-import { render } from "solid-js/web";
+import { render, setTrustedTypesPolicy } from "solid-js/web";
+import { solidPolicy } from "../trusted-types";
 import Chat from "./Chat";
 import "./chat.css";
+
+// Solid builds its elements from template strings, which the page's
+// policy accepts only through the policy made for them.
+if (solidPolicy) setTrustedTypesPolicy(solidPolicy);
 
 const mount = document.getElementById("chat-mount");
 

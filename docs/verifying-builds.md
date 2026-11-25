@@ -209,13 +209,16 @@ for path in / /auth/login /auth/register /auth/upgrade /chat /compose /settings/
     echo "  POLICY    holds a character other than printable ASCII"
   LC_ALL=C awk -F '[,;]' '{ for (i = 1; i <= NF; i++) print $i }' "$TMP/csp" |
     LC_ALL=C awk 'NF { $1 = tolower($1); print }' > "$TMP/policy"
-  for rule in "default-src 'none'" "script-src 'self'" "style-src 'self'"; do
+  for rule in "default-src 'none'" "script-src 'self'" "style-src 'self'" \
+      "require-trusted-types-for 'script'" "trusted-types noombat-parse noombat-solid default"; do
     LC_ALL=C grep -qxF "$rule" "$TMP/policy" || printf '  POLICY    no %s\n' "$rule"
   done
-  LC_ALL=C grep -E '^(default|script|style)-src(-elem|-attr)?( |$)' "$TMP/policy" |
+  LC_ALL=C grep -E '^((default|script|style)-src(-elem|-attr)?|require-trusted-types-for|trusted-types)( |$)' \
+      "$TMP/policy" |
     while read -r rule; do
       case "$rule" in
         "default-src 'none'" | "script-src 'self'" | "style-src 'self'") ;;
+        "require-trusted-types-for 'script'" | "trusted-types noombat-parse noombat-solid default") ;;
         *) printf '  POLICY    %s\n' "$rule" ;;
       esac
     done
@@ -249,7 +252,7 @@ On an instance running the release, every line under each page reads `ok`.
 `UNKNOWN` shows a tag the release does not write, or a file the manifest does not name: code or styles the release never attested to.
 `UNKNOWN   no script or stylesheet the manifest names` means the page showed none in a form the release writes, which every page of the release does.
 The check accepts only the exact forms the release writes, so it also reports a harmless variation; read the tag before concluding anything.
-`POLICY` shows a rule for scripts or styles that differs from the release's three, such as one allowing inline code or another origin, or one of the three missing, or a policy holding characters the release's does not.
+`POLICY` shows a rule for scripts, styles or Trusted Types that differs from the release's five, such as one allowing inline code or another origin, or one of the five missing, or a policy holding characters the release's does not.
 `RESPONSE` shows a page sent in another form than the release sends it, which a browser could read differently from the check, or with a header that loads a stylesheet or moves you to another page: an HTTP version other than 2 or 3, another content type or character set, a byte order mark, compression or a transfer coding, or a `Link`, `Refresh` or `Speculation-Rules` header.
 An instance whose proxy speaks only HTTP/1.1 cannot be checked this way.
 `NOTE` means the address answered with something other than its page, usually a redirect to the login page, so the page went unchecked: set `COOKIE` and run it again.

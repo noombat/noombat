@@ -236,6 +236,8 @@ async fn resolve_viewer(state: &AppState, token: &str) -> Option<(Viewer, Option
 /// be the offending component.
 const FALLBACK_CSP: &str = "default-src 'none'; script-src 'self'; style-src 'self'; \
                             connect-src 'self'; img-src 'self' data:; font-src 'self'; \
+                            require-trusted-types-for 'script'; \
+                            trusted-types noombat-parse noombat-solid default; \
                             frame-ancestors 'none'; base-uri 'self'; form-action 'self'";
 
 /// Permissions-Policy denying every feature the application does not
@@ -329,6 +331,8 @@ pub fn content_security_policy(domain: &str, public_port: u16, configured: Optio
     format!(
         "default-src 'none'; script-src 'self'; style-src 'self'; \
          connect-src 'self' {origin}; img-src 'self' data:; font-src 'self'; \
+         require-trusted-types-for 'script'; \
+         trusted-types noombat-parse noombat-solid default; \
          frame-ancestors 'none'; base-uri 'self'; form-action 'self'",
         origin = websocket_origin(domain, public_port, configured),
     )
@@ -512,6 +516,18 @@ mod tests {
         assert!(csp.contains("form-action 'self'"));
         assert!(!csp.contains("unsafe-inline"));
         assert!(!csp.contains("unsafe-eval"));
+        // The browser refuses a plain string wherever it would become
+        // markup or code, and only the front end's three policies exist.
+        for policy in [&csp, FALLBACK_CSP] {
+            assert!(
+                policy.contains("require-trusted-types-for 'script';"),
+                "{policy}"
+            );
+            assert!(
+                policy.contains("trusted-types noombat-parse noombat-solid default;"),
+                "{policy}"
+            );
+        }
     }
 
     #[test]
