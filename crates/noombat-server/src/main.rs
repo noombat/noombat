@@ -1553,6 +1553,112 @@ mod tests {
         );
     }
 
+    /// The field names `Config` deserializes, as its derived `Deserialize`
+    /// declares them, so a field added later is covered without a list
+    /// here to update.
+    fn config_field_names() -> &'static [&'static str] {
+        use serde::de::{self, Deserialize, Deserializer, Visitor};
+
+        struct Recorder<'a>(&'a mut &'static [&'static str]);
+
+        impl<'de> Deserializer<'de> for Recorder<'_> {
+            type Error = de::value::Error;
+
+            fn deserialize_struct<V: Visitor<'de>>(
+                self,
+                _name: &'static str,
+                fields: &'static [&'static str],
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                *self.0 = fields;
+                Err(de::Error::custom("recorded"))
+            }
+
+            fn deserialize_any<V: Visitor<'de>>(
+                self,
+                _visitor: V,
+            ) -> Result<V::Value, Self::Error> {
+                Err(de::Error::custom(
+                    "Config is no longer deserialized as a struct",
+                ))
+            }
+
+            serde::forward_to_deserialize_any! {
+                bool i8 i16 i32 i64 i128 u8 u16 u32 u64 u128 f32 f64 char str string bytes
+                byte_buf option unit unit_struct newtype_struct seq tuple tuple_struct map
+                enum identifier ignored_any
+            }
+        }
+
+        let mut fields: &'static [&'static str] = &[];
+        let _ = Config::deserialize(Recorder(&mut fields));
+        fields
+    }
+
+    /// A credential by name, by the rule scripts/check-config-secrets.py
+    /// applies to the source, with its exceptions: change both together.
+    fn is_credential(name: &str) -> bool {
+        let shaped = ["secret", "token", "password", "passwd", "credential"]
+            .iter()
+            .any(|word| name.contains(word))
+            || name.ends_with("_key")
+            || name.ends_with("_url")
+            || name == "key"
+            || name == "kek";
+        // The search endpoint, whose key is `meili_key`; an internal
+        // address; and an access key ID, which every signed request
+        // publishes.
+        shaped && !["meili_url", "chatmail_admin_url", "s3_access_key"].contains(&name)
+    }
+
+    /// No credential set in the configuration appears in its debug output,
+    /// in either form, while a setting that is not one does: the derived
+    /// `Debug` prints every field, so only `Secret`'s own keeps a value out.
+    #[test]
+    fn no_credential_reaches_configs_debug_output() {
+        let fields = config_field_names();
+        for known in ["domain", "jwt_secret", "database_url"] {
+            assert!(
+                fields.contains(&known),
+                "the field list lacks {known}: {fields:?}"
+            );
+        }
+        let credentials: Vec<&str> = fields
+            .iter()
+            .copied()
+            .filter(|f| is_credential(f))
+            .collect();
+        assert!(
+            credentials.len() >= 9,
+            "only {credentials:?} look like credentials"
+        );
+
+        let marker = |field: &str| format!("marker-{field}-5f3a");
+        let mut toml = format!("domain = {:?}\n", marker("domain"));
+        for field in &credentials {
+            toml.push_str(&format!("{field} = {:?}\n", marker(field)));
+        }
+        let config: Config = Figment::new()
+            .merge(Toml::string(&toml))
+            .extract()
+            .unwrap_or_else(|e| panic!("a credential field that takes no string? {e}"));
+
+        for rendered in [format!("{config:?}"), format!("{config:#?}")] {
+            assert!(
+                rendered.contains(&marker("domain")),
+                "the debug output prints no settings"
+            );
+            let printed: Vec<&&str> = credentials
+                .iter()
+                .filter(|field| rendered.contains(&marker(field)))
+                .collect();
+            assert!(
+                printed.is_empty(),
+                "printed in Config's debug output: {printed:?}"
+            );
+        }
+    }
+
     #[test]
     fn the_variant_names_are_not_accepted_as_configuration() {
         // The enum derives Serialize with no rename, so "VerifyOrFetch"

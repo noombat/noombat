@@ -10,7 +10,9 @@
 # and nothing else notices: the instance boots and the setting works.
 #
 # Names are the only available signal, so anything credential-shaped must
-# be `Secret` or listed in ALLOWED with a reason.
+# be `Secret` or listed in ALLOWED with a reason. The test
+# `no_credential_reaches_configs_debug_output` in main.rs applies the same
+# rule to what `Debug` actually prints: change both together.
 
 import re
 import sys
