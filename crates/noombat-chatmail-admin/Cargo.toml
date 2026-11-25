@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Chatmail relay administration sidecar daemon and filtermail content filter."
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "noombat-chatmail-admin"
 path = "src/main.rs"

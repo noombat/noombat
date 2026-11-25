@@ -30,6 +30,13 @@ rust-version = "1.96.0"
 license = "AGPL-3.0-or-later"
 repository = "https://github.com/noombat/noombat"
 
+# Cargo applies these only to a member whose own manifest says
+# `[lints] workspace = true`, so every member says it, and
+# scripts/check-safe-rust.sh fails on one that does not. Every crate root
+# keeps its `#![forbid(unsafe_code)]` as well.
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
 [workspace.dependencies]
 # Internal crates.
 noombat-core = { path = "crates/noombat-core", version = "0.1.0" }

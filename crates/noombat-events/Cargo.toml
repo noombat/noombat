@@ -6,3 +6,6 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 description = "Event CRUD, RSVP, and calendar feeds."
+
+[lints]
+workspace = true

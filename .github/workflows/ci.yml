@@ -130,8 +130,9 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       # Every crate root, not one per crate directory. The attribute is
-      # per root, so a crate with two `[[bin]]` targets has two.
-      - name: Verify every crate root forbids unsafe code
+      # per root, so a crate with two `[[bin]]` targets has two. Cargo
+      # lists the members whose manifests must take the workspace lints.
+      - name: Verify every crate root and member forbids unsafe code
         run: scripts/check-safe-rust.sh
 
   markup-conventions:

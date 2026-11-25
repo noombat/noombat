@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Axum routes, server-side HTML Askama templates, and internationalisation."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 noombat-ap = { workspace = true }

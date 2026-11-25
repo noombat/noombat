@@ -57,8 +57,8 @@ noombat-chatmail-admin         (Chatmail relay admin sidecar daemon, independent
 
 ### Safe Rust only
 
-Every first-party crate carries `#![forbid(unsafe_code)]`.
-The build fails if `unsafe` is introduced.
+Every first-party crate root carries `#![forbid(unsafe_code)]`, and every crate's `Cargo.toml` says `[lints] workspace = true`, which takes the workspace's `unsafe_code = "forbid"` into its tests and benches too.
+The build fails if `unsafe` is introduced, and `scripts/check-safe-rust.sh` fails on a crate missing either.
 Third-party crates that use `unsafe` internally are acceptable when well-audited (e.g. `tokio`, `serde`, `ring`, `sqlx`).
 
 ### Workspace dependency hygiene

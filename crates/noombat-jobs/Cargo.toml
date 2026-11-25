@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Job posting CRUD, search, and matching."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 noombat-markup = { workspace = true }

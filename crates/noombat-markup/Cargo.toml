@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "(Markdown and LaTeX maths) to HTML pipeline and Markdown to Typst converter."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 pulldown-cmark = { workspace = true }

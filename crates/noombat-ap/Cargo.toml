@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "ActivityPub serialisation, vocabulary extensions, and JSON-LD error bodies."
 
+[lints]
+workspace = true
+
 [dependencies]
 serde = { workspace = true }
 serde_json = { workspace = true }

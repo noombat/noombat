@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Core domain types, error types, and extension-point traits for Noombat."
 
+[lints]
+workspace = true
+
 [dependencies]
 getrandom = { workspace = true }
 async-trait = { workspace = true }

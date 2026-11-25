@@ -7,6 +7,9 @@ license = "AGPL-3.0-or-later AND MIT"
 repository.workspace = true
 description = "Binary entry point, configuration, and migration runner."
 
+[lints]
+workspace = true
+
 [[bin]]
 name = "noombat"
 path = "src/main.rs"

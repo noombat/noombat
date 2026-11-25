@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "ActivityPub S2S federation: inbox, outbox, delivery, WebFinger, NodeInfo, and HTTP Signature verification."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 noombat-ap = { workspace = true }

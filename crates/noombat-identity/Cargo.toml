@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "Actor repository, key generation, post persistence, domain verification, DOI resolution, hashtag management, and CV generation."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 noombat-markup = { workspace = true }

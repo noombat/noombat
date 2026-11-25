@@ -7,6 +7,9 @@ license.workspace = true
 repository.workspace = true
 description = "IMAP/SMTP ciphertext relay for Chatmail (WebSocket to Chatmail bridge)."
 
+[lints]
+workspace = true
+
 [dependencies]
 noombat-core = { workspace = true }
 noombat-openpgp = { workspace = true }
