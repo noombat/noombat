@@ -30,11 +30,10 @@
 # immutable once published: a mistake in one cannot be corrected, and its
 # tag name cannot be used again.
 #
-# Three properties this workflow is arranged to hold:
+# Four properties this workflow is arranged to hold:
 #
 #   1. One build. The manifests are extracted from the images that are
 #      pushed, so the bytes attested to are the bytes an operator runs.
-#      Two independent builds would agree only by reproducibility.
 #   2. Signing precedes publication. A signing failure must not leave a
 #      published image with no attestation and `latest` already moved.
 #      The reverse, i.e. a signature for an image whose push failed, is
@@ -43,6 +42,11 @@
 #      HTML document and therefore decides which assets a page loads;
 #      attesting the assets while leaving the loader unattested is a
 #      partial guarantee.
+#   4. A second build agrees. verify.yml built the same commit on another
+#      runner when it passed on main; nothing is signed unless every file
+#      its manifests list, the Rust binaries included, has the hash this
+#      build's give it. Each manifest is the one its own build job wrote,
+#      so this catches a build that went wrong, not one that lies.
 
 name: Release
 
@@ -77,6 +81,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: scripts/check-release-tested.sh "$GITHUB_SHA"
+      - name: Find verify.yml's manifests of this commit
+        # The publish job compares with them (property 4). They expire
+        # after verify.yml's retention period, so this fails before the
+        # build rather than after it.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/verify.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")] | max_by(.created_at) | .id // empty')
+          if [ -z "$run_id" ] || [ -z "$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$run_id/artifacts" \
+              --jq '.artifacts[] | select(.name == "image-manifests" and (.expired | not)) | .id')" ]; then
+            echo "::error::verify.yml's manifests of $GITHUB_SHA have expired or are missing: run verify.yml" \
+              "on $GITHUB_REF_NAME (Actions tab, Container build verification, Run workflow; or gh workflow" \
+              "run verify.yml --ref $GITHUB_REF_NAME), then re-run this workflow"
+            exit 1
+          fi
+          echo "verify.yml run $run_id kept the manifests of $GITHUB_SHA."
 
   build:
     name: Build and attest
@@ -315,6 +336,47 @@ jobs:
             exit 1
           fi
           echo "The manifests name $GITHUB_REF_NAME at $GITHUB_SHA, and the server image serves the asset manifest."
+
+      - name: Compare every file with verify.yml's build of this commit
+        # Property 4. The asset manifest is left out because its version
+        # label differs by design (the build there had no tag to name);
+        # the assets it lists are files here, and compared as such. Debian
+        # packages are not built from source, so two builds days apart can
+        # install different ones; that is reported apart, with its remedy.
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          run_id=$(gh api "repos/$GH_REPO/actions/workflows/verify.yml/runs?head_sha=$GITHUB_SHA&status=success&per_page=100" \
+            --jq '[.workflow_runs[] | select(.event == "push" or .event == "workflow_dispatch")] | max_by(.created_at) | .id // empty')
+          if [ -z "$run_id" ] || ! gh run download "$run_id" --name image-manifests --dir verify; then
+            echo "::error::no manifests of $GITHUB_SHA from verify.yml to compare with: run verify.yml on" \
+              "$GITHUB_REF_NAME (Actions tab, Container build verification, Run workflow), then re-run this workflow"
+            exit 1
+          fi
+          refused=0
+          for m in server-image-manifest.json chatmail-image-manifest.json; do
+            if ! jq -e --arg c "$GITHUB_SHA" '.commit == $c and (.files | length) > 0' "verify/$m" > /dev/null; then
+              echo "::error::verify.yml run $run_id's $m does not list the files of $GITHUB_SHA"
+              exit 1
+            fi
+            differ=$(jq -rn --slurpfile a "$m" --slurpfile b "verify/$m" '
+              ($a[0].files | del(."opt/noombat/frontend/dist/assets-manifest.json")) as $x
+              | ($b[0].files | del(."opt/noombat/frontend/dist/assets-manifest.json")) as $y
+              | ($x + $y | keys[]) | select($x[.] != $y[.])')
+            if [ -n "$differ" ]; then
+              echo "::error::$m: these files differ from verify.yml run $run_id's build of the same commit:"
+              printf '%s\n' "$differ" | sed 's/^/  /'
+              if ! jq -en --slurpfile a "$m" --slurpfile b "verify/$m" '$a[0].packages == $b[0].packages' > /dev/null; then
+                echo "::error::the two builds installed different Debian packages; if only files those" \
+                  "packages own or are made from differ (etc/postfix/peer-roots.pem is ca-certificates')," \
+                  "run verify.yml on $GITHUB_REF_NAME now and re-run this workflow"
+              fi
+              refused=1
+            else
+              echo "$m: all $(jq '.files | length' "$m") files match verify.yml run $run_id."
+            fi
+          done
+          exit "$refused"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
