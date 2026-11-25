@@ -344,4 +344,82 @@ mod tests {
             .collect();
         assert!(missing.is_empty(), "untranslated: {missing:?}");
     }
+
+    /// The `%{name}` slots in a string, which `tf` fills by exact name.
+    fn placeholders(text: &str) -> std::collections::BTreeSet<&str> {
+        text.split("%{")
+            .skip(1)
+            .filter_map(|rest| rest.split_once('}').map(|(name, _)| name))
+            .collect()
+    }
+
+    /// The locales loaded are exactly the ones offered, and each holds
+    /// exactly the default locale's keys, with the same placeholders and
+    /// none left empty. A locale file nobody can negotiate is a translation
+    /// nobody reads, an offered locale without one is served in English,
+    /// and a value written as a YAML list arrives empty. The test above sees
+    /// only keys named literally in the source; this one also catches a
+    /// stale or misspelt key, a key asked for by a computed name, and a
+    /// placeholder renamed or dropped in translation, which `tf` would
+    /// leave on the page or lose. Nested keys arrive flattened to dotted
+    /// names, so they are compared too.
+    #[test]
+    fn every_locale_has_the_default_locales_keys_and_placeholders() {
+        assert!(
+            AVAILABLE_LOCALES.contains(&DEFAULT_LOCALE),
+            "{DEFAULT_LOCALE} is not offered"
+        );
+        let backend = crate::_rust_i18n_backend();
+        let mut loaded: Vec<String> = backend
+            .available_locales()
+            .into_iter()
+            .map(std::borrow::Cow::into_owned)
+            .collect();
+        loaded.sort();
+        let mut offered: Vec<String> = AVAILABLE_LOCALES.iter().map(|l| (*l).to_owned()).collect();
+        offered.sort();
+        assert_eq!(
+            loaded, offered,
+            "the locale files differ from AVAILABLE_LOCALES"
+        );
+
+        let table = |locale: &str| -> std::collections::BTreeMap<String, String> {
+            backend
+                .messages_for_locale(locale)
+                .unwrap_or_else(|| panic!("no messages for {locale}"))
+                .into_iter()
+                .map(|(key, text)| (key.into_owned(), text.into_owned()))
+                .collect()
+        };
+        let default = table(DEFAULT_LOCALE);
+        assert!(
+            default.len() > 300,
+            "{DEFAULT_LOCALE} has only {} keys",
+            default.len()
+        );
+        let mut differences = Vec::new();
+        for locale in AVAILABLE_LOCALES.iter().filter(|l| **l != DEFAULT_LOCALE) {
+            let other = table(locale);
+            for key in default.keys().filter(|key| !other.contains_key(*key)) {
+                differences.push(format!("{locale}: missing {key}"));
+            }
+            for (key, text) in &other {
+                match default.get(key) {
+                    None => differences.push(format!("{locale}: {key} is not in {DEFAULT_LOCALE}")),
+                    Some(expected) if text.is_empty() && !expected.is_empty() => {
+                        differences.push(format!("{locale}: {key} is empty"));
+                    }
+                    Some(expected) if placeholders(expected) != placeholders(text) => {
+                        differences.push(format!(
+                            "{locale}: {key} has {:?}, {DEFAULT_LOCALE} {:?}",
+                            placeholders(text),
+                            placeholders(expected)
+                        ));
+                    }
+                    Some(_) => {}
+                }
+            }
+        }
+        assert!(differences.is_empty(), "{differences:#?}");
+    }
 }

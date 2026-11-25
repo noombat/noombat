@@ -106,9 +106,6 @@ fi
 step "Checking the DKIM selector agrees everywhere"
 run ./scripts/check-dkim-selector.sh
 
-step "Checking locale parity"
-run python3 ./scripts/check-locale-parity.py
-
 # ..... Templates .....
 
 # An inline <script> or style attribute is blocked by the served policy,

@@ -7,13 +7,15 @@
 # `frontend/**` is not among them, so a push confined to stylesheets
 # would not run the gate that audits those stylesheets.
 #
-# WCAG conformance and locale completeness are claims the project makes
-# to its readers, not properties of a subsystem. A claim that is checked
-# only when a matching path changes is a claim nobody is checking.
+# WCAG conformance and right-to-left readiness are claims the project
+# makes to its readers, not properties of a subsystem. A claim that is
+# checked only when a matching path changes is a claim nobody is checking.
+# Locale completeness is a test in noombat-api, which ci.yml runs whenever
+# a locale file or the code naming the locales changes.
 #
-# The cost of running these unconditionally is about six seconds: three
-# Python and shell scripts over text files, with no toolchain to install
-# and nothing to compile.
+# The cost of running these unconditionally is about six seconds: two
+# scripts over text files, with no toolchain to install and nothing to
+# compile.
 #
 # Related workflows:
 #   ci.yml           Rust checks, path-gated.
@@ -54,15 +56,6 @@ jobs:
       - name: Assert the design-system mode still works
         if: ${{ !cancelled() }}
         run: python3 scripts/check-contrast.py --self-test
-
-      # A locale missing a key renders that key's name to a reader, in
-      # the middle of otherwise translated text, and one with a renamed
-      # placeholder shows the placeholder as written. The build succeeds,
-      # the server boots, and the page returns 200, so nothing else here
-      # would report it.
-      - name: Assert every locale defines the same keys and placeholders
-        if: ${{ !cancelled() }}
-        run: python3 scripts/check-locale-parity.py
 
       # Both spellings compile and render, so nothing else distinguishes
       # a page that will follow the reading direction from one that will
