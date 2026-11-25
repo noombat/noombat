@@ -20,6 +20,7 @@
 
 import { createSignal, createEffect, onCleanup, Show, type JSX } from "solid-js";
 import { withCsrf } from "../csrf";
+import { answerNodes } from "../fragment";
 
 // ..... i18n .....
 
@@ -101,11 +102,17 @@ export default function Editor(props: EditorProps): JSX.Element {
   const [preview, setPreview] = createSignal("");
   const [activeTab, setActiveTab] = createSignal<"edit" | "preview">("edit");
   // Kept separate from `preview` so that the only thing ever assigned to
-  // `preview` is a response body from the server, which has been through
-  // the same sanitiser as the stored document. The failure message is
-  // rendered as text below instead of being built into an HTML string
-  // here, so nothing this file composes can reach `innerHTML`.
+  // `preview` is a response body from the server. The failure message is
+  // rendered as text below instead of being built into an HTML string here.
   const [failed, setFailed] = createSignal(false);
+
+  // The preview becomes nodes the way every htmx answer does: parsed and
+  // kept only as far as `fragment-allowlist.ts` allows, so a modified
+  // server can put nothing into it that an honest one would not.
+  let previewBox: HTMLDivElement | undefined;
+  createEffect(() => {
+    previewBox?.replaceChildren(...answerNodes(preview()));
+  });
 
   // Debounced server render: 500 ms rather than 150 ms, because a pause
   // now costs a request rather than a local parse.
@@ -213,21 +220,7 @@ export default function Editor(props: EditorProps): JSX.Element {
           <Show when={failed()}>
             <p class="noombat-editor__preview-error">{strings().preview_unavailable}</p>
           </Show>
-          {/*
-            The one place this application assigns innerHTML, and the
-            rule is right to ask. What makes it safe is not that the
-            string came from our own server, but that it came from
-            `POST /api/v1/preview`, which runs the same
-            `noombat-markup` render and the same ammonia sanitiser as
-            the path that stores and federates the document, under the
-            same `MarkupOptions`. That equivalence is asserted by the
-            parity test in `crates/noombat-api/src/routes/preview.rs`.
-            Nothing composed in this file reaches here: the failure
-            message above is rendered as text, and `preview` is only
-            ever assigned a response body.
-          */}
-          {/* eslint-disable-next-line solid/no-innerhtml */}
-          <div innerHTML={preview()} />
+          <div ref={previewBox} />
         </div>
       </div>
     </div>

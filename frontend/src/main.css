@@ -400,9 +400,8 @@
  * These are the project's own rules and use `display`, not the
  * `opacity`/`visibility` pair htmx injects for itself.
  *
- * htmx's injection is disabled through the htmx-config meta element in
- * crates/noombat-api/templates/base.html, because the <style> element it
- * appends violates `style-src 'self'`.
+ * htmx's injection is off in its frozen configuration (htmx-config.ts),
+ * because the <style> element it appends violates `style-src 'self'`.
  *
  * The compound selector matches an element that is both the indicator and
  * the request target, which is what `hx-indicator` produces:

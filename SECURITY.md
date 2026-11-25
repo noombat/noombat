@@ -118,10 +118,10 @@ Templates carry no inline script, no inline event handlers, and no inline styles
 This is not only defence in depth:
 enforcement mechanisms in category 2 above rely on the CSP to constrain what enrolled pages may execute, so a policy weakened by `'unsafe-inline'` would forfeit that route.
 
-htmx, which swaps HTML from the server into a page after it loads, drops the script elements of what it swaps in:
-every script a page needs loads with the page, and the bundle the release builds holds htmx's `allowScriptTags` off where the configuration the server sends cannot turn it back on.
-That does not stop every script such HTML can carry: an `<iframe srcdoc>` runs one in every browser, and a declarative shadow root or an out-of-band element wrapped in a `<template>` does in Chromium and WebKit.
-It can also link a same-origin stylesheet, and a meta refresh or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header can move the page elsewhere.
+htmx, which swaps HTML from the server into a page after it loads, gets that HTML only through the release's own script, as does the editor's preview.
+It parses each answer itself, without declarative shadow roots, and keeps only the elements, attributes and values the honest answers use, an `id` or an `hx-target` only in the honest patterns, without serialising it again: no script, frame, template, stylesheet, refresh, form or title in an answer reaches the page, whichever way htmx inserts it.
+htmx's configuration is the release's, frozen where the server cannot change it, and htmx never sees an `HX-*` response header, so an answer cannot move the page, push an address or redirect a swap.
+What an answer can still do is what an honest one does: arrange the release's own styles, which could imitate the page, and carry items whose `hx-get` or `hx-delete` asks for any path on the instance, to replace that item or the row or box it sits in.
 
 ## Supply chain
 

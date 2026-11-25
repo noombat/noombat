@@ -4,43 +4,85 @@
 // Bundled htmx entry point.
 // Importing htmx starts it: it processes the page once the document is ready.
 //
-// Upgrading htmx: `crates/noombat-api/templates/base.html` carries an
-// htmx-config meta element with two settings. includeIndicatorStyles is
-// off, because the <style> element htmx injects during initialisation
-// violates `style-src 'self'`; htmx reads the element while initialising,
-// so that setting cannot be made from here, and it is the only thing
-// preventing the violation. responseHandling makes htmx swap a 204, so a
-// removed row leaves its page. An upgrade that stopped honouring the
-// element or either setting would silently undo one of them.
+// Everything the server sends htmx passes through here first, so that an
+// answer can change no more than the part of the page that asked for it.
+// The modules below are the release's, attested by its manifest; nothing
+// the server sends can switch any of it off.
 //
-// `htmx.spec.ts` asserts the installed bundle still supports all three,
-// and the end-to-end suite fails on any securitypolicyviolation and
-// removes a row in a browser.
+// `htmx.spec.ts` checks that the installed bundle still works the way
+// this relies on: one parse function, configuration read through the
+// exported object and replaced only by assignment, response headers read
+// through `getResponseHeader`, and page moves through `htmx.location`.
 //
 // The indicator rules in main.css are the project's own and use
 // `display` rather than htmx's `opacity`/`visibility`, so they are not a
 // copy of upstream and need no synchronisation with it.
 import htmx from "htmx.org";
 import { addCsrfHeader, showRefusal, type HtmxRequestDetail } from "./csrf";
+import { parseAnswer } from "./fragment";
+import { RELEASE_CONFIG } from "./htmx-config";
 
 /*
- * htmx drops the script elements of an answer it swaps in: every script
- * the pages need loads with its page, so a script in an answer is one no
- * release attested. It covers the answer's own script elements only; an
- * iframe's srcdoc, a declarative shadow root or a template's contents can
- * still carry one. The option has to hold through every replacement of
- * the configuration, because once the document is ready htmx replaces it
- * with a copy merged with the htmx-config meta element, which the server
- * writes, after this module has run. It relies on htmx reading its
- * configuration through the object it exports, and replacing it only by
- * assignment; `htmx.spec.ts` checks the bundle for both.
+ * The configuration is the release's alone. htmx replaces it, once the
+ * document is ready, with a copy merged with any htmx-config meta element
+ * the page carries, which the server writes; that assignment is ignored.
  */
-let config = { ...htmx.config, allowScriptTags: false };
+const config = Object.freeze({ ...htmx.config, ...RELEASE_CONFIG });
 Object.defineProperty(htmx, "config", {
   get: () => config,
-  set: (value: typeof config) => {
-    config = { ...value, allowScriptTags: false };
+  set: () => undefined,
+  configurable: false,
+});
+
+/*
+ * No HX-* response header reaches htmx: they move the page (HX-Redirect,
+ * HX-Location, HX-Refresh, HX-Push-Url), retarget a swap or fire events,
+ * and the honest server sends none. htmx reads them only through these
+ * two methods. And htmx moves the page only through `htmx.location`,
+ * which goes nowhere.
+ */
+const getResponseHeader = XMLHttpRequest.prototype.getResponseHeader;
+XMLHttpRequest.prototype.getResponseHeader = function (this: XMLHttpRequest, name: string) {
+  return /^hx-/i.test(name) ? null : getResponseHeader.call(this, name);
+};
+const getAllResponseHeaders = XMLHttpRequest.prototype.getAllResponseHeaders;
+XMLHttpRequest.prototype.getAllResponseHeaders = function (this: XMLHttpRequest) {
+  return getAllResponseHeaders
+    .call(this)
+    .split("\r\n")
+    .filter((line) => !/^hx-/i.test(line))
+    .join("\r\n");
+};
+Object.defineProperty(htmx, "location", {
+  value: Object.freeze({
+    get href() {
+      return location.href;
+    },
+    set href(_: string) {},
+    reload() {},
+  }),
+  writable: false,
+  configurable: false,
+});
+
+/*
+ * htmx turns every answer into nodes through `Document.parseHTMLUnsafe`
+ * where the browser has it and `DOMParser` otherwise. Both parse without
+ * declarative shadow roots and keep only what `fragment-allowlist.ts`
+ * names; other documents parse as `DOMParser` does.
+ */
+Object.defineProperty(Document, "parseHTMLUnsafe", {
+  value: parseAnswer,
+  writable: false,
+  configurable: false,
+});
+const parseFromString = DOMParser.prototype.parseFromString;
+Object.defineProperty(DOMParser.prototype, "parseFromString", {
+  value: function (this: DOMParser, text: string, type: DOMParserSupportedType) {
+    return type === "text/html" ? parseAnswer(text) : parseFromString.call(this, text, type);
   },
+  writable: false,
+  configurable: false,
 });
 
 // Every htmx write carries the session's CSRF token as a header.

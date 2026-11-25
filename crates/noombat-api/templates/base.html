@@ -17,21 +17,6 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <!--
-      HTMX injects a style element for its request-indicator classes
-      during initialisation. A `style-src 'self'` policy without
-      'unsafe-inline' blocks it, which raised a securitypolicyviolation
-      on every page load. Disabling the injection here rather than in
-      htmx.ts is necessary: htmx reads this meta element while
-      initialising, before a deferred module script could set the option.
-      The equivalent rules live in frontend/src/main.css.
-
-      `responseHandling` is htmx's default without its exception for 204,
-      which it leaves unswapped: the pages' remove buttons are answered
-      204, and swapping that empty answer is what takes the row off the
-      page. This list replaces htmx's whole default, not only its 204 entry.
-    -->
-    <meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"[23]..","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
     <!-- The session's CSRF token, which htmx.js and the front end's
          writes send as the X-CSRF-Token header. A write the session
          cookie authenticates is refused without it. -->

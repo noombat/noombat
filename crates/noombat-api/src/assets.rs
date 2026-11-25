@@ -525,7 +525,6 @@ mod tests {
                 || ["viewport", "robots", "csrf-token"]
                     .iter()
                     .any(|name| content(name, '"'))
-                || content("htmx-config", '\'')
         };
         let loads_nothing = |tag: &str| {
             let Some(rest) = tag

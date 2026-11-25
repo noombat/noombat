@@ -2,56 +2,40 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * Guards the htmx behaviours the configuration in base.html depends on,
- * and those the `allowScriptTags` setting in htmx.ts depends on.
+ * Guards the htmx behaviours `htmx.ts` relies on to keep an answer to the
+ * part of the page that asked for it, and the release's htmx
+ * configuration in `htmx-config.ts`.
  *
- * The `responseHandling` setting there makes htmx swap a 204, so that a
- * removed row leaves its page; it has to stay htmx's own default but for
- * that one rule, and htmx has to keep replacing its list with it. The
- * rest of this comment is about the other setting.
+ * `htmx.ts` freezes the configuration, hides HX-* response headers,
+ * makes `htmx.location` go nowhere, and replaces the two parse functions
+ * htmx uses. Each holds only while htmx works the way these tests pin:
+ * an upgrade that parsed answers some other way, read headers some other
+ * way, or wrote to its configuration, would slip past it unnoticed.
  *
- * htmx appends a `<style>` element during initialisation, which
- * `style-src 'self'` without `'unsafe-inline'` blocks. The injection is
- * disabled by an `htmx-config` meta element in
- * `crates/noombat-api/templates/base.html`, which relies on htmx both
- * reading that element and honouring `includeIndicatorStyles`.
+ * There is nowhere useful to put a comment warning about it:
+ * `package.json` cannot carry comments, and the dependency is declared
+ * as a range rather than a version, so there is no version string to
+ * annotate. This test is the reminder instead, and it fails at the point
+ * an upgrade lands rather than in review.
  *
- * An upgrade that dropped either would silently reintroduce a policy
- * violation on every page. There is nowhere useful to put a comment
- * warning about it: `package.json` cannot carry comments, and the
- * dependency is declared as a range rather than a version, so there is
- * no version string to annotate. This test is the reminder instead, and
- * it fails at the point an upgrade lands rather than in review.
- *
- * The end-to-end suite catches the same regression from the other
- * direction, by failing on any `securitypolicyviolation` event, but only
- * where a live instance is available.
+ * The end-to-end suite checks the same from the other direction, in the
+ * browsers: `htmx-fragments.spec.ts` answers htmx with what a modified
+ * server could send.
  */
 
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
+import { RELEASE_CONFIG } from "./htmx-config";
 
 // The module Vite bundles: the package's `main`.
 const BUNDLE = readFileSync(new URL("../node_modules/htmx.org/dist/htmx.esm.js", import.meta.url), {
   encoding: "utf8",
 });
 
-const BASE_HTML = readFileSync(
-  new URL("../../crates/noombat-api/templates/base.html", import.meta.url),
-  { encoding: "utf8" },
-);
-
 interface Rule {
   code: string;
   swap: boolean;
   error?: boolean;
-}
-
-/** The configuration `base.html` gives htmx in its meta element. */
-function metaConfig(): { responseHandling?: Rule[] } {
-  const content = /<meta name="htmx-config" content='([^']*)'>/.exec(BASE_HTML)?.[1];
-  expect(content, "base.html no longer carries the htmx-config meta element").toBeDefined();
-  return JSON.parse(content ?? "{}") as ReturnType<typeof metaConfig>;
 }
 
 /** htmx's own default `responseHandling`, as the bundle declares it. */
@@ -62,30 +46,23 @@ function defaultResponseHandling(): Rule[] {
 }
 
 /** The first rule htmx would apply to a status, as htmx itself picks one. */
-function ruleFor(status: number) {
-  return metaConfig().responseHandling?.find((rule) => new RegExp(rule.code).test(String(status)));
+function ruleFor(status: number): Rule | undefined {
+  return RELEASE_CONFIG.responseHandling.find((rule) => new RegExp(rule.code).test(String(status)));
+}
+
+/** How many times `pattern` occurs in the bundle. */
+function count(pattern: RegExp): number {
+  return BUNDLE.match(new RegExp(pattern.source, "g"))?.length ?? 0;
 }
 
 describe("htmx configuration surface", () => {
-  it("still reads responseHandling from its configuration", () => {
-    expect(
-      BUNDLE.includes("htmx.config.responseHandling"),
-      "htmx no longer reads htmx.config.responseHandling; the rule in base.html that swaps a 204 is being ignored",
-    ).toBe(true);
-  });
-
-  it("still honours includeIndicatorStyles", () => {
-    expect(
-      BUNDLE.includes("includeIndicatorStyles"),
-      "htmx no longer references includeIndicatorStyles; the htmx-config meta element in base.html may no longer suppress the injected <style> element",
-    ).toBe(true);
-  });
-
-  it("still reads configuration from the htmx-config meta element", () => {
-    expect(
-      BUNDLE.includes('meta[name="htmx-config"]'),
-      "htmx no longer reads meta[name=htmx-config]; the option set in base.html is being ignored",
-    ).toBe(true);
+  it("still reads every setting the release gives it from its configuration", () => {
+    for (const key of Object.keys(RELEASE_CONFIG)) {
+      expect(
+        new RegExp(`htmx\\.config\\.${key}\\b`).test(BUNDLE),
+        `htmx no longer reads htmx.config.${key}; htmx-config.ts sets a setting it ignores`,
+      ).toBe(true);
+    }
   });
 
   it("removes a swapped fragment's scripts when allowScriptTags is off", () => {
@@ -97,13 +74,18 @@ describe("htmx configuration surface", () => {
     ).toBe(true);
   });
 
-  it("replaces its configuration only by assigning htmx.config, once", () => {
-    // The property htmx.ts defines catches that assignment; a configuration
-    // replaced some other way would carry the option past it.
+  it("replaces its configuration only by assigning htmx.config, once, and writes no setting", () => {
+    // htmx.ts ignores that assignment and freezes the object: a setting
+    // written in place would throw, and a configuration replaced some
+    // other way would bypass the freeze.
     expect(
-      BUNDLE.match(/htmx\.config = /g)?.length,
+      count(/htmx\.config = /),
       "htmx replaces its configuration elsewhere too, or nowhere; re-check htmx.ts",
     ).toBe(1);
+    expect(
+      count(/htmx\.config\.\w+(\.\w+)* = /),
+      "htmx now writes a setting in place, which the frozen configuration refuses",
+    ).toBe(0);
   });
 
   it("reads its configuration through the object it exports", () => {
@@ -125,22 +107,46 @@ describe("htmx configuration surface", () => {
   });
 });
 
-describe("the htmx configuration in base.html", () => {
-  it("is htmx's own default without its rule for 204", () => {
-    expect(
-      metaConfig().responseHandling,
-      "base.html's responseHandling has drifted from htmx's default; an upgrade may have changed it",
-    ).toEqual(defaultResponseHandling().filter((rule) => rule.code !== "204"));
+describe("how htmx turns answers into nodes", () => {
+  it("parses every answer in one function, with parseHTMLUnsafe or DOMParser", () => {
+    // htmx.ts replaces both; a third way to parse would bypass the allowlist.
+    expect(count(/Document\.parseHTMLUnsafe\(/), "htmx calls parseHTMLUnsafe elsewhere").toBe(1);
+    expect(count(/\.parseFromString\(/), "htmx calls parseFromString elsewhere").toBe(1);
+    expect(count(/function parseHTML\(/)).toBe(1);
+    expect(count(/createContextualFragment|setHTMLUnsafe|\.innerHTML = |\.outerHTML = /)).toBe(0);
   });
 
-  it("replaces htmx's default list rather than merging into it", () => {
-    expect(/htmx\.config = mergeObjects\(htmx\.config, metaConfig\)/.test(BUNDLE)).toBe(true);
+  it("inserts no other HTML of its own but two fixed strings", () => {
+    expect(count(/insertAdjacentHTML\(/)).toBe(2);
     expect(
-      /function mergeObjects\(obj1, obj2\) \{\s*return Object\.assign\(\{\}, obj1, obj2\)/.test(
-        BUNDLE,
-      ),
-      "htmx no longer merges its configuration shallowly; the default rule for 204 may now come first",
-    ).toBe(true);
+      count(/insertAdjacentHTML\('afterend', "<div id='--htmx-preserve-pantry--'><\/div>"\)/),
+    ).toBe(1);
+    expect(count(/head\.insertAdjacentHTML\('beforeend',\s*`<style/)).toBe(1);
+  });
+});
+
+describe("how htmx follows the server", () => {
+  it("reads response headers only through getResponseHeader", () => {
+    // htmx.ts hides HX-* headers there.
+    expect(count(/getAllResponseHeaders/), "htmx reads all headers some other way").toBe(0);
+    expect(count(/getResponseHeader\(/)).toBeGreaterThan(5);
+  });
+
+  it("moves the page only through htmx.location", () => {
+    // htmx.ts makes htmx.location go nowhere.
+    expect(
+      count(/(?<!htmx\.)location\.(?:assign|replace|reload)\(|(?<!htmx\.)location\.href = /),
+    ).toBe(0);
+    expect(count(/htmx\.location\.(?:href = |reload\()/)).toBe(4);
+  });
+});
+
+describe("the release's htmx configuration", () => {
+  it("is htmx's own default responseHandling without its rule for 204", () => {
+    expect(
+      RELEASE_CONFIG.responseHandling,
+      "htmx-config.ts's responseHandling has drifted from htmx's default; an upgrade may have changed it",
+    ).toEqual(defaultResponseHandling().filter((rule) => rule.code !== "204"));
   });
 
   it("swaps a 204, so a removed row leaves the page", () => {

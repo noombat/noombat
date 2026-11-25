@@ -161,7 +161,6 @@ cat > "$TMP/inert" <<'FORMS'
 <link rel="(canonical|alternate)"( type="[^"<>]*")? href="[^"<>]*">
 <meta charset="utf-8">
 <meta name="(viewport|robots|csrf-token)" content="[^"<>]*">
-<meta name="htmx-config" content='[^'<>]*'>
 FORMS
 
 # Everything printed passes through `tr` at the end as printable ASCII, so
@@ -265,8 +264,8 @@ Only enforcement inside the browser can do that;
 see the WEBCAT note in [`SECURITY.md`](../SECURITY.md).
 
 Nor does it read the answers htmx fetches from a page's attributes, whether on loading or on a click; a page's own markup can fetch one as it opens.
-htmx as the release builds it, which step 2 checks, drops an answer's own script elements, but an answer can still run a script through an `<iframe srcdoc>`, in every browser, or through a declarative shadow root or an out-of-band element wrapped in a `<template>`, in Chromium and WebKit.
-The browser applies a same-origin stylesheet an answer links, and a meta refresh in it, or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header, moves you to another page.
+The release's own script, which step 2 checks, turns each such answer into nodes itself and keeps only the elements, attributes and values honest answers use, so no script, frame, stylesheet, refresh, form or title in one reaches the page, and it hides `HX-*` headers from htmx, so none moves you elsewhere.
+What an answer can still do is what an honest one does: arrange the release's own classes, and carry items that ask the instance for another answer or to remove them.
 
 ## 4. Reproduce the build yourself
 
