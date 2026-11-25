@@ -55,10 +55,10 @@ Neither is a substitute for enforcement at load time.
 *It does not detect* **targeting**: correct assets to whoever checks, modified assets to one session.
 Detection is per-observation, and nobody observes every load.
 
-*Attestation is not reproducibility.*
-The browser assets are known to be byte-reproducible from source and CI enforces that on every change.
-The Rust and Typst binaries are attested but have no reproducibility provisions, so an independent rebuild will not match their hashes;
-the manifests record what was shipped, not something you can recreate.
+*Attestation and reproducibility.*
+The browser assets and the Rust binaries are both attested and rebuilt to the same bytes from source:
+CI checks the assets on every change, and every release compares each file its image manifests list, the binaries included, with a second build of the same commit before it signs.
+[`docs/verifying-builds.md`](docs/verifying-builds.md) step 4 rebuilds both.
 
 **2. Enforcement in the browser.**
 Verification on every page load, before any script executes, requires a component the operator does not control.
@@ -179,16 +179,19 @@ They are requests the feature cannot work without, not reporting.
 
 ## Additional notes
 
-Two known gaps, stated rather than left to be "discovered".
+Two limits, stated rather than left to be "discovered".
 
-**Reproducible Rust builds are not implemented yet.**
-The manifests attest to the `noombat`, `noombat-chatmail-admin`, and `noombat-filtermail` binaries, i.e. you can confirm that the image you run is the image that was released, but nothing yet lets you confirm that the image corresponds to the source.
-Nothing sets `SOURCE_DATE_EPOCH` or `--remap-path-prefix`, and dependency paths under `$CARGO_HOME` reach the binary through panic location metadata, so an independent rebuild in a different environment will not match.
-Closing this needs those flags, a pinned toolchain version rather than `channel = "stable"`, and a CI gate that builds twice in different directories and compares.
-It is planned;
-until it lands, treat the binary hashes as a record of what shipped rather than something you can recreate.
+**The Rust binaries are reproducible within the build image, and only there.**
+The `noombat`, `noombat-chatmail-admin`, and `noombat-filtermail` binaries come out byte for byte the same from the same commit, so you can confirm both that the image you run is the image that was released and that its binaries correspond to the source.
+That holds because every build runs in the same digest-pinned Rust image, under the same paths (`/build`, and Cargo's home at `/usr/local/cargo`), with the release `rust-toolchain.toml` names, which the build checks, and exactly the dependencies `Cargo.lock` records (`--locked`).
+Paths reach the binaries through panic locations, and nothing remaps them, so a build outside that image, such as a plain `cargo build`, will not match.
+The binaries are for x86-64 (`linux/amd64`); a build on an arm64 machine produces other ones.
+Builds have matched on GitHub's runners and on one machine outside GitHub, a different Docker version and image store included.
+Each release builds once, compares every file its manifests list with `verify.yml`'s build of the same commit on another runner, and refuses to sign on any difference but the asset manifest's version label; the maintainer rebuilds the binaries on their own machine before publishing it.
+The manifests cover the roots `docs/verifying-builds.md` lists, not every file in the images.
 The `typst` binary is a separate case:
 it is not built here at all, but taken from the `ghcr.io/typst/typst` image, pinned by digest in the Dockerfile, which makes it immutable rather than reproducible.
+Debian packages are installed from the archive at build time, so their files can differ between builds made on different days, and the manifests list them by name and version.
 
 **Signing trusts the build platform.**
 GitHub Actions, Fulcio, and Rekor are in the trusted set.

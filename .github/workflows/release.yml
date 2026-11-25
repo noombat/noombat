@@ -28,7 +28,10 @@
 # A tag push leaves the GitHub release as a draft, its signed manifests
 # attached, for the maintainer to check and publish. Releases here are
 # immutable once published: a mistake in one cannot be corrected, and its
-# tag name cannot be used again.
+# tag name cannot be used again. Before publishing, the maintainer
+# rebuilds the Rust binaries on their own machine, as step 4 of
+# docs/verifying-builds.md describes, and publishes only if they match
+# the draft's signed manifests.
 #
 # Four properties this workflow is arranged to hold:
 #
@@ -552,11 +555,12 @@ jobs:
           fi
           web="Releases, the draft $GITHUB_REF_NAME, Edit, $latest \"Set as the latest release\""
           web="$web, Publish release"
-          echo "::notice::the release is a draft; check it, then publish it: $web; or $cmd"
+          echo "::notice::the release is a draft; check it, rebuild its Rust binaries as step 4 of docs/verifying-builds.md describes, then publish it: $web; or $cmd"
           {
             echo "### The release is a draft"
             echo ""
-            echo "Check it, then publish it on the web: $web."
+            echo "Check it, and rebuild its Rust binaries as step 4 of docs/verifying-builds.md describes;"
+            echo "publish it only if they match, on the web: $web."
             echo "Or with gh: \`$cmd\`."
             echo "Once published, its assets and tag are locked."
           } >> "$GITHUB_STEP_SUMMARY"

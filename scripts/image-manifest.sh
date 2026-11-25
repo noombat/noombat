@@ -13,10 +13,11 @@
 #
 #   1. Attestation is not reproducibility. These hashes record what was
 #      shipped, so an operator can confirm their image matches the
-#      release. Only the frontend assets are additionally known to be
-#      byte-reproducible from source; the Rust and Typst binaries have
-#      no reproducibility provisions, so an independent rebuild will
-#      not match. docs/verifying-builds.md states which is which.
+#      release. The frontend assets and the Rust binaries also rebuild
+#      to the same bytes, the binaries only in the pinned build image;
+#      the Typst binary is copied from a pinned image, and files that
+#      Debian packages install can differ between builds made on
+#      different days. docs/verifying-builds.md states which is which.
 #   2. Package entries are names and versions, not content hashes. They
 #      pin what the Debian archive was asked for, not what it returned.
 #

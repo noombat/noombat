@@ -41,14 +41,13 @@ Each Sigstore bundle carries a signature, a certificate, and a Rekor inclusion p
 
 Each manifest also records the version and commit it was built from.
 
-**Attestation is not reproducibility.**
-The browser assets are both:
+**Attestation and reproducibility.**
+The browser assets and the three Rust binaries are both:
 attested, and known to rebuild byte-identically from source.
-The Rust binaries are attested only.
-Reproducible Rust builds are planned but not implemented yet, so an independent rebuild will *not* produce matching hashes;
-step 4 below therefore covers the assets and nothing else.
-The binary entries let you confirm that the image you are running is the image that was released, not that it corresponds to the source.
-See the gaps section of [`SECURITY.md`](../SECURITY.md) for what closing this requires.
+Step 4 below rebuilds both, so the entries let you confirm that the image you are running is the image that was released, and that its binaries and assets correspond to the source.
+The binaries match only when built in the digest-pinned Rust image the Dockerfiles name, for x86-64, as step 4 does;
+the release itself refuses to sign unless a second build of the same commit, made on another runner, gave the same hash for every file the manifests list.
+See the notes in [`SECURITY.md`](../SECURITY.md) for why, and for what is not reproducible.
 
 The `typst` binary is a different case:
 it is not built here, but taken from the `ghcr.io/typst/typst` image, pinned by digest in the Dockerfile.
@@ -62,7 +61,7 @@ One build produces both, so the image an operator runs and the hashes that are s
 That distinction matters:
 the image builds the frontend inside a digest-pinned Node base, whereas a build on the CI runner uses whatever that runner provides.
 Attesting to the second would sign bytes no operator serves, and any divergence between the two would appear as a mismatch on instances that are in fact honest.
-The release workflow asserts that a host build reproduces the image build, which is what keeps step 3 below meaningful.
+The release workflow asserts that a host build reproduces the image build, which is what keeps step 4 below meaningful.
 
 Signing is keyless.
 The certificate binds the signature to the release workflow's identity rather than to a long-lived private key, so a signature produced anywhere other than that workflow fails the identity check below.
@@ -72,28 +71,32 @@ The signature is recorded in the Rekor transparency log at signing time, which m
 
 - [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) v3 or later
 - `sha256sum`, `curl` 7.83 or later with HTTP/2 (`curl -V` lists `HTTP2`), and `jq`
+- Docker, for rebuilding the binaries in step 4
 
-## 1. Verify the signature on the manifest
+## 1. Verify the signatures on the manifests
 
-Download both files from the release, then:
+Download the three manifests and their three bundles from the release into one directory, then, in it:
 
 ```sh
 TAG=v0.1.0  # the release you are checking
 
-cosign verify-blob \
-  --bundle assets-manifest.sigstore.json \
-  --certificate-identity \
-    "https://github.com/noombat/noombat/.github/workflows/release.yml@refs/tags/${TAG}" \
-  --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-  assets-manifest.json
+for manifest in assets-manifest server-image-manifest chatmail-image-manifest; do
+  cosign verify-blob \
+    --bundle "$manifest.sigstore.json" \
+    --certificate-identity \
+      "https://github.com/noombat/noombat/.github/workflows/release.yml@refs/tags/${TAG}" \
+    --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+    "$manifest.json"
+done
 ```
 
 `--certificate-identity` is the part that carries the weight.
 Without it, `cosign` accepts a signature from *any* Sigstore identity, and the check degenerates into "somebody signed this".
 The value must name this repository, this workflow, and the tag you are verifying.
 
-Expect `Verified OK`.
+Expect `Verified OK` three times.
 Anything else means stop.
+The steps below run in the same directory, and step 4 reads the manifests from it.
 
 ## 2. Compare against the assets an instance serves
 
@@ -271,6 +274,7 @@ The signature attests that the release workflow produced those hashes.
 To check that the *source* produces them, build it:
 
 ```sh
+MANIFESTS=$PWD  # the directory holding the manifests from step 1
 git clone https://github.com/noombat/noombat
 cd noombat
 git checkout "$TAG"
@@ -282,7 +286,7 @@ pnpm build
 cd ..
 
 scripts/asset-manifest.sh > local-manifest.json
-diff <(jq -S .assets assets-manifest.json) <(jq -S .assets local-manifest.json)
+diff <(jq -S .assets "$MANIFESTS/assets-manifest.json") <(jq -S .assets local-manifest.json)
 ```
 
 The `assets` objects should be identical.
@@ -292,11 +296,34 @@ The build is deterministic and CI enforces that on every change to the frontend 
 either the release did not come from this source, or the build has acquired a dependency on its environment.
 Both are worth reporting.
 
-Only the browser assets can be checked this way;
-see the note on attestation versus reproducibility above.
 This step compares a build on your machine against a manifest taken from the release image, so it also exercises reproducibility across environments.
 The release workflow performs the same comparison before signing and refuses to publish if the two disagree;
 a difference you observe locally therefore points at your toolchain or at the source, not at a known gap.
+
+The Rust binaries are built the way the release builds them, in the Rust image the Dockerfiles pin, for x86-64, from the same checkout.
+Docker is all it needs on an x86-64 machine.
+On an arm64 one it also needs x86-64 emulation (QEMU through binfmt, which Docker Desktop includes); that is much slower, and a match under emulation has not been tried.
+Each image's build stage is built on its own and the binaries copied out of it:
+
+```sh
+docker build --platform linux/amd64 --target builder --load -t noombat-rebuild-server .
+docker build --platform linux/amd64 --target rust-builder -f Dockerfile.chatmail \
+  --load -t noombat-rebuild-chatmail .
+
+for pair in server:noombat chatmail:noombat-chatmail-admin chatmail:noombat-filtermail; do
+  image=${pair%%:*}
+  binary=${pair#*:}
+  container=$(docker create --platform linux/amd64 "noombat-rebuild-$image")
+  docker cp "$container:/build/target/release/$binary" "$binary"
+  docker rm "$container" > /dev/null
+  echo "$(jq -r --arg p "usr/local/bin/$binary" '.files[$p]' "$MANIFESTS/$image-image-manifest.json")  $binary" |
+    sha256sum -c
+done
+```
+
+Each line should end in `OK`.
+The `--platform` flag matters: without it an arm64 machine builds arm64 binaries, which cannot match.
+A mismatch on x86-64 is worth reporting, with the commit and the output of `docker version`.
 
 ## 5. Limits of this procedure
 
