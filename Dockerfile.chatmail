@@ -108,14 +108,6 @@ RUN groupadd -g 5000 vmail && \
 # parses attacker-supplied MIME and needs no access to anybody's mail.
 RUN useradd -r -s /usr/sbin/nologin filtermail
 
-# Create Postfix access map files and the transport_maps file.
-RUN touch /etc/postfix/noombat_recipient_access \
-          /etc/postfix/noombat_sender_access \
-          /etc/postfix/noombat_transport_maps && \
-    postmap /etc/postfix/noombat_recipient_access && \
-    postmap /etc/postfix/noombat_sender_access && \
-    postmap /etc/postfix/noombat_transport_maps
-
 # Copy Chatmail-specific Postfix and Dovecot configuration.
 COPY chatmail-config/main.cf /etc/postfix/main.cf
 COPY chatmail-config/noombat_login_map /etc/postfix/noombat_login_map
