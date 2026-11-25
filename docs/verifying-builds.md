@@ -71,7 +71,7 @@ The signature is recorded in the Rekor transparency log at signing time, which m
 ## Prerequisites
 
 - [`cosign`](https://docs.sigstore.dev/cosign/system_config/installation/) v3 or later
-- `sha256sum`, `curl`, and `jq`
+- `sha256sum`, `curl` 7.83 or later with HTTP/2 (`curl -V` lists `HTTP2`), and `jq`
 
 ## 1. Verify the signature on the manifest
 
@@ -103,8 +103,8 @@ Fetch them from the instance and hash them:
 ```sh
 INSTANCE=https://noombat.example.com
 
-jq -r '.assets | to_entries[] | "\(.key) \(.value)"' assets-manifest.json \
-  | while read -r path expected; do
+jq -r '.assets | to_entries[] | "\(.key) \(.value)"' assets-manifest.json |
+  while read -r path expected; do
       actual=$(curl -fsSL "${INSTANCE}/assets/${path}" | sha256sum | cut -d' ' -f1)
       if [ "$actual" = "$expected" ]; then
           printf '  ok        %s\n' "$path"
@@ -135,32 +135,135 @@ Images published by `release.yml` always carry real values, and the same values 
 Step 2 verifies the files the manifest names.
 It cannot see a file the manifest does not name.
 An operator can add a same-origin script, reference it from a modified template, and leave every hash in step 2 matching; `script-src 'self'` permits it.
+A stylesheet matters too: it can change what a page shows, and leak parts of the page to the server through the images and fonts it requests.
 
 So **check the complement**:
-every script a page loads must appear in the manifest.
+every script and stylesheet a page loads must be one the manifest names, the page's Content-Security-Policy must still allow scripts and styles only from the instance's own files, with no inline code, and the page must arrive in the form the check reads, without sending you on to another page.
+
+**The check sees what the instance sends to curl.**
+curl is easy to tell from a browser, so an operator who knows this procedure can send curl the release and browsers something else.
+A clean result therefore rules out a change sent to everyone, such as by a compromised or careless server, not an operator set on deceiving the check.
+
+Most of these pages need you to be logged in.
+Set `COOKIE` to `__Host-noombat_session=` followed by that cookie's value, which your browser's developer tools show under Storage or Application, then Cookies.
+The cookie lasts as long as the instance's sessions, 15 minutes unless its operator changed that, so copy it just before running the check.
+It is a credential: anyone who has it is logged in as you.
 
 ```sh
-for path in / /auth/login /auth/register /chat /settings/chat /compose; do
-  curl -fsSL "${INSTANCE}${path}" \
-    | grep -o 'src="/assets/[^"]*"' \ |  |  |  |  |  |  |
-    |---------------------------------|--|--|--|--|--|--|
-    | while read -r asset; do         |  |  |  |  |  |  |
-        if jq -e --arg a "$asset" '.assets | has($a)' \
-             assets-manifest.json > /dev/null; then
-          printf '  ok        %s -> %s\n' "$path" "$asset"
-        else
-          printf '  UNKNOWN   %s -> %s (not in the manifest)\n' "$path" "$asset"
-        fi
-      done
-done
+COOKIE=''  # __Host-noombat_session=..., for the pages behind a login
+TMP=$(mktemp -d)
+
+# The tags, besides the release's scripts and stylesheets, that load nothing.
+cat > "$TMP/inert" <<'FORMS'
+<link rel="(canonical|alternate)"( type="[^"<>]*")? href="[^"<>]*">
+<meta charset="utf-8">
+<meta name="(viewport|robots|csrf-token)" content="[^"<>]*">
+<meta name="htmx-config" content='[^'<>]*'>
+FORMS
+
+# Everything printed passes through `tr` at the end as printable ASCII, so
+# that a page cannot rewrite what you see.
+for path in / /auth/login /auth/register /auth/upgrade /chat /compose /settings/profile /settings/chat; do
+  echo "$path"
+  # Not following redirects, so the page is the address's own; the headers
+  # are the final response's alone, as curl reads them.
+  if ! curl -fsS --cookie "$COOKIE" -o "$TMP/page" \
+      -w '%{http_code} %{redirect_url}\n%{http_version}\n%{header_json}' \
+      "${INSTANCE}${path}" > "$TMP/answer"; then
+    echo "  FAILED    could not fetch it"
+    continue
+  fi
+  answer=$(sed -n 1p "$TMP/answer")
+  case "$answer" in
+    "200 "*) ;;
+    *) echo "  NOTE      answered $answer"; continue ;;
+  esac
+  sed 1,2d "$TMP/answer" > "$TMP/headers"
+
+  # The form the rest assumes: HTTP/2 or 3, where curl and a browser cannot
+  # read a header or the body's length differently; UTF-8 HTML, with no
+  # byte order mark and no compression; and no header that loads a
+  # stylesheet or moves to another page.
+  version=$(sed -n 2p "$TMP/answer")
+  case "$version" in
+    2 | 3) ;;
+    *) echo "  RESPONSE  HTTP/$version" ;;
+  esac
+  jq -r 'def report(name): .[name] // empty | "  RESPONSE  \(name): \(join(", "))";
+         if ."content-type" == ["text/html; charset=utf-8"] then empty
+         else report("content-type") // "  RESPONSE  no content-type" end,
+         report("content-encoding"), report("transfer-encoding"), report("link"),
+         report("refresh"), report("speculation-rules")' "$TMP/headers" ||
+    echo "  RESPONSE  headers unreadable"
+  case $(head -c 2 "$TMP/page" | od -An -tx1 | LC_ALL=C tr -d ' \n') in
+    efbb | feff | fffe) echo "  RESPONSE  starts with a byte order mark" ;;
+  esac
+
+  # The policy one directive per line, its name lower-cased, read as bytes
+  # (LC_ALL=C). Only printable ASCII is expected: a browser also splits a
+  # directive at a form feed or a carriage return, which awk does not.
+  jq -r '."content-security-policy" // [] | .[]' "$TMP/headers" > "$TMP/csp"
+  LC_ALL=C grep -q '[^ -~]' "$TMP/csp" &&
+    echo "  POLICY    holds a character other than printable ASCII"
+  LC_ALL=C awk -F '[,;]' '{ for (i = 1; i <= NF; i++) print $i }' "$TMP/csp" |
+    LC_ALL=C awk 'NF { $1 = tolower($1); print }' > "$TMP/policy"
+  for rule in "default-src 'none'" "script-src 'self'" "style-src 'self'"; do
+    LC_ALL=C grep -qxF "$rule" "$TMP/policy" || printf '  POLICY    no %s\n' "$rule"
+  done
+  LC_ALL=C grep -E '^(default|script|style)-src(-elem|-attr)?( |$)' "$TMP/policy" |
+    while read -r rule; do
+      case "$rule" in
+        "default-src 'none'" | "script-src 'self'" | "style-src 'self'") ;;
+        *) printf '  POLICY    %s\n' "$rule" ;;
+      esac
+    done
+
+  # Every script, link, style, base, frame, object, embed or meta tag, with
+  # the page joined onto one line and its spaces squeezed, so that a tag
+  # split across lines is still found, and any NUL made visible: GNU grep
+  # prints nothing for a page holding one, and where a grep prints it,
+  # `read` drops it from inside a tag.
+  LC_ALL=C tr '\000\n\r\t' '?   ' < "$TMP/page" | LC_ALL=C tr -s ' ' |
+    LC_ALL=C grep -oiE '<(script|link|style|base|i?frame|object|embed|meta)[^>]*>' |
+    while read -r tag; do
+      name=$(printf '%s\n' "$tag" | LC_ALL=C sed -nE \
+        -e 's#^<script type="module" src="/assets/([A-Za-z0-9_.-]+\.js)">$#\1#p' \
+        -e 's#^<script src="/assets/([A-Za-z0-9_.-]+\.js)" type="module">$#\1#p' \
+        -e 's#^<link rel="stylesheet" href="/assets/([A-Za-z0-9_.-]+\.css)">$#\1#p')
+      if [ -n "$name" ] && jq -e --arg a "$name" '.assets | has($a)' \
+           assets-manifest.json > /dev/null; then
+        printf '  ok        %s\n' "$name"
+      elif ! printf '%s\n' "$tag" | LC_ALL=C grep -qxEf "$TMP/inert"; then
+        printf '  UNKNOWN   %s\n' "$tag"
+      fi
+    done > "$TMP/tags"
+  cat "$TMP/tags"
+  grep -q '^  ok ' "$TMP/tags" || echo "  UNKNOWN   no script or stylesheet the manifest names"
+done 2>&1 | LC_ALL=C tr -c ' -~\n' '?'
+rm -r "$TMP"
 ```
 
-Anything reported `UNKNOWN`, or any `<script src=...>` pointing outside `/assets/`, is code the release never attested to.
+On an instance running the release, every line under each page reads `ok`.
+`UNKNOWN` shows a tag the release does not write, or a file the manifest does not name: code or styles the release never attested to.
+`UNKNOWN   no script or stylesheet the manifest names` means the page showed none in a form the release writes, which every page of the release does.
+The check accepts only the exact forms the release writes, so it also reports a harmless variation; read the tag before concluding anything.
+`POLICY` shows a rule for scripts or styles that differs from the release's three, such as one allowing inline code or another origin, or one of the three missing, or a policy holding characters the release's does not.
+`RESPONSE` shows a page sent in another form than the release sends it, which a browser could read differently from the check, or with a header that loads a stylesheet or moves you to another page: an HTTP version other than 2 or 3, another content type or character set, a byte order mark, compression or a transfer coding, or a `Link`, `Refresh` or `Speculation-Rules` header.
+An instance whose proxy speaks only HTTP/1.1 cannot be checked this way.
+`NOTE` means the address answered with something other than its page, usually a redirect to the login page, so the page went unchecked: set `COOKIE` and run it again.
+Any character other than printable ASCII is shown as `?`.
+The list holds every page that loads a script or stylesheet of its own, plus `/`.
+A modified instance can change any page, so the result covers only the pages checked; add any other page you use.
 
 This is still a check you perform once, on markup you fetched once.
+It reads that markup as text, not as a browser does, and accepts only the release's exact forms so that a difference shows; it cannot prove a page safe.
 It does not run on every page load, and it cannot see scripts injected by already-running JavaScript.
 Only enforcement inside the browser can do that;
 see the WEBCAT note in [`SECURITY.md`](../SECURITY.md).
+
+Nor does it read the answers htmx fetches from a page's attributes, whether on loading or on a click; a page's own markup can fetch one as it opens.
+htmx runs a script in such an answer that names a same-origin file, and the browser applies a same-origin stylesheet the answer links.
+A meta refresh in the answer, or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header, moves you to another page.
 
 ## 4. Reproduce the build yourself
 
@@ -197,9 +300,9 @@ a difference you observe locally therefore points at your toolchain or at the so
 
 ## 5. Limits of this procedure
 
-Checking once tells you what the instance served *once*.
-An operator can serve correct assets to everyone who looks and modified assets to a single targeted user, and a manual check will not catch that.
-Steps 2 and 3 together cover substitution and addition at the moment you look;
+Checking once tells you what the instance served, to curl, *once*.
+An operator can serve correct assets to everyone who looks and modified assets to a single targeted user, or to every browser while curl gets the release, and a manual check will not catch that.
+Steps 2 and 3 together cover substitution and addition at the moment you look, within the limits step 3 states;
 neither covers targeting, nor the next page load.
 Closing that gap requires the browser itself to enforce the check on every load, which is what the WEBCAT work described in [`SECURITY.md`](../SECURITY.md) aims at.
 

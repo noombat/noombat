@@ -48,7 +48,8 @@ See [`docs/verifying-builds.md`](docs/verifying-builds.md).
 The manifest is a set of hashes for files that exist; it says nothing about which files a page loads.
 An operator can add a same-origin script the manifest never names, load it from a modified template, and leave every manifest entry verifying.
 `script-src 'self'` permits it.
-The end-to-end suite closes this for the pages it covers by checking the complement, i.e. that nothing outside the manifest is loaded, and [`docs/verifying-builds.md`](docs/verifying-builds.md) gives the same check to readers.
+The end-to-end suite closes this for the pages it covers by checking the complement, i.e. that nothing outside the manifest is loaded, and [`docs/verifying-builds.md`](docs/verifying-builds.md) gives readers a similar check.
+The readers' check sees what the instance sends to curl, and curl is easy to tell from a browser, so in the pages it checks it catches a change sent to everyone, but not an operator who sends the check something else.
 Neither is a substitute for enforcement at load time.
 
 *It does not detect* **targeting**: correct assets to whoever checks, modified assets to one session.

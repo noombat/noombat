@@ -471,21 +471,130 @@ mod tests {
         kept + rest
     }
 
-    /// Every template's text without its comments, where a call loads
-    /// nothing.
-    fn templates() -> Vec<(PathBuf, String)> {
+    /// Every template's text as its page carries it: without the template
+    /// comments, which render to nothing, but with the HTML ones.
+    fn served_templates() -> Vec<(PathBuf, String)> {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("templates");
         let found: Vec<(PathBuf, String)> = std::fs::read_dir(&dir)
             .expect("templates readable")
             .map(|file| {
                 let path = file.expect("a template").path();
                 let text = std::fs::read_to_string(&path).expect("a template's text");
-                let text = without(&without(&text, "{#", "#}"), "<!--", "-->");
-                (path, text)
+                (path, without(&text, "{#", "#}"))
             })
             .collect();
         assert!(found.len() > 30, "the templates were read");
         found
+    }
+
+    /// Every template's text without its comments, where a call loads
+    /// nothing.
+    fn templates() -> Vec<(PathBuf, String)> {
+        served_templates()
+            .into_iter()
+            .map(|(path, text)| (path, without(&text, "<!--", "-->")))
+            .collect()
+    }
+
+    /// Every tag a page carries that could load code or styles is in a
+    /// form the check in docs/verifying-builds.md accepts, so that check
+    /// reports nothing on an honest instance. An HTML comment reaches the
+    /// page too, so a tag named in one counts. Like the check, this reads
+    /// each tag with its line breaks and tabs as spaces, and runs of spaces
+    /// as one.
+    #[test]
+    fn every_loading_tag_is_in_a_form_the_verification_guide_accepts() {
+        // The check accepts a script only as a `.js` file: every entry Vite
+        // builds is a script but `main`, whose file is a stylesheet.
+        let script_entry = |name: &str| ENTRIES.contains(&name) && name != "main";
+        let script = |tag: &str, head: &str, tail: &str| {
+            tag.strip_prefix(head)
+                .and_then(|rest| rest.strip_suffix(tail))
+                .is_some_and(script_entry)
+        };
+        // A link or meta tag the check skips, in the forms it lists: no value
+        // holds an angle bracket or the quote around it.
+        let plain = |value: &str| !value.contains(['"', '<', '>']);
+        let inert_meta = |tag: &str| {
+            let content = |name: &str, quote: char| {
+                tag.strip_prefix(&format!(r#"<meta name="{name}" content={quote}"#))
+                    .and_then(|rest| rest.strip_suffix(&format!("{quote}>")))
+                    .is_some_and(|value| !value.contains([quote, '<', '>']))
+            };
+            tag == r#"<meta charset="utf-8">"#
+                || ["viewport", "robots", "csrf-token"]
+                    .iter()
+                    .any(|name| content(name, '"'))
+                || content("htmx-config", '\'')
+        };
+        let loads_nothing = |tag: &str| {
+            let Some(rest) = tag
+                .strip_prefix(r#"<link rel="canonical" "#)
+                .or_else(|| tag.strip_prefix(r#"<link rel="alternate" "#))
+            else {
+                return false;
+            };
+            let rest = match rest.strip_prefix(r#"type=""#) {
+                Some(typed) => match typed.split_once(r#"" "#) {
+                    Some((kind, rest)) if plain(kind) => rest,
+                    _ => return false,
+                },
+                None => rest,
+            };
+            rest.strip_prefix(r#"href=""#)
+                .and_then(|href| href.strip_suffix(r#"">"#))
+                .is_some_and(plain)
+        };
+        let accepted = |tag: &str| {
+            script(
+                tag,
+                r#"<script type="module" src="{{ crate::assets::url(""#,
+                r#"") }}">"#,
+            ) || script(
+                tag,
+                r#"<script src="{{ crate::assets::url(""#,
+                r#"") }}" type="module">"#,
+            ) || [
+                r#"<link rel="stylesheet" href="{{ href }}">"#,
+                r#"<link rel="stylesheet" href="{{ crate::assets::url("main") }}">"#,
+            ]
+            .contains(&tag)
+                || loads_nothing(tag)
+                || inert_meta(tag)
+        };
+        let mut tags = 0;
+        for (path, text) in served_templates() {
+            let lower = text.to_ascii_lowercase();
+            for open in [
+                "<script", "<link", "<style", "<base", "<iframe", "<frame", "<object", "<embed",
+                "<meta",
+            ] {
+                for (start, _) in lower.match_indices(open) {
+                    let end = text[start..]
+                        .find('>')
+                        .map_or(text.len(), |i| start + i + 1);
+                    let tag = text[start..end]
+                        .split([' ', '\t', '\n', '\r'])
+                        .filter(|word| !word.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" ");
+                    tags += 1;
+                    // The OAuth hand-off page sends the browser on by design; the
+                    // guide checks no such page.
+                    if path.ends_with("oauth_continue.html")
+                        && tag == r#"<meta http-equiv="refresh" content="0;url={{ url }}">"#
+                    {
+                        continue;
+                    }
+                    assert!(
+                        accepted(&tag),
+                        "{} carries {tag}, which the guide's check would report",
+                        path.display()
+                    );
+                }
+            }
+        }
+        assert!(tags >= 20, "the pages' tags were found: {tags}");
     }
 
     /// Every page names its files through [`url`] and [`stylesheets`]: a

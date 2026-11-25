@@ -5,7 +5,7 @@
 <!--
   Localised client-side strings are carried on the root element as
   data-* attributes. Scripts read them via `document.documentElement.dataset`,
-  which keeps translated text out of inline <script> bodies and so out of
+  which keeps translated text out of inline script bodies and so out of
   conflict with a `script-src 'self'` Content-Security-Policy.
 -->
 <html lang="{{ i18n.lang_attr() }}" dir="{{ i18n.dir_attr() }}"
@@ -18,7 +18,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <!--
-      HTMX injects a <style> element for its request-indicator classes
+      HTMX injects a style element for its request-indicator classes
       during initialisation. A `style-src 'self'` policy without
       'unsafe-inline' blocks it, which raised a securitypolicyviolation
       on every page load. Disabling the injection here rather than in
