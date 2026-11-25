@@ -262,8 +262,8 @@ Only enforcement inside the browser can do that;
 see the WEBCAT note in [`SECURITY.md`](../SECURITY.md).
 
 Nor does it read the answers htmx fetches from a page's attributes, whether on loading or on a click; a page's own markup can fetch one as it opens.
-htmx runs a script in such an answer that names a same-origin file, and the browser applies a same-origin stylesheet the answer links.
-A meta refresh in the answer, or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header, moves you to another page.
+htmx as the release builds it, which step 2 checks, drops an answer's own script elements, but an answer can still run a script through an `<iframe srcdoc>`, in every browser, or through a declarative shadow root or an out-of-band element wrapped in a `<template>`, in Chromium and WebKit.
+The browser applies a same-origin stylesheet an answer links, and a meta refresh in it, or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header, moves you to another page.
 
 ## 4. Reproduce the build yourself
 

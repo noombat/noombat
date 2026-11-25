@@ -2,7 +2,8 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 /**
- * Guards the htmx behaviours the configuration in base.html depends on.
+ * Guards the htmx behaviours the configuration in base.html depends on,
+ * and those the `allowScriptTags` setting in htmx.ts depends on.
  *
  * The `responseHandling` setting there makes htmx swap a 204, so that a
  * removed row leaves its page; it has to stay htmx's own default but for
@@ -84,6 +85,32 @@ describe("htmx configuration surface", () => {
     expect(
       BUNDLE.includes('meta[name="htmx-config"]'),
       "htmx no longer reads meta[name=htmx-config]; the option set in base.html is being ignored",
+    ).toBe(true);
+  });
+
+  it("removes a swapped fragment's scripts when allowScriptTags is off", () => {
+    // htmx.ts holds the option off, which stops nothing unless htmx still
+    // removes the scripts of a fragment it parses while the option is off.
+    expect(
+      /if \(!htmx\.config\.allowScriptTags\) \{[^}]*script\.remove\(\)/.test(BUNDLE),
+      "htmx keeps a fragment's scripts with allowScriptTags off; htmx.ts stops nothing",
+    ).toBe(true);
+  });
+
+  it("replaces its configuration only by assigning htmx.config, once", () => {
+    // The property htmx.ts defines catches that assignment; a configuration
+    // replaced some other way would carry the option past it.
+    expect(
+      BUNDLE.match(/htmx\.config = /g)?.length,
+      "htmx replaces its configuration elsewhere too, or nowhere; re-check htmx.ts",
+    ).toBe(1);
+  });
+
+  it("reads its configuration through the object it exports", () => {
+    const shape = /const htmx = \{[\s\S]*return htmx\s*\}\)\(\)[\s\S]*export default htmx/;
+    expect(
+      shape.test(BUNDLE),
+      "htmx no longer exports the object it reads its configuration from; re-check htmx.ts",
     ).toBe(true);
   });
 

@@ -118,6 +118,11 @@ Templates carry no inline script, no inline event handlers, and no inline styles
 This is not only defence in depth:
 enforcement mechanisms in category 2 above rely on the CSP to constrain what enrolled pages may execute, so a policy weakened by `'unsafe-inline'` would forfeit that route.
 
+htmx, which swaps HTML from the server into a page after it loads, drops the script elements of what it swaps in:
+every script a page needs loads with the page, and the bundle the release builds holds htmx's `allowScriptTags` off where the configuration the server sends cannot turn it back on.
+That does not stop every script such HTML can carry: an `<iframe srcdoc>` runs one in every browser, and a declarative shadow root or an out-of-band element wrapped in a `<template>` does in Chromium and WebKit.
+It can also link a same-origin stylesheet, and a meta refresh or an `HX-Redirect`, `HX-Location` or `HX-Refresh` header can move the page elsewhere.
+
 ## Supply chain
 
 - Container base images are pinned by digest, not by tag.

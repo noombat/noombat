@@ -2,7 +2,7 @@
 // SPDX-FileCopyrightText: 2026 Gabriel Henrique Lopes Gomes Alves Nunes
 
 // Bundled htmx entry point.
-// Importing the module registers htmx on `window.htmx` as a side effect.
+// Importing htmx starts it: it processes the page once the document is ready.
 //
 // Upgrading htmx: `crates/noombat-api/templates/base.html` carries an
 // htmx-config meta element with two settings. includeIndicatorStyles is
@@ -20,8 +20,28 @@
 // The indicator rules in main.css are the project's own and use
 // `display` rather than htmx's `opacity`/`visibility`, so they are not a
 // copy of upstream and need no synchronisation with it.
-import "htmx.org";
+import htmx from "htmx.org";
 import { addCsrfHeader, showRefusal, type HtmxRequestDetail } from "./csrf";
+
+/*
+ * htmx drops the script elements of an answer it swaps in: every script
+ * the pages need loads with its page, so a script in an answer is one no
+ * release attested. It covers the answer's own script elements only; an
+ * iframe's srcdoc, a declarative shadow root or a template's contents can
+ * still carry one. The option has to hold through every replacement of
+ * the configuration, because once the document is ready htmx replaces it
+ * with a copy merged with the htmx-config meta element, which the server
+ * writes, after this module has run. It relies on htmx reading its
+ * configuration through the object it exports, and replacing it only by
+ * assignment; `htmx.spec.ts` checks the bundle for both.
+ */
+let config = { ...htmx.config, allowScriptTags: false };
+Object.defineProperty(htmx, "config", {
+  get: () => config,
+  set: (value: typeof config) => {
+    config = { ...value, allowScriptTags: false };
+  },
+});
 
 // Every htmx write carries the session's CSRF token as a header.
 document.addEventListener("htmx:configRequest", (event) => {
@@ -41,11 +61,9 @@ document.addEventListener("htmx:responseError", (event) => {
  * covers markup inserted later by HTMX swaps, which a listener bound
  * at load time would miss.
  *
- * This replaces `onclick` attributes previously used on the report
- * buttons in `profile.html` and `post.html`. Inline event handlers
- * are executed as inline script and are therefore blocked by a
- * `script-src 'self'` policy that omits `'unsafe-inline'`, which
- * left those buttons inert whenever the policy was enforced.
+ * Inline event handlers are inline script, which a `script-src 'self'`
+ * policy without `'unsafe-inline'` blocks, so the toggles use this
+ * listener instead.
  */
 document.addEventListener("click", (event) => {
   const target = event.target;
