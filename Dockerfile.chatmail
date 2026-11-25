@@ -21,11 +21,20 @@
 FROM rust:1-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS rust-builder
 
 WORKDIR /build
-COPY Cargo.toml Cargo.lock* rust-toolchain.toml ./
+COPY rust-toolchain.toml ./
+# rust-toolchain.toml names the release, and rustup installs whatever of
+# it the base image lacks on first use. Stop unless rustc reports exactly it.
+RUN want="$(sed -n 's/^channel *= *"\([0-9.]*\)".*/\1/p' rust-toolchain.toml)" && \
+    : "${want:?rust-toolchain.toml names no release}" && \
+    got="$(rustc -vV | sed -n 's/^release: //p')" && \
+    if [ "$got" = "$want" ]; then echo "rustc $got"; \
+    else echo "rustc is ${got:-missing}; rust-toolchain.toml names $want" >&2; exit 1; fi
+COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 
-# Build the sidecar and filtermail binaries in release mode.
-RUN cargo build --release --bin noombat-chatmail-admin --bin noombat-filtermail
+# The sidecar and filtermail binaries, in release mode, with exactly the
+# dependency versions Cargo.lock records.
+RUN cargo build --release --locked --bin noombat-chatmail-admin --bin noombat-filtermail
 
 # ..... RUNTIME .....
 #

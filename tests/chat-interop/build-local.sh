@@ -23,15 +23,15 @@ if [ -z "$BUILDER" ]; then
     exit 1
 fi
 
-# RUSTUP_HOME is persisted because rust-toolchain.toml names a channel and
-# not a version, so an unpersisted home re-downloads the toolchain on every
-# run into a layer that --rm discards.
+# RUSTUP_HOME is a directory under target/, so the release
+# rust-toolchain.toml names, which rustup installs there in full, survives
+# --rm instead of being downloaded again on every run.
 docker run --rm --user "$(id -u):$(id -g)" \
     -v "$REPO_ROOT:/build" -w /build \
     -e CARGO_HOME=/build/target/localbin-cargo \
     -e RUSTUP_HOME=/build/target/localbin-rustup \
     -e CARGO_TARGET_DIR=/build/target/localbin \
     "$BUILDER" \
-    cargo build --release --bin noombat "$@"
+    cargo build --release --locked --bin noombat "$@"
 
 echo "built: $REPO_ROOT/target/localbin/release/noombat"

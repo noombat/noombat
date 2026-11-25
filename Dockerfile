@@ -33,8 +33,8 @@ RUN sh /build/scripts/install-pnpm.sh package.json && pnpm install --frozen-lock
 
 # Label the asset manifest with the release it was built from. The
 # repository history is excluded by .dockerignore, so these cannot be
-# derived here and are supplied by the caller; publish-container.yml
-# and container-build.yml both pass them.
+# derived here and are supplied by the caller: release.yml and
+# verify.yml pass them through scripts/build-image.sh.
 #
 # Declared here, after the build, and not earlier: a changed ARG value
 # invalidates the cache for every following instruction, and the
@@ -54,15 +54,20 @@ RUN NOOMBAT_VERSION="$NOOMBAT_VERSION" NOOMBAT_COMMIT="$NOOMBAT_COMMIT" \
     sh /build/scripts/asset-manifest.sh dist/assets > dist/assets-manifest.json
 
 # ..... RUST BUILD .....
-# The `rust:1-trixie` tag tracks the latest stable Rust 1.x release,
-# matching the CI `stable` channel. The workspace MSRV (rust-version in
-# Cargo.toml) is verified separately by the CI `msrv` job.
+# The workspace MSRV (rust-version in Cargo.toml) is verified separately
+# by the CI `msrv` job.
 FROM rust:1-trixie@sha256:223cc32ddca8f3ee90c436dbc94b6b5f052ea7f9653c5201e9612f08ad7d21b8 AS builder
 
 WORKDIR /build
-COPY Cargo.toml rust-toolchain.toml ./
-# Copy Cargo.lock if it exists (run `cargo generate-lockfile` before building).
-COPY Cargo.lock* ./
+COPY rust-toolchain.toml ./
+# rust-toolchain.toml names the release, and rustup installs whatever of
+# it the base image lacks on first use. Stop unless rustc reports exactly it.
+RUN want="$(sed -n 's/^channel *= *"\([0-9.]*\)".*/\1/p' rust-toolchain.toml)" && \
+    : "${want:?rust-toolchain.toml names no release}" && \
+    got="$(rustc -vV | sed -n 's/^release: //p')" && \
+    if [ "$got" = "$want" ]; then echo "rustc $got"; \
+    else echo "rustc is ${got:-missing}; rust-toolchain.toml names $want" >&2; exit 1; fi
+COPY Cargo.toml Cargo.lock ./
 COPY crates/ crates/
 COPY migrations/ migrations/
 COPY frontend/ frontend/
@@ -71,8 +76,10 @@ COPY templates/ templates/
 # Copy the compiled frontend assets from the previous stage.
 COPY --from=frontend /build/frontend/dist frontend/dist
 
-# Build in release mode.
-RUN cargo build --release --bin noombat
+# Release mode, with exactly the dependency versions Cargo.lock records:
+# a lockfile out of step with Cargo.toml fails the build rather than
+# being resolved again here.
+RUN cargo build --release --locked --bin noombat
 
 # ..... TYPST BINARY .....
 # Copy the pre-built Typst CLI from the official container image.
